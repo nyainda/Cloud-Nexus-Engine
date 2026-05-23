@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["es2022", "dom"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "outDir": "../dist/api",
+    "rootDir": ".",
+    "paths": {
+      "@workspace/db": ["../lib/db/src/index.ts"],
+      "@workspace/api-zod": ["../lib/api-zod/src/index.ts"]
+    }
+  },
+  "include": ["index.ts"]
+}

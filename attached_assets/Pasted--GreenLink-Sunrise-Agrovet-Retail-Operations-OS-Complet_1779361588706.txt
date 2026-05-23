@@ -1,0 +1,2118 @@
+# 🌿 GreenLink & Sunrise Agrovet
+# Retail Operations OS — Complete System Specification
+> Version 3.0 — Every section fully specced. Nothing left out.
+
+---
+
+## 1. PRODUCT VISION
+
+GreenLink POS is designed for small and medium agrovet businesses that need:
+- Accurate stock
+- Instant profit visibility
+- Debt tracking
+- Intelligent inventory automation
+
+Without complicated accounting software.
+
+**The system is designed around REAL shop behavior:**
+```
+Staff forget things
+Internet fails
+Books are still used
+Handwriting is messy
+Receipts get lost
+Products are repeated
+Quantities may be missing
+Customers buy in bulk
+```
+
+The software must adapt to humans — not force humans to become perfect.
+
+---
+
+## 2. CORE PHILOSOPHY
+
+### The Original Problem (Why This Exists)
+```
+BROKEN CURRENT FLOW:
+Customer buys item →
+Cashier sells it (POS or book) →
+Item still shows in stock (wrong) →
+End of day: staff manually remove items →
+Tiresome + staff forget items →
+Stock count wrong →
+Profit = unknown 😭
+
+THE FIX:
+Customer buys item →
+Cashier records sale in PWA (5 seconds) →
+Stock AUTO reduces immediately →
+Profit AUTO calculated instantly →
+End of day: owner opens app →
+Full profit report already ready →
+Zero manual work. Ever. 🎉
+
+FORGOT TO RECORD? (manual removal):
+Go to Today's Sales →
+Find the item →
+Remove it →
+System recalculates profit automatically
+Even at midnight. Even next day.
+```
+
+### Design Philosophy
+```
+Forgiving software.
+Messy human input should still work.
+
+The system must:
+  ✅ tolerate shorthand writing        e.g. "BASA" → Basagran 1L
+  ✅ tolerate OCR mistakes             e.g. "KNGA" → KINGA
+  ✅ tolerate duplicate products       merge, don't break
+  ✅ tolerate missing quantities       infer from price
+  ✅ support offline workflows         IndexedDB queue
+  ✅ support both modern and           POS + book scan
+     traditional shop workflows
+```
+
+### Final Product Positioning
+```
+This is NOT just a POS system.
+
+This is:
+  Retail Operations OS for Agrovets
+
+Designed around real African retail workflows including:
+  notebooks              → OCR scanner recovers missed sales
+  handwritten sales      → quantity inference engine
+  WhatsApp invoices      → invoice scanner
+  offline workflows      → IndexedDB + background sync
+  messy inventory        → normalization pipeline
+  bulk scanning          → multi-page OCR
+  shorthand writing      → alias system
+  duplicate pages        → image hash + content detection
+  real-world shop chaos  → forgiving matching engine
+
+The system must feel:
+  smart
+  forgiving
+  fast
+  practical
+  human
+
+While maintaining:
+  accurate stock
+  accurate profit
+  accurate reports
+  accurate inventory history
+```
+
+---
+
+## 3. SYSTEM OVERVIEW
+
+```
+Two shops:
+├── GreenLink Farm Supplies & Services Ltd
+└── Sunrise Agrovet
+
+One PWA app — phone, tablet, desktop
+Installs like native app (no Play Store)
+Works offline (IndexedDB + service worker)
+Hosted on Vercel (free)
+Database on Supabase (free tier)
+```
+
+---
+
+## 4. SYSTEM ARCHITECTURE
+
+```
+Cashier Action
+   ↓
+UI (Next.js PWA)
+   ↓
+Zustand Store (local state)
+   ↓
+IndexedDB (offline queue — saves FIRST)
+   ↓
+Supabase API (when online)
+   ↓
+PostgreSQL Transaction
+   ├── update products.stock_qty
+   ├── create sale
+   ├── create sale_items
+   ├── calculate profit
+   ├── create inventory_movement  ← SOURCE OF TRUTH
+   ├── create audit_log entry
+   └── trigger notifications
+   ↓
+Supabase Realtime
+   ↓
+All devices update instantly
+```
+
+---
+
+## 5. OFFLINE-FIRST STRATEGY
+
+### The Problem
+```
+Internet is unreliable in many agrovet environments.
+Sales cannot stop because WiFi dropped.
+```
+
+### The Solution
+```
+Sales are stored in IndexedDB FIRST.
+UI confirms immediately.
+Supabase sync happens in background.
+
+Flow:
+  Cashier records sale →
+  Saved to IndexedDB instantly (< 50ms) →
+  "Sale recorded ✅" shown immediately →
+  Background worker uploads to Supabase →
+  Sync indicator: 🟢 synced / 🟡 pending
+
+Failed Sync Handling:
+  If upload fails →
+  Sale marked "⏳ Pending Sync" in log →
+  After 30 minutes still unsynced →
+  Owner notification fires:
+    "⚠️ 3 sales not synced — check connection"
+  Retry button available
+  Never lost — always in IndexedDB
+```
+
+### Performance Goals
+```
+POS search result:    < 100ms
+Sale completion:      < 2 seconds
+Offline mode:         functional 24+ hours
+Low-end Android:      Tecno, Infinix, low RAM devices
+
+Optimizations:
+  image compression before OCR upload
+  lazy loading for product lists
+  virtualized lists (handles 2,610+ products)
+  OCR processing in Web Workers (no UI freeze)
+  reduced animations on weak devices (detected via navigator)
+```
+
+---
+
+## 6. ROLE PERMISSIONS
+
+```
+OWNER
+  ✅ View all reports
+  ✅ View profit margins
+  ✅ Edit prices
+  ✅ Override discounts (PIN confirm)
+  ✅ Delete products (soft delete)
+  ✅ Export data (CSV)
+  ✅ Manage PINs
+  ✅ Import products (Excel + OCR)
+  ✅ Manage suppliers
+  ✅ View full audit trail
+  ✅ View cash reconciliation
+  ✅ Access OCR scanner
+  ✅ View inventory movements
+
+CASHIER
+  ✅ Record sales
+  ✅ Search stock
+  ✅ Record debts
+  ✅ View debt list (their shop)
+  ❌ Cannot see profit margins
+  ❌ Cannot see buy prices
+  ❌ Cannot edit prices
+  ❌ Cannot delete products
+  ❌ Cannot export data
+  ❌ Cannot see audit trail
+  ❌ Cannot access reports
+  ❌ Cannot override discounts (needs owner PIN)
+```
+
+### PIN System
+```
+4-digit PIN per role
+Stored hashed in Supabase (bcrypt)
+Change anytime in Settings (owner only)
+
+Login flow:
+  Select shop → select role → enter PIN
+  Wrong PIN: shake animation
+  3 wrong attempts: 30 second lockout
+
+Owner PIN override (in-session):
+  Certain actions require owner PIN even mid-session
+  e.g. discount override, price edit, product delete
+  Re-enter PIN → action allowed → logged in audit
+```
+
+---
+
+## 7. DESIGN SYSTEM
+
+### 7.1 Design Philosophy
+```
+NOT vibe-coded.
+NOT generic AI purple gradients.
+Properly designed, intentional, memorable.
+
+Clean enough for daily business use.
+Bold enough to feel premium.
+Fast enough for 50 customers/day.
+Readable on low-end Android screens.
+```
+
+### 7.2 Color Palette
+```
+Primary Background:     #0A0A0A  (near black — deep, serious)
+Secondary Background:   #111111  (card surfaces)
+Elevated Surface:       #1A1A1A  (modals, dropdowns)
+Border subtle:          #2A2A2A
+Border visible:         #363636
+
+Accent — Electric Lime: #C8FF00  ← PRIMARY action color
+  → All main buttons
+  → Active states
+  → Profit numbers
+  → Why lime? Agriculture = growth = green.
+                Electric = modern, not boring.
+
+Success Green:          #00D46A  (in stock, paid, synced)
+Warning Amber:          #FFB800  (low stock, partial, pending)
+Danger Red:             #FF3B3B  (out of stock, blocked, error)
+Info Blue:              #3B82F6  (notifications, info states)
+Purple:                 #A855F7  (OCR confidence, AI features)
+
+Text Primary:           #FFFFFF
+Text Secondary:         #A0A0A0
+Text Muted:             #505050
+Text Disabled:          #303030
+```
+
+### 7.3 Typography
+```
+Display / Logo:    "Clash Display" weight 700
+                   → app name, big totals, profit numbers
+                   → makes numbers feel impactful
+
+Headings:          "Syne" weight 700-800
+                   → page titles, section headers
+                   → geometric, strong, trustworthy
+
+Body / UI:         "DM Sans" weight 400/500/600
+                   → labels, descriptions, all general text
+                   → clean, readable at small sizes
+
+Numbers / Prices:  "JetBrains Mono" weight 600-700
+                   → ALL prices, quantities, SKUs, margins
+                   → monospace = numbers align + scan fast
+                   → critical for cashier reading quickly
+```
+
+### 7.4 Component Specs
+
+#### Buttons
+```
+Primary (Lime):
+  background: #C8FF00
+  color: #000000
+  font-weight: 700
+  border-radius: 10px
+  padding: 12px 24px
+  hover: brightness(1.1) + scale(1.02)
+  active: scale(0.97)
+
+Ghost:
+  background: transparent
+  border: 1px solid #2A2A2A
+  color: #FFFFFF
+  hover: background #1A1A1A
+
+Danger:
+  background: rgba(255,59,59,0.1)
+  border: 1px solid #FF3B3B
+  color: #FF3B3B
+
+Blocked / Disabled:
+  background: #1A1A1A
+  color: #303030
+  cursor: not-allowed
+  no hover effect
+```
+
+#### Status Badges
+```
+In Stock:     rgba(0,212,106,0.15) / #00D46A
+Low Stock:    rgba(255,184,0,0.15) / #FFB800  ← pulses infinitely
+Out of Stock: rgba(255,59,59,0.15) / #FF3B3B
+Pending Sync: rgba(255,184,0,0.15) / #FFB800
+Paid:         rgba(0,212,106,0.15) / #00D46A
+Partial:      rgba(255,184,0,0.15) / #FFB800
+Unpaid:       rgba(255,59,59,0.15) / #FF3B3B
+```
+
+#### Cards
+```
+background: #111111
+border: 1px solid #2A2A2A
+border-radius: 12px
+padding: 16px
+hover: border-color → #C8FF00 + glow: 0 0 20px rgba(200,255,0,0.08)
+```
+
+#### Search Input
+```
+background: #1A1A1A
+border: 1.5px solid #2A2A2A
+border-radius: 10px
+focus: border-color #C8FF00
+       box-shadow: 0 0 0 3px rgba(200,255,0,0.08)
+font: DM Sans 15px
+placeholder: #505050
+```
+
+### 7.5 Animations
+```
+Page transitions:     fade + slide up 200ms ease-out
+Modal open:           scale(0.95→1) + fade 150ms
+Toast notifications:  slide in from top 200ms
+Profit numbers:       count-up animation on update
+Search results:       staggered fade 50ms delay each
+Button press:         scale(0.97) 100ms
+Low stock badge:      infinite pulse (attention-grabbing)
+Sync indicator:       rotating on pending, checkmark on done
+PIN dots:             scale pop when filled
+Wrong PIN:            horizontal shake 300ms
+```
+
+---
+
+## 8. DATABASE SCHEMA
+
+```sql
+-- ─────────────────────────────────────────────
+-- SHOPS
+-- ─────────────────────────────────────────────
+shops (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name            text NOT NULL,
+  owner_whatsapp  text,
+  owner_pin       text NOT NULL,    -- bcrypt hashed
+  cashier_pin     text NOT NULL,    -- bcrypt hashed
+  created_at      timestamptz DEFAULT now()
+)
+
+-- ─────────────────────────────────────────────
+-- PRODUCTS
+-- ─────────────────────────────────────────────
+products (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id          uuid REFERENCES shops ON DELETE CASCADE,
+  canonical_name   text NOT NULL,   -- "Basagran 1L" ← shown to user
+  normalized_name  text NOT NULL,   -- "basagran1l"  ← used for matching
+  sku              text UNIQUE,
+  category         text,
+  unit             text DEFAULT 'Pc(s)',
+  purchase_price   decimal(12,2),
+  selling_price    decimal(12,2),
+  profit_margin    decimal(8,2),    -- percentage
+  stock_qty        integer DEFAULT 0,
+  alert_qty        integer DEFAULT 5,
+  tokens           jsonb,           -- ["basa","basagran","1l","basa1l"]
+  size             text,            -- "1L", "500ml", "50kg"
+  dimension        text,            -- "15cm", "1000m"
+  is_active        boolean DEFAULT true,   -- SOFT DELETE
+  last_sold_at     timestamptz,
+  created_at       timestamptz DEFAULT now(),
+  updated_at       timestamptz DEFAULT now()
+)
+
+-- WHY TWO NAME FIELDS:
+--   canonical_name  → "Basagran 1L"  shown in POS, receipts, reports
+--   normalized_name → "basagran1l"   used for OCR match, fuzzy, duplicates
+
+-- ─────────────────────────────────────────────
+-- PRODUCT ALIASES (OCR + shorthand matching)
+-- ─────────────────────────────────────────────
+product_aliases (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id      uuid REFERENCES products ON DELETE CASCADE,
+  alias           text NOT NULL,      -- "BASA", "DAP50", "U50"
+  confidence      decimal(4,3),       -- 0.000 to 1.000
+  auto_generated  boolean DEFAULT false,
+  created_at      timestamptz DEFAULT now()
+)
+
+-- Examples:
+--   "BASA"   → Basagran 1L       confidence 0.95  auto_generated true
+--   "DAP50"  → DAP 50KG          confidence 0.98  auto_generated true
+--   "U50"    → Urea 50KG         confidence 0.92  auto_generated true
+--   "KINGA"  → Kingcode 1L       confidence 0.88  auto_generated true
+--   "TINGA"  → Tinga Top 500ml   confidence 0.96  auto_generated true
+
+-- ─────────────────────────────────────────────
+-- PRICE HISTORY
+-- ─────────────────────────────────────────────
+price_history (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id           uuid REFERENCES products ON DELETE CASCADE,
+  old_purchase_price   decimal(12,2),
+  new_purchase_price   decimal(12,2),
+  old_selling_price    decimal(12,2),
+  new_selling_price    decimal(12,2),
+  pct_change           decimal(8,2),    -- calculated % difference
+  changed_at           timestamptz DEFAULT now(),
+  changed_by           text             -- 'owner' | cashier name
+)
+
+-- ─────────────────────────────────────────────
+-- INVENTORY MOVEMENTS ← SOURCE OF TRUTH
+-- ─────────────────────────────────────────────
+inventory_movements (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id     uuid REFERENCES products ON DELETE CASCADE,
+  movement_type  text NOT NULL,
+  -- SALE         regular sale through POS
+  -- RESTOCK      owner added new stock
+  -- OCR_IMPORT   came from OCR scan (notebook or invoice)
+  -- LOSS         plant died, item damaged, expired
+  -- ADJUSTMENT   manual correction by owner
+  -- RETURN       customer returned item
+  qty_change     integer NOT NULL,  -- negative for SALE/LOSS, positive for RESTOCK
+  before_qty     integer NOT NULL,  -- stock before this movement
+  after_qty      integer NOT NULL,  -- stock after this movement
+  source         text,              -- 'pos' | 'ocr' | 'manual' | 'excel' | 'invoice'
+  reference_id   uuid,              -- sale_id | invoice_id | null
+  created_by     text,              -- 'owner' | cashier name | 'system'
+  created_at     timestamptz DEFAULT now()
+)
+
+-- EVERY stock change MUST create a movement record.
+-- This table is the complete history of all inventory activity.
+-- Used for: stock audits, discrepancy detection, reports
+
+-- ─────────────────────────────────────────────
+-- SALES
+-- ─────────────────────────────────────────────
+sales (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id               uuid REFERENCES shops ON DELETE CASCADE,
+  total_amount          decimal(12,2),
+  total_cost            decimal(12,2),
+  total_profit          decimal(12,2),
+  discount              decimal(12,2) DEFAULT 0,
+  discount_override_by  text,    -- set if owner PIN used for discount
+  sale_type             text,    -- 'cash' | 'debt'
+  served_by             text,    -- cashier name
+  sync_status           text DEFAULT 'synced',  -- 'synced' | 'pending'
+  created_at            timestamptz DEFAULT now()
+)
+
+-- ─────────────────────────────────────────────
+-- SALE ITEMS
+-- ─────────────────────────────────────────────
+sale_items (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  sale_id         uuid REFERENCES sales ON DELETE CASCADE,
+  product_id      uuid REFERENCES products,
+  product_name    text NOT NULL,    -- SNAPSHOT at time of sale — immutable
+  qty             integer NOT NULL,
+  unit_price      decimal(12,2),
+  unit_cost       decimal(12,2),
+  unit_profit     decimal(12,2),
+  total_price     decimal(12,2),
+  total_profit    decimal(12,2)
+)
+-- product_name is snapshotted because:
+-- if product is later renamed/deleted, historical sales must still show correctly
+
+-- ─────────────────────────────────────────────
+-- DEBTS
+-- ─────────────────────────────────────────────
+debts (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id          uuid REFERENCES shops ON DELETE CASCADE,
+  sale_id          uuid REFERENCES sales,
+  customer_name    text NOT NULL,
+  customer_phone   text NOT NULL,
+  total_amount     decimal(12,2) NOT NULL,
+  amount_paid      decimal(12,2) DEFAULT 0,
+  balance          decimal(12,2),   -- computed: total_amount - amount_paid
+  status           text DEFAULT 'unpaid',  -- 'unpaid' | 'partial' | 'paid'
+  notes            text,
+  created_at       timestamptz DEFAULT now(),
+  paid_at          timestamptz
+)
+
+-- ─────────────────────────────────────────────
+-- DEBT PAYMENTS
+-- ─────────────────────────────────────────────
+debt_payments (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  debt_id      uuid REFERENCES debts ON DELETE CASCADE,
+  amount       decimal(12,2) NOT NULL,
+  paid_at      timestamptz DEFAULT now(),
+  recorded_by  text
+)
+
+-- ─────────────────────────────────────────────
+-- NOTIFICATIONS
+-- ─────────────────────────────────────────────
+notifications (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id     uuid REFERENCES shops ON DELETE CASCADE,
+  type        text NOT NULL,
+  -- 'low_stock' | 'out_stock' | 'dead_stock' | 'debt_new' |
+  -- 'debt_cleared' | 'debt_partial' | 'price_change' |
+  -- 'eod_report' | 'sync_failed' | 'ocr_complete'
+  title       text NOT NULL,
+  message     text NOT NULL,
+  product_id  uuid REFERENCES products,
+  debt_id     uuid REFERENCES debts,
+  is_read     boolean DEFAULT false,
+  created_at  timestamptz DEFAULT now()
+)
+
+-- ─────────────────────────────────────────────
+-- AUDIT LOG ← every sensitive action logged
+-- ─────────────────────────────────────────────
+audit_log (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id       uuid REFERENCES shops ON DELETE CASCADE,
+  action        text NOT NULL,
+  -- 'price_change'       price edited
+  -- 'stock_edit'         manual stock adjustment
+  -- 'ocr_import'         OCR scan applied to stock
+  -- 'duplicate_override' user forced duplicate through
+  -- 'product_delete'     product soft-deleted
+  -- 'debt_edit'          debt manually modified
+  -- 'pin_change'         PIN was changed
+  -- 'discount_override'  owner PIN used on discount
+  -- 'sale_removed'       sale manually removed from log
+  entity_type   text,     -- 'product' | 'sale' | 'debt' | 'pin'
+  entity_id     uuid,
+  old_value     jsonb,    -- full snapshot before change
+  new_value     jsonb,    -- full snapshot after change
+  performed_by  text,     -- 'owner' | cashier name
+  created_at    timestamptz DEFAULT now()
+)
+
+-- Example entry:
+-- action:       'price_change'
+-- entity_type:  'product'
+-- entity_id:    uuid of DAP 50KG
+-- old_value:    { purchase_price: 4200, selling_price: 4800 }
+-- new_value:    { purchase_price: 4500, selling_price: 5100 }
+-- performed_by: 'owner'
+-- Human readable: "Owner changed DAP 50KG price
+--                  Ksh 4,200 → 4,500 at 2:14PM"
+
+-- ─────────────────────────────────────────────
+-- SUPPLIERS
+-- ─────────────────────────────────────────────
+suppliers (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id    uuid REFERENCES shops ON DELETE CASCADE,
+  name       text NOT NULL,
+  phone      text,
+  notes      text,
+  created_at timestamptz DEFAULT now()
+)
+
+-- ─────────────────────────────────────────────
+-- SUPPLIER INVOICES
+-- ─────────────────────────────────────────────
+supplier_invoices (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_id     uuid REFERENCES suppliers,
+  invoice_number  text,
+  total_amount    decimal(12,2),
+  invoice_date    date,
+  image_url       text,        -- Supabase Storage URL
+  scanned_text    text,        -- raw OCR output (for debug/audit)
+  created_by      text,
+  created_at      timestamptz DEFAULT now()
+)
+
+-- ─────────────────────────────────────────────
+-- INVOICE ITEMS (from OCR invoice scan)
+-- ─────────────────────────────────────────────
+invoice_items (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_id          uuid REFERENCES supplier_invoices ON DELETE CASCADE,
+  product_id          uuid REFERENCES products,   -- null if unmatched
+  raw_item_name       text,      -- exactly what OCR read
+  matched_confidence  decimal(4,3),  -- 0.000 to 1.000
+  qty                 integer,
+  purchase_price      decimal(12,2),
+  subtotal            decimal(12,2)
+)
+
+-- ─────────────────────────────────────────────
+-- PLANTS (separate module)
+-- ─────────────────────────────────────────────
+plants (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id         uuid REFERENCES shops ON DELETE CASCADE,
+  name            text NOT NULL,
+  category        text,
+  size_variant    text,    -- 'seedling' | 'small' | 'medium' | 'large'
+  purchase_price  decimal(12,2),
+  selling_price   decimal(12,2),
+  stock_qty       integer DEFAULT 0,
+  alert_qty       integer DEFAULT 3,
+  is_available    boolean DEFAULT true,
+  last_sold_at    timestamptz,
+  created_at      timestamptz DEFAULT now()
+)
+
+-- ─────────────────────────────────────────────
+-- PLANT LOSSES
+-- ─────────────────────────────────────────────
+plant_losses (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  plant_id    uuid REFERENCES plants ON DELETE CASCADE,
+  qty_lost    integer NOT NULL,
+  reason      text,   -- 'drought' | 'pest' | 'overwatering' | 'other'
+  recorded_at timestamptz DEFAULT now()
+)
+```
+
+### Indexes
+```sql
+CREATE INDEX ON products(shop_id, sku);
+CREATE INDEX ON products(shop_id, canonical_name);
+CREATE INDEX ON products(normalized_name);
+CREATE INDEX ON products(shop_id, is_active);
+CREATE INDEX ON sales(shop_id, created_at DESC);
+CREATE INDEX ON debts(status, shop_id);
+CREATE INDEX ON inventory_movements(product_id, created_at DESC);
+CREATE INDEX ON audit_log(shop_id, created_at DESC);
+CREATE INDEX ON notifications(shop_id, is_read, created_at DESC);
+```
+
+### Soft Delete Policy
+```
+Products are NEVER hard deleted.
+DELETE action → sets is_active = false
+
+This preserves:
+  historical sale records
+  profit report accuracy
+  inventory movement history
+  audit trail completeness
+
+Product retired confirmation:
+  "⚠️ Delete Basagran 1L?
+   This product has Ksh 45,000 in historical sales.
+   Sales history will be kept.
+   Product will be hidden from POS.
+   [CANCEL]  [CONFIRM DELETE]"
+```
+
+### Security
+```
+✅ Row-level security (RLS) on all tables — shop data isolated
+✅ PINs hashed with bcrypt before storage — never plain text
+✅ HTTPS only
+✅ Session auto-expiry after inactivity
+✅ Critical actions require PIN re-authentication
+✅ Cashier cannot see purchase prices (RLS policy)
+✅ Cashier cannot see profit margins (RLS policy)
+✅ Every sensitive action written to audit_log
+```
+
+---
+
+## 9. DATA NORMALIZATION PIPELINE
+
+### Why This Is Critical
+```
+Good OCR and search systems are mostly:
+  good preprocessing
+  + clean data
+  + smart matching
+
+NOT magical AI.
+
+If DB contains:
+  Basagran 1litre
+  Basagran 1 litre
+  BASAGRAN 1L
+  Basa 1L
+
+→ OCR matching breaks
+→ fuzzy search returns duplicates
+→ reports show 4 products instead of 1
+→ stock split across phantom duplicates
+
+After normalization:
+  canonical_name:  "Basagran 1L"
+  normalized_name: "basagran1l"
+  tokens:          ["basagran","basa","1l","basagran1l","basa1l"]
+
+→ everything matches cleanly
+→ OCR finds it instantly
+→ one product, one stock count
+→ clean reports
+```
+
+### The Full Pipeline
+```
+Excel Upload
+    ↓
+Step 1: Parser
+  Extract 8 of 37 columns:
+  NAME, SKU, PURCHASE PRICE, SELLING PRICE,
+  PROFIT MARGIN, UNIT, ALERT QUANTITY, MANAGE STOCK
+    ↓
+Step 2: Cleaner
+  Fix all messy data (see rules below)
+    ↓
+Step 3: Normalizer
+  Generate canonical_name, normalized_name, tokens
+    ↓
+Step 4: Validation
+  Flag missing prices, negative stock, missing SKU
+    ↓
+Step 5: Duplicate Detection
+  Compare normalized_names — 85%+ similarity = flag
+    ↓
+Step 6: Preview Screen
+  Human reviews everything before DB write
+    ↓
+Step 7: Save to Supabase
+  Only confirmed, clean records written
+```
+
+### Step 2: Cleaning Rules
+
+**Trim whitespace:**
+```
+"  BASAGRAN 1L  " → "BASAGRAN 1L"
+```
+
+**Normalize units:**
+```
+1litre / 1 litre / 1ltr / 1lt / 1Litre  → 1L
+500ml / 500 ml / 500ML                   → 500ml
+250gm / 250 gram / 250GM                 → 250g
+20lt / 20ltr / 20LT                      → 20L
+50kg / 50KG / 50 kg                      → 50kg
+```
+
+**Standardize case:**
+```
+bAsAgRaN               → Basagran
+ELGON 20LT PUMP        → Elgon 20L Pump
+rid out 1lt            → Rid Out 1L
+POULTRY MICROBES 500ML → Poultry Microbes 500ml
+```
+
+**Auto-assign categories by keyword:**
+```
+"pump","sprinkler","drip","pipe","valve",
+"filter","hose","nozzle","emitter","cam lock",
+"dripline","lay flat","riser"             → Irrigation
+
+"basagran","rid out","glyphosate",
+"paraquat","atrazine","weedicide"         → Herbicide
+
+"tinga","mancozeb","ridomil","score",
+"bravo","copper","milraz","dithane"       → Fungicide
+
+"kingcode","karate","lambda",
+"cypermethrin","emamectin"                → Insecticide
+
+"dap","urea","npk","can ","foliar",
+"optimizer","calcium","boron","humic"     → Fertilizer
+
+"seed","maize","tomato","bean",
+"kale","cabbage","onion","spinach"        → Seeds
+
+"milking","salve","dewormer","levacide",
+"albafas","opticlox","alamycin",
+"norbrook","duodip","microbes","poultry"  → Veterinary
+
+"ph meter","soil","pruning","shear",
+"sprayer","knapsack","applicator"         → Equipment & Tools
+```
+
+**Extract structured metadata:**
+```
+"DRIPLINE 15CM*1000M"
+  → size:      "15cm"
+  → length:    "1000m"
+
+"BASAGRAN 1L"
+  → volume:    "1L"
+
+"DAP FERTILIZER 50KG"
+  → weight:    "50kg"
+
+"ELGON 20LT PUMP"
+  → volume:    "20L"
+  → type:      "pump"
+```
+
+### Step 3: Normalization Output
+
+**canonical_name vs normalized_name:**
+```
+canonical_name  = "Basagran 1L"    ← displayed everywhere
+normalized_name = "basagran1l"     ← used for matching only
+
+canonical → shown in:
+  POS search results
+  Cart
+  Receipts
+  Reports
+  Notifications
+  Stock list
+
+normalized → used for:
+  Fuzzy search matching
+  OCR product matching
+  Duplicate detection
+  Alias matching
+```
+
+**Search token generation:**
+```
+"Basagran 1L"      → ["basagran","basa","1l","basagran1l","basa1l"]
+"DAP 50KG"         → ["dap","50kg","dap50","dap50kg","fertilizer"]
+"Elgon 20L Pump"   → ["elgon","elg","20l","pump","elgon20l"]
+"Dripline 15cm"    → ["dripline","drip","15cm","dripline15cm"]
+"Poultry Microbes" → ["poultry","microbes","micro","poultry microbes"]
+
+Token generation rules:
+  1. All full words (length > 1)
+  2. First 4 chars of words ≥ 5 chars (prefix shorthand)
+  3. Concatenated first two words (no space)
+  4. Combined with unit/size ("basa1l")
+
+Stored as: products.tokens jsonb array
+```
+
+### Step 4: Validation Flags
+```
+❌ Missing buy price       → skip or flag for manual entry
+❌ Missing sell price      → skip or flag for manual entry
+⚠️ alert_qty = 0 or null  → suggest default of 5
+⚠️ No SKU                 → auto-generate (next available number)
+⚠️ Margin < 5%            → "Very low margin — confirm?"
+⚠️ Margin > 200%          → "Very high margin — confirm?"
+```
+
+### Step 5: Duplicate Detection
+```
+Compare normalized_name of new product vs all existing products.
+
+Exact match (100%):
+  → BLOCK: "Basagran 1L already exists (SKU 0002)"
+  → Show existing product
+  → Options: [SKIP] [UPDATE EXISTING] [KEEP BOTH]
+
+Near match (85%+):
+  → WARNING: "Similar product detected"
+  → "Basagran 1L" vs "Basagran 1 Litre" — 91% match
+  → Show both side by side
+  → Options: [MERGE] [KEEP BOTH] [SKIP NEW]
+```
+
+### Step 6: Import Preview Screen
+```
+┌─────────────────────────────────────────────┐
+│  Import Preview — GreenLink Farm Supplies   │
+│  File: products-export-2026-05-14.xlsx      │
+├─────────────────────────────────────────────┤
+│  Products Found:      2,610                 │
+│                                             │
+│  ✅ Ready:            2,595                 │
+│  ⚠️  Missing prices:     15                 │
+│  🔁 Duplicates:           0                 │
+│  🏷️  Auto-categorized:  428                 │
+├─────────────────────────────────────────────┤
+│  [ REVIEW ISSUES (15) ]                     │
+│  [ IMPORT 2,595 PRODUCTS → ]                │
+└─────────────────────────────────────────────┘
+```
+
+### Real Data Findings (Your Actual Excel)
+```
+File: products-export-2026-05-14.xlsx
+Total rows: 2,610
+
+Problems found:
+  Missing buy price:    9 products
+  Missing sell price:   6 products
+  Case inconsistencies: 1,580 products
+  Unit inconsistencies: 302 products
+  Category column:      EMPTY for all 2,610 products
+
+Auto-category detection results:
+  General (needs more keywords): 2,182
+  Seeds:                           144
+  Irrigation:                      124
+  Fertilizer:                       62
+  Veterinary:                       47
+  Fungicide:                        37
+  Equipment & Tools:                 6
+  Insecticide:                       5
+  Herbicide:                         3
+
+REASON most are "General":
+  Your catalog is deep specialty agrochem.
+  Generic keyword rules don't catch e.g.:
+  "ALBAFAS", "DUODIP", "OPTICLOX", "LEVACIDE"
+  These need their specific names added as keywords
+  OR manual category assignment after import.
+
+ACTION:
+  Expand keyword rules with your actual product names.
+  OR bulk-assign categories after import via filter.
+```
+
+---
+
+## 10. OCR & DOCUMENT INTELLIGENCE SYSTEM
+
+### Purpose
+```
+Allow shops to:
+  ✅ Scan invoices           → auto-restock from supplier invoice photo
+  ✅ Scan notebooks          → recover missed sales from book
+  ✅ Recover missed sales    → even days later
+  ✅ Bulk import inventory   → photograph shelves or stock sheets
+  ✅ Reduce manual typing    → OCR does the reading
+```
+
+### OCR Technology Stack
+```
+Image Processing:  OpenCV.js     (browser, free)
+OCR Engine:        Tesseract.js  (browser, free)
+                   OR Gemini Vision (subscription, better handwriting)
+Product Matching:  Fuse.js       (fuzzy, free)
+Image Storage:     Supabase Storage (free tier)
+Processing:        Web Workers   (no UI freeze)
+
+Gemini Vision advantage:
+  Handles messy handwriting dramatically better
+  Understands context (can infer product from partial name)
+  Worth subscribing for handwritten notebook scans
+
+Architecture: try Gemini first, fall back to Tesseract.js
+```
+
+### Document Preprocessing (before OCR)
+```
+Camera image →
+  Step 1: Auto document detection
+          Detect paper edges in frame
+          Show overlay guide: "Align paper to corners"
+  Step 2: Crop to paper boundary
+  Step 3: Perspective correction (flatten if angled)
+  Step 4: Shadow removal
+  Step 5: Contrast enhancement
+  Step 6: Text sharpening
+  Step 7: Convert to high-contrast grayscale
+→ THEN OCR runs
+
+Goal: fix poor lighting, angle, shadows
+      before OCR attempts to read anything.
+Accuracy difference: 40% raw → 85%+ preprocessed.
+```
+
+### Full OCR Pipeline
+```
+Take Photo
+    ↓
+Document Detection + Preprocessing (OpenCV.js)
+    ↓
+OCR Extraction (Tesseract.js or Gemini Vision)
+    ↓
+Line-by-line Parsing
+  Split on newlines
+  Each line = potential product entry
+  Handle: "DAP 2800", "BASA ×3", "UREA 50KG 2pcs"
+    ↓
+Product Matching Engine
+  For each parsed line:
+  1. Check tokens index
+  2. Check product_aliases
+  3. Fuzzy match normalized_names (Fuse.js)
+  4. Category inference from keywords
+  → Assign confidence score
+    ↓
+Quantity Inference Engine
+  If no qty found: try price ÷ known sell price
+    ↓
+Duplicate Detection
+  Image hash check (same scan uploaded twice?)
+  Content similarity check (overlapping pages?)
+    ↓
+Repeated Product Merging
+  Same product appears multiple times →
+  Sum quantities before review screen
+    ↓
+Review Screen (ALWAYS — never skip)
+    ↓
+Human Confirms / Edits
+    ↓
+Apply to Inventory
+  Creates inventory_movements (OCR_IMPORT)
+  Updates stock_qty
+  Logs to audit_trail
+```
+
+### Product Matching Engine
+```
+OCR reads: "BASA 1LT"
+
+System runs in this order:
+
+1. Token match:
+   "basa" found in tokens → Basagran 1L → confidence 0.95
+
+2. Alias match:
+   "BASA" in product_aliases → Basagran 1L → confidence 1.00
+
+3. Fuzzy match (Fuse.js):
+   "basa 1lt" vs normalized_names → "basagran1l" → 88% match
+
+4. If still unresolved:
+   Known price check (see quantity inference)
+   Category keyword detection
+
+Result: Basagran 1L — confidence 0.98 ✅
+
+System does NOT rely on perfect OCR output.
+Multiple signals combined = robust matching.
+```
+
+### Confidence Scoring System
+```
+Score    Action                    UI
+──────────────────────────────────────────────
+0.98+    Auto-selected             Green ✅ — user can still change
+0.70+    Ask user to confirm       Amber 🔶 — show top 3 options
+0.40+    Show as uncertain         Red 🔴 — user must select manually
+< 0.40   Mark as unresolved        ❌ — show raw OCR text, user types
+
+RULE: System MUST NEVER blindly apply OCR results.
+      Every import MUST pass through Review Screen.
+      Human is final authority.
+```
+
+### Product Alias System
+```sql
+product_aliases (alias, product_id, confidence, auto_generated)
+```
+
+```
+Auto-generated on product creation from tokens:
+  Basagran 1L     → "BASA", "BASA1L", "BASAGRAN"
+  DAP 50KG        → "DAP", "DAP50", "DAP50KG"
+  Urea 50KG       → "U50", "UREA", "UREA50"
+  Kingcode 1L     → "KINGA", "KINGCODE", "KING1L"
+  Tinga Top 500ml → "TINGA", "TINGATOP"
+
+User can add custom aliases:
+  Settings → Product → Aliases →
+  + Add alias: "RDUP" → Roundup 5L
+  Saved with confidence 1.00 (user-defined = trusted)
+
+Aliases improve over time:
+  OCR reads "BASA" → matched to Basagran 1L →
+  User confirms in review →
+  System increases confidence for that alias
+  (reinforcement learning without ML)
+```
+
+### Quantity Inference Engine
+```
+Problem: Cashier writes total amount instead of quantity.
+
+Example from book:
+  "DAP 8400"
+
+System sees no quantity. Runs inference:
+  Look up DAP Fertilizer 50KG selling price = 2,800
+  8400 ÷ 2800 = 3 (exact)
+  → DAP × 3 inferred ✅
+
+Handles multiple patterns:
+  "DAP 2800"   → 2800 ÷ 2800 = 1  → DAP × 1
+  "DAP 5600"   → 5600 ÷ 2800 = 2  → DAP × 2
+  "DAP 8400"   → 8400 ÷ 2800 = 3  → DAP × 3
+  "DAP 11200"  → 11200 ÷ 2800 = 4 → DAP × 4
+
+Non-exact division:
+  8500 ÷ 2800 = 3.03  → round to 3 + "⚠️ Rounding applied"
+  Shows in review: "DAP × 3 (~Ksh 8,400)"
+
+If no price match found at any rounding:
+  Flag as "Unknown quantity — please enter manually"
+
+When used in notebook mode:
+  Pattern per line detected automatically
+  Mixed: "BASA 3" and "DAP 8400" in same page both handled
+```
+
+### Repeated Product Merging
+```
+Notebook may record same product on multiple lines:
+  DAP   2800       ← 1 bag sold earlier
+  DAP   5600       ← 2 bags sold later
+  DAP   8400       ← 3 bags sold later
+
+System:
+  1. Identifies all lines as "DAP Fertilizer 50KG"
+  2. Infers quantities: ×1, ×2, ×3
+  3. MERGES before review:
+     DAP Fertilizer 50KG × 6 total
+
+Shown in review as:
+  ☑ DAP Fertilizer 50KG × 6   Ksh 16,800
+    (merged from 3 entries)
+
+User can expand to see breakdown:
+  ├── Line 4:  DAP × 1  Ksh 2,800
+  ├── Line 7:  DAP × 2  Ksh 5,600
+  └── Line 11: DAP × 3  Ksh 8,400
+```
+
+### Bulk Page Scanning
+```
+Supports: 5–30 products per page, multiple images.
+
+Flow:
+  Upload photo 1 → OCR queued
+  Upload photo 2 → OCR queued
+  Upload photo 3 → OCR queued
+  All processed in parallel (Web Workers)
+  Results merged intelligently:
+    aggregate quantities across pages
+    detect cross-page duplicates
+    detect overlapping entries
+  ONE combined review screen
+  ONE confirm button
+
+Max recommended: 10 pages per session
+(performance on low-end Android)
+```
+
+### Duplicate Scan Detection
+
+**Level 1 — Image Hash:**
+```
+Before OCR runs:
+  Hash the image (perceptual hash, pHash)
+  Compare to all previous scan hashes today
+
+If match found:
+  "⚠️ This image looks like it was already scanned today.
+   Upload anyway?"
+  [SKIP]  [UPLOAD ANYWAY]
+
+Prevents: same page photographed twice by accident
+```
+
+**Level 2 — Content Similarity:**
+```
+After OCR runs:
+  Compare extracted product list to previous scans
+
+If 95%+ products overlap with previous scan:
+  "⚠️ This scan contains mostly products already
+   recorded. Possible duplicate page."
+  Show overlap highlighted
+  [SKIP DUPLICATES]  [KEEP ALL]
+```
+
+**Overlapping Page Detection:**
+```
+Book pages sometimes overlap:
+  Page 1 ends with: BASA, DAP, UREA
+  Page 2 starts with: UREA, BASA, ROUNDUP
+
+System detects UREA + BASA as appearing in both.
+Flags: "These products may be on both pages:"
+Shows: [BASA] [UREA] with checkboxes to include/exclude
+Does not double-count unless user confirms.
+```
+
+### Scan Review Screen (ALWAYS shown — never skipped)
+```
+┌─────────────────────────────────────────────┐
+│  📋 Scan Review — 7 products detected       │
+│  Source: Notebook  •  3 images scanned      │
+├─────────────────────────────────────────────┤
+│  ☑ DAP Fertilizer 50KG  × 6   Ksh 16,800  ✅ 98%  │
+│    (merged from 3 entries)                  │
+│                                             │
+│  ☑ Urea 50KG            × 2   Ksh 7,200   ✅ 95%  │
+│                                             │
+│  ⚠️ KNGA                × 1   ?????        🔶 72%  │
+│    Best match: KINGA Dip 1L                 │
+│    [ KINGA Dip 1L ▼ ]  [Type manually]     │
+│                                             │
+│  ☑ Basagran 1L          × 3   Ksh 8,100   ✅ 99%  │
+│                                             │
+│  ❌ "8400 PUMP"               UNRESOLVED   🔴 32%  │
+│    OCR read: "8400 PUMP"                    │
+│    [ Search product... ]                    │
+│                                             │
+│  ☑ Roundup 5L           × 1   Ksh 6,000   ✅ 91%  │
+│                                             │
+│  ☑ Micro Sprinkler Male × 10  Ksh 1,500   ✅ 88%  │
+├─────────────────────────────────────────────┤
+│  5 confirmed  1 needs review  1 unresolved  │
+│                                             │
+│  [ FIX ISSUES ]  [ CONFIRM 5 PRODUCTS → ]  │
+└─────────────────────────────────────────────┘
+```
+
+### Invoice Import System
+```
+Goal: Supplier invoice photo → automatic restock
+
+Flow:
+  Take invoice photo →
+  Preprocessing (crop, enhance) →
+  OCR extracts:
+    product names
+    quantities
+    unit prices
+    invoice total
+    supplier name (if readable)
+  →
+  Match each item to products in DB →
+  Smart price comparison:
+    New price vs last recorded price →
+    "⚠️ DAP price increased 12% vs last invoice"
+    "💡 Cheaper price detected for Basagran"
+  →
+  Review screen →
+  Confirm →
+  Creates inventory_movements (RESTOCK) →
+  Updates stock_qty for each product →
+  Logs to price_history if price changed →
+  Archives invoice image in Supabase Storage →
+  Saves supplier_invoice + invoice_items records
+
+New product on invoice (not in DB):
+  "AMISTAR TOP 500ML" not found →
+  Auto-draft created:
+    Name:           Amistar Top 500ml
+    Category:       Fungicide (auto-detected)
+    Purchase Price: 1,200 (from invoice)
+    Suggested Sell: 1,500 (30% margin suggested)
+    SKU:            auto-generated
+  →
+  "New product detected — confirm to add:"
+  User edits if needed → Confirm → Product added + stocked
+```
+
+### Smart Price Intelligence
+```
+System tracks price history across all invoices.
+
+Detects:
+  ⚠️ "DAP prices increased 12% vs 3 months ago"
+  ⚠️ "Basagran up Ksh 150 since last restock"
+  💡 "Supplier B has DAP Ksh 200 cheaper than Supplier A"
+     (if same product invoiced from different suppliers)
+
+Shown in:
+  Notification center
+  Product detail screen (price history chart)
+  Restock flow (comparison shown automatically)
+
+Used for:
+  Margin protection (suggest new sell price)
+  Supplier comparison
+  Budget forecasting
+```
+
+---
+
+## 11. CORE BUSINESS LOGIC
+
+### 11.1 The Core Sale Flow
+```
+1. Cashier searches → results in < 100ms
+2. Selects item, sets qty
+3. Optional discount (locked above cost — see 11.3)
+4. Tap CASH SALE or DEBT
+5. System executes in one transaction:
+   a. Creates sale record
+   b. Creates sale_items (price snapshot — immutable forever)
+   c. Reduces products.stock_qty by qty sold
+   d. Creates inventory_movement (SALE, qty negative)
+   e. Calculates unit_profit and total_profit
+   f. Creates debt record if debt sale
+   g. Checks stock_qty vs alert_qty → fires notification if needed
+   h. Writes to audit_log
+   i. Clears cart
+   j. Shows success toast: "Sale recorded ✅"
+6. If offline: steps saved to IndexedDB, sync later
+```
+
+### 11.2 Manual Sale Removal (forgot to record)
+```
+Cashier or Owner goes to:
+  POS → Today's Sales (or any previous day)
+  OR Reports → All Transactions
+
+Finds the item to remove.
+Taps REMOVE.
+Enters reason (optional): "entered wrong qty" / "customer returned" / etc.
+
+System:
+  Restores stock: products.stock_qty += qty
+  Creates inventory_movement (ADJUSTMENT, qty positive)
+  Removes from today's profit calculation
+  Logs to audit_log:
+    "John removed: Basagran 1L × 2
+     Reason: entered wrong qty
+     at 11:47PM"
+
+Available: any day, any time, any past sale.
+Even at midnight. Even next week.
+Owner sees all removals in audit trail.
+```
+
+### 11.3 Discount Lock Logic
+```
+minimum_selling_price = purchase_price + 1
+
+if entered_price < minimum_selling_price:
+  → BLOCKED immediately
+  → Red flash animation on price field
+  → Toast: "Cannot sell below cost price"
+  → Field resets to 0
+
+Owner PIN override:
+  Owner enters PIN in-session →
+  Discount field unlocks →
+  Any price allowed →
+  Written to audit_log:
+    "Owner discount override:
+     Basagran 1L — normal Ksh 2,700 → Ksh 2,000
+     at 3:15PM"
+  →
+  Sale recorded with override flag in sales table
+```
+
+### 11.4 Smart Restock Price Detection
+```
+Owner opens RESTOCK for any product.
+Enters:
+  New stock quantity: 10 bags
+  New purchase price: 3,600
+
+System checks:
+  Old purchase price was: 3,200
+  Difference: +400 (+12.5%)
+
+If changed:
+  Shows modal:
+    "⚠️ Price Change Detected!
+     DAP Fertilizer 50KG
+
+     Old purchase price: Ksh 3,200
+     New purchase price: Ksh 3,600  (+12.5%)
+
+     Your current selling price: Ksh 3,800
+     At new cost this gives:     8.5% margin (was 19%)
+     Suggested new selling:      Ksh 4,200  (maintains 19%)
+
+     [ KEEP Ksh 3,800 ]
+     [ USE SUGGESTED Ksh 4,200 ]
+     [ SET MANUALLY ]"
+
+Whatever owner chooses:
+  price_history record created
+  audit_log entry created
+  notification fired to owner
+```
+
+### 11.5 Low Stock Alert Logic
+```
+Runs after EVERY sale:
+
+For each item in the sale:
+  if product.stock_qty <= product.alert_qty:
+    Check: does an unread low_stock notification
+           already exist for this product?
+    If no:
+      Create notification (type: 'low_stock')
+      Title: "Low Stock: DAP Fertilizer 50KG"
+      Message: "Only 3 units remaining (alert: 5)"
+
+  if product.stock_qty == 0:
+    Create notification (type: 'out_stock')
+    Mark product in POS search:
+      Show with 🔴 OUT OF STOCK badge
+      Shown at bottom of results, greyed
+      [+ ADD] button disabled
+```
+
+### 11.6 Dead Stock Detection
+```
+Scheduled: runs at midnight every day
+
+Query:
+  Products where:
+    last_sold_at < (now - 30 days)
+    AND stock_qty > 10
+    AND is_active = true
+    AND no unread dead_stock notification exists
+
+For each found:
+  Create notification (type: 'dead_stock')
+  Title: "Dead Stock: Rid Out 1L"
+  Message: "12 units in stock. No sales in 31 days.
+            Consider: discount, promotion,
+            or return to supplier."
+  Include [VIEW PRODUCT] shortcut
+```
+
+### 11.7 End of Day Report
+```
+Scheduled: runs at 9:00 PM every day
+
+For each shop:
+  Count total sales transactions
+  Sum total_amount (revenue)
+  Sum total_cost
+  Sum total_profit
+  Calculate margin %: (profit / revenue) × 100
+  Find top 5 by qty sold
+  Find top 5 by profit generated
+  Find single biggest sale (by amount)
+
+Create notification (type: 'eod_report')
+Store full report data in notification.message (JSON)
+
+Available in Reports screen:
+  Today | Week | Month | Custom range
+  GreenLink | Sunrise | Both shops combined
+```
+
+### 11.8 Daily Cash Reconciliation
+```
+Available to owner at end of day.
+
+Screen shows:
+  Expected Cash:  Ksh 24,300  ← from system (cash sales only)
+  Actual Cash:    [_______]   ← owner physically counts and enters
+  Difference:     [auto-calculated]
+
+If difference > Ksh 100 (configurable threshold):
+  Notification fires: "Cash discrepancy: Ksh -150"
+  Logged to audit_log
+
+Possible causes shown:
+  Unrecorded sales (suggests: check book/OCR scan)
+  Discount not entered
+  Wrong change given
+
+History: each day's reconciliation stored
+Owner can review weekly/monthly patterns
+```
+
+### 11.9 Fuzzy Search Algorithm
+```
+Library: Fuse.js
+Search fields:
+  canonical_name  (weight: 0.4)
+  sku             (weight: 0.3)
+  category        (weight: 0.1)
+  tokens          (weight: 0.2)
+Threshold: 0.3 (lenient — handles typos)
+Response target: < 100ms
+
+Priority order (applied before Fuse):
+  1. Exact SKU match         → always first
+  2. Exact name match        → second
+  3. Starts with query       → third
+  4. Token exact match       → fourth
+  5. Fuse fuzzy match        → last
+
+Examples:
+  "bas"        → Basagran 1L, Basagran 500ml
+  "drip 15"    → Dripline 15Cm*1000m
+  "0002"       → SKU → Basagran 1L instantly
+  "fungis"     → all fungicides (category match)
+  "elgn"       → Elgon pumps (typo)
+  "basa1l"     → Basagran 1L (token match)
+  "8400"       → nothing (not a product — OCR context only)
+
+Results display:
+  Max 8 items
+  Sorted: relevance → in-stock first → name
+  Out of stock: greyed, shown at bottom
+  "No results" triggers: "Add this product? +"
+```
+
+---
+
+## 12. INVENTORY MOVEMENT ENGINE
+
+```
+inventory_movements is the source of truth.
+
+Every single stock change — regardless of source — 
+creates a movement record.
+
+Movement types:
+
+SALE
+  Source: POS cashier sale
+  qty_change: negative
+  reference_id: sale_id
+
+RESTOCK
+  Source: owner adds new stock
+  qty_change: positive
+  reference_id: null (or invoice_id if from scan)
+
+OCR_IMPORT
+  Source: notebook or invoice scan confirmed
+  qty_change: negative (for sales recovery)
+              or positive (for invoice restock)
+  reference_id: invoice_id or scan_session_id
+
+LOSS
+  Source: plant died, item damaged, expired
+  qty_change: negative
+  reference_id: plant_loss_id or null
+
+ADJUSTMENT
+  Source: manual correction by owner
+          or sale removal by staff
+  qty_change: positive or negative
+  reference_id: sale_id being reversed
+
+RETURN
+  Source: customer returned item
+  qty_change: positive
+  reference_id: original sale_id
+
+Every movement records:
+  before_qty: stock BEFORE change
+  after_qty:  stock AFTER change
+  created_by: who did it
+  created_at: exact timestamp
+
+This enables:
+  Complete stock audit at any time
+  Discrepancy investigation
+  Inventory reports by movement type
+  Prove exactly when/why stock changed
+```
+
+---
+
+## 13. AUDIT TRAIL SYSTEM
+
+```
+Every sensitive action in the system is logged.
+Cashier cannot see audit trail.
+Owner sees full history in Settings → Audit Trail.
+
+Actions logged:
+
+price_change
+  "Owner changed DAP 50KG purchase price
+   Ksh 4,200 → Ksh 4,500 at 2:14PM"
+
+stock_edit
+  "Owner manually adjusted Basagran 1L stock
+   24 → 20 units at 5:30PM (reason: damaged stock)"
+
+ocr_import
+  "OCR import applied: 6 products updated
+   from notebook scan at 9:15AM"
+
+duplicate_override
+  "Owner forced duplicate product:
+   Basagran 1 Litre (new) alongside Basagran 1L (existing)"
+
+product_delete
+  "Owner deleted: NOMAX 250ML (SKU 0050)
+   Product had 0 sales history. Soft deleted."
+
+debt_edit
+  "Cashier edited John Kamau debt:
+   Ksh 2,500 → Ksh 2,200 at 3:45PM"
+
+pin_change
+  "Owner PIN changed at 10:00AM"
+
+discount_override
+  "Owner override discount:
+   Basagran 1L Ksh 2,700 → Ksh 2,000 at 3:15PM"
+
+sale_removed
+  "Cashier removed sale from log:
+   Basagran 1L ×2 — reason: wrong qty — at 11:47PM"
+```
+
+---
+
+## 14. SMART ANALYTICS ENGINE
+
+```
+System continuously analyses patterns and surfaces insights.
+
+📉 Stock Depletion Forecast
+  Based on daily sales velocity:
+  "DAP Fertilizer 50KG: at current rate,
+   will run out in ~4 days"
+  Shown in product detail + notification
+
+📦 Dead Stock Detection
+  No movement 30+ days, qty > 10
+  Suggests: discount, promo, return to supplier
+
+⏰ Best Selling Hours
+  Hourly bar chart in reports
+  "Peak hours: 10AM–12PM and 2PM–4PM"
+  Useful for staffing decisions
+
+🏆 Most Profitable Category
+  Weekly ranking of categories by total profit
+  "This week: Irrigation = Ksh 14,200 profit"
+
+⚠️ Recurring Debt Customers
+  Customers with 2+ active debts flagged:
+  "John Kamau has 3 open debts totalling Ksh 7,500"
+
+💲 Supplier Price Increases
+  Detected from invoice scan history:
+  "DAP prices up 12% across last 3 invoices"
+
+📈 Fastest Growing Products
+  Products with increasing sales trend week-on-week
+
+🔁 Reorder Suggestions
+  Products below alert level +
+  depletion forecast combined:
+  Auto-generates reorder list per supplier
+  Owner can share via WhatsApp
+```
+
+---
+
+## 15. RECEIPT SYSTEM
+
+```
+After every sale — three options shown:
+
+  [ 🖨️  PRINT ]
+  [ 📲  SHARE WHATSAPP ]
+  [ 📄  DOWNLOAD PDF ]
+
+Receipt content:
+  Shop name + logo
+  Transaction ID
+  Date + time
+  Cashier name
+  ─────────────────
+  Item list:
+    Product name
+    Quantity × unit price
+    Line total
+  ─────────────────
+  Subtotal
+  Discount (if any)
+  TOTAL
+  ─────────────────
+  Payment type: Cash / Debt
+  If Debt:
+    Customer name
+    Outstanding balance
+  ─────────────────
+  "Thank you for shopping at GreenLink!"
+
+WhatsApp share:
+  wa.me/2547XXXXXXXX?text=...
+  Pre-formatted receipt text
+  Opens WhatsApp with message ready
+  Customer's number pre-filled from debt record
+
+PDF download:
+  Generated client-side (no server needed)
+  Library: jsPDF
+```
+
+---
+
+## 16. NOTIFICATION CENTER
+
+```
+Bell icon with unread badge count.
+Badge pulses on new notification.
+
+Notification types + actions:
+
+🔴 LOW STOCK
+   "DAP Fertilizer 50KG — 3 units left (alert: 5)"
+   [ Restock → ]
+
+⚫ OUT OF STOCK
+   "ELGON 20L Pump — no units remaining"
+   [ Restock → ]
+
+📦 DEAD STOCK
+   "Rid Out 1L — 12 units, 0 sales in 31 days"
+   [ View Product → ]
+
+💰 NEW DEBT
+   "Grace Njeri — Ksh 850 recorded"
+   [ View Debt → ]
+
+✅ DEBT CLEARED
+   "Peter Otieno paid Ksh 3,200 in full"
+
+🟡 PARTIAL PAYMENT
+   "Mary Wanjiku paid Ksh 800 of Ksh 1,500"
+
+💲 PRICE CHANGE
+   "DAP purchase price increased 12.5%"
+   [ Review → ]
+
+📊 END OF DAY REPORT
+   "GreenLink — 47 sales, Profit Ksh 8,200"
+   [ View Report → ]
+
+⏳ SYNC FAILED
+   "3 sales not synced — check connection"
+   [ Retry → ]
+
+📸 OCR COMPLETE
+   "Notebook scan ready — 6 products detected"
+   [ Review → ]
+
+WhatsApp one-tap (for debt reminders):
+  Tapping WhatsApp on debt notification:
+  Opens wa.me/2547XXXXXXXX with message pre-filled:
+  "Hello [Name], this is a reminder that you have
+   an outstanding balance of Ksh X at GreenLink
+   Farm Supplies. Kindly settle at your earliest
+   convenience. Thank you 🙏"
+  Owner just taps SEND — no API, no cost.
+```
+
+---
+
+## 17. PLANTS MODULE 🌱
+
+```
+Completely separate module from main stock.
+Own navigation item.
+Own CRUD, own stock logic.
+
+Why plants are different:
+  Sold individually (not by pack)
+  Can die/get damaged without a sale (losses)
+  Size/age variants matter to price
+  Seasonal availability (can toggle off-season)
+  Loss tracking important for profitability
+
+Plant size variants:
+  Seedling | Small | Medium | Large | Mature
+
+Recording a sale (same as POS):
+  Select plant → qty → SELL/DEBT
+  Stock reduces → profit calculated
+
+Recording a loss (no sale):
+  Select plant → how many died → reason:
+    drought / pest / overwatering / transplant shock / other
+  → stock reduces
+  → inventory_movement created (LOSS)
+  → NOT counted as sale or revenue
+  → Shows in loss report: "10 Bougainvillea lost — drought"
+
+Loss report:
+  Total plants lost (period)
+  Cost of losses (purchase price × qty lost)
+  Loss by reason (drought / pest / etc.)
+  Most loss-prone plants
+```
+
+---
+
+## 18. SCREENS SUMMARY
+
+### Navigation
+```
+Bottom bar (mobile first, 5 items):
+  🛒 POS  |  📦 Stock  |  💰 Debts  |  🔔 Alerts  |  📊 Reports
+
+Top bar:
+  Left:   Shop selector toggle (GreenLink / Sunrise)
+  Center: Page title
+  Right:  Role badge + sync indicator (🟢/🟡)
+```
+
+### Screen: PIN Login
+```
+Full dark screen, centered
+App logo in Electric Lime (Clash Display)
+Shop toggle → Role toggle → PIN pad
+4 dots progress → Large tap-friendly number keys
+Wrong PIN: shake animation
+3 wrong → 30s lockout
+```
+
+### Screen: POS (most used)
+```
+Sticky search bar at top (always focused)
+Search results list (max 8, instant)
+Cart section (below results, scrolls)
+Sell/Debt buttons (always visible at bottom)
+Profit preview shown before confirming sale
+Confirm modal before completing
+```
+
+### Screen: Stock
+```
+Tabs: All / Low ⚠️ / Out 🔴 / Dead 📦
+Search bar
+Cards with: name, status, stock/alert, buy/sell, margin bar
+Actions: Edit / Restock / History
+Add Product button (owner only)
+Restock triggers smart price detection
+```
+
+### Screen: Stock → Product Detail
+```
+Product name + status
+Sales history chart (bar, by day/week/month)
+Stats: total sold, total revenue, total profit, avg/day
+Price history timeline
+Last sold date
+Actions: Edit / Restock / View Aliases
+```
+
+### Screen: Debts
+```
+Total outstanding (big red number)
+Tabs: Unpaid / Partial / Paid
+Cards: name, phone, amount, days since, status
+Actions: Record Payment / WhatsApp / Edit
+Payment: full or partial, both update status + fire notification
+Paid history: cannot delete (audit integrity)
+```
+
+### Screen: Alerts
+```
+Bell with unread count (pulses)
+Grouped: Today / Yesterday / Earlier
+Each alert: icon, title, message, time, action button
+WhatsApp one-tap on debt alerts
+```
+
+### Screen: Reports
+```
+Date filter: Today / Week / Month / Custom
+Shop filter: GreenLink / Sunrise / Both
+
+4 stat cards: Revenue, Profit, Sales, Margin
+Hourly bar chart
+Top selling list (by qty)
+Most profitable list (by Ksh)
+All transactions (scrollable, with removal option)
+Both shops side-by-side comparison
+```
+
+### Screen: OCR Scanner
+```
+Two modes at top:
+  📓 Notebook Scan    ← recover missed sales
+  📄 Invoice Scan     ← restock from supplier
+
+Camera view:
+  Edge detection overlay
+  "Align paper within frame"
+  Auto-capture OR manual shutter
+
+Processing screen:
+  "Reading document... (Web Worker)"
+  Progress indicator
+
+Always → Review Screen → Confirm
+```
+
+### Screen: Plants
+```
+Tabs: Available / Low / Losses
+Cards: plant name, variant, stock, buy/sell
+Actions: Sell / Record Loss / Edit
+Loss form: qty + reason
+```
+
+### Screen: Settings (owner only)
+```
+Shop Settings          → name, WhatsApp number
+PIN Management         → change owner/cashier PINs
+Import Products        → Excel normalization pipeline
+OCR Configuration      → alias rules, category keywords
+Categories             → add/edit/delete
+Suppliers              → name, phone, products they supply
+Audit Trail            → full action history log
+Cash Reconciliation    → daily balance check
+Danger Zone            → export CSV, bulk soft-delete
+```
+
+---
+
+## 19. TECH STACK
+
+```
+Frontend:
+  Framework:    Next.js 14 (App Router)
+  Styling:      Tailwind CSS + CSS variables
+  State:        Zustand (lightweight, no boilerplate)
+  Offline:      Dexie.js (IndexedDB wrapper)
+  Search:       Fuse.js (fuzzy, < 100ms on 2,610 items)
+  Charts:       Recharts
+  OCR:          Tesseract.js + OpenCV.js
+                (Gemini Vision for handwriting — optional)
+  PDF:          jsPDF (client-side, no server)
+  Icons:        Lucide React
+  Fonts:        Clash Display, Syne, DM Sans, JetBrains Mono
+  PWA:          next-pwa
+
+Backend:
+  Database:     Supabase (PostgreSQL + RLS)
+  Realtime:     Supabase Realtime (stock live updates)
+  Storage:      Supabase Storage (invoice images)
+  Auth:         PIN-based (custom — stored hashed)
+  Import:       xlsx library (parse Excel client-side)
+  Background:   Web Workers (OCR, search indexing)
+
+Hosting:
+  Frontend:     Vercel (free)
+  Database:     Supabase (free tier)
+
+Monthly cost:   Ksh 0 (or small subscription if Gemini Vision used)
+```
+
+---
+
+## 20. BUILD PHASES
+
+```
+Phase 1 — Core (solve the original problem first)
+  ✅ PIN login (owner/cashier with roles)
+  ✅ POS + fuzzy search (< 100ms)
+  ✅ Record sale → auto stock reduction
+  ✅ Manual sale removal from log
+  ✅ Daily profit visible in real time
+  ✅ IndexedDB offline queue
+
+Phase 2 — Stock Management
+  ✅ Full CRUD with audit trail
+  ✅ Excel import + normalization pipeline (all 7 steps)
+  ✅ Smart restock price detection
+  ✅ Low stock + out of stock alerts
+  ✅ Inventory movements table (all movement types)
+  ✅ Soft delete with history preservation
+
+Phase 3 — Debts
+  ✅ Record debt (name + phone + date)
+  ✅ Full + partial payments
+  ✅ WhatsApp one-tap reminder (no API)
+  ✅ Debt notifications
+
+Phase 4 — Smart Features
+  ✅ Dead stock detection (midnight cron)
+  ✅ Product sales history + charts
+  ✅ Price history timeline
+  ✅ End of day auto report (9PM)
+  ✅ Full notification center
+  ✅ Cash reconciliation
+  ✅ Audit trail UI
+
+Phase 5 — OCR Intelligence
+  ✅ Document preprocessing (OpenCV.js)
+  ✅ Notebook scanner (recover missed sales)
+  ✅ Invoice scanner (auto restock)
+  ✅ Product alias system
+  ✅ Quantity inference engine
+  ✅ Confidence scoring
+  ✅ Duplicate scan detection (image hash + content)
+  ✅ Bulk page scanning
+  ✅ Overlapping page detection
+  ✅ Smart price intelligence from invoices
+
+Phase 6 — Plants + Polish
+  ✅ Plants module + loss tracking
+  ✅ Full reports (both shops combined)
+  ✅ Receipt system (print/WhatsApp/PDF)
+  ✅ PWA optimization (low-end Android)
+  ✅ Supplier management
+  ✅ Smart analytics engine
+```
+
+---
+
+## 21. ROUTES
+
+```
+/                   → redirect to /login
+/login              → PIN screen
+/pos                → Main selling screen
+/pos/sales          → Today's log + manual removal
+/stock              → Stock list
+/stock/[id]         → Product detail + history + aliases
+/stock/add          → Add new product
+/debts              → Debt management
+/alerts             → Notification center
+/reports            → Profit + sales reports
+/ocr                → OCR scanner (notebook + invoice)
+/ocr/review         → Review screen before confirming
+/plants             → Plants module
+/settings           → Owner dashboard
+/settings/audit     → Full audit trail
+/settings/import    → Excel normalization pipeline
+/settings/suppliers → Supplier management
+/settings/pins      → PIN management
+```
+
+---
+
+## 22. FUTURE ROADMAP
+
+```
+v2.0+
+  Barcode scanning (camera-based, no hardware)
+  M-Pesa integration (Daraja API payment tracking)
+  Supplier ordering (generate PO from low stock list)
+  AI demand forecasting (ML on sales history)
+  Customer loyalty system
+  SMS debt reminders (Africa's Talking)
+  Multi-branch support (3+ shops)
+  Advanced analytics dashboard
+  Expiry date tracking
+  Batch/lot number tracking
+```
+
+---
+
+*GreenLink Farm Supplies & Services Ltd + Sunrise Agrovet*
+*Built for real African retail — forgiving, fast, practical, human.*
+*The problem: manual end-of-day removal = wrong stock + unknown profit*
+*The solution: record at point of sale = everything is automatic*

@@ -1,0 +1,21 @@
+name = "greenlink-pos-api"
+main = "src/worker.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "greenlink-db"
+database_id = "e3598c00-9fda-4e77-8c5b-8515a94d3de7"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "3b54b79e2afa4320ba1eb8567e48e54b"
+preview_id = "3b54b79e2afa4320ba1eb8567e48e54b"
+
+[vars]
+NODE_ENV = "production"
+
+[dev]
+port = 8080
+inspector_port = 0

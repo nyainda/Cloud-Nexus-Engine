@@ -1,0 +1,99 @@
+107 lines
+Find in logs
+CtrlF
+21:05:04.536 
+> @workspace/greenlink-app@0.0.0 build /vercel/path0/artifacts/greenlink-app
+21:05:04.536 
+> vite build --config vite.config.ts
+21:05:04.536 
+21:05:06.950 
+vite v7.3.3 building client environment for production...
+21:05:07.048 
+transforming...
+21:05:15.031 
+✓ 2766 modules transformed.
+21:05:15.117 
+Circular chunk: vendor-misc -> vendor-react -> vendor-misc. Please adjust the manual chunk logic for these chunks.
+21:05:15.711 
+rendering chunks...
+21:05:16.066 
+computing gzip size...
+21:05:16.108 
+dist/public/manifest.webmanifest                  0.48 kB
+21:05:16.109 
+dist/public/index.html                            1.92 kB │ gzip:  0.72 kB
+21:05:16.110 
+dist/public/assets/index-DviG7fWm.css           130.66 kB │ gzip: 20.03 kB
+21:05:16.110 
+dist/public/assets/format-CRrQPxrQ.js             0.16 kB │ gzip:  0.15 kB
+21:05:16.111 
+dist/public/assets/not-found-CWYYd-A9.js          0.77 kB │ gzip:  0.42 kB
+21:05:16.111 
+dist/public/assets/card-Cb573FZB.js               1.03 kB │ gzip:  0.39 kB
+21:05:16.112 
+dist/public/assets/button-DKPx_Dg3.js             1.35 kB │ gzip:  0.67 kB
+21:05:16.112 
+dist/public/assets/use-debounce-Dx_zsbPC.js       1.46 kB │ gzip:  0.72 kB
+21:05:16.112 
+dist/public/assets/dialog-jZtetCnS.js             2.48 kB │ gzip:  0.95 kB
+21:05:16.113 
+dist/public/assets/ocr-CKJyPcrW.js                9.08 kB │ gzip:  2.66 kB
+21:05:16.113 
+dist/public/assets/owner-dashboard-BmDvUfmk.js    9.55 kB │ gzip:  2.69 kB
+21:05:16.113 
+dist/public/assets/login-j8_iAhpP.js              9.96 kB │ gzip:  3.12 kB
+21:05:16.113 
+dist/public/assets/sales-history-DVoNzxfm.js     12.03 kB │ gzip:  3.22 kB
+21:05:16.113 
+dist/public/assets/reports-BqOVtygB.js           12.56 kB │ gzip:  3.79 kB
+21:05:16.114 
+dist/public/assets/alerts-CPj-ofp9.js            13.53 kB │ gzip:  3.66 kB
+21:05:16.114 
+dist/public/assets/debts-DUPdJVSI.js             14.91 kB │ gzip:  4.15 kB
+21:05:16.114 
+dist/public/assets/pos-D94qqxYW.js               20.99 kB │ gzip:  5.58 kB
+21:05:16.114 
+dist/public/assets/settings-B4gYq8FR.js          25.66 kB │ gzip:  5.67 kB
+21:05:16.114 
+dist/public/assets/stock-Bd5IK3WH.js             30.87 kB │ gzip:  7.22 kB
+21:05:16.115 
+dist/public/assets/index-BFEMKomG.js             31.41 kB │ gzip:  8.45 kB
+21:05:16.115 
+dist/public/assets/vendor-utils-DXOdxs4a.js      53.63 kB │ gzip: 16.82 kB
+21:05:16.115 
+dist/public/assets/vendor-radix-CDecknz4.js      69.27 kB │ gzip: 22.05 kB
+21:05:16.115 
+dist/public/assets/vendor-misc-BaHl2MR8.js      102.76 kB │ gzip: 38.25 kB
+21:05:16.121 
+dist/public/assets/vendor-react-Xyu3MGRh.js     296.25 kB │ gzip: 91.31 kB
+21:05:16.121 
+dist/public/assets/vendor-charts-CO0wdq28.js    310.47 kB │ gzip: 80.13 kB
+21:05:16.122 
+✓ built in 9.12s
+21:05:19.890 
+21:05:19.890 
+PWA v1.3.0
+21:05:19.890 
+mode      generateSW
+21:05:19.890 
+precache  33 entries (1152.86 KiB)
+21:05:19.890 
+files generated
+21:05:19.890 
+  dist/public/sw.js
+21:05:19.891 
+  dist/public/workbox-8553a241.js
+21:05:20.146 
+Build Completed in /vercel/output [34s]
+21:05:20.275 
+Deploying outputs...
+21:05:21.693 
+Deployment completed
+21:05:21.822 
+Creating build cache...
+21:06:04.745 
+Created build cache: 43s
+21:06:04.745 
+Uploading build cache [84.84 MB]
+21:06:06.400 
+Build cache uploaded: 1.654s

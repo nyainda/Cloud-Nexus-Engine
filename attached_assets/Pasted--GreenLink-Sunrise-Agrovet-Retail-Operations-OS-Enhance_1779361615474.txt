@@ -1,0 +1,722 @@
+🌿 GreenLink & Sunrise Agrovet
+Retail Operations OS — Enhanced Specification v4.0
+Expanded architecture + intelligence improvements + OCR reliability upgrades + enterprise-grade inventory logic.
+
+🚀 NEW IMPROVEMENTS ADDED IN v4.0
+This update improves:
+
+OCR reliability
+Duplicate prevention
+Multi-page scan intelligence
+Bulk quantity inference
+Performance on large catalogs
+Inventory safety
+Smart confidence scoring
+Image preprocessing pipeline
+Human error tolerance
+Sales reconstruction logic
+Advanced matching engine
+Scan session architecture
+Inventory consistency protection
+Analytics foundation
+Future scalability
+1. ADVANCED OCR MATCHING ENGINE
+Problem
+Real agrovet notebooks are chaotic:
+
+DAP 8400
+DAP 5600
+BASA
+KNGA 2300
+UREA 3
+Problems:
+
+shorthand writing
+missing quantities
+duplicate products
+bad handwriting
+repeated scans
+overlapping pages
+OCR mistakes
+partial product names
+inconsistent units
+Traditional OCR systems fail here.
+
+Final OCR Matching Architecture
+IMAGE
+  ↓
+Document Detection
+  ↓
+Perspective Correction
+  ↓
+Contrast Enhancement
+  ↓
+OCR Extraction
+  ↓
+Line Segmentation
+  ↓
+Normalization Pipeline
+  ↓
+Alias Matching
+  ↓
+Token Matching
+  ↓
+Fuzzy Matching
+  ↓
+Price-Based Quantity Inference
+  ↓
+Cross-Page Duplicate Detection
+  ↓
+Repeated Product Merge Engine
+  ↓
+Human Review Screen
+  ↓
+Inventory Application
+2. MULTI-SIGNAL PRODUCT MATCHING
+The system NEVER depends on one method.
+
+It combines multiple signals.
+
+Matching Priority
+1. Exact SKU Match
+OCR: 00045
+→ SKU found instantly
+→ Confidence: 1.00
+2. Alias Match
+OCR: BASA
+→ alias: BASA
+→ product: Basagran 1L
+→ confidence: 0.99
+Aliases are critical because shop staff use shorthand.
+
+3. Token Match
+OCR: DAP50
+→ token match
+→ DAP Fertilizer 50KG
+4. Prefix Match
+OCR: KING
+→ matches:
+  KINGCODE
+  KINGA DIP
+  KINGTOP
+
+Scored by frequency + sales history.
+5. Fuzzy Match (Fuse.js)
+OCR: BASAGRN
+→ Basagran
+→ 91% similarity
+Thresholds:
+
+95%+ → auto-select
+70–94% → ask confirmation
+40–69% → uncertain
+<40% → unresolved
+6. Historical Sales Intelligence
+If two products are close:
+
+KNGA
+→ could be:
+  KINGA DIP
+  KINGCODE
+
+System checks:
+- most sold product
+- most recently sold
+- product popularity
+- shop-specific trends
+This improves accuracy over time.
+
+3. QUANTITY INFERENCE ENGINE (ENHANCED)
+Purpose
+Many shop books contain PRICE ONLY.
+
+Example:
+
+DAP 8400
+No quantity written.
+
+Inference Logic
+Known DAP sell price = 2800
+8400 ÷ 2800 = 3
+→ infer qty = 3
+Multi-Pattern Support
+Pattern A — Price Only
+DAP 8400
+→ qty inferred from unit price
+Pattern B — Explicit Quantity
+DAP x3
+DAP 3
+DAP qty 3
+Pattern C — Mixed Units
+BASA 2pcs
+UREA 4bags
+Pattern D — Bulk Lines
+DAP 16800
+→ qty = 6
+Smart Rounding Logic
+8500 ÷ 2800 = 3.03
+→ round to 3
+→ confidence penalty applied
+Confidence adjusted automatically.
+
+4. REPEATED PRODUCT MERGE ENGINE
+Notebook pages commonly repeat products.
+
+Example:
+
+DAP 2800
+DAP 5600
+DAP 8400
+Without merging:
+
+3 separate entries
+With merge engine:
+
+DAP × 6 total
+Merge Algorithm
+GROUP BY:
+- matched product id
+- scan session id
+
+SUM:
+- quantities
+- totals
+
+STORE:
+- original line references
+Expandable Review UI
+DAP × 6
+(merged from 3 entries)
+
+Expand:
+- line 3 → ×1
+- line 8 → ×2
+- line 11 → ×3
+This preserves audit traceability.
+
+5. MULTI-PAGE BULK SCANNING
+Problem
+One notebook page may contain:
+
+10–30 products
+And users may upload:
+
+5 images
+10 images
+Final Architecture
+Upload images
+  ↓
+Create scan_session
+  ↓
+Queue OCR jobs in parallel
+  ↓
+Process via Web Workers
+  ↓
+Merge results
+  ↓
+Detect overlap
+  ↓
+Detect duplicates
+  ↓
+Generate ONE review screen
+Scan Session Model
+scan_sessions (
+  id uuid,
+  shop_id uuid,
+  total_images integer,
+  total_products integer,
+  status text,
+  created_at timestamptz
+)
+Benefits:
+
+grouped imports
+rollback support
+auditability
+duplicate prevention
+scan history
+6. DUPLICATE PAGE DETECTION
+Level 1 — Image Hashing
+Before OCR:
+
+Generate perceptual hash (pHash)
+Compare against today's uploads
+If similar:
+
+⚠ This image may already be scanned.
+Level 2 — OCR Content Similarity
+After OCR:
+
+Compare extracted products
+If:
+
+95% overlap
+Then:
+
+Possible duplicate page detected
+Level 3 — Overlapping Page Detection
+Example:
+
+Page 1
+DAP
+UREA
+BASA
+Page 2
+BASA
+ROUNDUP
+UREA
+System highlights overlap.
+
+User chooses:
+
+[KEEP]
+[REMOVE DUPLICATES]
+7. DOCUMENT PREPROCESSING ENGINE
+OCR quality depends more on preprocessing than AI.
+
+Full Image Pipeline
+Camera Image
+  ↓
+Edge Detection
+  ↓
+Auto Crop
+  ↓
+Perspective Flattening
+  ↓
+Shadow Removal
+  ↓
+Brightness Correction
+  ↓
+Contrast Enhancement
+  ↓
+Noise Reduction
+  ↓
+Text Sharpening
+  ↓
+OCR
+Why This Matters
+Raw OCR accuracy:
+
+40–60%
+Preprocessed OCR accuracy:
+
+85–95%
+Massive improvement.
+
+8. OCR REVIEW SYSTEM
+The system NEVER blindly applies OCR.
+
+Human review is mandatory.
+
+Review Features
+Editable Matches
+KNGA → dropdown suggestions
+Confidence Indicators
+Green   → high confidence
+Amber   → medium confidence
+Red     → unresolved
+Bulk Actions
+Confirm all
+Reject all
+Edit unresolved only
+Inline Search
+Search product manually
+Quantity Editing
+Adjust inferred quantity
+9. INVENTORY CONSISTENCY PROTECTION
+Problem
+Double scans can destroy inventory accuracy.
+
+Solution
+Every OCR import becomes:
+
+inventory_movement
+with:
+
+source = 'ocr'
+scan_session_id
+System can:
+
+reverse imports
+audit imports
+trace duplicate scans
+rollback errors
+10. ADVANCED SEARCH ENGINE
+Performance Goal
+<100ms on 2,600+ products
+Search Layers
+1. Exact SKU
+2. Exact Name
+3. Starts-With Match
+4. Token Match
+5. Alias Match
+6. Fuzzy Match
+7. Category Match
+Search Optimizations
+Precomputed Tokens
+[
+  "basagran",
+  "basa",
+  "1l",
+  "basa1l"
+]
+In-Memory Index
+Loaded once during app startup.
+
+Avoids DB roundtrips.
+
+Debounced Search
+50ms debounce
+Avoids excessive re-renders.
+
+11. PERFORMANCE ENGINEERING
+Target Devices
+Tecno
+Infinix
+Low RAM Android phones
+Optimizations
+Virtualized Lists
+Only render visible products.
+
+Critical for:
+
+2,610+ products
+Lazy Loading
+Charts/images loaded only when needed.
+
+Web Workers
+OCR runs off main thread.
+
+Prevents UI freezing.
+
+IndexedDB Caching
+Entire catalog cached locally.
+
+Benefits:
+
+offline search
+instant load
+reduced bandwidth
+Image Compression
+Before upload:
+
+compress → resize → optimize
+Reduces:
+
+storage
+upload time
+OCR processing cost
+12. ADVANCED ANALYTICS FOUNDATION
+Future Intelligence Layer
+The architecture now supports:
+
+Sales Trend Forecasting
+Predict future demand
+Seasonal Analysis
+Rainy season fertilizer demand
+Supplier Intelligence
+Cheapest supplier over time
+Fast-Moving Product Detection
+Most rapidly growing products
+Margin Compression Alerts
+Purchase price rising too fast
+13. DATA SAFETY & RECOVERY
+Protection Layers
+IndexedDB Offline Queue
+Sales stored locally FIRST.
+
+Never lost during internet outage.
+
+Sync Retry Engine
+retry → exponential backoff
+Audit Trail
+Every sensitive action logged.
+
+Soft Deletes
+Products hidden, never destroyed.
+
+Import Rollback
+OCR session reversible.
+
+14. ENTERPRISE SCALABILITY PREPARATION
+Even though this targets small agrovets initially, architecture supports:
+
+multi-branch
+multi-user
+warehouse tracking
+supplier APIs
+barcode systems
+AI forecasting
+mobile synchronization
+regional deployments
+without rewriting core systems.
+
+15. FINAL SYSTEM PHILOSOPHY
+The software adapts to humans.
+Humans should not adapt to software.
+Real shops are messy.
+
+The system is designed for:
+
+forgotten entries
+duplicate scans
+shorthand writing
+poor handwriting
+unstable internet
+repeated products
+overlapping notebook pages
+low-end devices
+inconsistent product naming
+real African retail behavior
+This is not generic POS software.
+
+This is:
+
+Retail Operations OS for African agrovets.
+
+
+---
+
+# 16. RECOMMENDED NEXT ENGINEERING PRIORITIES
+
+## Highest Priority
+
+### 1. Core POS Engine
+
+Must work perfectly before AI/OCR.
+
+---
+
+### 2. Inventory Movement Engine
+
+This is the TRUE source of stock accuracy.
+
+---
+
+### 3. Offline Reliability
+
+Most important real-world feature.
+
+---
+
+### 4. OCR Review UX
+
+Human correction flow matters more than AI.
+
+---
+
+### 5. Duplicate Prevention
+
+Critical for inventory trust.
+
+---
+
+# 17. FINAL POSITIONING
+
+```txt
+GreenLink OS is:
+
+POS
++ Inventory System
++ OCR Recovery Engine
++ Offline Retail System
++ Agrovet Intelligence Platform
++ Supplier Tracking System
++ Debt Management System
++ Retail Analytics Engine
++ Smart Inventory Infrastructure
+18. FINAL BUILD STRATEGY
+Build Order
+Phase 1
+POS
+Inventory
+Offline sync
+Inventory movements
+Phase 2
+Debts
+Reports
+Notifications
+Phase 3
+Normalization pipeline
+Import engine
+OCR preprocessing
+Phase 4
+Notebook OCR
+Invoice OCR
+Quantity inference
+Duplicate detection
+Phase 5
+Analytics
+Forecasting
+Supplier intelligence
+Plants module
+🌿 GreenLink & Sunrise Agrovet
+Built for:
+
+real shops
+real cashiers
+real internet problems
+real handwriting
+real inventory chaos
+Fast. Forgiving. Practical. Human.
+
+23. COMPLETE UI/UX DESIGN SYSTEM — PRODUCTION SPEC
+23.1 Design Direction
+The interface must feel:
+  premium
+  intentional
+  operational
+  fast
+  tactile
+  trustworthy
+
+NOT:
+  generic SaaS
+  AI-generated purple gradients
+  crypto dashboard aesthetics
+  glassmorphism overload
+  playful fintech UI
+23.2 Visual Identity
+Brand Feel
+GreenLink:
+  Modern agriculture + technology.
+
+Visual language:
+  dark industrial surfaces
+  electric lime highlights
+  dense operational layouts
+  sharp typography
+  high readability
+Logo Direction
+Logo text:
+  GREENLINK
+
+Typography:
+  Clash Display Bold
+
+Accent:
+  electric lime underline or corner mark
+23.3 GLOBAL LAYOUT SYSTEM
+App Shell
+┌────────────────────────────┐
+│ Top Bar                    │
+├────────────────────────────┤
+│ Main Content               │
+├────────────────────────────┤
+│ Bottom Navigation          │
+└────────────────────────────┘
+Bottom Navigation
+Height: 72px
+Background: #111111
+Top border: #2A2A2A
+
+Active tab:
+  lime icon
+  lime glow
+23.4 LOGIN SCREEN DESIGN
+Layout
+Full screen dark background.
+
+Center:
+  Logo
+  Shop selector
+  Role selector
+  PIN interface
+PIN Interface
+Large circular number buttons.
+
+Wrong PIN:
+  red shake animation
+  haptic vibration
+23.5 POS SCREEN — MASTER DESIGN
+Layout Structure
+┌────────────────────────────┐
+│ Search                     │
+├────────────────────────────┤
+│ Search Results             │
+├────────────────────────────┤
+│ Cart                       │
+├────────────────────────────┤
+│ Totals                     │
+├────────────────────────────┤
+│ CASH / DEBT buttons        │
+└────────────────────────────┘
+Search Experience
+Always auto-focused.
+Results appear instantly.
+Smooth add-to-cart animation.
+Checkout Buttons
+CASH:
+  electric lime
+
+DEBT:
+  deep amber
+23.6 STOCK MANAGEMENT DESIGN
+Product Card
+┌──────────────────────────┐
+│ Product Name             │
+│ SKU                      │
+│ Stock: 12                │
+│ Buy:  2,400              │
+│ Sell: 3,000              │
+│ Margin: 20%              │
+│ [EDIT] [RESTOCK]         │
+└──────────────────────────┘
+Visual States
+Healthy stock:
+  green edge glow
+
+Low stock:
+  amber pulse border
+
+Out of stock:
+  red border
+23.7 OCR SCANNER EXPERIENCE
+Camera Interface
+Darkened camera overlay.
+Animated corner brackets.
+Processing Screen
+Enhancing image
+Reading handwriting
+Matching products
+Checking duplicates
+23.8 REPORTS DASHBOARD DESIGN
+Hero Metrics
+Revenue
+Profit
+Sales Count
+Margin
+Charts
+Dark charts.
+Thin grid lines.
+Lime highlight lines.
+23.9 MICRO-INTERACTIONS
+Button tap:
+  90ms scale
+
+Card hover:
+  subtle lift
+
+Add to cart:
+  flying animation into cart
+23.10 SMOOTHNESS ENGINE
+Performance Strategy
+The app should FEEL instant.
+
+Techniques:
+  optimistic UI
+  skeleton loading
+  prefetching
+  instant IndexedDB writes
+Rendering Rules
+Never block main thread.
+Heavy tasks always use Web Workers.
+23.11 ADVANCED UX IMPROVEMENTS
+Smart Keyboard Flow
+After sale completes:
+  search auto-focused again
+Gesture Support
+Swipe:
+  delete
+  archive
+  mark read

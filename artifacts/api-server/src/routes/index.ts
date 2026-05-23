@@ -1,0 +1,35 @@
+import { Hono } from "hono";
+import type { AppEnv } from "../types";
+import health from "./health";
+import auth from "./auth";
+import shopsRouter from "./shops";
+import productsRouter from "./products";
+import salesRouter from "./sales";
+import debtsRouter from "./debts";
+import reportsRouter from "./reports";
+import notificationsRouter from "./notifications";
+import inventoryRouter from "./inventory";
+import suppliersRouter from "./suppliers";
+import auditRouter from "./audit";
+import ocrRouter from "./ocr";
+import storageRouter from "./storage";
+import transfersRouter from "./transfers";
+
+const router = new Hono<AppEnv>();
+
+router.route("/", health);
+router.route("/", auth);
+router.route("/", shopsRouter);
+router.route("/", productsRouter);
+router.route("/", salesRouter);
+router.route("/", debtsRouter);
+router.route("/", reportsRouter);
+router.route("/", notificationsRouter);
+router.route("/", inventoryRouter);
+router.route("/", suppliersRouter);
+router.route("/", auditRouter);
+router.route("/", ocrRouter);
+router.route("/", storageRouter);
+router.route("/", transfersRouter);
+
+export default router;

@@ -1,0 +1,2087 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: GreenLink & Sunrise Agrovet Retail Operations OS API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: auth
+    description: PIN-based authentication
+  - name: shops
+    description: Shop management
+  - name: products
+    description: Product catalog and inventory
+  - name: aliases
+    description: Product aliases for OCR matching
+  - name: sales
+    description: Sales transactions
+  - name: debts
+    description: Debt management
+  - name: inventory
+    description: Inventory movement tracking
+  - name: notifications
+    description: Notification center
+  - name: audit
+    description: Audit trail
+  - name: suppliers
+    description: Supplier management
+  - name: reports
+    description: Analytics and reports
+  - name: ocr
+    description: OCR scanning
+  - name: import
+    description: Excel/bulk import
+  - name: storage
+    description: File storage
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ─── AUTH ────────────────────────────────────────────────
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: PIN login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthToken"
+        "401":
+          description: Invalid PIN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/session:
+    get:
+      operationId: getSession
+      tags: [auth]
+      summary: Get current session
+      responses:
+        "200":
+          description: Session info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          description: No session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /auth/verify-pin:
+    post:
+      operationId: verifyOwnerPin
+      tags: [auth]
+      summary: Verify owner PIN for privileged action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyPinInput"
+      responses:
+        "200":
+          description: PIN verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          description: Invalid PIN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─── SHOPS ───────────────────────────────────────────────
+  /shops:
+    get:
+      operationId: listShops
+      tags: [shops]
+      summary: List all shops
+      responses:
+        "200":
+          description: List of shops
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Shop"
+    post:
+      operationId: createShop
+      tags: [shops]
+      summary: Create a shop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShopInput"
+      responses:
+        "201":
+          description: Shop created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shop"
+
+  /shops/{shopId}:
+    get:
+      operationId: getShop
+      tags: [shops]
+      summary: Get shop by ID
+      parameters:
+        - name: shopId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Shop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shop"
+    patch:
+      operationId: updateShop
+      tags: [shops]
+      summary: Update shop
+      parameters:
+        - name: shopId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShopUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shop"
+
+  # ─── PRODUCTS ────────────────────────────────────────────
+  /products:
+    get:
+      operationId: listProducts
+      tags: [products]
+      summary: List/search products
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search query (fuzzy)
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: lowStock
+          in: query
+          schema:
+            type: string
+          description: Filter to low stock only
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Products list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductList"
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Create product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+
+  /products/{productId}:
+    get:
+      operationId: getProduct
+      tags: [products]
+      summary: Get product by ID
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+    patch:
+      operationId: updateProduct
+      tags: [products]
+      summary: Update product
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Soft-delete product
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /products/{productId}/restock:
+    post:
+      operationId: restockProduct
+      tags: [products]
+      summary: Restock product (adds stock + creates inventory movement)
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestockInput"
+      responses:
+        "200":
+          description: Restocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+
+  /products/{productId}/price-history:
+    get:
+      operationId: getProductPriceHistory
+      tags: [products]
+      summary: Get product price history
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Price history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceHistory"
+
+  /products/bulk-import:
+    post:
+      operationId: bulkImportProducts
+      tags: [import]
+      summary: Bulk import products from parsed Excel data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkImportInput"
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkImportResult"
+
+  # ─── PRODUCT ALIASES ─────────────────────────────────────
+  /products/{productId}/aliases:
+    get:
+      operationId: listProductAliases
+      tags: [aliases]
+      summary: List aliases for a product
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Aliases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductAlias"
+    post:
+      operationId: createProductAlias
+      tags: [aliases]
+      summary: Add alias to product
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductAliasInput"
+      responses:
+        "201":
+          description: Alias created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductAlias"
+
+  /aliases/{aliasId}:
+    delete:
+      operationId: deleteProductAlias
+      tags: [aliases]
+      summary: Delete alias
+      parameters:
+        - name: aliasId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── SALES ───────────────────────────────────────────────
+  /sales:
+    get:
+      operationId: listSales
+      tags: [sales]
+      summary: List sales
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: date
+          in: query
+          schema:
+            type: string
+          description: Filter by date (YYYY-MM-DD), defaults to today
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Sales list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Sale"
+    post:
+      operationId: createSale
+      tags: [sales]
+      summary: Record a sale
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleInput"
+      responses:
+        "201":
+          description: Sale recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+
+  /sales/{saleId}:
+    get:
+      operationId: getSale
+      tags: [sales]
+      summary: Get sale with items
+      parameters:
+        - name: saleId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sale
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleWithItems"
+    delete:
+      operationId: deleteSale
+      tags: [sales]
+      summary: Remove sale (restores stock)
+      parameters:
+        - name: saleId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteSaleInput"
+      responses:
+        "204":
+          description: Sale removed
+
+  # ─── DEBTS ───────────────────────────────────────────────
+  /debts:
+    get:
+      operationId: listDebts
+      tags: [debts]
+      summary: List debts
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Filter by status (unpaid|partial|paid)
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search by customer name/phone
+      responses:
+        "200":
+          description: Debts list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Debt"
+    post:
+      operationId: createDebt
+      tags: [debts]
+      summary: Create debt record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DebtInput"
+      responses:
+        "201":
+          description: Debt created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Debt"
+
+  /debts/{debtId}:
+    get:
+      operationId: getDebt
+      tags: [debts]
+      summary: Get debt with payment history
+      parameters:
+        - name: debtId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Debt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebtWithPayments"
+    patch:
+      operationId: updateDebt
+      tags: [debts]
+      summary: Update debt
+      parameters:
+        - name: debtId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DebtUpdate"
+      responses:
+        "200":
+          description: Updated debt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Debt"
+
+  /debts/{debtId}/payments:
+    post:
+      operationId: recordDebtPayment
+      tags: [debts]
+      summary: Record a payment against a debt
+      parameters:
+        - name: debtId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DebtPaymentInput"
+      responses:
+        "201":
+          description: Payment recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebtPayment"
+
+  # ─── INVENTORY MOVEMENTS ─────────────────────────────────
+  /inventory-movements:
+    get:
+      operationId: listInventoryMovements
+      tags: [inventory]
+      summary: List inventory movements
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: productId
+          in: query
+          schema:
+            type: string
+        - name: movementType
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Movements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryMovement"
+
+  # ─── NOTIFICATIONS ────────────────────────────────────────
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List notifications
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: unreadOnly
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notification"
+
+  /notifications/{notificationId}/read:
+    patch:
+      operationId: markNotificationRead
+      tags: [notifications]
+      summary: Mark notification as read
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Marked read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+
+  /notifications/read-all:
+    patch:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark all notifications as read
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: All marked read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  # ─── AUDIT LOG ───────────────────────────────────────────
+  /audit-log:
+    get:
+      operationId: listAuditLog
+      tags: [audit]
+      summary: List audit log entries
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Audit entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEntry"
+
+  # ─── SUPPLIERS ───────────────────────────────────────────
+  /suppliers:
+    get:
+      operationId: listSuppliers
+      tags: [suppliers]
+      summary: List suppliers
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Suppliers list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Supplier"
+    post:
+      operationId: createSupplier
+      tags: [suppliers]
+      summary: Create supplier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+
+  /suppliers/{supplierId}:
+    patch:
+      operationId: updateSupplier
+      tags: [suppliers]
+      summary: Update supplier
+      parameters:
+        - name: supplierId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+    delete:
+      operationId: deleteSupplier
+      tags: [suppliers]
+      summary: Delete supplier
+      parameters:
+        - name: supplierId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  # ─── REPORTS / ANALYTICS ─────────────────────────────────
+  /reports/dashboard:
+    get:
+      operationId: getDashboard
+      tags: [reports]
+      summary: Dashboard summary for today or a date
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: date
+          in: query
+          schema:
+            type: string
+          description: YYYY-MM-DD, defaults to today
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /reports/range:
+    get:
+      operationId: getReportRange
+      tags: [reports]
+      summary: Sales report for a date range
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Range report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RangeReport"
+
+  /reports/top-products:
+    get:
+      operationId: getTopProducts
+      tags: [reports]
+      summary: Top products by revenue or profit
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Top products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TopProduct"
+
+  /reports/category-breakdown:
+    get:
+      operationId: getCategoryBreakdown
+      tags: [reports]
+      summary: Revenue and profit breakdown by category
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Category breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CategoryBreakdown"
+
+  /reports/hourly:
+    get:
+      operationId: getHourlySales
+      tags: [reports]
+      summary: Sales by hour for a given date
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+        - name: date
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Hourly breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HourlySales"
+
+  /reports/debts-summary:
+    get:
+      operationId: getDebtsSummary
+      tags: [reports]
+      summary: Debt summary totals
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Debts summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebtsSummary"
+
+  # ─── OCR ─────────────────────────────────────────────────
+  /ocr/scan:
+    post:
+      operationId: ocrScan
+      tags: [ocr]
+      summary: Process OCR scan of notebook/invoice image
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OcrScanInput"
+      responses:
+        "200":
+          description: OCR scan results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OcrScanResult"
+
+  /ocr/sessions:
+    get:
+      operationId: listScanSessions
+      tags: [ocr]
+      summary: List scan sessions
+      parameters:
+        - name: shopId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Scan sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScanSession"
+    post:
+      operationId: createScanSession
+      tags: [ocr]
+      summary: Create a scan session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanSessionInput"
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanSession"
+
+  /ocr/sessions/{sessionId}/apply:
+    post:
+      operationId: applyScanSession
+      tags: [ocr]
+      summary: Apply confirmed OCR results to inventory
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyScanInput"
+      responses:
+        "200":
+          description: Applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyScanResult"
+
+  # ─── STORAGE ─────────────────────────────────────────────
+  /storage/uploads/request-url:
+    post:
+      operationId: requestUploadUrl
+      tags: [storage]
+      summary: Request presigned upload URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadUrlRequest"
+      responses:
+        "200":
+          description: Presigned upload URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadUrlResult"
+
+  /storage/objects/{objectPath}:
+    get:
+      operationId: getObject
+      tags: [storage]
+      summary: Serve stored object
+      parameters:
+        - name: objectPath
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Object file
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required: [success]
+
+    # ─── AUTH ─────────────────────────────────────────────
+    AuthToken:
+      type: object
+      properties:
+        token:
+          type: string
+        role:
+          type: string
+        shopId:
+          type: string
+        shopName:
+          type: string
+        userName:
+          type: ["string", "null"]
+      required: [token, role, shopId, shopName]
+
+    LoginInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        role:
+          type: string
+          enum: [owner, cashier]
+        pin:
+          type: string
+        userName:
+          type: ["string", "null"]
+      required: [shopId, role, pin]
+
+
+
+    Session:
+      type: object
+      properties:
+        role:
+          type: string
+        shopId:
+          type: string
+        shopName:
+          type: string
+        userName:
+          type: ["string", "null"]
+      required: [role, shopId, shopName]
+
+    VerifyPinInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        pin:
+          type: string
+      required: [shopId, pin]
+
+    # ─── SHOPS ────────────────────────────────────────────
+    Shop:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        ownerWhatsapp:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required: [id, name, createdAt]
+
+    ShopInput:
+      type: object
+      properties:
+        name:
+          type: string
+        ownerWhatsapp:
+          type: ["string", "null"]
+        ownerPin:
+          type: string
+        cashierPin:
+          type: string
+      required: [name, ownerPin, cashierPin]
+
+    ShopUpdate:
+      type: object
+      properties:
+        name:
+          type: ["string", "null"]
+        ownerWhatsapp:
+          type: ["string", "null"]
+        ownerPin:
+          type: ["string", "null"]
+        cashierPin:
+          type: ["string", "null"]
+
+    # ─── PRODUCTS ─────────────────────────────────────────
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        canonicalName:
+          type: string
+        normalizedName:
+          type: string
+        sku:
+          type: ["string", "null"]
+        category:
+          type: ["string", "null"]
+        unit:
+          type: string
+        purchasePrice:
+          type: ["number", "null"]
+        sellingPrice:
+          type: ["number", "null"]
+        profitMargin:
+          type: ["number", "null"]
+        stockQty:
+          type: integer
+        alertQty:
+          type: integer
+        tokens:
+          type: ["array", "null"]
+          items:
+            type: string
+        size:
+          type: ["string", "null"]
+        isActive:
+          type: boolean
+        lastSoldAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, shopId, canonicalName, normalizedName, unit, stockQty, alertQty, isActive, createdAt, updatedAt]
+
+    ProductList:
+      type: object
+      properties:
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        total:
+          type: integer
+      required: [products, total]
+
+    ProductInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        canonicalName:
+          type: string
+        sku:
+          type: ["string", "null"]
+        category:
+          type: ["string", "null"]
+        unit:
+          type: string
+        purchasePrice:
+          type: ["number", "null"]
+        sellingPrice:
+          type: ["number", "null"]
+        stockQty:
+          type: integer
+        alertQty:
+          type: integer
+        size:
+          type: ["string", "null"]
+      required: [shopId, canonicalName]
+
+    ProductUpdate:
+      type: object
+      properties:
+        canonicalName:
+          type: ["string", "null"]
+        sku:
+          type: ["string", "null"]
+        category:
+          type: ["string", "null"]
+        unit:
+          type: ["string", "null"]
+        purchasePrice:
+          type: ["number", "null"]
+        sellingPrice:
+          type: ["number", "null"]
+        stockQty:
+          type: ["integer", "null"]
+        alertQty:
+          type: ["integer", "null"]
+        size:
+          type: ["string", "null"]
+        isActive:
+          type: ["boolean", "null"]
+
+    RestockInput:
+      type: object
+      properties:
+        qty:
+          type: integer
+        newPurchasePrice:
+          type: ["number", "null"]
+        newSellingPrice:
+          type: ["number", "null"]
+        performedBy:
+          type: string
+      required: [qty]
+
+    PriceHistory:
+      type: object
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        oldPurchasePrice:
+          type: ["number", "null"]
+        newPurchasePrice:
+          type: ["number", "null"]
+        oldSellingPrice:
+          type: ["number", "null"]
+        newSellingPrice:
+          type: ["number", "null"]
+        pctChange:
+          type: ["number", "null"]
+        changedAt:
+          type: string
+        changedBy:
+          type: ["string", "null"]
+      required: [id, productId, changedAt]
+
+    BulkImportInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductInput"
+        deduplicateStrategy:
+          type: string
+          enum: [skip, merge, overwrite]
+          description: What to do with duplicate products
+      required: [shopId, products]
+
+    BulkImportResult:
+      type: object
+      properties:
+        created:
+          type: integer
+        skipped:
+          type: integer
+        merged:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+      required: [created, skipped, merged, errors]
+
+    # ─── ALIASES ──────────────────────────────────────────
+    ProductAlias:
+      type: object
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        alias:
+          type: string
+        confidence:
+          type: ["number", "null"]
+        autoGenerated:
+          type: boolean
+        createdAt:
+          type: string
+      required: [id, productId, alias, autoGenerated, createdAt]
+
+    ProductAliasInput:
+      type: object
+      properties:
+        alias:
+          type: string
+        confidence:
+          type: ["number", "null"]
+      required: [alias]
+
+    # ─── SALES ────────────────────────────────────────────
+    SaleItem:
+      type: object
+      properties:
+        id:
+          type: string
+        saleId:
+          type: string
+        productId:
+          type: ["string", "null"]
+        productName:
+          type: string
+        qty:
+          type: integer
+        unitPrice:
+          type: number
+        unitCost:
+          type: ["number", "null"]
+        unitProfit:
+          type: ["number", "null"]
+        totalPrice:
+          type: number
+        totalProfit:
+          type: ["number", "null"]
+      required: [id, saleId, productName, qty, unitPrice, totalPrice]
+
+    Sale:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        totalAmount:
+          type: number
+        totalCost:
+          type: ["number", "null"]
+        totalProfit:
+          type: ["number", "null"]
+        discount:
+          type: number
+        saleType:
+          type: string
+          enum: [cash, debt]
+        servedBy:
+          type: ["string", "null"]
+        syncStatus:
+          type: string
+        createdAt:
+          type: string
+      required: [id, shopId, totalAmount, discount, saleType, syncStatus, createdAt]
+
+    SaleWithItems:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        totalAmount:
+          type: number
+        totalCost:
+          type: ["number", "null"]
+        totalProfit:
+          type: ["number", "null"]
+        discount:
+          type: number
+        saleType:
+          type: string
+        servedBy:
+          type: ["string", "null"]
+        syncStatus:
+          type: string
+        createdAt:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SaleItem"
+      required: [id, shopId, totalAmount, discount, saleType, syncStatus, createdAt, items]
+
+    SaleItemInput:
+      type: object
+      properties:
+        productId:
+          type: string
+        qty:
+          type: integer
+        unitPrice:
+          type: number
+        discount:
+          type: ["number", "null"]
+      required: [productId, qty, unitPrice]
+
+    SaleInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        saleType:
+          type: string
+          enum: [cash, debt]
+        servedBy:
+          type: ["string", "null"]
+        discount:
+          type: ["number", "null"]
+        discountOverrideBy:
+          type: ["string", "null"]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SaleItemInput"
+        debtCustomerName:
+          type: ["string", "null"]
+        debtCustomerPhone:
+          type: ["string", "null"]
+      required: [shopId, saleType, items]
+
+    DeleteSaleInput:
+      type: object
+      properties:
+        reason:
+          type: ["string", "null"]
+        performedBy:
+          type: ["string", "null"]
+
+    # ─── DEBTS ────────────────────────────────────────────
+    Debt:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        saleId:
+          type: ["string", "null"]
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        totalAmount:
+          type: number
+        amountPaid:
+          type: number
+        balance:
+          type: number
+        status:
+          type: string
+          enum: [unpaid, partial, paid]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        paidAt:
+          type: ["string", "null"]
+      required: [id, shopId, customerName, customerPhone, totalAmount, amountPaid, balance, status, createdAt]
+
+    DebtPayment:
+      type: object
+      properties:
+        id:
+          type: string
+        debtId:
+          type: string
+        amount:
+          type: number
+        paidAt:
+          type: string
+        recordedBy:
+          type: ["string", "null"]
+      required: [id, debtId, amount, paidAt]
+
+    DebtWithPayments:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        saleId:
+          type: ["string", "null"]
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        totalAmount:
+          type: number
+        amountPaid:
+          type: number
+        balance:
+          type: number
+        status:
+          type: string
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        paidAt:
+          type: ["string", "null"]
+        payments:
+          type: array
+          items:
+            $ref: "#/components/schemas/DebtPayment"
+      required: [id, shopId, customerName, customerPhone, totalAmount, amountPaid, balance, status, createdAt, payments]
+
+    DebtInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        saleId:
+          type: ["string", "null"]
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        totalAmount:
+          type: number
+        notes:
+          type: ["string", "null"]
+      required: [shopId, customerName, customerPhone, totalAmount]
+
+    DebtUpdate:
+      type: object
+      properties:
+        notes:
+          type: ["string", "null"]
+        customerName:
+          type: ["string", "null"]
+        customerPhone:
+          type: ["string", "null"]
+
+    DebtPaymentInput:
+      type: object
+      properties:
+        amount:
+          type: number
+        recordedBy:
+          type: ["string", "null"]
+      required: [amount]
+
+    # ─── INVENTORY ────────────────────────────────────────
+    InventoryMovement:
+      type: object
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        productName:
+          type: ["string", "null"]
+        movementType:
+          type: string
+        qtyChange:
+          type: integer
+        beforeQty:
+          type: integer
+        afterQty:
+          type: integer
+        source:
+          type: ["string", "null"]
+        referenceId:
+          type: ["string", "null"]
+        createdBy:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required: [id, productId, movementType, qtyChange, beforeQty, afterQty, createdAt]
+
+    # ─── NOTIFICATIONS ────────────────────────────────────
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+        message:
+          type: string
+        productId:
+          type: ["string", "null"]
+        debtId:
+          type: ["string", "null"]
+        isRead:
+          type: boolean
+        createdAt:
+          type: string
+      required: [id, shopId, type, title, message, isRead, createdAt]
+
+    # ─── AUDIT ────────────────────────────────────────────
+    AuditEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        action:
+          type: string
+        entityType:
+          type: ["string", "null"]
+        entityId:
+          type: ["string", "null"]
+        oldValue:
+          type: ["object", "null"]
+        newValue:
+          type: ["object", "null"]
+        performedBy:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required: [id, shopId, action, createdAt]
+
+    # ─── SUPPLIERS ────────────────────────────────────────
+    Supplier:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        name:
+          type: string
+        phone:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required: [id, shopId, name, createdAt]
+
+    SupplierInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        name:
+          type: string
+        phone:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+      required: [shopId, name]
+
+    SupplierUpdate:
+      type: object
+      properties:
+        name:
+          type: ["string", "null"]
+        phone:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+
+    # ─── REPORTS ──────────────────────────────────────────
+    DashboardSummary:
+      type: object
+      properties:
+        date:
+          type: string
+        shopId:
+          type: ["string", "null"]
+        totalRevenue:
+          type: number
+        totalProfit:
+          type: number
+        totalCost:
+          type: number
+        salesCount:
+          type: integer
+        marginPct:
+          type: number
+        cashSales:
+          type: number
+        debtSales:
+          type: number
+        topProducts:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopProduct"
+        lowStockCount:
+          type: integer
+        outOfStockCount:
+          type: integer
+        pendingDebtsTotal:
+          type: number
+        unreadNotificationsCount:
+          type: integer
+      required: [date, totalRevenue, totalProfit, totalCost, salesCount, marginPct, cashSales, debtSales, topProducts, lowStockCount, outOfStockCount, pendingDebtsTotal, unreadNotificationsCount]
+
+    RangeReport:
+      type: object
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        shopId:
+          type: ["string", "null"]
+        totalRevenue:
+          type: number
+        totalProfit:
+          type: number
+        totalCost:
+          type: number
+        salesCount:
+          type: integer
+        marginPct:
+          type: number
+        dailyBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailySummary"
+      required: [from, to, totalRevenue, totalProfit, totalCost, salesCount, marginPct, dailyBreakdown]
+
+    DailySummary:
+      type: object
+      properties:
+        date:
+          type: string
+        revenue:
+          type: number
+        profit:
+          type: number
+        salesCount:
+          type: integer
+      required: [date, revenue, profit, salesCount]
+
+    TopProduct:
+      type: object
+      properties:
+        productId:
+          type: string
+        productName:
+          type: string
+        totalQtySold:
+          type: integer
+        totalRevenue:
+          type: number
+        totalProfit:
+          type: ["number", "null"]
+      required: [productId, productName, totalQtySold, totalRevenue]
+
+    CategoryBreakdown:
+      type: object
+      properties:
+        category:
+          type: string
+        totalRevenue:
+          type: number
+        totalProfit:
+          type: number
+        salesCount:
+          type: integer
+      required: [category, totalRevenue, totalProfit, salesCount]
+
+    HourlySales:
+      type: object
+      properties:
+        hour:
+          type: integer
+        salesCount:
+          type: integer
+        revenue:
+          type: number
+      required: [hour, salesCount, revenue]
+
+    DebtsSummary:
+      type: object
+      properties:
+        totalOutstanding:
+          type: number
+        totalUnpaid:
+          type: number
+        totalPartial:
+          type: number
+        unpaidCount:
+          type: integer
+        partialCount:
+          type: integer
+      required: [totalOutstanding, totalUnpaid, totalPartial, unpaidCount, partialCount]
+
+    # ─── OCR ──────────────────────────────────────────────
+    OcrScanInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        imageBase64:
+          type: string
+          description: Base64 encoded image
+        scanType:
+          type: string
+          enum: [notebook, invoice]
+        sessionId:
+          type: ["string", "null"]
+      required: [shopId, imageBase64, scanType]
+
+    OcrLineResult:
+      type: object
+      properties:
+        rawText:
+          type: string
+        productId:
+          type: ["string", "null"]
+        productName:
+          type: ["string", "null"]
+        inferredQty:
+          type: ["integer", "null"]
+        inferredTotal:
+          type: ["number", "null"]
+        confidence:
+          type: number
+        status:
+          type: string
+          enum: [confirmed, review, unresolved]
+        suggestions:
+          type: array
+          items:
+            $ref: "#/components/schemas/OcrSuggestion"
+      required: [rawText, confidence, status, suggestions]
+
+    OcrSuggestion:
+      type: object
+      properties:
+        productId:
+          type: string
+        productName:
+          type: string
+        confidence:
+          type: number
+      required: [productId, productName, confidence]
+
+    OcrScanResult:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/OcrLineResult"
+        totalDetected:
+          type: integer
+        confirmedCount:
+          type: integer
+        reviewCount:
+          type: integer
+        unresolvedCount:
+          type: integer
+      required: [sessionId, lines, totalDetected, confirmedCount, reviewCount, unresolvedCount]
+
+    ScanSession:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        totalImages:
+          type: integer
+        totalProducts:
+          type: integer
+        status:
+          type: string
+        createdAt:
+          type: string
+      required: [id, shopId, totalImages, totalProducts, status, createdAt]
+
+    ScanSessionInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        scanType:
+          type: string
+          enum: [notebook, invoice]
+      required: [shopId, scanType]
+
+    ApplyScanLine:
+      type: object
+      properties:
+        productId:
+          type: string
+        qty:
+          type: integer
+        unitPrice:
+          type: ["number", "null"]
+      required: [productId, qty]
+
+    ApplyScanInput:
+      type: object
+      properties:
+        scanType:
+          type: string
+          enum: [notebook, invoice]
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplyScanLine"
+        performedBy:
+          type: ["string", "null"]
+      required: [scanType, lines]
+
+    ApplyScanResult:
+      type: object
+      properties:
+        applied:
+          type: integer
+        skipped:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+      required: [applied, skipped, errors]
+
+    # ─── STORAGE ──────────────────────────────────────────
+    UploadUrlRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        size:
+          type: integer
+        contentType:
+          type: string
+      required: [name, size, contentType]
+
+    UploadUrlResult:
+      type: object
+      properties:
+        uploadURL:
+          type: string
+        objectPath:
+          type: string
+      required: [uploadURL, objectPath]

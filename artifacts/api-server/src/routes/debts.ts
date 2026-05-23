@@ -1,0 +1,164 @@
+import { Hono } from "hono";
+import { eq, and, like } from "drizzle-orm";
+import type { AppEnv } from "../types";
+import { createDb } from "../lib/db";
+import { requireAuth } from "../middleware/auth";
+import { debts, debtPayments, notifications } from "@workspace/db/schema";
+
+const debtsRouter = new Hono<AppEnv>();
+
+debtsRouter.get("/debts", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const shopId = c.req.query("shopId");
+  const status = c.req.query("status");
+  const q = c.req.query("q");
+
+  let rows = await db
+    .select()
+    .from(debts)
+    .where(
+      and(
+        shopId ? eq(debts.shopId, shopId) : undefined,
+        status ? eq(debts.status, status as "unpaid" | "partial" | "paid") : undefined,
+      ),
+    )
+    .all();
+
+  if (q) {
+    const lower = q.toLowerCase();
+    rows = rows.filter(
+      (d) =>
+        d.customerName.toLowerCase().includes(lower) ||
+        d.customerPhone.includes(q),
+    );
+  }
+
+  return c.json(rows);
+});
+
+debtsRouter.post("/debts", requireAuth, async (c) => {
+  const body = await c.req.json<{
+    shopId: string;
+    saleId?: string;
+    customerName: string;
+    customerPhone: string;
+    totalAmount: number;
+    notes?: string;
+  }>();
+  const db = createDb(c.env.DB);
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.insert(debts).values({
+    id,
+    shopId: body.shopId,
+    saleId: body.saleId ?? null,
+    customerName: body.customerName,
+    customerPhone: body.customerPhone,
+    totalAmount: body.totalAmount,
+    amountPaid: 0,
+    balance: body.totalAmount,
+    status: "unpaid",
+    notes: body.notes ?? null,
+    paidAt: null,
+    createdAt: now,
+  });
+  const debt = await db.select().from(debts).where(eq(debts.id, id)).get();
+  return c.json(debt!, 201);
+});
+
+debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const debt = await db
+    .select()
+    .from(debts)
+    .where(eq(debts.id, c.req.param("debtId")))
+    .get();
+  if (!debt) return c.json({ error: "Not found" }, 404);
+  const payments = await db
+    .select()
+    .from(debtPayments)
+    .where(eq(debtPayments.debtId, debt.id))
+    .all();
+  return c.json({ ...debt, payments });
+});
+
+debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
+  const body = await c.req.json<{
+    notes?: string;
+    customerName?: string;
+    customerPhone?: string;
+  }>();
+  const db = createDb(c.env.DB);
+  const session = c.get("session");
+  const debtRecord = await db.select({ shopId: debts.shopId }).from(debts).where(eq(debts.id, c.req.param("debtId"))).get();
+  if (!debtRecord) return c.json({ error: "Not found" }, 404);
+  if (debtRecord.shopId !== session.shopId) return c.json({ error: "Forbidden" }, 403);
+  const patch: Partial<typeof debts.$inferInsert> = {};
+  if (body.notes !== undefined) patch.notes = body.notes;
+  if (body.customerName) patch.customerName = body.customerName;
+  if (body.customerPhone) patch.customerPhone = body.customerPhone;
+  await db.update(debts).set(patch).where(eq(debts.id, c.req.param("debtId")));
+  const debt = await db
+    .select()
+    .from(debts)
+    .where(eq(debts.id, c.req.param("debtId")))
+    .get();
+  if (!debt) return c.json({ error: "Not found" }, 404);
+  return c.json(debt);
+});
+
+debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
+  const body = await c.req.json<{
+    amount: number;
+    recordedBy?: string;
+  }>();
+  const db = createDb(c.env.DB);
+  const debtId = c.req.param("debtId");
+  const debt = await db.select().from(debts).where(eq(debts.id, debtId)).get();
+  if (!debt) return c.json({ error: "Not found" }, 404);
+
+  const now = new Date().toISOString();
+  const paymentId = crypto.randomUUID();
+  await db.insert(debtPayments).values({
+    id: paymentId,
+    debtId,
+    amount: body.amount,
+    recordedBy: body.recordedBy ?? null,
+    paidAt: now,
+  });
+
+  const newAmountPaid = debt.amountPaid + body.amount;
+  const newBalance = Math.max(0, debt.totalAmount - newAmountPaid);
+  const newStatus: "unpaid" | "partial" | "paid" =
+    newBalance === 0 ? "paid" : newAmountPaid > 0 ? "partial" : "unpaid";
+
+  await db
+    .update(debts)
+    .set({
+      amountPaid: newAmountPaid,
+      balance: newBalance,
+      status: newStatus,
+      paidAt: newStatus === "paid" ? now : null,
+    })
+    .where(eq(debts.id, debtId));
+
+  if (newStatus === "paid") {
+    await db
+      .delete(notifications)
+      .where(
+        and(
+          eq(notifications.debtId, debtId),
+          eq(notifications.type, "debt_reminder"),
+        ),
+      );
+  }
+
+  const payment = await db
+    .select()
+    .from(debtPayments)
+    .where(eq(debtPayments.id, paymentId))
+    .get();
+  return c.json(payment!, 201);
+});
+
+export default debtsRouter;

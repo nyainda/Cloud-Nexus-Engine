@@ -1,0 +1,5 @@
+api/
+artifacts/api-server/
+artifacts/mockup-sandbox/
+scripts/
+lib/db/
