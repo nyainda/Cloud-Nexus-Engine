@@ -27,11 +27,11 @@ const NotFound = lazy(() => import("@/pages/not-found"));
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: false,
+      retry: 1,
       refetchOnWindowFocus: false,
       refetchOnReconnect: true,
-      staleTime: 60_000,
-      gcTime: 5 * 60_000,
+      staleTime: 5 * 60_000,   // 5 min — data shows instantly on revisit
+      gcTime: 30 * 60_000,     // 30 min in memory
     },
   },
 });
@@ -80,11 +80,19 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 // ── Shared loading spinner ─────────────────────────────────────────────────────
 function PageLoader() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0A0A0A]">
-      <div className="flex flex-col items-center gap-3">
-        <div className="w-10 h-10 rounded-full border-2 border-[#C8FF00]/30 border-t-[#C8FF00] animate-spin" />
-        <p className="text-sm text-white/40 font-medium">Loading…</p>
+    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0A0A0A", gap: 20 }}>
+      <div style={{ width: 52, height: 52, borderRadius: 14, background: "#C8FF00", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0A0A0A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
+          <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>
+        </svg>
       </div>
+      <div style={{ textAlign: "center" }}>
+        <p style={{ color: "#fff", fontWeight: 700, fontSize: 18, margin: 0, letterSpacing: "-0.02em" }}>GreenLink OS</p>
+        <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, margin: "4px 0 0" }}>Loading…</p>
+      </div>
+      <div style={{ width: 36, height: 36, borderRadius: "50%", border: "2px solid rgba(200,255,0,0.2)", borderTop: "2px solid #C8FF00", animation: "spin 0.8s linear infinite" }} />
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

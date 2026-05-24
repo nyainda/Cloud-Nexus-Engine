@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useWindowVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useListProducts, useRestockProduct, useCreateProduct, useUpdateProduct,
   useDeleteProduct, useBulkImportProducts, getListProductsQueryKey, customFetch
@@ -409,13 +409,10 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
 
   const transferMutation = useMutation({
     mutationFn: async () => {
-      const res = await customFetch(`/api/products/${product.id}/transfer`, {
+      return await customFetch<any>(`/api/products/${product.id}/transfer`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ targetShopId, qty, notes: notes || undefined }),
       });
-      if (!res.ok) { const e = await res.json() as any; throw new Error(e.error || "Transfer failed"); }
-      return res.json();
     },
     onSuccess: () => { toast.success(`Transferred ${qty} ${product.unit || "units"} to ${targetLabel}`); setOpen(false); setQty(1); setNotes(""); onSuccess(); },
     onError: (e: any) => toast.error(e.message || "Transfer failed"),
@@ -554,21 +551,12 @@ function TransferHistory({ shopId, isOwner }: { shopId: string; isOwner: boolean
   const qc = useQueryClient();
   const { data: transfers, isLoading, refetch } = useQuery({
     queryKey: ["transfers", shopId],
-    queryFn: async () => {
-      const res = await customFetch(`/api/transfers?shopId=${shopId}&limit=200`);
-      if (!res.ok) return [];
-      return res.json();
-    },
+    queryFn: () => customFetch<any[]>(`/api/transfers?shopId=${shopId}&limit=200`),
     enabled: !!shopId,
   });
 
   const cancelTransfer = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await customFetch(`/api/transfers/${id}`, { method: "DELETE" });
-      const body = await res.json() as any;
-      if (!res.ok) throw new Error(body.error || "Cannot cancel transfer");
-      return body;
-    },
+    mutationFn: (id: string) => customFetch<any>(`/api/transfers/${id}`, { method: "DELETE" }),
     onSuccess: () => { toast.success("Transfer cancelled & stock restored"); refetch(); qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); },
     onError: (e: any) => toast.error(e.message || "Failed to cancel transfer"),
   });
@@ -703,22 +691,27 @@ export default function Stock() {
   const todayStr = new Date().toISOString().split("T")[0];
   const soonStr = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
-  // Virtual scrolling — only renders rows visible in the viewport
-  const virtualizer = useWindowVirtualizer({
+  // The list's own scroll container ref — fixes the black-screen bug caused by
+  // useWindowVirtualizer listening to window.scrollY while the actual scroll
+  // happens on the layout's inner div.
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
     count: filtered.length,
-    estimateSize: () => 64,
-    overscan: 8,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 68,
+    overscan: 12,
   });
 
   // Scroll to top when filter / search changes
   useEffect(() => {
-    if (filtered.length > 0) window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+    listRef.current?.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
   }, [debouncedSearch, view, categoryFilter]);
 
   return (
-    <div className="flex flex-col min-h-screen bg-background">
-      {/* Header */}
-      <div className="sticky top-0 z-20 bg-background border-b border-border px-4 py-3 space-y-3">
+    <div className="flex flex-col h-[calc(100dvh-4rem)] lg:h-screen bg-background">
+      {/* Header — shrinks, never scrolls */}
+      <div className="shrink-0 bg-background border-b border-border px-4 py-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div>
             <h1 className="text-lg font-bold text-foreground">Inventory</h1>
@@ -800,8 +793,8 @@ export default function Stock() {
         )}
       </div>
 
-      {/* Content */}
-      <div className="flex-1">
+      {/* Content — owns its scroll so useVirtualizer works correctly */}
+      <div ref={listRef} className="flex-1 overflow-y-auto min-h-0">
         {view === "transfers" ? (
           <TransferHistory shopId={shopId} isOwner={isOwner} />
         ) : isLoading ? (

@@ -7,12 +7,20 @@ import { registerSW } from "virtual:pwa-register";
 initTheme();
 
 registerSW({
-  onNeedRefresh() {
-    console.log("[PWA] New content available — will update on next reload.");
-  },
-  onOfflineReady() {
-    console.log("[PWA] App ready to work offline.");
-  },
+  onNeedRefresh() {},
+  onOfflineReady() {},
 });
 
-createRoot(document.getElementById("root")!).render(<App />);
+const root = createRoot(document.getElementById("root")!);
+root.render(<App />);
+
+// Dismiss the HTML splash screen after React paints its first frame
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    const splash = document.getElementById("app-splash");
+    if (splash) {
+      splash.classList.add("hidden");
+      setTimeout(() => splash.remove(), 350);
+    }
+  });
+});
