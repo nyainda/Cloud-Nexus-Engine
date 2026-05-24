@@ -48,6 +48,5 @@ Thumbs.db
 .cache/
 .local/
 *.sqlite
-.replit
 replit.nix
 *.sqlite
