@@ -9,7 +9,7 @@ import {
   Plus, Search, X, Printer, Trash2, FileText, Receipt,
   ChevronLeft, CheckCircle2, Clock, Send, XCircle,
   Edit3, Package, Phone, MapPin, User, Calendar,
-  StickyNote, Tag, ChevronDown, Loader2, MoreVertical, ArrowRight, Share2,
+  StickyNote, Tag, ChevronDown, Loader2, ArrowRight, Share2, MessageCircle,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -950,6 +950,7 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
   onConverted: (id: string) => void;
 }) {
   const [isSharing, setIsSharing] = useState(false);
+  const [itemsExpanded, setItemsExpanded] = useState(false);
   const qc = useQueryClient();
   const { data: q, isLoading } = useQuery({
     queryKey: ["quotations", id],
@@ -984,8 +985,16 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
     ? ["draft", "sent", "paid"]
     : ["draft", "sent", "accepted", "declined", "expired"];
 
+  const shop = shopName();
+  const docType = q.type === "invoice" ? "INVOICE" : "QUOTATION";
+  const whatsappPhone = q.customer_phone?.replace(/\D/g, "");
+  const whatsappMsg = encodeURIComponent(
+    `Hello ${q.customer_name},\nThank you for choosing ${shop}.\n\nYour ${q.type} *${q.quote_number}* is ready.\nTotal: *${formatKES(q.total)}*\n\nPlease let us know if you have any questions.`
+  );
+
   return (
     <div className="flex flex-col h-full">
+      {/* Nav */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card shrink-0">
         <button onClick={onBack} className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-muted/60 transition-colors">
           <ChevronLeft className="h-5 w-5" />
@@ -997,93 +1006,132 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
           </div>
           <p className="text-[10px] text-muted-foreground">{q.customer_name}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => printQuotation(q)}
-            className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Printer className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => onEdit(q)}
-            className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Edit3 className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => { if (confirm("Delete this document?")) deleteMutation.mutate(); }}
-            className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </div>
+        <button onClick={() => onEdit(q)} className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors">
+          <Edit3 className="h-4 w-4" />
+        </button>
+        <button onClick={() => { if (confirm("Delete this document?")) deleteMutation.mutate(); }} className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
+          <Trash2 className="h-4 w-4" />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
-        {/* Customer */}
-        <div className="bg-card border border-border rounded-xl p-4 space-y-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-3">Customer</p>
-          <div className="flex items-center gap-2">
-            <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <span className="text-sm font-semibold">{q.customer_name}</span>
+
+        {/* ── Document Preview Card ─────────────────────────────────── */}
+        <div className="rounded-2xl overflow-hidden border border-border shadow-lg">
+
+          {/* Header band */}
+          <div className="bg-[#0A0A0A] px-5 py-4 flex items-start justify-between">
+            <div>
+              <p className="text-[#C8FF00] font-black text-base tracking-tight leading-none">{shop}</p>
+              <p className="text-zinc-500 text-[10px] mt-1">Retail Operations</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[#C8FF00] text-lg font-black tracking-widest leading-none">{docType}</p>
+              <p className="text-zinc-400 text-[11px] font-mono mt-1">{q.quote_number}</p>
+            </div>
           </div>
-          {q.customer_phone && (
-            <div className="flex items-center gap-2">
-              <Phone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <a href={`tel:${q.customer_phone}`} className="text-sm text-primary">{q.customer_phone}</a>
-            </div>
-          )}
-          {q.customer_address && (
-            <div className="flex items-center gap-2">
-              <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="text-sm text-muted-foreground">{q.customer_address}</span>
-            </div>
-          )}
-          {q.valid_until && (
-            <div className="flex items-center gap-2">
-              <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="text-sm text-muted-foreground">Valid until {format(new Date(q.valid_until), "d MMM yyyy")}</span>
-            </div>
-          )}
-        </div>
+          <div className="h-[2px] bg-[#C8FF00]" />
 
-        {/* Items */}
-        <div className="space-y-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Items</p>
-          {(q.items ?? []).map((item, i) => (
-            <div key={i} className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold truncate">{item.productName}</p>
-                <p className="text-[10px] text-muted-foreground">{item.qty} {item.unit} × {formatKES(item.unitPrice)}</p>
-              </div>
-              <span className="text-sm font-bold font-mono text-primary shrink-0">{formatKES(item.total)}</span>
+          {/* Bill To / Details */}
+          <div className="bg-white px-5 py-4 grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-[8px] font-black uppercase tracking-[0.15em] text-zinc-400 mb-2">Bill To</p>
+              <p className="text-sm font-bold text-zinc-900 leading-snug">{q.customer_name}</p>
+              {q.customer_phone && <p className="text-xs text-zinc-500 mt-0.5">{q.customer_phone}</p>}
+              {q.customer_address && <p className="text-xs text-zinc-400 mt-0.5">{q.customer_address}</p>}
             </div>
-          ))}
+            <div className="text-right">
+              <p className="text-[8px] font-black uppercase tracking-[0.15em] text-zinc-400 mb-2">Details</p>
+              <p className="text-xs text-zinc-700">
+                <span className="text-zinc-400">Date </span>
+                {format(new Date(q.created_at), "d MMM yyyy")}
+              </p>
+              {q.valid_until && (
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  <span className="text-zinc-400">Valid </span>
+                  {format(new Date(q.valid_until), "d MMM yyyy")}
+                </p>
+              )}
+              <span className="inline-block mt-2 bg-[#0A0A0A] text-[#C8FF00] text-[8px] font-black px-2 py-0.5 rounded tracking-widest uppercase">
+                {q.status}
+              </span>
+            </div>
+          </div>
 
-          <div className="bg-card border border-border rounded-xl px-4 py-4 space-y-2">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Subtotal</span><span className="font-mono">{formatKES(q.subtotal)}</span>
-            </div>
-            {q.discount > 0 && (
-              <div className="flex justify-between text-xs text-destructive">
-                <span>Discount</span><span className="font-mono">− {formatKES(q.discount)}</span>
+          {/* Items — collapsed by default */}
+          <div className="bg-white border-t border-zinc-100">
+            <button
+              onClick={() => setItemsExpanded(e => !e)}
+              className="w-full flex items-center justify-between px-5 py-3 hover:bg-zinc-50 transition-colors"
+            >
+              <span className="flex items-center gap-2 text-xs font-bold text-zinc-700">
+                <Package className="h-3.5 w-3.5 text-zinc-400" />
+                {q.items?.length ?? 0} line item{(q.items?.length ?? 0) !== 1 ? "s" : ""}
+              </span>
+              <span className="flex items-center gap-1 text-[10px] text-zinc-400 font-medium">
+                {itemsExpanded ? "Hide" : "Show"}
+                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform duration-200", itemsExpanded && "rotate-180")} />
+              </span>
+            </button>
+
+            {itemsExpanded && (
+              <div className="border-t border-zinc-100">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-[#0A0A0A]">
+                      <th className="pl-5 pr-2 py-2 text-left text-[8px] font-black uppercase tracking-widest text-zinc-500 w-8">#</th>
+                      <th className="px-2 py-2 text-left text-[8px] font-black uppercase tracking-widest text-[#C8FF00]">Product</th>
+                      <th className="px-2 py-2 text-right text-[8px] font-black uppercase tracking-widest text-zinc-500 w-12">Qty</th>
+                      <th className="pl-2 pr-5 py-2 text-right text-[8px] font-black uppercase tracking-widest text-[#C8FF00] w-24">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(q.items ?? []).map((item, i) => (
+                      <tr key={i} className={cn("border-t border-zinc-50", i % 2 === 0 ? "bg-white" : "bg-zinc-50/60")}>
+                        <td className="pl-5 pr-2 py-2.5 text-[10px] text-zinc-400">{i + 1}</td>
+                        <td className="px-2 py-2.5">
+                          <p className="text-xs font-semibold text-zinc-800 leading-snug">{item.productName}</p>
+                          <p className="text-[9px] text-zinc-400 mt-0.5">{item.unit} · {formatKES(item.unitPrice)} each</p>
+                        </td>
+                        <td className="px-2 py-2.5 text-right text-xs font-mono text-zinc-600">{item.qty}</td>
+                        <td className="pl-2 pr-5 py-2.5 text-right text-xs font-bold font-mono text-zinc-900">{formatKES(item.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
-            <div className="flex justify-between text-sm font-bold border-t border-border pt-2">
-              <span>TOTAL</span>
-              <span className="font-mono text-primary text-base">{formatKES(q.total)}</span>
+          </div>
+
+          {/* Totals */}
+          <div className="bg-white border-t border-zinc-100 px-5 py-3">
+            {q.discount > 0 && (
+              <>
+                <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
+                  <span>Subtotal</span>
+                  <span className="font-mono">{formatKES(q.subtotal)}</span>
+                </div>
+                <div className="flex justify-between text-[10px] text-red-500 mb-2">
+                  <span>Discount</span>
+                  <span className="font-mono">− {formatKES(q.discount)}</span>
+                </div>
+              </>
+            )}
+            <div className="flex items-center justify-between pt-2 border-t border-zinc-100">
+              <span className="text-[8px] font-black uppercase tracking-[0.15em] text-zinc-400">Total Due</span>
+              <span className="text-xl font-black font-mono text-zinc-900">{formatKES(q.total)}</span>
             </div>
           </div>
+
+          {q.notes && (
+            <div className="bg-zinc-50 border-t border-zinc-100 px-5 py-3">
+              <p className="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-1">Notes</p>
+              <p className="text-[11px] text-zinc-600 leading-relaxed">{q.notes}</p>
+            </div>
+          )}
         </div>
 
-        {q.notes && (
-          <div className="bg-muted/30 border border-border rounded-xl p-4">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Notes</p>
-            <p className="text-xs text-foreground/80 leading-relaxed">{q.notes}</p>
-          </div>
-        )}
-
-        {/* Status change */}
+        {/* ── Status ───────────────────────────────────────────────── */}
         <div className="space-y-2">
           <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Change Status</p>
           <div className="flex flex-wrap gap-2">
@@ -1105,8 +1153,21 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
           </div>
         </div>
 
-        {/* Actions: Print + Share PDF + Convert */}
-        <div className="space-y-2">
+        {/* ── Actions ──────────────────────────────────────────────── */}
+        <div className="space-y-2.5">
+          {/* WhatsApp */}
+          {whatsappPhone && (
+            <a
+              href={`https://wa.me/${whatsappPhone}?text=${whatsappMsg}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-[#25D366] text-white text-sm font-bold hover:bg-[#20c05c] transition-colors shadow-sm"
+            >
+              <MessageCircle className="h-4 w-4" />
+              WhatsApp {q.customer_name.split(" ")[0]}
+            </a>
+          )}
+
           <div className="flex gap-2">
             <button
               onClick={() => printQuotation(q)}
@@ -1118,26 +1179,20 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
             <button
               onClick={async () => {
                 setIsSharing(true);
-                try {
-                  await shareAsPdf(q);
-                } catch (e: unknown) {
+                try { await shareAsPdf(q); }
+                catch (e: unknown) {
                   const msg = e instanceof Error ? e.message : String(e);
-                  if (!msg.includes("AbortError") && !msg.includes("cancel")) {
-                    toast.error("Could not share PDF");
-                  }
-                } finally {
-                  setIsSharing(false);
+                  if (!msg.includes("AbortError") && !msg.includes("cancel")) toast.error("Could not share PDF");
                 }
+                finally { setIsSharing(false); }
               }}
               disabled={isSharing}
               className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-border bg-card text-sm font-bold hover:bg-muted/60 transition-colors disabled:opacity-60"
             >
-              {isSharing
-                ? <><Loader2 className="h-4 w-4 animate-spin" />Generating…</>
-                : <><Share2 className="h-4 w-4" />Share PDF</>
-              }
+              {isSharing ? <><Loader2 className="h-4 w-4 animate-spin" />Generating…</> : <><Share2 className="h-4 w-4" />Share PDF</>}
             </button>
           </div>
+
           {q.type === "quotation" && (
             <ConvertToInvoiceDialog quotation={q} onConverted={onConverted} />
           )}
@@ -1265,32 +1320,44 @@ export default function QuotationsPage() {
             </button>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {quotes.map(q => (
               <button
                 key={q.id}
                 onClick={() => setView({ kind: "detail", id: q.id })}
-                className="w-full bg-card border border-border rounded-xl p-4 text-left hover:border-primary/30 hover:bg-muted/20 transition-all group"
+                className="w-full bg-card border border-border rounded-2xl p-4 text-left hover:border-primary/40 hover:shadow-md transition-all group active:scale-[0.99]"
               >
                 <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 group-hover:bg-primary/20 transition-colors">
+                  {/* Icon */}
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors",
+                    q.type === "invoice"
+                      ? "bg-primary/10 group-hover:bg-primary/20"
+                      : "bg-muted/60 group-hover:bg-muted"
+                  )}>
                     {q.type === "invoice"
-                      ? <Receipt className="h-4 w-4 text-primary" />
-                      : <FileText className="h-4 w-4 text-primary" />}
+                      ? <Receipt className="h-4.5 w-4.5 text-primary" />
+                      : <FileText className="h-4.5 w-4.5 text-muted-foreground" />}
                   </div>
+
+                  {/* Middle */}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <p className="text-xs font-bold text-muted-foreground font-mono">{q.quote_number}</p>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[11px] font-black font-mono text-muted-foreground tracking-wide">{q.quote_number}</span>
                       <StatusBadge status={q.status} />
                     </div>
-                    <p className="text-sm font-bold truncate">{q.customer_name}</p>
+                    <p className="text-sm font-bold text-foreground truncate leading-snug">{q.customer_name}</p>
                     {q.customer_phone && (
-                      <p className="text-[10px] text-muted-foreground">{q.customer_phone}</p>
+                      <p className="text-[10px] text-muted-foreground/70 mt-0.5 flex items-center gap-1">
+                        <Phone className="h-2.5 w-2.5 shrink-0" />{q.customer_phone}
+                      </p>
                     )}
                   </div>
+
+                  {/* Amount + date */}
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-bold font-mono text-primary">{formatKES(q.total)}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                    <p className="text-sm font-black font-mono text-primary">{formatKES(q.total)}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
                       {format(new Date(q.created_at), "d MMM yyyy")}
                     </p>
                   </div>

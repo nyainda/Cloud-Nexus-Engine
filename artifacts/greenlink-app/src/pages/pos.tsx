@@ -193,6 +193,191 @@ function QuickAddDialog({
   );
 }
 
+// ── CartPanel extracted outside POS to prevent remount-on-rerender focus loss ──
+interface CartPanelProps {
+  cart: CartItem[];
+  discount: number;
+  debtCustomerName: string;
+  debtCustomerPhone: string;
+  isOwner: boolean;
+  createSalePending: boolean;
+  subtotal: number;
+  total: number;
+  totalProfit: number;
+  cartCount: number;
+  setDiscount: (v: number) => void;
+  setDebtCustomerName: (v: string) => void;
+  setDebtCustomerPhone: (v: string) => void;
+  setCart: React.Dispatch<React.SetStateAction<CartItem[]>>;
+  setShowCartMobile: (v: boolean) => void;
+  updateQty: (id: string, delta: number) => void;
+  removeFromCart: (id: string) => void;
+  updatePrice: (id: string, price: number) => void;
+  handleCheckout: (type: "cash" | "debt") => void;
+}
+
+function CartPanel({
+  cart, discount, debtCustomerName, debtCustomerPhone, isOwner,
+  createSalePending, subtotal, total, totalProfit, cartCount,
+  setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
+  setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout,
+}: CartPanelProps) {
+  return (
+    <div className="flex flex-col h-full bg-card">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+        <div className="flex items-center gap-2">
+          <ShoppingCart className="h-4 w-4 text-primary" />
+          <span className="font-bold text-sm">Cart</span>
+          {cartCount > 0 && (
+            <Badge className="bg-primary/20 text-primary border-0 text-[10px] font-bold px-1.5 py-0.5 h-auto">
+              {cartCount} {cartCount === 1 ? "item" : "items"}
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="lg:hidden text-muted-foreground hover:text-foreground p-1" onClick={() => setShowCartMobile(false)}>
+            <X className="h-4 w-4" />
+          </button>
+          {cartCount > 0 && (
+            <button className="text-[11px] text-muted-foreground hover:text-destructive transition-colors" onClick={() => { setCart([]); setDiscount(0); }}>
+              Clear all
+            </button>
+          )}
+        </div>
+      </div>
+
+      <ScrollArea className="flex-1 overflow-y-auto">
+        {cart.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
+            <ShoppingCart className="h-10 w-10 opacity-10" />
+            <p className="text-sm font-medium">Cart is empty</p>
+            <p className="text-xs opacity-50 text-center px-6">Tap any product to add it</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border/50">
+            {cart.map(item => {
+              const itemProfit = isOwner && item.product.purchasePrice
+                ? item.qty * (item.unitPrice - item.product.purchasePrice) : null;
+              return (
+                <div key={item.product.id} className="px-4 py-3">
+                  <div className="flex justify-between items-start gap-2 mb-2.5">
+                    <span className="text-sm font-semibold text-foreground leading-snug flex-1 pr-1">{item.product.canonicalName}</span>
+                    <button onClick={() => removeFromCart(item.product.id)} className="text-muted-foreground/40 hover:text-destructive transition-colors shrink-0 p-0.5">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center bg-muted/50 rounded-lg border border-border/60 overflow-hidden">
+                      <button className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" onClick={() => updateQty(item.product.id, -1)}>
+                        <Minus className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="w-8 text-center text-sm font-bold">{item.qty}</span>
+                      <button className="h-8 w-8 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors" onClick={() => updateQty(item.product.id, 1)} disabled={item.qty >= item.product.stockQty}>
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-muted-foreground">KSh</span>
+                      <input type="number" value={item.unitPrice} onChange={e => updatePrice(item.product.id, Number(e.target.value))}
+                        className="w-20 h-8 text-right text-sm font-medium bg-muted/30 border border-border/60 rounded-lg px-2 focus:outline-none focus:border-primary/60" />
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-sm font-mono">{formatKES(item.qty * item.unitPrice)}</p>
+                      {isOwner && itemProfit !== null && (
+                        <p className={cn("text-[10px] font-mono", itemProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                          +{formatKES(itemProfit)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </ScrollArea>
+
+      {cart.length > 0 && (
+        <div className="shrink-0 border-t border-border">
+          <div className="px-4 py-3 space-y-1.5 bg-card">
+            <div className="flex justify-between text-sm text-muted-foreground">
+              <span>Subtotal ({cartCount} items)</span>
+              <span className="font-mono">{formatKES(subtotal)}</span>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Discount (KSh)</span>
+                <input type="number" min={0} max={subtotal} value={discount || ""} onChange={e => setDiscount(Number(e.target.value))}
+                  placeholder="0" className="w-24 h-7 text-right text-sm font-mono bg-muted/30 border border-border/60 rounded-lg px-2 focus:outline-none focus:border-primary/60" />
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {[5, 10, 15, 20].map(pct => (
+                  <button key={pct} onClick={() => setDiscount(Math.round(subtotal * pct / 100))} className={cn(
+                    "text-[10px] font-bold px-2 py-1 rounded-full transition-all",
+                    discount === Math.round(subtotal * pct / 100) ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground hover:bg-primary/20 hover:text-primary"
+                  )}>
+                    {pct}%
+                  </button>
+                ))}
+                {discount > 0 && (
+                  <button onClick={() => setDiscount(0)} className="text-[10px] font-bold px-2 py-1 rounded-full bg-destructive/15 text-destructive hover:bg-destructive/25 transition-all">
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-between items-center pt-1.5 border-t border-border/60">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total</span>
+              <span className="text-2xl font-bold text-primary font-mono">{formatKES(total)}</span>
+            </div>
+            {isOwner && totalProfit > 0 && (
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground/60 flex items-center gap-1">
+                  <TrendingUp className="h-3 w-3 text-emerald-400" />Est. Profit
+                </span>
+                <span className="font-mono text-emerald-400 font-semibold">{formatKES(totalProfit)}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="px-4 pb-3 space-y-2 bg-card">
+            <div className="space-y-1.5">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">
+                Customer name (required for debt)
+              </Label>
+              <input
+                type="text"
+                placeholder="e.g. John Kamau"
+                value={debtCustomerName}
+                onChange={e => setDebtCustomerName(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
+              />
+            </div>
+            <div>
+              <input
+                type="tel"
+                placeholder="Phone (optional)"
+                value={debtCustomerPhone}
+                onChange={e => setDebtCustomerPhone(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
+              />
+            </div>
+          </div>
+
+          <div className="px-4 pb-4 grid grid-cols-2 gap-2 bg-card">
+            <Button variant="outline" className="h-12 font-bold text-sm border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={createSalePending} onClick={() => handleCheckout("debt")}>
+              <CreditCard className="h-4 w-4 mr-1.5" />Debt Sale
+            </Button>
+            <Button className="h-12 font-bold text-sm bg-primary hover:bg-primary/90 text-primary-foreground active:scale-[0.98] transition-all shadow-lg shadow-primary/20" disabled={createSalePending} onClick={() => handleCheckout("cash")}>
+              <Banknote className="h-4 w-4 mr-1.5" />Cash Sale
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function POS() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const userName = localStorage.getItem("greenlink_userName") || "";
@@ -330,152 +515,13 @@ export default function POS() {
     );
   };
 
-  const CartPanel = () => (
-    <div className="flex flex-col h-full bg-card">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-        <div className="flex items-center gap-2">
-          <ShoppingCart className="h-4 w-4 text-primary" />
-          <span className="font-bold text-sm">Cart</span>
-          {cartCount > 0 && (
-            <Badge className="bg-primary/20 text-primary border-0 text-[10px] font-bold px-1.5 py-0.5 h-auto">
-              {cartCount} {cartCount === 1 ? "item" : "items"}
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="lg:hidden text-muted-foreground hover:text-foreground p-1" onClick={() => setShowCartMobile(false)}>
-            <X className="h-4 w-4" />
-          </button>
-          {cartCount > 0 && (
-            <button className="text-[11px] text-muted-foreground hover:text-destructive transition-colors" onClick={() => { setCart([]); setDiscount(0); }}>
-              Clear all
-            </button>
-          )}
-        </div>
-      </div>
-
-      <ScrollArea className="flex-1 overflow-y-auto">
-        {cart.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
-            <ShoppingCart className="h-10 w-10 opacity-10" />
-            <p className="text-sm font-medium">Cart is empty</p>
-            <p className="text-xs opacity-50 text-center px-6">Tap any product to add it</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-border/50">
-            {cart.map(item => {
-              const itemProfit = isOwner && item.product.purchasePrice
-                ? item.qty * (item.unitPrice - item.product.purchasePrice) : null;
-              return (
-                <div key={item.product.id} className="px-4 py-3">
-                  <div className="flex justify-between items-start gap-2 mb-2.5">
-                    <span className="text-sm font-semibold text-foreground leading-snug flex-1 pr-1">{item.product.canonicalName}</span>
-                    <button onClick={() => removeFromCart(item.product.id)} className="text-muted-foreground/40 hover:text-destructive transition-colors shrink-0 p-0.5">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center bg-muted/50 rounded-lg border border-border/60 overflow-hidden">
-                      <button className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" onClick={() => updateQty(item.product.id, -1)}>
-                        <Minus className="h-3.5 w-3.5" />
-                      </button>
-                      <span className="w-8 text-center text-sm font-bold">{item.qty}</span>
-                      <button className="h-8 w-8 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors" onClick={() => updateQty(item.product.id, 1)} disabled={item.qty >= item.product.stockQty}>
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-muted-foreground">KSh</span>
-                      <input type="number" value={item.unitPrice} onChange={e => updatePrice(item.product.id, Number(e.target.value))}
-                        className="w-20 h-8 text-right text-sm font-medium bg-muted/30 border border-border/60 rounded-lg px-2 focus:outline-none focus:border-primary/60" />
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-bold text-sm font-mono">{formatKES(item.qty * item.unitPrice)}</p>
-                      {isOwner && itemProfit !== null && (
-                        <p className={cn("text-[10px] font-mono", itemProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
-                          +{formatKES(itemProfit)}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </ScrollArea>
-
-      {cart.length > 0 && (
-        <div className="shrink-0 border-t border-border">
-          <div className="px-4 py-3 space-y-1.5 bg-card">
-            <div className="flex justify-between text-sm text-muted-foreground">
-              <span>Subtotal ({cartCount} items)</span>
-              <span className="font-mono">{formatKES(subtotal)}</span>
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Discount (KSh)</span>
-                <input type="number" min={0} max={subtotal} value={discount || ""} onChange={e => setDiscount(Number(e.target.value))}
-                  placeholder="0" className="w-24 h-7 text-right text-sm font-mono bg-muted/30 border border-border/60 rounded-lg px-2 focus:outline-none focus:border-primary/60" />
-              </div>
-              <div className="flex gap-1.5 flex-wrap">
-                {[5, 10, 15, 20].map(pct => (
-                  <button key={pct} onClick={() => setDiscount(Math.round(subtotal * pct / 100))} className={cn(
-                    "text-[10px] font-bold px-2 py-1 rounded-full transition-all",
-                    discount === Math.round(subtotal * pct / 100) ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground hover:bg-primary/20 hover:text-primary"
-                  )}>
-                    {pct}%
-                  </button>
-                ))}
-                {discount > 0 && (
-                  <button onClick={() => setDiscount(0)} className="text-[10px] font-bold px-2 py-1 rounded-full bg-destructive/15 text-destructive hover:bg-destructive/25 transition-all">
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="flex justify-between items-center pt-1.5 border-t border-border/60">
-              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total</span>
-              <span className="text-2xl font-bold text-primary font-mono">{formatKES(total)}</span>
-            </div>
-            {isOwner && totalProfit > 0 && (
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground/60 flex items-center gap-1">
-                  <TrendingUp className="h-3 w-3 text-emerald-400" />Est. Profit
-                </span>
-                <span className="font-mono text-emerald-400 font-semibold">{formatKES(totalProfit)}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="px-4 pb-3 space-y-2 bg-card">
-            <div className="space-y-1.5">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">
-                Customer name (required for debt)
-              </Label>
-              <input type="text" placeholder="e.g. John Kamau" value={debtCustomerName} onChange={e => setDebtCustomerName(e.target.value)}
-                onPointerDown={e => e.stopPropagation()}
-                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60" />
-            </div>
-            <div className="space-y-1.5">
-              <input type="tel" placeholder="Phone (optional)" value={debtCustomerPhone} onChange={e => setDebtCustomerPhone(e.target.value)}
-                onPointerDown={e => e.stopPropagation()}
-                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60" />
-            </div>
-          </div>
-
-          <div className="px-4 pb-4 grid grid-cols-2 gap-2 bg-card">
-            <Button variant="outline" className="h-12 font-bold text-sm border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={createSale.isPending} onClick={() => handleCheckout("debt")}>
-              <CreditCard className="h-4 w-4 mr-1.5" />Debt Sale
-            </Button>
-            <Button className="h-12 font-bold text-sm bg-primary hover:bg-primary/90 text-primary-foreground active:scale-[0.98] transition-all shadow-lg shadow-primary/20" disabled={createSale.isPending} onClick={() => handleCheckout("cash")}>
-              <Banknote className="h-4 w-4 mr-1.5" />Cash Sale
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  const cartPanelProps: CartPanelProps = {
+    cart, discount, debtCustomerName, debtCustomerPhone, isOwner,
+    createSalePending: createSale.isPending,
+    subtotal, total, totalProfit, cartCount,
+    setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
+    setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout,
+  };
 
   return (
     <div className="flex flex-col lg:flex-row h-full bg-background overflow-hidden">
@@ -625,7 +671,7 @@ export default function POS() {
 
       {/* Desktop Cart */}
       <div className="hidden lg:flex flex-col w-[340px] xl:w-[380px] shrink-0 border-l border-border overflow-hidden">
-        <CartPanel />
+        <CartPanel {...cartPanelProps} />
       </div>
 
       {/* Mobile: Cart FAB */}
@@ -647,7 +693,7 @@ export default function POS() {
       <Dialog open={showCartMobile} onOpenChange={setShowCartMobile}>
         <DialogContent className="p-0 h-[92svh] max-h-[92svh] flex flex-col sm:max-w-md border-border bg-card rounded-t-2xl">
           <DialogHeader className="sr-only"><DialogTitle>Cart</DialogTitle></DialogHeader>
-          <div className="flex-1 flex flex-col min-h-0"><CartPanel /></div>
+          <div className="flex-1 flex flex-col min-h-0"><CartPanel {...cartPanelProps} /></div>
         </DialogContent>
       </Dialog>
 
