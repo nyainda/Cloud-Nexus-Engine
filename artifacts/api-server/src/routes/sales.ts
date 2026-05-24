@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, inventoryMovements, notifications } from "@workspace/db/schema";
+import { kvDel, CK } from "../lib/cache";
 
 const salesRouter = new Hono<AppEnv>();
 
@@ -188,6 +189,14 @@ salesRouter.post("/sales", requireAuth, async (c) => {
       createdAt: now,
     });
   }
+
+  // Bust products + today's dashboard cache so next read is fresh from D1
+  const today = new Date().toISOString().slice(0, 10);
+  await kvDel(
+    c.env.SESSIONS,
+    CK.products(body.shopId),
+    CK.dashboard(body.shopId, today),
+  );
 
   const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
   return c.json(sale!, 201);

@@ -3,6 +3,7 @@ import { eq, and, like, or, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
+import { kvGet, kvSet, kvDel, CK, CACHE_TTL } from "../lib/cache";
 import {
   products,
   productAliases,
@@ -88,6 +89,12 @@ productsRouter.get("/products", requireAuth, async (c) => {
     }
   }
 
+  // ── KV cache: full product list (no search / no filter) ──────────────────────
+  if (!q && !category && !lowStock && shopId) {
+    const cached = await kvGet<object>(c.env.SESSIONS, CK.products(shopId));
+    if (cached) return c.json(cached);
+  }
+
   // ── Non-search / fallback path: SQL WHERE with LIKE ─────────────────────────
   const conditions: ReturnType<typeof eq>[] = [];
   if (shopId) conditions.push(eq(products.shopId, shopId));
@@ -115,7 +122,7 @@ productsRouter.get("/products", requireAuth, async (c) => {
   ]);
 
   const total = Number(countRows[0]?.n ?? 0);
-  return c.json({
+  const payload = {
     products: rows.map((p) => {
       // Strip heavy internal fields never used by the frontend
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -123,7 +130,12 @@ productsRouter.get("/products", requireAuth, async (c) => {
       return rest;
     }),
     total,
-  });
+  };
+  // Cache the full list (no search/filter) so subsequent reads skip D1
+  if (!q && !category && !lowStock && shopId) {
+    await kvSet(c.env.SESSIONS, CK.products(shopId), payload, CACHE_TTL.products);
+  }
+  return c.json(payload);
 });
 
 productsRouter.post("/products", requireAuth, async (c) => {
@@ -173,6 +185,7 @@ productsRouter.post("/products", requireAuth, async (c) => {
     .from(products)
     .where(eq(products.id, id))
     .get();
+  await kvDel(c.env.SESSIONS, CK.products(body.shopId));
   return c.json(
     { ...product!, tokens: product!.tokensJson ? JSON.parse(product!.tokensJson) : null },
     201,
@@ -289,6 +302,7 @@ productsRouter.post("/products/bulk-import", requireAuth, async (c) => {
     }
   }
 
+  await kvDel(c.env.SESSIONS, CK.products(body.shopId));
   return c.json({ created, skipped, merged, errors });
 });
 
@@ -355,6 +369,7 @@ productsRouter.patch("/products/:productId", requireAuth, async (c) => {
     .where(eq(products.id, c.req.param("productId")))
     .get();
   if (!product) return c.json({ error: "Not found" }, 404);
+  await kvDel(c.env.SESSIONS, CK.products(existing.shopId));
   return c.json({
     ...product,
     tokens: product.tokensJson ? JSON.parse(product.tokensJson) : null,
@@ -372,6 +387,7 @@ productsRouter.delete("/products/:productId", requireAuth, async (c) => {
     .update(products)
     .set({ isActive: false, updatedAt: new Date().toISOString() })
     .where(eq(products.id, productId));
+  await kvDel(c.env.SESSIONS, CK.products(existing.shopId));
   return c.body(null, 204);
 });
 
@@ -470,6 +486,7 @@ productsRouter.post("/products/:productId/restock", requireAuth, async (c) => {
     .from(products)
     .where(eq(products.id, productId))
     .get();
+  await kvDel(c.env.SESSIONS, CK.products(product.shopId));
   return c.json({
     ...updated!,
     tokens: updated!.tokensJson ? JSON.parse(updated!.tokensJson) : null,

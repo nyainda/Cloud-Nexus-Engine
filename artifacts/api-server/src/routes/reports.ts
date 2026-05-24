@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, notifications } from "@workspace/db/schema";
+import { kvGet, kvSet, CK, CACHE_TTL } from "../lib/cache";
 
 const reportsRouter = new Hono<AppEnv>();
 
@@ -11,6 +12,13 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const shopId = c.req.query("shopId") ?? null;
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
+
+  // ── KV cache (5 min TTL, busted on every sale or debt payment) ──────────────
+  if (shopId) {
+    const ck = CK.dashboard(shopId, date);
+    const cached = await kvGet<object>(c.env.SESSIONS, ck);
+    if (cached) return c.json(cached);
+  }
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
 
@@ -94,7 +102,7 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     .sort((a, b) => b.totalRevenue - a.totalRevenue)
     .slice(0, 5);
 
-  return c.json({
+  const dashPayload = {
     date,
     shopId,
     totalRevenue,
@@ -109,7 +117,11 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     outOfStockCount,
     pendingDebtsTotal,
     unreadNotificationsCount: unreadNotifications.length,
-  });
+  };
+  if (shopId) {
+    await kvSet(c.env.SESSIONS, CK.dashboard(shopId, date), dashPayload, CACHE_TTL.dashboard);
+  }
+  return c.json(dashPayload);
 });
 
 reportsRouter.get("/reports/range", requireAuth, async (c) => {
