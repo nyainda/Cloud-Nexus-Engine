@@ -535,8 +535,18 @@ export default function POS() {
             </div>
           ) : (
             <>
+              {!debouncedSearch && stockFilter === "all" && filteredProducts.length > 200 && (
+                <div className="flex items-center gap-2 mb-3 px-1 py-2.5 rounded-xl bg-muted/30 border border-border/40">
+                  <Search className="h-3.5 w-3.5 text-muted-foreground/50 ml-2 shrink-0" />
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Showing first <span className="font-bold text-foreground/60">200</span> of{" "}
+                    <span className="font-bold text-foreground/60">{filteredProducts.length.toLocaleString()}</span>{" "}
+                    products — search above to find any product instantly
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-                {filteredProducts.map(product => {
+                {(debouncedSearch || stockFilter !== "all" ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
                   const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
                   const isOut = product.stockQty === 0;
                   const weighed = isWeighedUnit(product.unit || "");
@@ -598,7 +608,13 @@ export default function POS() {
 
               {filteredProducts.length > 0 && (
                 <p className="text-center text-[11px] text-muted-foreground/40 mt-4 pb-2">
-                  {debouncedSearch ? `${filteredProducts.length.toLocaleString()} results` : `${filteredProducts.length.toLocaleString()} products`}
+                  {debouncedSearch
+                    ? `${filteredProducts.length.toLocaleString()} results`
+                    : stockFilter !== "all"
+                    ? `${filteredProducts.length.toLocaleString()} products`
+                    : filteredProducts.length > 200
+                    ? `Showing 200 of ${filteredProducts.length.toLocaleString()} — search to see all`
+                    : `${filteredProducts.length.toLocaleString()} products`}
                 </p>
               )}
             </>

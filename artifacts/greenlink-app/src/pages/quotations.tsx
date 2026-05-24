@@ -9,10 +9,11 @@ import {
   Plus, Search, X, Printer, Trash2, FileText, Receipt,
   ChevronLeft, CheckCircle2, Clock, Send, XCircle,
   Edit3, Package, Phone, MapPin, User, Calendar,
-  StickyNote, Tag, ChevronDown, Loader2, MoreVertical
+  StickyNote, Tag, ChevronDown, Loader2, MoreVertical, ArrowRight,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 const shopId = () => localStorage.getItem("greenlink_shopId") || "";
 const shopName = () => localStorage.getItem("greenlink_shopName") || "Shop";
@@ -100,6 +101,152 @@ function StatusBadge({ status }: { status: string }) {
       <Icon className="h-3 w-3" />
       {c.label}
     </span>
+  );
+}
+
+// ── Convert to Invoice dialog ───────────────────────────────────────────────────
+function ConvertToInvoiceDialog({
+  quotation,
+  onConverted,
+}: {
+  quotation: Quotation;
+  onConverted: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [markAccepted, setMarkAccepted] = useState(true);
+  const qc = useQueryClient();
+
+  const convertMutation = useMutation({
+    mutationFn: async () => {
+      const invoice = await createQuotation({
+        type: "invoice",
+        customerName: quotation.customer_name,
+        customerPhone: quotation.customer_phone,
+        customerAddress: quotation.customer_address,
+        notes: quotation.notes ?? undefined,
+        discount: quotation.discount,
+        items: (quotation.items ?? []).map(i => ({
+          productId: i.productId,
+          productName: i.productName,
+          unit: i.unit,
+          unitPrice: i.unitPrice,
+          qty: i.qty,
+        })),
+      });
+      if (markAccepted) await updateQuotation(quotation.id, { status: "accepted" });
+      return invoice;
+    },
+    onSuccess: (invoice) => {
+      qc.invalidateQueries({ queryKey: ["quotations"] });
+      toast.success(`Invoice ${invoice.quote_number} created!`);
+      setOpen(false);
+      onConverted(invoice.id);
+    },
+    onError: () => toast.error("Conversion failed — try again"),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={o => { setOpen(o); }}>
+      <DialogTrigger asChild>
+        <button className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-all active:scale-[0.98] shadow-md shadow-primary/15">
+          <Receipt className="h-4 w-4" />
+          Convert to Invoice
+          <ArrowRight className="h-3.5 w-3.5 opacity-60" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-sm p-0 overflow-hidden border-border">
+        <DialogHeader className="sr-only"><DialogTitle>Convert to Invoice</DialogTitle></DialogHeader>
+
+        {/* Visual transform header */}
+        <div className="px-6 pt-6 pb-5 border-b border-border/60 bg-gradient-to-br from-card to-muted/10">
+          <div className="flex items-center gap-3 mb-5">
+            {/* Source card */}
+            <div className="flex-1 rounded-xl border border-border bg-muted/40 p-3.5 text-center">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/60 mb-2">From</p>
+              <FileText className="h-6 w-6 text-muted-foreground/50 mx-auto mb-2" />
+              <p className="text-[10px] font-bold font-mono text-foreground">{quotation.quote_number}</p>
+              <p className="text-[9px] text-muted-foreground/40 mt-0.5">Quotation</p>
+            </div>
+            {/* Arrow */}
+            <div className="w-9 h-9 rounded-full bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
+              <ArrowRight className="h-4 w-4 text-primary" />
+            </div>
+            {/* Destination card */}
+            <div className="flex-1 rounded-xl border border-primary/30 bg-primary/8 p-3.5 text-center">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-primary/70 mb-2">To</p>
+              <Receipt className="h-6 w-6 text-primary mx-auto mb-2" />
+              <p className="text-[10px] font-bold font-mono text-primary">INV-####</p>
+              <p className="text-[9px] text-primary/40 mt-0.5">Invoice</p>
+            </div>
+          </div>
+          <p className="text-sm font-bold text-foreground">Convert to Invoice</p>
+          <p className="text-[11px] text-muted-foreground/70 mt-1 leading-relaxed">
+            A new invoice is created with all items and customer details copied across.
+          </p>
+        </div>
+
+        {/* Details */}
+        <div className="px-6 py-4 space-y-3">
+          <div className="rounded-xl border border-border bg-muted/20 overflow-hidden divide-y divide-border/50">
+            <div className="flex items-center justify-between px-4 py-2.5 text-xs">
+              <span className="text-muted-foreground flex items-center gap-1.5"><User className="h-3 w-3" />Customer</span>
+              <span className="font-semibold text-foreground truncate max-w-[150px]">{quotation.customer_name}</span>
+            </div>
+            <div className="flex items-center justify-between px-4 py-2.5 text-xs">
+              <span className="text-muted-foreground flex items-center gap-1.5"><Package className="h-3 w-3" />Items</span>
+              <span className="font-semibold text-foreground">{quotation.items?.length ?? 0} line items</span>
+            </div>
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total</span>
+              <span className="font-bold font-mono text-primary text-sm">{formatKES(quotation.total)}</span>
+            </div>
+          </div>
+
+          {/* Toggle */}
+          <button
+            type="button"
+            onClick={() => setMarkAccepted(m => !m)}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left",
+              markAccepted ? "bg-emerald-500/5 border-emerald-500/20" : "bg-muted/20 border-border/50 hover:bg-muted/30"
+            )}
+          >
+            <div className={cn(
+              "w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
+              markAccepted ? "bg-emerald-500 border-emerald-500" : "border-border/60 bg-transparent"
+            )}>
+              {markAccepted && <CheckCircle2 className="h-3 w-3 text-white" />}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-foreground">Mark quotation as Accepted</p>
+              <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                Updates {quotation.quote_number} status automatically
+              </p>
+            </div>
+          </button>
+        </div>
+
+        {/* Actions */}
+        <div className="px-6 pb-6 flex gap-2.5">
+          <button
+            onClick={() => setOpen(false)}
+            className="h-11 px-5 rounded-xl bg-muted text-muted-foreground text-sm font-semibold hover:bg-muted/70 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => convertMutation.mutate()}
+            disabled={convertMutation.isPending}
+            className="flex-1 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2 shadow-md shadow-primary/15"
+          >
+            {convertMutation.isPending
+              ? <><Loader2 className="h-4 w-4 animate-spin" />Creating…</>
+              : <><Receipt className="h-4 w-4" />Create Invoice</>
+            }
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -599,7 +746,12 @@ function QuoteBuilder({ docType, initial, onSaved, onCancel }: BuilderProps) {
 }
 
 // ── Detail view ────────────────────────────────────────────────────────────────
-function QuoteDetail({ id, onBack, onEdit }: { id: string; onBack: () => void; onEdit: (q: Quotation) => void }) {
+function QuoteDetail({ id, onBack, onEdit, onConverted }: {
+  id: string;
+  onBack: () => void;
+  onEdit: (q: Quotation) => void;
+  onConverted: (id: string) => void;
+}) {
   const qc = useQueryClient();
   const { data: q, isLoading } = useQuery({
     queryKey: ["quotations", id],
@@ -759,11 +911,14 @@ function QuoteDetail({ id, onBack, onEdit }: { id: string; onBack: () => void; o
         <div className="flex gap-2">
           <button
             onClick={() => printQuotation(q)}
-            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-border bg-card text-sm font-bold hover:bg-muted/60 transition-colors"
+            className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-border bg-card text-sm font-bold hover:bg-muted/60 transition-colors"
           >
             <Printer className="h-4 w-4" />
-            Print / PDF
+            Print
           </button>
+          {q.type === "quotation" && (
+            <ConvertToInvoiceDialog quotation={q} onConverted={onConverted} />
+          )}
         </div>
       </div>
     </div>
@@ -806,6 +961,7 @@ export default function QuotationsPage() {
           id={view.id}
           onBack={() => setView({ kind: "list" })}
           onEdit={q => setView({ kind: "build", docType: q.type, editing: q })}
+          onConverted={newId => setView({ kind: "detail", id: newId })}
         />
       </div>
     );
