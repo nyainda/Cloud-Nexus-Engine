@@ -692,7 +692,7 @@ function QuoteBuilder({ docType, initial, onSaved, onCancel }: BuilderProps) {
         discount,
         items: items.map(it => ({
           productId: it.productId ?? undefined,
-          productName: (it.productName ?? "").trim() || it.productId ?? "Product",
+          productName: (it.productName ?? "").trim() || (it.productId ?? "Product"),
           unit: it.unit ?? "unit",
           unitPrice: it.unitPrice,
           qty: it.qty,
