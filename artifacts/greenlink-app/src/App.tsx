@@ -2,18 +2,17 @@ import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { setBaseUrl, setAuthTokenGetter } from "@workspace/api-client-react";
+import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions } from "@workspace/api-client-react";
 import { useEffect, useRef, useState, lazy, Suspense, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { useGetSession } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { getCachedSession, setCachedSession } from "@/lib/session-cache";
 
-// Login is EAGERLY imported — it's the critical first screen, must never flash black
+// Login and POS are EAGERLY imported — they are the two critical first screens
 import Login from "@/pages/login";
+import POS from "@/pages/pos";
 import Layout from "@/components/layout";
-
-// All other pages are lazy — loaded only when navigated to
-const POS = lazy(() => import("@/pages/pos"));
 const Stock = lazy(() => import("@/pages/stock"));
 const Debts = lazy(() => import("@/pages/debts"));
 const Alerts = lazy(() => import("@/pages/alerts"));
@@ -105,6 +104,8 @@ function AuthGuard({ children }: { children: ReactNode }) {
 
   const [ready, setReady] = useState(!!token && !!cachedSession);
   const redirectedRef = useRef(false);
+  const prefetchedRef = useRef(false);
+  const qc = useQueryClient();
 
   const { data: session, isLoading, error } = useGetSession({
     query: { enabled: !!token },
@@ -127,9 +128,15 @@ function AuthGuard({ children }: { children: ReactNode }) {
       } else {
         setCachedSession(session);
         setReady(true);
+        // Pre-warm the product cache so POS loads instantly on first click
+        if (!prefetchedRef.current && session.shopId) {
+          prefetchedRef.current = true;
+          const opts = getListProductsQueryOptions({ shopId: session.shopId, limit: 3000 });
+          qc.prefetchQuery({ ...opts, staleTime: 60_000 });
+        }
       }
     }
-  }, [token, session, isLoading, error, setLocation]);
+  }, [token, session, isLoading, error, setLocation, qc]);
 
   if (!token) return <Login />;
   if (!ready) return <PageLoader />;

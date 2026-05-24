@@ -201,7 +201,7 @@ export default function POS() {
   const qc = useQueryClient();
 
   const [search, setSearch] = useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const debouncedSearch = useDebounce(search, 100);
   const [stockFilter, setStockFilter] = useState<StockFilter>("all");
 
   const { data: productsData, isLoading } = useListProducts(
