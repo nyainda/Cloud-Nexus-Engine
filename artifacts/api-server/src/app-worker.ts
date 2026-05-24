@@ -20,7 +20,7 @@ import ocrRouter from "./routes/ocr";
 import storageRouter from "./routes/storage";
 import auditRouter from "./routes/audit";
 import healthRouter from "./routes/health";
-import quotationsRouter from "./routes/quotations";
+
 import pushRouter from "./routes/push";
 
 const SHOP_A_ID = "shop-greenlink";
@@ -73,7 +73,6 @@ app.route("/api", ocrRouter);
 app.route("/api", storageRouter);
 app.route("/api", auditRouter);
 app.route("/api", healthRouter);
-app.route("/api", quotationsRouter);
 app.route("/api", pushRouter);
 
 app.all("*", (c) => c.json({ error: "Not found" }, 404));

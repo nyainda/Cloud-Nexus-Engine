@@ -185,34 +185,4 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   keys_auth TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS quotations (
-  id TEXT PRIMARY KEY,
-  shop_id TEXT NOT NULL REFERENCES shops(id),
-  quote_number TEXT NOT NULL,
-  type TEXT NOT NULL DEFAULT 'quotation',
-  customer_name TEXT NOT NULL,
-  customer_phone TEXT NOT NULL DEFAULT '',
-  customer_address TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'draft',
-  valid_until TEXT,
-  notes TEXT,
-  subtotal REAL NOT NULL DEFAULT 0,
-  discount REAL NOT NULL DEFAULT 0,
-  total REAL NOT NULL DEFAULT 0,
-  created_by TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS quotation_items (
-  id TEXT PRIMARY KEY,
-  quotation_id TEXT NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
-  product_id TEXT,
-  product_name TEXT NOT NULL,
-  unit TEXT NOT NULL DEFAULT 'unit',
-  unit_price REAL NOT NULL,
-  qty REAL NOT NULL,
-  total REAL NOT NULL
-);
 `;
