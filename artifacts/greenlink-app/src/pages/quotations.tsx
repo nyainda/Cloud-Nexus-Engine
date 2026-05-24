@@ -282,7 +282,8 @@ function ConvertToInvoiceDialog({
 }
 
 // ── Print view ─────────────────────────────────────────────────────────────────
-function printQuotation(q: Quotation) {
+function printQuotation(q?: Quotation) {
+  if (!q) return;
   const safeItems = normalizeItems(q.items);
   const shop = shopName();
   const docType = q.type === "invoice" ? "INVOICE" : "QUOTATION";
@@ -382,7 +383,8 @@ ${q.notes ? `<div class="notes"><strong>Notes</strong>${q.notes}</div>` : ""}
 }
 
 // ── Share / download as PDF ────────────────────────────────────────────────────
-async function shareAsPdf(q: Quotation): Promise<void> {
+async function shareAsPdf(q?: Quotation): Promise<void> {
+  if (!q) throw new Error("Document is not loaded yet");
   const { jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
 
