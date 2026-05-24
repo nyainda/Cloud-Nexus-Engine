@@ -91,12 +91,28 @@ export const priceHistory = sqliteTable("price_history", {
 export type PriceHistoryRow = typeof priceHistory.$inferSelect;
 export type InsertPriceHistory = typeof priceHistory.$inferInsert;
 
+// ─── customers ───────────────────────────────────────────────────────────────
+export const customers = sqliteTable("customers", {
+  id: pk(),
+  shopId: text("shop_id").notNull().references(() => shops.id),
+  name: text("name").notNull(),
+  phone: text("phone").notNull().default(""),
+  email: text("email"),
+  notes: text("notes"),
+  createdAt: createdAt(),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export type Customer = typeof customers.$inferSelect;
+export type InsertCustomer = typeof customers.$inferInsert;
+
 // ─── sales ───────────────────────────────────────────────────────────────────
 export const sales = sqliteTable("sales", {
   id: pk(),
   shopId: text("shop_id")
     .notNull()
     .references(() => shops.id),
+  customerId: text("customer_id"),
   totalAmount: real("total_amount").notNull().default(0),
   totalCost: real("total_cost"),
   totalProfit: real("total_profit"),
@@ -141,6 +157,7 @@ export const debts = sqliteTable("debts", {
   shopId: text("shop_id")
     .notNull()
     .references(() => shops.id),
+  customerId: text("customer_id"),
   saleId: text("sale_id"),
   customerName: text("customer_name").notNull(),
   customerPhone: text("customer_phone").notNull().default(""),
@@ -258,6 +275,68 @@ export const stockTransfers = sqliteTable("stock_transfers", {
 
 export type StockTransfer = typeof stockTransfers.$inferSelect;
 export type InsertStockTransfer = typeof stockTransfers.$inferInsert;
+
+// ─── bundles ──────────────────────────────────────────────────────────────────
+export const bundles = sqliteTable("bundles", {
+  id: pk(),
+  shopId: text("shop_id").notNull().references(() => shops.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  priceOverride: real("price_override"),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export type Bundle = typeof bundles.$inferSelect;
+export type InsertBundle = typeof bundles.$inferInsert;
+
+export const bundleItems = sqliteTable("bundle_items", {
+  id: pk(),
+  bundleId: text("bundle_id").notNull().references(() => bundles.id, { onDelete: "cascade" }),
+  productId: text("product_id").notNull(),
+  productName: text("product_name").notNull(),
+  qty: real("qty").notNull().default(1),
+});
+
+export type BundleItem = typeof bundleItems.$inferSelect;
+export type InsertBundleItem = typeof bundleItems.$inferInsert;
+
+// ─── returns ──────────────────────────────────────────────────────────────────
+export const returns = sqliteTable("returns", {
+  id: pk(),
+  shopId: text("shop_id").notNull().references(() => shops.id),
+  returnNumber: text("return_number").notNull(),
+  originalSaleId: text("original_sale_id"),
+  customerName: text("customer_name").notNull().default(""),
+  customerPhone: text("customer_phone").notNull().default(""),
+  totalRefund: real("total_refund").notNull().default(0),
+  status: text("status").notNull().default("pending"),
+  reason: text("reason").notNull(),
+  notes: text("notes"),
+  handledBy: text("handled_by"),
+  handledAt: text("handled_at"),
+  createdBy: text("created_by").notNull().default(""),
+  createdAt: createdAt(),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export type Return = typeof returns.$inferSelect;
+export type InsertReturn = typeof returns.$inferInsert;
+
+export const returnItems = sqliteTable("return_items", {
+  id: pk(),
+  returnId: text("return_id").notNull().references(() => returns.id, { onDelete: "cascade" }),
+  productId: text("product_id"),
+  productName: text("product_name").notNull(),
+  qty: real("qty").notNull(),
+  unitPrice: real("unit_price").notNull(),
+  total: real("total").notNull(),
+  condition: text("condition").notNull().default("resaleable"),
+});
+
+export type ReturnItem = typeof returnItems.$inferSelect;
+export type InsertReturnItem = typeof returnItems.$inferInsert;
 
 // ─── scan sessions ───────────────────────────────────────────────────────────
 export const scanSessions = sqliteTable("scan_sessions", {

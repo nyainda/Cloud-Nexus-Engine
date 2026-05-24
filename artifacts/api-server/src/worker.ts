@@ -66,6 +66,65 @@ async function bootstrapD1(db: D1Database): Promise<void> {
        INSERT INTO products_fts(products_fts, rowid, id, shop_id, normalized_name, canonical_name, sku, category)
        VALUES ('delete', old.rowid, old.id, old.shop_id, old.normalized_name, old.canonical_name, COALESCE(old.sku,''), COALESCE(old.category,''));
      END`,
+    // Customer profiles
+    `CREATE TABLE IF NOT EXISTS customers (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      email TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    "ALTER TABLE sales ADD COLUMN customer_id TEXT",
+    "ALTER TABLE debts ADD COLUMN customer_id TEXT",
+    // Product bundles
+    `CREATE TABLE IF NOT EXISTS bundles (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      price_override REAL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS bundle_items (
+      id TEXT PRIMARY KEY,
+      bundle_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      qty REAL NOT NULL DEFAULT 1
+    )`,
+    // Product returns
+    `CREATE TABLE IF NOT EXISTS returns (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      return_number TEXT NOT NULL,
+      original_sale_id TEXT,
+      customer_name TEXT NOT NULL DEFAULT '',
+      customer_phone TEXT NOT NULL DEFAULT '',
+      total_refund REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      reason TEXT NOT NULL,
+      notes TEXT,
+      handled_by TEXT,
+      handled_at TEXT,
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS return_items (
+      id TEXT PRIMARY KEY,
+      return_id TEXT NOT NULL,
+      product_id TEXT,
+      product_name TEXT NOT NULL,
+      qty REAL NOT NULL,
+      unit_price REAL NOT NULL,
+      total REAL NOT NULL,
+      condition TEXT NOT NULL DEFAULT 'resaleable'
+    )`,
   ];
   for (const m of MIGRATIONS) {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }

@@ -21,6 +21,9 @@ const OCR = lazy(() => import("@/pages/ocr"));
 const Settings = lazy(() => import("@/pages/settings"));
 const OwnerDashboard = lazy(() => import("@/pages/owner-dashboard"));
 const SalesHistory = lazy(() => import("@/pages/sales-history"));
+const Customers = lazy(() => import("@/pages/customers"));
+const Bundles = lazy(() => import("@/pages/bundles"));
+const Returns = lazy(() => import("@/pages/returns"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
 const queryClient = new QueryClient({
@@ -164,6 +167,9 @@ function AppRoutes() {
                 <Route path="/settings" component={Settings} />
                 <Route path="/owner-dashboard" component={OwnerDashboard} />
                 <Route path="/sales-history" component={SalesHistory} />
+                <Route path="/customers" component={Customers} />
+                <Route path="/bundles" component={Bundles} />
+                <Route path="/returns" component={Returns} />
                 <Route component={NotFound} />
               </Switch>
             </Suspense>

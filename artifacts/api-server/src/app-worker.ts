@@ -22,6 +22,9 @@ import auditRouter from "./routes/audit";
 import healthRouter from "./routes/health";
 
 import pushRouter from "./routes/push";
+import customersRouter from "./routes/customers";
+import bundlesRouter from "./routes/bundles";
+import returnsRouter from "./routes/returns";
 
 const SHOP_A_ID = "shop-greenlink";
 const SHOP_B_ID = "shop-sunrise";
@@ -74,6 +77,9 @@ app.route("/api", storageRouter);
 app.route("/api", auditRouter);
 app.route("/api", healthRouter);
 app.route("/api", pushRouter);
+app.route("/api", customersRouter);
+app.route("/api", bundlesRouter);
+app.route("/api", returnsRouter);
 
 app.all("*", (c) => c.json({ error: "Not found" }, 404));
 
