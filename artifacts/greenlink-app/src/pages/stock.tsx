@@ -94,16 +94,25 @@ function RestockDialog({ product }: { product: any }) {
     restockMutation.mutate(
       { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
       {
-        onSuccess: () => {
+        onSuccess: (updatedProduct: any) => {
           toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`);
           setOpen(false);
           setQty(1);
-          // refetchQueries bypasses staleTime and forces an immediate server sync
-          qc.refetchQueries({ queryKey: getListProductsQueryKey() });
+          // Update cache directly from confirmed server response — avoids KV cache race
+          // (GET /api/products uses KV caching; refetching immediately after restock
+          //  can return the stale cached value before KV is invalidated)
+          qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+            if (!old?.products) return old;
+            return { ...old, products: old.products.map((p: any) =>
+              p.id === updatedProduct.id
+                ? { ...p, stockQty: updatedProduct.stockQty, purchasePrice: updatedProduct.purchasePrice, sellingPrice: updatedProduct.sellingPrice }
+                : p
+            )};
+          });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
         },
         onError: () => {
-          // Revert by re-fetching fresh data from server
+          // Revert optimistic update by refetching fresh data from server
           qc.refetchQueries({ queryKey: getListProductsQueryKey() });
           toast.error("Failed to update stock");
         },
@@ -222,10 +231,13 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
           toast.success("Product updated");
           setOpen(false);
           onSuccess();
-          qc.refetchQueries({ queryKey: getListProductsQueryKey() });
+          // Optimistic update already applied the correct values to the cache.
+          // Do NOT refetch — the GET uses KV caching and a refetch right after
+          // the write races the KV invalidation, returning the stale old value.
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
         },
         onError: () => {
+          // Revert optimistic update by refetching fresh data from server
           qc.refetchQueries({ queryKey: getListProductsQueryKey() });
           toast.error("Failed to update product");
         },

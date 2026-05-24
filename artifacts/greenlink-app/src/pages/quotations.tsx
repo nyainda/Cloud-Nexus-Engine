@@ -119,6 +119,7 @@ function ConvertToInvoiceDialog({
   const convertMutation = useMutation({
     mutationFn: async () => {
       const invoice = await createQuotation({
+        shopId: quotation.shop_id,
         type: "invoice",
         customerName: quotation.customer_name,
         customerPhone: quotation.customer_phone,
@@ -674,6 +675,7 @@ function QuoteBuilder({ docType, initial, onSaved, onCancel }: BuilderProps) {
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = {
+        shopId: shopId(),
         type: docType,
         customerName,
         customerPhone,
