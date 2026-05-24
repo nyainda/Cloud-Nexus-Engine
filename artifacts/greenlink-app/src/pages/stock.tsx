@@ -2,7 +2,8 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useListProducts, useRestockProduct, useCreateProduct, useUpdateProduct,
-  useDeleteProduct, useBulkImportProducts, getListProductsQueryKey, customFetch
+  useDeleteProduct, useBulkImportProducts, getListProductsQueryKey,
+  getListInventoryMovementsQueryKey, customFetch
 } from "@workspace/api-client-react";
 import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -96,7 +97,10 @@ function RestockDialog({ product }: { product: any }) {
       {
         onSuccess: () => { toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`); setOpen(false); setQty(1); },
         onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to update stock"); },
-        onSettled: () => qc.invalidateQueries({ queryKey: getListProductsQueryKey() }),
+        onSettled: () => {
+          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+        },
       }
     );
   };
@@ -208,7 +212,7 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     });
     updateProduct.mutate(
       { productId: product.id, data: patch },
-      { onSuccess: () => { toast.success("Product updated"); setOpen(false); onSuccess(); }, onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to update product"); }, onSettled: () => qc.invalidateQueries({ queryKey: getListProductsQueryKey() }) }
+      { onSuccess: () => { toast.success("Product updated"); setOpen(false); onSuccess(); }, onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to update product"); }, onSettled: () => { qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() }); } }
     );
   };
 
@@ -493,7 +497,10 @@ function DeleteProductButton({ productId, productName, onSuccess }: { productId:
     delProduct.mutate({ productId }, {
       onSuccess: () => { toast.success("Product removed"); onSuccess(); },
       onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to delete product"); },
-      onSettled: () => qc.invalidateQueries({ queryKey: getListProductsQueryKey() }),
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+        qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+      },
     });
   };
   return (
@@ -585,7 +592,7 @@ function TransferHistory({ shopId, isOwner }: { shopId: string; isOwner: boolean
 
   const cancelTransfer = useMutation({
     mutationFn: (id: string) => customFetch<any>(`/api/transfers/${id}`, { method: "DELETE" }),
-    onSuccess: () => { toast.success("Transfer cancelled & stock restored"); refetch(); qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); },
+    onSuccess: () => { toast.success("Transfer cancelled & stock restored"); refetch(); qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() }); },
     onError: (e: any) => toast.error(e.message || "Failed to cancel transfer"),
   });
 
@@ -714,7 +721,10 @@ export default function Stock() {
     };
   }, [allProducts]);
 
-  const refresh = () => qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+    qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+  };
 
   const todayStr = new Date().toISOString().split("T")[0];
   const soonStr = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];

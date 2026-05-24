@@ -28,9 +28,10 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      refetchOnWindowFocus: false,
+      refetchOnWindowFocus: true,
       refetchOnReconnect: true,
-      staleTime: 5 * 60_000,   // 5 min — data shows instantly on revisit
+      refetchOnMount: true,
+      staleTime: 30_000,        // 30s — mutations invalidate immediately; fallback keeps data fresh
       gcTime: 30 * 60_000,     // 30 min in memory
     },
   },
@@ -133,7 +134,7 @@ function AuthGuard({ children }: { children: ReactNode }) {
         if (!prefetchedRef.current && session.shopId) {
           prefetchedRef.current = true;
           const opts = getListProductsQueryOptions({ shopId: session.shopId, limit: 3000 });
-          qc.prefetchQuery({ ...opts, staleTime: 60_000 });
+          qc.prefetchQuery(opts);
         }
       }
     }

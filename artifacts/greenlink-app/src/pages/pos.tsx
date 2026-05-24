@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useListProducts, useCreateSale, getListProductsQueryKey } from "@workspace/api-client-react";
+import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -206,7 +206,7 @@ export default function POS() {
 
   const { data: productsData, isLoading } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, staleTime: 60_000 } }
+    { query: { enabled: !!shopId } }
   );
 
   const filteredProducts = useMemo(() => {
@@ -317,8 +317,9 @@ export default function POS() {
       {
         onSuccess: () => {
           toast.success(saleType === "cash" ? "✓ Cash sale complete!" : "✓ Debt recorded!");
-          if (saleType === "debt") qc.invalidateQueries({ queryKey: ['listDebts'] });
+          if (saleType === "debt") qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
         },
         onError: (err: any) => {
           qc.setQueryData(getListProductsQueryKey(), productsSnapshot);
