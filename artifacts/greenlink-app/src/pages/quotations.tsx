@@ -601,7 +601,7 @@ function ProductPicker({ onAdd }: { onAdd: (item: QuoteItem) => void }) {
                 key={p.id}
                 onClick={() => onAdd({
                   productId: p.id,
-                  productName: p.canonicalName,
+                  productName: p.canonicalName ?? p.sku ?? p.id,
                   unit: p.unit ?? "unit",
                   unitPrice: p.sellingPrice ?? 0,
                   qty: 1,
@@ -682,16 +682,16 @@ function QuoteBuilder({ docType, initial, onSaved, onCancel }: BuilderProps) {
       const payload = {
         shopId: shopId(),
         type: docType,
-        customerName,
-        customerPhone,
-        customerAddress,
+        customerName: customerName.trim(),
+        customerPhone: customerPhone.trim(),
+        customerAddress: customerAddress.trim(),
         validUntil,
         notes,
         discount,
         items: items.map(it => ({
-          productId: it.productId,
-          productName: it.productName,
-          unit: it.unit,
+          productId: it.productId ?? undefined,
+          productName: (it.productName ?? "").trim() || it.productId ?? "Product",
+          unit: it.unit ?? "unit",
           unitPrice: it.unitPrice,
           qty: it.qty,
         })),
@@ -704,7 +704,10 @@ function QuoteBuilder({ docType, initial, onSaved, onCancel }: BuilderProps) {
       toast.success(`${docType === "invoice" ? "Invoice" : "Quotation"} saved!`);
       onSaved(saved);
     },
-    onError: () => toast.error("Failed to save — please try again"),
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      toast.error(`Failed to save — ${msg}`);
+    },
   });
 
   const isValid = customerName.trim() && items.length > 0;
