@@ -9,7 +9,7 @@ import {
   Plus, Search, X, Printer, Trash2, FileText, Receipt,
   ChevronLeft, CheckCircle2, Clock, Send, XCircle,
   Edit3, Package, Phone, MapPin, User, Calendar,
-  StickyNote, Tag, ChevronDown, Loader2, MoreVertical, ArrowRight,
+  StickyNote, Tag, ChevronDown, Loader2, MoreVertical, ArrowRight, Share2,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -346,6 +346,203 @@ ${q.notes ? `<div class="notes"><strong>Notes</strong>${q.notes}</div>` : ""}
     win.document.write(html);
     win.document.close();
     win.onload = () => { win.focus(); win.print(); };
+  }
+}
+
+// ── Share / download as PDF ────────────────────────────────────────────────────
+async function shareAsPdf(q: Quotation): Promise<void> {
+  const { jsPDF } = await import("jspdf");
+  const { default: autoTable } = await import("jspdf-autotable");
+
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+  const W = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const shop = shopName();
+  const docType = q.type === "invoice" ? "INVOICE" : "QUOTATION";
+  const DARK: [number, number, number] = [10, 10, 10];
+  const LIME: [number, number, number] = [200, 255, 0];
+  const GREY: [number, number, number] = [100, 100, 100];
+  const L = 14; // left margin
+  const R = W - 14; // right edge
+
+  // ─── Header band ─────────────────────────────────────────────────────────
+  doc.setFillColor(...DARK);
+  doc.rect(0, 0, W, 30, "F");
+  doc.setFillColor(...LIME);
+  doc.rect(0, 30, W, 0.8, "F");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(17);
+  doc.setTextColor(...LIME);
+  doc.text(shop, L, 13);
+
+  doc.setFontSize(8.5);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(160, 160, 160);
+  doc.text("Retail Operations", L, 20);
+
+  doc.setFontSize(20);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(...LIME);
+  doc.text(docType, R, 12, { align: "right" });
+  doc.setFontSize(9.5);
+  doc.setTextColor(200, 200, 200);
+  doc.text(q.quote_number, R, 20, { align: "right" });
+
+  // ─── Meta: Bill To + Details ─────────────────────────────────────────────
+  let y = 42;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7);
+  doc.setTextColor(...GREY);
+  doc.text("BILL TO", L, y);
+  doc.text("DETAILS", W / 2 + 6, y);
+  y += 5.5;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(...DARK);
+  doc.text(q.customer_name, L, y);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(55, 55, 55);
+  doc.text(`Date: ${format(new Date(q.created_at), "d MMM yyyy")}`, W / 2 + 6, y);
+
+  if (q.customer_phone) {
+    y += 5.5;
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    doc.text(q.customer_phone, L, y);
+  }
+  if (q.valid_until) {
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    doc.text(`Valid until: ${format(new Date(q.valid_until), "d MMM yyyy")}`, W / 2 + 6, y + (q.customer_phone ? 0 : 5.5));
+    if (!q.customer_phone) y += 5.5;
+  }
+  if (q.customer_address) {
+    y += 5.5;
+    doc.setTextColor(110, 110, 110);
+    doc.text(q.customer_address, L, y);
+  }
+
+  // Status pill
+  const pillX = W / 2 + 6;
+  const pillY = y - (q.customer_phone ? 5.5 : 0);
+  doc.setFillColor(...DARK);
+  doc.roundedRect(pillX, pillY + 4, 26, 5.5, 1.2, 1.2, "F");
+  doc.setFontSize(7);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(...LIME);
+  doc.text(q.status.toUpperCase(), pillX + 13, pillY + 8.2, { align: "center" });
+
+  y += 12;
+
+  // ─── Line items ──────────────────────────────────────────────────────────
+  autoTable(doc, {
+    startY: y,
+    head: [["#", "Description", "Unit", "Qty", "Unit Price", "Total"]],
+    body: (q.items ?? []).map((item, i) => [
+      String(i + 1),
+      item.productName,
+      item.unit || "—",
+      String(item.qty),
+      formatKES(item.unitPrice),
+      formatKES(item.total),
+    ]),
+    theme: "plain",
+    styles: { fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 3, right: 3 }, textColor: [30, 30, 30] },
+    headStyles: { fillColor: DARK, textColor: LIME, fontStyle: "bold", fontSize: 8, cellPadding: { top: 5, bottom: 5, left: 3, right: 3 } },
+    columnStyles: {
+      0: { cellWidth: 9, halign: "center", textColor: GREY },
+      2: { cellWidth: 18, halign: "center", textColor: GREY },
+      3: { cellWidth: 14, halign: "right" },
+      4: { cellWidth: 30, halign: "right" },
+      5: { cellWidth: 32, halign: "right", fontStyle: "bold" },
+    },
+    alternateRowStyles: { fillColor: [248, 248, 248] },
+    margin: { left: L, right: L },
+  });
+
+  y = (doc as any).lastAutoTable.finalY + 10;
+
+  // ─── Totals block ────────────────────────────────────────────────────────
+  const totW = 78;
+  const totX = R - totW;
+
+  if (q.discount > 0) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    doc.text("Subtotal", totX, y);
+    doc.text(formatKES(q.subtotal), R, y, { align: "right" });
+    y += 6;
+    doc.setTextColor(200, 50, 50);
+    doc.text("Discount", totX, y);
+    doc.text(`- ${formatKES(q.discount)}`, R, y, { align: "right" });
+    y += 4;
+    doc.setDrawColor(210, 210, 210);
+    doc.line(totX, y, R, y);
+    y += 5;
+  }
+
+  doc.setFillColor(...DARK);
+  doc.roundedRect(totX - 4, y - 4, totW + 4, 12.5, 2, 2, "F");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(170, 170, 170);
+  doc.text("TOTAL", totX, y + 4);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.setTextColor(...LIME);
+  doc.text(formatKES(q.total), R - 2, y + 4.5, { align: "right" });
+  y += 20;
+
+  // ─── Notes ───────────────────────────────────────────────────────────────
+  if (q.notes) {
+    const noteLines = doc.splitTextToSize(q.notes as string, R - L - 12);
+    const noteH = noteLines.length * 5.5 + 14;
+    doc.setFillColor(246, 246, 246);
+    doc.roundedRect(L, y, R - L, noteH, 2, 2, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.setTextColor(...GREY);
+    doc.text("NOTES", L + 6, y + 6);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(60, 60, 60);
+    doc.text(noteLines, L + 6, y + 12);
+    y += noteH + 8;
+  }
+
+  // ─── Footer ──────────────────────────────────────────────────────────────
+  doc.setDrawColor(220, 220, 220);
+  doc.line(L, pageH - 16, R, pageH - 16);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(160, 160, 160);
+  doc.text(
+    `${shop} · ${docType} ${q.quote_number} · Generated ${format(new Date(), "d MMM yyyy, h:mm a")}`,
+    W / 2, pageH - 10, { align: "center" }
+  );
+
+  // ─── Share or download ───────────────────────────────────────────────────
+  const filename = `${docType}-${q.quote_number.replace(/\//g, "-")}.pdf`;
+  const blob = doc.output("blob");
+  const file = new File([blob], filename, { type: "application/pdf" });
+
+  if (navigator.canShare?.({ files: [file] })) {
+    await navigator.share({ files: [file], title: `${shop} — ${q.quote_number}` });
+  } else {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -752,6 +949,7 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
   onEdit: (q: Quotation) => void;
   onConverted: (id: string) => void;
 }) {
+  const [isSharing, setIsSharing] = useState(false);
   const qc = useQueryClient();
   const { data: q, isLoading } = useQuery({
     queryKey: ["quotations", id],
@@ -907,15 +1105,39 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
           </div>
         </div>
 
-        {/* Print / convert */}
-        <div className="flex gap-2">
-          <button
-            onClick={() => printQuotation(q)}
-            className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-border bg-card text-sm font-bold hover:bg-muted/60 transition-colors"
-          >
-            <Printer className="h-4 w-4" />
-            Print
-          </button>
+        {/* Actions: Print + Share PDF + Convert */}
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => printQuotation(q)}
+              className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-border bg-card text-sm font-bold hover:bg-muted/60 transition-colors"
+            >
+              <Printer className="h-4 w-4" />
+              Print
+            </button>
+            <button
+              onClick={async () => {
+                setIsSharing(true);
+                try {
+                  await shareAsPdf(q);
+                } catch (e: unknown) {
+                  const msg = e instanceof Error ? e.message : String(e);
+                  if (!msg.includes("AbortError") && !msg.includes("cancel")) {
+                    toast.error("Could not share PDF");
+                  }
+                } finally {
+                  setIsSharing(false);
+                }
+              }}
+              disabled={isSharing}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-border bg-card text-sm font-bold hover:bg-muted/60 transition-colors disabled:opacity-60"
+            >
+              {isSharing
+                ? <><Loader2 className="h-4 w-4 animate-spin" />Generating…</>
+                : <><Share2 className="h-4 w-4" />Share PDF</>
+              }
+            </button>
+          </div>
           {q.type === "quotation" && (
             <ConvertToInvoiceDialog quotation={q} onConverted={onConverted} />
           )}
