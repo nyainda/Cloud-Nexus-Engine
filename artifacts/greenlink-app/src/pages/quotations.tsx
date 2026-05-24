@@ -45,6 +45,30 @@ interface QuoteItem {
   total: number;
 }
 
+const cleanText = (v?: string | null, fallback = "—") => {
+  const s = (v ?? "").trim();
+  return s.length > 0 && s.toLowerCase() !== "undefined" ? s : fallback;
+};
+const cleanNumber = (v: unknown, fallback = 0): number => {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+const normalizeItems = (items?: QuoteItem[]): QuoteItem[] =>
+  (items ?? []).map((item) => {
+    const qty = Math.max(0, cleanNumber(item.qty, 0));
+    const unitPrice = Math.max(0, cleanNumber(item.unitPrice, 0));
+    const derivedTotal = qty * unitPrice;
+    const total = cleanNumber(item.total, derivedTotal);
+    return {
+      ...item,
+      productName: cleanText(item.productName, "Product"),
+      unit: cleanText(item.unit, "—"),
+      qty,
+      unitPrice,
+      total: Number.isFinite(total) ? total : derivedTotal,
+    };
+  });
+
 interface Quotation {
   id: string;
   shop_id: string;
@@ -259,6 +283,7 @@ function ConvertToInvoiceDialog({
 
 // ── Print view ─────────────────────────────────────────────────────────────────
 function printQuotation(q: Quotation) {
+  const safeItems = normalizeItems(q.items);
   const shop = shopName();
   const docType = q.type === "invoice" ? "INVOICE" : "QUOTATION";
   const html = `<!DOCTYPE html>
@@ -328,7 +353,7 @@ function printQuotation(q: Quotation) {
     </tr>
   </thead>
   <tbody>
-    ${(q.items || []).map((item, i) => `
+    ${safeItems.map((item, i) => `
     <tr>
       <td style="color:#888">${i + 1}</td>
       <td>${item.productName}</td>
@@ -365,7 +390,9 @@ async function shareAsPdf(q: Quotation): Promise<void> {
   const W = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const shop = shopName();
+  const safeItems = normalizeItems(q.items);
   const docType = q.type === "invoice" ? "INVOICE" : "QUOTATION";
+  const billLabel = q.type === "invoice" ? "Bill To" : "Quote For";
   const DARK: [number, number, number] = [10, 10, 10];
   const LIME: [number, number, number] = [200, 255, 0];
   const GREY: [number, number, number] = [100, 100, 100];
@@ -386,7 +413,10 @@ async function shareAsPdf(q: Quotation): Promise<void> {
   doc.setFontSize(8.5);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(160, 160, 160);
-  doc.text("Retail Operations", L, 20);
+  doc.text("Farm Supplies & Services Ltd", L, 20);
+  doc.setFontSize(7.5);
+  doc.setTextColor(140, 200, 140);
+  doc.text("Smart. Reliable. Profitable.", L, 25);
 
   doc.setFontSize(20);
   doc.setFont("helvetica", "bold");
@@ -402,14 +432,14 @@ async function shareAsPdf(q: Quotation): Promise<void> {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7);
   doc.setTextColor(...GREY);
-  doc.text("BILL TO", L, y);
+  doc.text(billLabel.toUpperCase(), L, y);
   doc.text("DETAILS", W / 2 + 6, y);
   y += 5.5;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   doc.setTextColor(...DARK);
-  doc.text(q.customer_name, L, y);
+  doc.text(cleanText(q.customer_name, "Customer"), L, y);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
@@ -442,15 +472,21 @@ async function shareAsPdf(q: Quotation): Promise<void> {
   doc.setFontSize(7);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...LIME);
-  doc.text(q.status.toUpperCase(), pillX + 13, pillY + 8.2, { align: "center" });
+  doc.text((q.status || "draft").toUpperCase(), pillX + 13, pillY + 8.2, { align: "center" });
 
   y += 12;
+  if (q.type !== "invoice") {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    doc.setTextColor(168, 120, 26);
+    doc.text("This is not a tax invoice", R, y - 3, { align: "right" });
+  }
 
   // ─── Line items ──────────────────────────────────────────────────────────
   autoTable(doc, {
     startY: y,
     head: [["#", "Description", "Unit", "Qty", "Unit Price", "Total"]],
-    body: (q.items ?? []).map((item, i) => [
+    body: safeItems.map((item, i) => [
       String(i + 1),
       item.productName,
       item.unit || "—",
@@ -1009,6 +1045,11 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
   );
 
   const totalQty = (q.items ?? []).reduce((s, i) => s + i.qty, 0);
+  const safeItems = normalizeItems(q.items);
+  const [showAllItems, setShowAllItems] = useState(false);
+  const maxVisibleItems = 6;
+  const visibleItems = showAllItems ? safeItems : safeItems.slice(0, maxVisibleItems);
+  const hiddenItemsCount = Math.max(0, safeItems.length - visibleItems.length);
   const isInvoice = q.type === "invoice";
   const billLabel = isInvoice ? "Bill To" : "Quote For";
 
@@ -1134,7 +1175,7 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
                 </tr>
               </thead>
               <tbody>
-                {(q.items ?? []).map((item, i) => (
+                {visibleItems.map((item, i) => (
                   <tr key={i} className={cn("border-t border-zinc-100", i % 2 === 1 && "bg-zinc-50/70")}>
                     <td className="pl-4 pr-2 py-2.5 text-[10px] text-zinc-400">{i + 1}</td>
                     <td className="px-2 py-2.5">
@@ -1146,8 +1187,25 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
                     <td className="pl-2 pr-4 py-2.5 text-right text-xs font-bold font-mono text-zinc-900">{formatKES(item.total)}</td>
                   </tr>
                 ))}
+                {hiddenItemsCount > 0 && (
+                  <tr className="border-t border-zinc-100 bg-emerald-50/40">
+                    <td className="px-4 py-2.5 text-[10px] text-zinc-500" colSpan={5}>
+                      + {hiddenItemsCount} more item{hiddenItemsCount === 1 ? "" : "s"} hidden for cleaner preview
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
+            {safeItems.length > maxVisibleItems && (
+              <div className="px-4 py-2 border-t border-zinc-100 flex justify-end">
+                <button
+                  onClick={() => setShowAllItems(v => !v)}
+                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 transition-colors"
+                >
+                  {showAllItems ? "Show fewer items" : `Show all ${safeItems.length} items`}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Order summary + payment summary side by side */}
@@ -1158,7 +1216,7 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
               <div className="space-y-1">
                 <div className="flex justify-between text-[10px] text-zinc-600">
                   <span>Items</span>
-                  <span className="font-mono font-semibold">{q.items?.length ?? 0}</span>
+                  <span className="font-mono font-semibold">{safeItems.length}</span>
                 </div>
                 <div className="flex justify-between text-[10px] text-zinc-600">
                   <span>Total Qty</span>
@@ -1301,12 +1359,17 @@ type View =
 export default function QuotationsPage() {
   const [view, setView] = useState<View>({ kind: "list" });
   const [activeTab, setActiveTab] = useState<"quotation" | "invoice">("quotation");
+  const [page, setPage] = useState(1);
+  const pageSize = 12;
 
   const { data: quotes = [], isLoading } = useQuery<Quotation[]>({
     queryKey: ["quotations", activeTab],
     queryFn: () => fetchQuotations(activeTab),
     staleTime: 30_000,
   });
+  const totalPages = Math.max(1, Math.ceil(quotes.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedQuotes = quotes.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   if (view.kind === "build") {
     return (
@@ -1369,7 +1432,7 @@ export default function QuotationsPage() {
           {(["quotation", "invoice"] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => { setActiveTab(tab); setPage(1); }}
               className={cn(
                 "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all",
                 activeTab === tab
@@ -1411,7 +1474,7 @@ export default function QuotationsPage() {
           </div>
         ) : (
           <div className="space-y-2.5">
-            {quotes.map(q => (
+            {pagedQuotes.map(q => (
               <button
                 key={q.id}
                 onClick={() => setView({ kind: "detail", id: q.id })}
@@ -1454,9 +1517,34 @@ export default function QuotationsPage() {
                 </div>
               </button>
             ))}
+            {quotes.length > pageSize && (
+              <div className="pt-2 flex items-center justify-between">
+                <p className="text-[11px] text-muted-foreground">
+                  Showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, quotes.length)} of {quotes.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-bold disabled:opacity-40"
+                  >
+                    Prev
+                  </button>
+                  <span className="text-xs font-semibold text-muted-foreground">Page {currentPage}/{totalPages}</span>
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-bold disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
     </div>
   );
 }
+  const safeItems = normalizeItems(q.items);
