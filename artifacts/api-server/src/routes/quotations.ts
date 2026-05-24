@@ -56,12 +56,15 @@ quotationsRouter.post("/quotations", requireAuth, async (c) => {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
 
-  const { results: existing } = await db.prepare(
-    "SELECT COUNT(*) as n FROM quotations WHERE shop_id = ? AND type = ?"
+  const prefix = (body.type ?? "quotation") === "invoice" ? "INV" : "QT";
+  // Use MAX of the numeric suffix to avoid duplicate numbers after deletions
+  const { results: maxRow } = await db.prepare(
+    `SELECT quote_number FROM quotations WHERE shop_id = ? AND type = ? ORDER BY created_at DESC LIMIT 1`
   ).bind(body.shopId, body.type ?? "quotation").all();
-  const count = Number((existing[0] as any)?.n ?? 0) + 1;
-  const prefix = body.type === "invoice" ? "INV" : "QT";
-  const quoteNumber = `${prefix}-${String(count).padStart(4, "0")}`;
+  const lastNum = maxRow.length > 0
+    ? parseInt(((maxRow[0] as any).quote_number ?? "").replace(/^[A-Z]+-/, "") || "0", 10)
+    : 0;
+  const quoteNumber = `${prefix}-${String(lastNum + 1).padStart(4, "0")}`;
 
   const subtotal = body.items.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const discount = body.discount ?? 0;

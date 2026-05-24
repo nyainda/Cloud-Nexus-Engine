@@ -62,11 +62,25 @@ productsRouter.get("/products", requireAuth, async (c) => {
       const total = Number((countRes.results[0] as any)?.n ?? 0);
       const rows = dataRes.results as any[];
       return c.json({
-        products: rows.map((p) => {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { tokens_json, normalized_name, ...rest } = p;
-          return rest;
-        }),
+        products: rows.map((p) => ({
+          id: p.id,
+          shopId: p.shop_id,
+          canonicalName: p.canonical_name,
+          sku: p.sku,
+          category: p.category,
+          unit: p.unit,
+          purchasePrice: p.purchase_price,
+          sellingPrice: p.selling_price,
+          profitMargin: p.profit_margin,
+          stockQty: p.stock_qty,
+          alertQty: p.alert_qty,
+          size: p.size,
+          expiryDate: p.expiry_date,
+          isActive: p.is_active !== undefined ? Boolean(p.is_active) : true,
+          lastSoldAt: p.last_sold_at,
+          createdAt: p.created_at,
+          updatedAt: p.updated_at,
+        })),
         total,
       });
     } catch {

@@ -51,16 +51,15 @@ self.addEventListener("push", (event) => {
     data = { body: event.data.text() };
   }
 
-  event.waitUntil(
-    self.registration.showNotification(data.title ?? "GreenLink OS", {
-      body: data.body ?? "",
-      icon: "/pwa-192x192.png",
-      badge: "/pwa-192x192.png",
-      tag: data.type ?? "greenlink",
-      renotify: true,
-      data: { url: data.url ?? "/alerts" },
-    })
-  );
+  const notifOptions: NotificationOptions & { renotify?: boolean } = {
+    body: data.body ?? "",
+    icon: "/pwa-192x192.png",
+    badge: "/pwa-192x192.png",
+    tag: data.type ?? "greenlink",
+    renotify: true,
+    data: { url: data.url ?? "/alerts" },
+  };
+  event.waitUntil(self.registration.showNotification(data.title ?? "GreenLink OS", notifOptions));
 });
 
 // ── Notification click — open/focus the app ──────────────────────────────────
@@ -69,7 +68,7 @@ self.addEventListener("notificationclick", (event) => {
   const target: string = (event.notification.data as { url?: string })?.url ?? "/alerts";
 
   event.waitUntil(
-    clients
+    self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((list) => {
         const existing = list.find((c) =>
@@ -79,7 +78,7 @@ self.addEventListener("notificationclick", (event) => {
           existing.navigate(target);
           return existing.focus();
         }
-        return clients.openWindow(target);
+        return self.clients.openWindow(target);
       })
   );
 });

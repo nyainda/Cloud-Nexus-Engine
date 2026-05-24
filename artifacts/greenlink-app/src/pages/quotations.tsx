@@ -215,9 +215,9 @@ function ProductPicker({ onAdd }: { onAdd: (item: QuoteItem) => void }) {
     if (!q.trim()) return products.slice(0, 30);
     const lower = q.toLowerCase();
     return products.filter(p =>
-      p.name?.toLowerCase().includes(lower) ||
-      (p as any).category?.toLowerCase().includes(lower) ||
-      (p as any).sku?.toLowerCase().includes(lower)
+      p.canonicalName?.toLowerCase().includes(lower) ||
+      p.category?.toLowerCase().includes(lower) ||
+      p.sku?.toLowerCase().includes(lower)
     ).slice(0, 50);
   }, [products, q]);
 
@@ -251,8 +251,8 @@ function ProductPicker({ onAdd }: { onAdd: (item: QuoteItem) => void }) {
                 key={p.id}
                 onClick={() => onAdd({
                   productId: p.id,
-                  productName: p.name,
-                  unit: (p as any).unit ?? "unit",
+                  productName: p.canonicalName,
+                  unit: p.unit ?? "unit",
                   unitPrice: p.sellingPrice ?? 0,
                   qty: 1,
                   total: p.sellingPrice ?? 0,
@@ -263,8 +263,8 @@ function ProductPicker({ onAdd }: { onAdd: (item: QuoteItem) => void }) {
                   <Package className="h-3.5 w-3.5 text-primary" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold truncate">{p.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{(p as any).category ?? "General"}</p>
+                  <p className="text-xs font-semibold truncate">{p.canonicalName}</p>
+                  <p className="text-[10px] text-muted-foreground">{p.category ?? "General"}{p.unit && p.unit !== "unit" ? ` · ${p.unit}` : ""}</p>
                 </div>
                 <span className="text-xs font-bold font-mono text-primary shrink-0">{formatKES(p.sellingPrice ?? 0)}</span>
               </button>
