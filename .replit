@@ -28,10 +28,6 @@ args = "GreenLink App"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Deploy to Cloudflare"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "Mockup Sandbox"
 
 [[workflows.workflow]]
@@ -57,17 +53,6 @@ outputType = "webview"
 task = "shell.exec"
 args = "PORT=5000 BASE_PATH=/ pnpm --filter @workspace/greenlink-app run dev"
 waitForPort = 5000
-
-[[workflows.workflow]]
-name = "Deploy to Cloudflare"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN pnpm --filter @workspace/api-server run deploy"
 
 [[workflows.workflow]]
 name = "Mockup Sandbox"
