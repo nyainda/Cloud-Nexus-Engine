@@ -4,19 +4,25 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "tsx watch src/node-server.ts",
+    "dev:wrangler": "wrangler dev",
     "deploy": "wrangler deploy",
     "build": "echo 'no build needed'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@hono/node-server": "^1.14.3",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
+    "better-sqlite3": "^11.10.0",
     "drizzle-orm": "catalog:",
     "hono": "^4.7.11"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250522.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
     "wrangler": "^4.23.0"
   }
 }
