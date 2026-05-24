@@ -86,6 +86,7 @@ interface Quotation {
   created_by: string;
   created_at: string;
   updated_at: string;
+  item_count?: number;
   items?: QuoteItem[];
 }
 
@@ -1502,11 +1503,18 @@ export default function QuotationsPage() {
                       <StatusBadge status={q.status} />
                     </div>
                     <p className="text-sm font-bold text-foreground truncate leading-snug">{q.customer_name}</p>
-                    {q.customer_phone && (
-                      <p className="text-[10px] text-muted-foreground/70 mt-0.5 flex items-center gap-1">
-                        <Phone className="h-2.5 w-2.5 shrink-0" />{q.customer_phone}
-                      </p>
-                    )}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {q.customer_phone && (
+                        <p className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
+                          <Phone className="h-2.5 w-2.5 shrink-0" />{q.customer_phone}
+                        </p>
+                      )}
+                      {(q.item_count ?? 0) > 0 && (
+                        <p className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+                          <Package className="h-2.5 w-2.5 shrink-0" />{q.item_count} item{q.item_count === 1 ? "" : "s"}
+                        </p>
+                      )}
+                    </div>
                   </div>
 
                   {/* Amount + date */}
@@ -1549,4 +1557,3 @@ export default function QuotationsPage() {
     </div>
   );
 }
-  const safeItems = normalizeItems(q.items);

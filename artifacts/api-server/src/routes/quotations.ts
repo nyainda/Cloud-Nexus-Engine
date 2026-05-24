@@ -11,11 +11,11 @@ quotationsRouter.get("/quotations", requireAuth, async (c) => {
   const status = c.req.query("status");
   if (!shopId) return c.json({ error: "shopId required" }, 400);
 
-  let sql = "SELECT * FROM quotations WHERE shop_id = ?";
+  let sql = `SELECT q.*, (SELECT COUNT(*) FROM quotation_items WHERE quotation_id = q.id) as item_count FROM quotations q WHERE q.shop_id = ?`;
   const params: any[] = [shopId];
-  if (type) { sql += " AND type = ?"; params.push(type); }
-  if (status) { sql += " AND status = ?"; params.push(status); }
-  sql += " ORDER BY created_at DESC LIMIT 200";
+  if (type) { sql += " AND q.type = ?"; params.push(type); }
+  if (status) { sql += " AND q.status = ?"; params.push(status); }
+  sql += " ORDER BY q.created_at DESC LIMIT 200";
 
   const { results } = await db.prepare(sql).bind(...params).all();
   return c.json(results);
