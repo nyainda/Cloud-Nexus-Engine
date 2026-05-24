@@ -15,9 +15,7 @@ import ocrRouter from "./ocr";
 import storageRouter from "./storage";
 import transfersRouter from "./transfers";
 import pushRouter from "./push";
-import customersRouter from "./customers";
-import bundlesRouter from "./bundles";
-import returnsRouter from "./returns";
+
 
 const router = new Hono<AppEnv>();
 
@@ -36,7 +34,4 @@ router.route("/", ocrRouter);
 router.route("/", storageRouter);
 router.route("/", transfersRouter);
 router.route("/", pushRouter);
-router.route("/", customersRouter);
-router.route("/", bundlesRouter);
-router.route("/", returnsRouter);
 export default router;

@@ -52,21 +52,9 @@ CREATE TABLE IF NOT EXISTS price_history (
   changed_at TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS customers (
-  id TEXT PRIMARY KEY,
-  shop_id TEXT NOT NULL REFERENCES shops(id),
-  name TEXT NOT NULL,
-  phone TEXT NOT NULL DEFAULT '',
-  email TEXT,
-  notes TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY,
   shop_id TEXT NOT NULL REFERENCES shops(id),
-  customer_id TEXT,
   total_amount REAL NOT NULL DEFAULT 0,
   total_cost REAL,
   total_profit REAL,
@@ -97,7 +85,6 @@ CREATE TABLE IF NOT EXISTS sale_items (
 CREATE TABLE IF NOT EXISTS debts (
   id TEXT PRIMARY KEY,
   shop_id TEXT NOT NULL REFERENCES shops(id),
-  customer_id TEXT,
   sale_id TEXT,
   customer_name TEXT NOT NULL,
   customer_phone TEXT NOT NULL DEFAULT '',
@@ -197,53 +184,5 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   keys_p256dh TEXT NOT NULL,
   keys_auth TEXT NOT NULL,
   created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS bundles (
-  id TEXT PRIMARY KEY,
-  shop_id TEXT NOT NULL REFERENCES shops(id),
-  name TEXT NOT NULL,
-  description TEXT,
-  price_override REAL,
-  is_active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS bundle_items (
-  id TEXT PRIMARY KEY,
-  bundle_id TEXT NOT NULL REFERENCES bundles(id) ON DELETE CASCADE,
-  product_id TEXT NOT NULL,
-  product_name TEXT NOT NULL,
-  qty REAL NOT NULL DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS returns (
-  id TEXT PRIMARY KEY,
-  shop_id TEXT NOT NULL REFERENCES shops(id),
-  return_number TEXT NOT NULL,
-  original_sale_id TEXT,
-  customer_name TEXT NOT NULL DEFAULT '',
-  customer_phone TEXT NOT NULL DEFAULT '',
-  total_refund REAL NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'pending',
-  reason TEXT NOT NULL,
-  notes TEXT,
-  handled_by TEXT,
-  handled_at TEXT,
-  created_by TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS return_items (
-  id TEXT PRIMARY KEY,
-  return_id TEXT NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
-  product_id TEXT,
-  product_name TEXT NOT NULL,
-  qty REAL NOT NULL,
-  unit_price REAL NOT NULL,
-  total REAL NOT NULL,
-  condition TEXT NOT NULL DEFAULT 'resaleable'
 );
 `;
