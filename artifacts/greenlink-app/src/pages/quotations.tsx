@@ -1,6 +1,5 @@
 import { useState, useMemo, useRef, useCallback } from "react";
 import { useListProducts } from "@workspace/api-client-react";
-import { customFetch } from "@workspace/api-client-react";
 import { formatKES } from "@/lib/format";
 import { format, addDays } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -17,6 +16,22 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 
 const shopId = () => localStorage.getItem("greenlink_shopId") || "";
 const shopName = () => localStorage.getItem("greenlink_shopName") || "Shop";
+
+// ── API base + auth ─────────────────────────────────────────────────────────────
+// Works locally (relative → Vite proxy → localhost:8080) and on Vercel
+// (absolute → CF Worker via VITE_API_BASE_URL).
+const API = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+const authHeaders = () => ({
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${localStorage.getItem("greenlink_token") ?? ""}`,
+});
+
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API}${path}`, { ...init, headers: authHeaders() });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+  return data as T;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface QuoteItem {
@@ -50,35 +65,29 @@ interface Quotation {
 }
 
 // ── API helpers ────────────────────────────────────────────────────────────────
-const fetchQuotations = async (type?: string): Promise<Quotation[]> => {
+const fetchQuotations = (type?: string): Promise<Quotation[]> => {
   const params = new URLSearchParams({ shopId: shopId() });
   if (type) params.set("type", type);
-  return customFetch<Quotation[]>(`/api/quotations?${params}`);
+  return apiFetch<Quotation[]>(`/api/quotations?${params}`);
 };
 
-const fetchQuotation = async (id: string): Promise<Quotation> => {
-  return customFetch<Quotation>(`/api/quotations/${id}`);
-};
+const fetchQuotation = (id: string): Promise<Quotation> =>
+  apiFetch<Quotation>(`/api/quotations/${id}`);
 
-const createQuotation = async (data: any): Promise<Quotation> => {
-  return customFetch<Quotation>("/api/quotations", {
+const createQuotation = (data: any): Promise<Quotation> =>
+  apiFetch<Quotation>("/api/quotations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...data, shopId: shopId() }),
   });
-};
 
-const updateQuotation = async (id: string, data: any): Promise<Quotation> => {
-  return customFetch<Quotation>(`/api/quotations/${id}`, {
+const updateQuotation = (id: string, data: any): Promise<Quotation> =>
+  apiFetch<Quotation>(`/api/quotations/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-};
 
-const deleteQuotation = async (id: string): Promise<void> => {
-  await customFetch(`/api/quotations/${id}`, { method: "DELETE" });
-};
+const deleteQuotation = (id: string): Promise<void> =>
+  apiFetch<void>(`/api/quotations/${id}`, { method: "DELETE" });
 
 // ── Status badge ───────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
