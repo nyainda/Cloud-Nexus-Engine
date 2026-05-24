@@ -1549,3 +1549,4 @@ export default function QuotationsPage() {
     </div>
   );
 }
+  const safeItems = normalizeItems(q.items);
