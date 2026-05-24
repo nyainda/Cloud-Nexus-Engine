@@ -102,6 +102,17 @@ Re-seeds both shops with 2,583 clean products from the Excel file. Cleaning rule
 - Mobile-first PWA
 - Prices always in KES format with thousands separator
 
+## Push Notifications (PWA)
+
+- **VAPID public key** in `wrangler.toml` `[vars]` — safe to commit
+- **VAPID private key** uploaded as Worker secret: `wrangler secret put VAPID_PRIVATE_KEY_JWK`
+- **Service worker**: `artifacts/greenlink-app/src/sw.ts` — custom injectManifest SW (handles push + precaching + network-first API)
+- **Subscribe endpoint**: `POST /api/push/subscribe` — stores subscription in `push_subscriptions` D1 table
+- **Test endpoint**: `POST /api/push/test` — owner only, sends test push to all subscribed devices
+- **Auto-triggers**: push sent when `/api/notifications/generate` creates new alerts (low stock, debt overdue, expiry)
+- **Frontend**: Alerts page shows "Enable" banner when push is not active; "Active" indicator + Test/Disable controls when enabled
+- For local dev, push sending is skipped if `VAPID_PRIVATE_KEY_JWK` is not set in `.dev.vars`
+
 ## Cloudflare Deployment
 
 - **Worker URL**: `https://greenlink-pos-api.bruce42oyugi.workers.dev`

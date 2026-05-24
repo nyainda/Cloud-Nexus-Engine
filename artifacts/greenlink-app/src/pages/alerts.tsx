@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { isPushSupported, subscribeToPush, unsubscribeFromPush, sendTestPush, getActiveSubscription } from "@/lib/push-notifications";
 import {
   useListNotifications, useMarkAllNotificationsRead,
   useMarkNotificationRead, useListProducts, useGetShop,
@@ -122,6 +123,40 @@ export default function Alerts() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "cashier";
   const isOwner = role === "owner";
+
+  // ── Push notification state ────────────────────────────────────────────────
+  const [pushActive, setPushActive] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
+  const pushSupported = isPushSupported();
+
+  useEffect(() => {
+    if (!pushSupported) return;
+    getActiveSubscription().then((sub) => setPushActive(!!sub));
+  }, [pushSupported]);
+
+  const handleEnablePush = async () => {
+    setPushLoading(true);
+    const ok = await subscribeToPush();
+    setPushActive(ok);
+    if (ok) toast.success("Push notifications enabled! You'll get alerts even when the app is closed.");
+    else toast.error("Couldn't enable notifications. Check browser permissions and try again.");
+    setPushLoading(false);
+  };
+
+  const handleDisablePush = async () => {
+    await unsubscribeFromPush();
+    setPushActive(false);
+    toast.success("Push notifications disabled");
+  };
+
+  const handleTestPush = async () => {
+    try {
+      await sendTestPush();
+      toast.success("Test notification sent to all subscribed devices!");
+    } catch {
+      toast.error("Test failed — make sure the app is deployed to Cloudflare with VAPID keys set");
+    }
+  };
 
   const { data: notifications, isLoading: notifsLoading, refetch } = useListNotifications(
     { shopId }, { query: { enabled: !!shopId } }
@@ -368,6 +403,38 @@ export default function Alerts() {
           </div>
         ) : (
           <div>
+            {/* ── Push Notifications Banner ── */}
+            {pushSupported && !pushActive && Notification.permission !== "denied" && (
+              <div className="mx-4 mt-4 flex items-start gap-3 p-3.5 rounded-xl bg-primary/10 border border-primary/25">
+                <Bell className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground">Get instant push alerts</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">Receive low-stock and debt reminders on this device — even when the app is closed.</p>
+                </div>
+                <button
+                  onClick={handleEnablePush}
+                  disabled={pushLoading}
+                  className="shrink-0 h-8 px-3 rounded-lg text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-60"
+                >
+                  {pushLoading ? "…" : "Enable"}
+                </button>
+              </div>
+            )}
+            {pushSupported && pushActive && (
+              <div className="mx-4 mt-4 flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-muted/20 border border-border/40">
+                <Bell className="h-3.5 w-3.5 text-primary shrink-0" />
+                <p className="text-xs text-muted-foreground flex-1">Push alerts active on this device</p>
+                {isOwner && (
+                  <button onClick={handleTestPush} className="text-[10px] font-semibold text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded">
+                    Test
+                  </button>
+                )}
+                <button onClick={handleDisablePush} className="text-[10px] font-semibold text-muted-foreground hover:text-destructive transition-colors px-1.5 py-1 rounded">
+                  Disable
+                </button>
+              </div>
+            )}
+
             {/* ── WhatsApp Owner Alerts (owner only, phone required) ── */}
             {isOwner && ownerPhone && (needsRestockCount > 0 || activeDebts.length > 0) && (
               <div className="px-4 pt-4 pb-3">

@@ -14,6 +14,7 @@ import auditRouter from "./audit";
 import ocrRouter from "./ocr";
 import storageRouter from "./storage";
 import transfersRouter from "./transfers";
+import pushRouter from "./push";
 
 const router = new Hono<AppEnv>();
 
@@ -31,5 +32,6 @@ router.route("/", auditRouter);
 router.route("/", ocrRouter);
 router.route("/", storageRouter);
 router.route("/", transfersRouter);
+router.route("/", pushRouter);
 
 export default router;

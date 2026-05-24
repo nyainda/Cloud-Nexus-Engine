@@ -26,6 +26,14 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     "ALTER TABLE price_history ADD COLUMN created_at TEXT",
     "ALTER TABLE shops ADD COLUMN gemini_api_key TEXT",
     "ALTER TABLE products ADD COLUMN expiry_date TEXT",
+    `CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      keys_p256dh TEXT NOT NULL,
+      keys_auth TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
     // FTS5 virtual table for fast product search
     `CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
       id UNINDEXED,

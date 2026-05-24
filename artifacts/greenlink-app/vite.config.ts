@@ -16,6 +16,9 @@ const plugins: any[] = [
   react(),
   tailwindcss(),
   VitePWA({
+    strategies: "injectManifest",
+    srcDir: "src",
+    filename: "sw.ts",
     registerType: "autoUpdate",
     injectRegister: false,
     includeAssets: ["favicon.svg", "apple-touch-icon.png"],
@@ -30,70 +33,16 @@ const plugins: any[] = [
       scope: "/",
       start_url: "/",
       icons: [
-        {
-          src: "/pwa-192x192.png",
-          sizes: "192x192",
-          type: "image/png",
-        },
-        {
-          src: "/pwa-512x512.png",
-          sizes: "512x512",
-          type: "image/png",
-        },
-        {
-          src: "/pwa-512x512.png",
-          sizes: "512x512",
-          type: "image/png",
-          purpose: "maskable",
-        },
+        { src: "/pwa-192x192.png", sizes: "192x192", type: "image/png" },
+        { src: "/pwa-512x512.png", sizes: "512x512", type: "image/png" },
+        { src: "/pwa-512x512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
       ],
     },
-    workbox: {
-      // Cache app shell (HTML, JS chunks, CSS) — cache-first, updated in background
+    injectManifest: {
       globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
-      // Network-first for API calls — always try network, fall back to cache
-      runtimeCaching: [
-        {
-          urlPattern: /^https?:\/\/.*\/api\//,
-          handler: "NetworkFirst",
-          options: {
-            cacheName: "api-cache",
-            networkTimeoutSeconds: 5,
-            expiration: {
-              maxEntries: 200,
-              maxAgeSeconds: 60 * 60 * 24, // 24 hours
-            },
-            cacheableResponse: {
-              statuses: [0, 200],
-            },
-          },
-        },
-        // Cache Google Fonts and Fontshare
-        {
-          urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/,
-          handler: "CacheFirst",
-          options: {
-            cacheName: "google-fonts",
-            expiration: {
-              maxEntries: 20,
-              maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
-            },
-            cacheableResponse: { statuses: [0, 200] },
-          },
-        },
-        {
-          urlPattern: /^https:\/\/api\.fontshare\.com\/.*/,
-          handler: "CacheFirst",
-          options: {
-            cacheName: "fontshare",
-            expiration: {
-              maxEntries: 20,
-              maxAgeSeconds: 60 * 60 * 24 * 365,
-            },
-            cacheableResponse: { statuses: [0, 200] },
-          },
-        },
-      ],
+    },
+    devOptions: {
+      enabled: false,
     },
   }),
 ];

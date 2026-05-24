@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { notifications, debts, products } from "@workspace/db/schema";
+import { broadcastPush, getVapidConfig } from "../lib/web-push";
 
 const notificationsRouter = new Hono<AppEnv>();
 
@@ -148,6 +149,20 @@ notificationsRouter.post("/notifications/generate", requireAuth, async (c) => {
         });
       }
       generated++;
+    }
+  }
+
+  // ── Push notification broadcast ──────────────────────────────────────────
+  if (generated > 0) {
+    const vapid = getVapidConfig(c.env);
+    if (vapid) {
+      const label = generated === 1 ? "1 new alert" : `${generated} new alerts`;
+      broadcastPush(
+        c.env.DB,
+        shopId,
+        { title: `GreenLink OS — ${session.shopName}`, body: `${label} need your attention.`, url: "/alerts", type: "alert" },
+        vapid
+      ).catch(() => {}); // fire-and-forget — don't delay the HTTP response
     }
   }
 
