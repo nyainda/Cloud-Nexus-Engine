@@ -390,7 +390,9 @@ async function shareAsPdf(q: Quotation): Promise<void> {
   const W = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const shop = shopName();
+  const safeItems = normalizeItems(q.items);
   const docType = q.type === "invoice" ? "INVOICE" : "QUOTATION";
+  const billLabel = q.type === "invoice" ? "Bill To" : "Quote For";
   const DARK: [number, number, number] = [10, 10, 10];
   const LIME: [number, number, number] = [200, 255, 0];
   const GREY: [number, number, number] = [100, 100, 100];
@@ -411,7 +413,10 @@ async function shareAsPdf(q: Quotation): Promise<void> {
   doc.setFontSize(8.5);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(160, 160, 160);
-  doc.text("Retail Operations", L, 20);
+  doc.text("Farm Supplies & Services Ltd", L, 20);
+  doc.setFontSize(7.5);
+  doc.setTextColor(140, 200, 140);
+  doc.text("Smart. Reliable. Profitable.", L, 25);
 
   doc.setFontSize(20);
   doc.setFont("helvetica", "bold");
@@ -427,14 +432,14 @@ async function shareAsPdf(q: Quotation): Promise<void> {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7);
   doc.setTextColor(...GREY);
-  doc.text("BILL TO", L, y);
+  doc.text(billLabel.toUpperCase(), L, y);
   doc.text("DETAILS", W / 2 + 6, y);
   y += 5.5;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   doc.setTextColor(...DARK);
-  doc.text(q.customer_name, L, y);
+  doc.text(cleanText(q.customer_name, "Customer"), L, y);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
@@ -467,9 +472,15 @@ async function shareAsPdf(q: Quotation): Promise<void> {
   doc.setFontSize(7);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...LIME);
-  doc.text(q.status.toUpperCase(), pillX + 13, pillY + 8.2, { align: "center" });
+  doc.text((q.status || "draft").toUpperCase(), pillX + 13, pillY + 8.2, { align: "center" });
 
   y += 12;
+  if (q.type !== "invoice") {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    doc.setTextColor(168, 120, 26);
+    doc.text("This is not a tax invoice", R, y - 3, { align: "right" });
+  }
 
   // ─── Line items ──────────────────────────────────────────────────────────
   autoTable(doc, {
