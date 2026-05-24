@@ -641,7 +641,7 @@ export default function Stock() {
   const isOwner = role === "owner";
 
   const [search, setSearch] = useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const debouncedSearch = useDebounce(search, 100);
   const [view, setView] = useState<StockView>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const qc = useQueryClient();
@@ -709,7 +709,7 @@ export default function Stock() {
   }, [debouncedSearch, view, categoryFilter]);
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-4rem)] lg:h-screen bg-background">
+    <div className="flex flex-col h-full bg-background">
       {/* Header — shrinks, never scrolls */}
       <div className="shrink-0 bg-background border-b border-border px-4 py-3 space-y-3">
         <div className="flex items-center justify-between gap-2">

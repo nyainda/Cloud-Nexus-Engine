@@ -494,9 +494,18 @@ export default function POS() {
         {/* Product Grid */}
         <div className="flex-1 overflow-y-auto p-3">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-3">
-              <div className="w-7 h-7 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-              <p className="text-sm">Loading products…</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+              {Array.from({ length: 18 }).map((_, i) => (
+                <div key={i} className="rounded-xl border border-border/50 bg-card p-3 space-y-2 animate-pulse">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="w-7 h-7 rounded-lg bg-muted/60" />
+                    <div className="w-2 h-2 rounded-full bg-muted/60" />
+                  </div>
+                  <div className="h-3 bg-muted/60 rounded-full w-4/5" />
+                  <div className="h-2.5 bg-muted/40 rounded-full w-3/5" />
+                  <div className="h-3.5 bg-muted/50 rounded-full w-2/5 mt-1" />
+                </div>
+              ))}
             </div>
           ) : filteredProducts.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
