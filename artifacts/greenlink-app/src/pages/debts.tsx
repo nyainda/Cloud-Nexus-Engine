@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
-import { useListDebts, useRecordDebtPayment, useGetDebt } from "@workspace/api-client-react";
+import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,17 +23,31 @@ function PaymentDialog({ debt }: { debt: any }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const recordPayment = useRecordDebtPayment();
+  const qc = useQueryClient();
   const userName = localStorage.getItem("greenlink_userName") || "";
   const paidPct = debt.totalAmount > 0
     ? Math.round(((debt.totalAmount - debt.balance) / debt.totalAmount) * 100)
     : 0;
 
-  const handlePayment = () => {
+  const handlePayment = async () => {
+    const paid = Number(amount);
+    await qc.cancelQueries({ queryKey: getListDebtsQueryKey() });
+    const snapshot = qc.getQueryData(getListDebtsQueryKey());
+    qc.setQueriesData({ queryKey: getListDebtsQueryKey() }, (old: any) => {
+      if (!Array.isArray(old)) return old;
+      return old.map(d => {
+        if (d.id !== debt.id) return d;
+        const newBalance = Math.max(0, d.balance - paid);
+        return { ...d, balance: newBalance, status: newBalance === 0 ? "paid" : newBalance < d.totalAmount ? "partial" : d.status };
+      });
+    });
+    setOpen(false); setAmount("");
     recordPayment.mutate(
-      { debtId: debt.id, data: { amount: Number(amount), recordedBy: userName } },
+      { debtId: debt.id, data: { amount: paid, recordedBy: userName } },
       {
-        onSuccess: () => { toast.success("Payment recorded!"); setOpen(false); setAmount(""); },
-        onError: () => toast.error("Failed to record payment"),
+        onSuccess: () => { toast.success("Payment recorded!"); },
+        onError: () => { qc.setQueryData(getListDebtsQueryKey(), snapshot); toast.error("Failed to record payment"); },
+        onSettled: () => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() }),
       }
     );
   };
@@ -233,7 +248,7 @@ type DebtTab = "unpaid" | "partial" | "overdue" | "paid" | "all";
 export default function Debts() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const [search, setSearch] = useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const debouncedSearch = useDebounce(search, 100);
   const [tab, setTab] = useState<DebtTab>("unpaid");
 
   const [expandedDebtId, setExpandedDebtId] = useState<string | null>(null);
@@ -365,9 +380,25 @@ export default function Debts() {
       {/* Debt list */}
       <div>
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground pt-12">
-            <div className="w-7 h-7 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-            <p className="text-sm">Loading debts…</p>
+          <div className="divide-y divide-border/40 animate-pulse">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="px-4 py-4 flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-muted/60 shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-3.5 w-28 bg-muted/60 rounded-full" />
+                    <div className="h-3 w-12 bg-muted/40 rounded-full" />
+                  </div>
+                  <div className="h-2.5 w-20 bg-muted/40 rounded-full" />
+                  <div className="h-1.5 w-full bg-muted/40 rounded-full mt-2" />
+                  <div className="flex gap-2 mt-1">
+                    <div className="h-7 w-28 bg-muted/50 rounded-lg" />
+                    <div className="h-7 w-20 bg-muted/30 rounded-lg" />
+                  </div>
+                </div>
+                <div className="h-4 w-16 bg-muted/60 rounded-full" />
+              </div>
+            ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground pt-12">

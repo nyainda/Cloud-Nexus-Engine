@@ -78,14 +78,25 @@ function RestockDialog({ product }: { product: any }) {
   const restockMutation = useRestockProduct();
   const qc = useQueryClient();
 
-  const handleRestock = () => {
+  const handleRestock = async () => {
     const qtyNum = Number(qty);
     if (!qtyNum || qtyNum <= 0) return;
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+    const snapshot = qc.getQueryData(getListProductsQueryKey());
+    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+      if (!old?.products) return old;
+      return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : {
+        ...p, stockQty: p.stockQty + qtyNum,
+        ...(purchasePrice && { purchasePrice: Number(purchasePrice) }),
+        ...(sellingPrice && { sellingPrice: Number(sellingPrice) }),
+      }) };
+    });
     restockMutation.mutate(
       { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
       {
-        onSuccess: () => { toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`); setOpen(false); setQty(1); qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); },
-        onError: () => toast.error("Failed to update stock"),
+        onSuccess: () => { toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`); setOpen(false); setQty(1); },
+        onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to update stock"); },
+        onSettled: () => qc.invalidateQueries({ queryKey: getListProductsQueryKey() }),
       }
     );
   };
@@ -182,14 +193,22 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
   const [alertQty, setAlertQty] = useState(product.alertQty?.toString() || "5");
   const [expiryDate, setExpiryDate] = useState(product.expiryDate || "");
   const updateProduct = useUpdateProduct();
+  const qc = useQueryClient();
 
   const margin = buyPrice && sellPrice && Number(sellPrice) > 0
     ? (((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100).toFixed(1) : null;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    const patch: any = { canonicalName: name.trim() || undefined, sku: sku || undefined, category: category || undefined, unit: unit || undefined, purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: alertQty ? parseFloat(alertQty) : undefined, expiryDate: expiryDate || undefined };
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+    const snapshot = qc.getQueryData(getListProductsQueryKey());
+    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+      if (!old?.products) return old;
+      return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : { ...p, ...patch }) };
+    });
     updateProduct.mutate(
-      { productId: product.id, data: { canonicalName: name.trim() || undefined, sku: sku || undefined, category: category || undefined, unit: unit || undefined, purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: alertQty ? parseFloat(alertQty) : undefined, expiryDate: expiryDate || undefined } as any },
-      { onSuccess: () => { toast.success("Product updated"); setOpen(false); onSuccess(); }, onError: () => toast.error("Failed to update product") }
+      { productId: product.id, data: patch },
+      { onSuccess: () => { toast.success("Product updated"); setOpen(false); onSuccess(); }, onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to update product"); }, onSettled: () => qc.invalidateQueries({ queryKey: getListProductsQueryKey() }) }
     );
   };
 
@@ -462,12 +481,21 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
 }
 
 function DeleteProductButton({ productId, productName, onSuccess }: { productId: string; productName: string; onSuccess: () => void }) {
-  const delProduct = useDeleteProduct({
-    mutation: {
+  const qc = useQueryClient();
+  const delProduct = useDeleteProduct();
+  const handleDelete = async () => {
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+    const snapshot = qc.getQueryData(getListProductsQueryKey());
+    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+      if (!old?.products) return old;
+      return { ...old, products: old.products.filter((p: any) => p.id !== productId) };
+    });
+    delProduct.mutate({ productId }, {
       onSuccess: () => { toast.success("Product removed"); onSuccess(); },
-      onError: () => toast.error("Failed to delete product"),
-    },
-  });
+      onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to delete product"); },
+      onSettled: () => qc.invalidateQueries({ queryKey: getListProductsQueryKey() }),
+    });
+  };
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
@@ -484,7 +512,7 @@ function DeleteProductButton({ productId, productName, onSuccess }: { productId:
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={() => delProduct.mutate({ productId })} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+          <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

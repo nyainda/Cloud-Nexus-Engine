@@ -284,27 +284,47 @@ export default function POS() {
   }, 0), [cart]);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
-  const handleCheckout = (saleType: "cash" | "debt") => {
+  const handleCheckout = async (saleType: "cash" | "debt") => {
     if (cart.length === 0) { toast.error("Cart is empty"); return; }
     if (saleType === "debt" && !debtCustomerName.trim()) { toast.error("Enter customer name for debt sale"); return; }
+    // Capture values before clearing state
+    const cartSnapshot = [...cart];
+    const discountSnapshot = discount;
+    const debtName = debtCustomerName;
+    const debtPhone = debtCustomerPhone;
+    // Optimistically deduct stock from cache
+    const productsSnapshot = qc.getQueryData(getListProductsQueryKey());
+    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+      if (!old?.products) return old;
+      return { ...old, products: old.products.map((p: any) => {
+        const cartItem = cartSnapshot.find(i => i.product.id === p.id);
+        return cartItem ? { ...p, stockQty: Math.max(0, p.stockQty - cartItem.qty) } : p;
+      }) };
+    });
+    // Clear UI immediately — feels instant
+    setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setShowCartMobile(false);
     createSale.mutate(
       {
         data: {
-          shopId, saleType, discount,
-          items: cart.map(i => ({ productId: i.product.id, qty: i.qty, unitPrice: i.unitPrice })),
+          shopId, saleType,
+          discount: discountSnapshot,
+          items: cartSnapshot.map(i => ({ productId: i.product.id, qty: i.qty, unitPrice: i.unitPrice })),
           servedBy: userName,
-          debtCustomerName: saleType === "debt" ? debtCustomerName : undefined,
-          debtCustomerPhone: saleType === "debt" ? debtCustomerPhone : undefined,
+          debtCustomerName: saleType === "debt" ? debtName : undefined,
+          debtCustomerPhone: saleType === "debt" ? debtPhone : undefined,
         },
       },
       {
         onSuccess: () => {
           toast.success(saleType === "cash" ? "✓ Cash sale complete!" : "✓ Debt recorded!");
-          setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone("");
-          setShowCartMobile(false);
+          if (saleType === "debt") qc.invalidateQueries({ queryKey: ['listDebts'] });
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
         },
-        onError: (err: any) => toast.error(err?.message || "Sale failed"),
+        onError: (err: any) => {
+          qc.setQueryData(getListProductsQueryKey(), productsSnapshot);
+          setCart(cartSnapshot); setDiscount(discountSnapshot);
+          toast.error(err?.message || "Sale failed");
+        },
       }
     );
   };
