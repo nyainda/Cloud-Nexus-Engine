@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -216,7 +216,7 @@ interface CartPanelProps {
   handleCheckout: (type: "cash" | "debt") => void;
 }
 
-function CartPanel({
+const CartPanel = memo(function CartPanel({
   cart, discount, debtCustomerName, debtCustomerPhone, isOwner,
   createSalePending, subtotal, total, totalProfit, cartCount,
   setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
@@ -376,7 +376,7 @@ function CartPanel({
       )}
     </div>
   );
-}
+});
 
 export default function POS() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
@@ -451,15 +451,15 @@ export default function POS() {
     toast.success(`${product.canonicalName} added`);
   };
 
-  const updateQty = (productId: string, delta: number) => {
+  const updateQty = useCallback((productId: string, delta: number) => {
     setCart(prev =>
       prev.map(i => i.product.id === productId ? { ...i, qty: Math.max(0, i.qty + delta) } : i)
         .filter(i => i.qty > 0)
     );
-  };
+  }, []);
 
-  const removeFromCart = (productId: string) => setCart(prev => prev.filter(i => i.product.id !== productId));
-  const updatePrice = (productId: string, price: number) => setCart(prev => prev.map(i => i.product.id === productId ? { ...i, unitPrice: price } : i));
+  const removeFromCart = useCallback((productId: string) => setCart(prev => prev.filter(i => i.product.id !== productId)), []);
+  const updatePrice = useCallback((productId: string, price: number) => setCart(prev => prev.map(i => i.product.id === productId ? { ...i, unitPrice: price } : i)), []);
 
   const subtotal = useMemo(() => cart.reduce((s, i) => s + i.qty * i.unitPrice, 0), [cart]);
   const total = Math.max(0, subtotal - discount);
@@ -469,7 +469,7 @@ export default function POS() {
   }, 0), [cart]);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
-  const handleCheckout = async (saleType: "cash" | "debt") => {
+  const handleCheckout = useCallback(async (saleType: "cash" | "debt") => {
     if (cart.length === 0) { toast.error("Cart is empty"); return; }
     if (saleType === "debt" && !debtCustomerName.trim()) { toast.error("Enter customer name for debt sale"); return; }
     // Capture values before clearing state
@@ -513,7 +513,8 @@ export default function POS() {
         },
       }
     );
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, discount, debtCustomerName, debtCustomerPhone, shopId, userName]);
 
   const cartPanelProps: CartPanelProps = {
     cart, discount, debtCustomerName, debtCustomerPhone, isOwner,

@@ -82,8 +82,7 @@ function RestockDialog({ product }: { product: any }) {
   const handleRestock = async () => {
     const qtyNum = Number(qty);
     if (!qtyNum || qtyNum <= 0) return;
-    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
-    const snapshot = qc.getQueryData(getListProductsQueryKey());
+    // Optimistic update: immediately show new stock qty in the list
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : {
@@ -95,11 +94,18 @@ function RestockDialog({ product }: { product: any }) {
     restockMutation.mutate(
       { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
       {
-        onSuccess: () => { toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`); setOpen(false); setQty(1); },
-        onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to update stock"); },
-        onSettled: () => {
-          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+        onSuccess: () => {
+          toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`);
+          setOpen(false);
+          setQty(1);
+          // refetchQueries bypasses staleTime and forces an immediate server sync
+          qc.refetchQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+        },
+        onError: () => {
+          // Revert by re-fetching fresh data from server
+          qc.refetchQueries({ queryKey: getListProductsQueryKey() });
+          toast.error("Failed to update stock");
         },
       }
     );
@@ -204,15 +210,26 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
 
   const handleSubmit = async () => {
     const patch: any = { canonicalName: name.trim() || undefined, sku: sku || undefined, category: category || undefined, unit: unit || undefined, purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: alertQty ? parseFloat(alertQty) : undefined, expiryDate: expiryDate || undefined };
-    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
-    const snapshot = qc.getQueryData(getListProductsQueryKey());
+    // Optimistic update
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : { ...p, ...patch }) };
     });
     updateProduct.mutate(
       { productId: product.id, data: patch },
-      { onSuccess: () => { toast.success("Product updated"); setOpen(false); onSuccess(); }, onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to update product"); }, onSettled: () => { qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() }); } }
+      {
+        onSuccess: () => {
+          toast.success("Product updated");
+          setOpen(false);
+          onSuccess();
+          qc.refetchQueries({ queryKey: getListProductsQueryKey() });
+          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+        },
+        onError: () => {
+          qc.refetchQueries({ queryKey: getListProductsQueryKey() });
+          toast.error("Failed to update product");
+        },
+      }
     );
   };
 
