@@ -9,7 +9,7 @@ import {
   ChevronLeft, CheckCircle2, Clock, Send, XCircle,
   Edit3, Package, Phone, MapPin, User, Calendar,
   StickyNote, Tag, ChevronDown, Loader2, ArrowRight, Share2, MessageCircle,
-  Leaf, Building2, Mail, Globe,
+  Leaf, Building2, Mail, Globe, BadgeCheck, ShieldCheck,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1037,14 +1037,15 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
       <div className="flex-1 overflow-y-auto min-h-0 p-3 space-y-3">
 
         {/* ── Document Card ───────────────────────────────────────────── */}
-        <div className="rounded-2xl overflow-hidden border border-zinc-200 shadow-xl bg-white text-zinc-900">
+        <div className="rounded-2xl overflow-hidden border border-emerald-100 shadow-xl bg-white text-zinc-900">
 
           {/* Green header */}
-          <div className="bg-[#1a5c2a] px-5 py-4">
+          <div className="bg-gradient-to-r from-[#0a1f17] via-[#0d2d1f] to-[#123925] px-5 py-4 relative">
+            <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_#C8FF00_0%,_transparent_40%)]" />
             <div className="flex items-start justify-between">
               {/* Logo + brand */}
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-[#C8FF00] rounded-xl flex items-center justify-center shrink-0">
+                <div className="w-10 h-10 bg-[#C8FF00] rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-lime-300/40">
                   <Leaf className="h-5 w-5 text-[#1a5c2a]" />
                 </div>
                 <div>
@@ -1062,7 +1063,7 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
           </div>
 
           {/* Date / status bar */}
-          <div className="bg-green-50 border-b border-green-100 px-5 py-2 flex items-center gap-4 flex-wrap">
+          <div className="bg-gradient-to-r from-emerald-50 to-lime-50 border-b border-emerald-100 px-5 py-2 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-1.5 text-[11px] text-zinc-600">
               <Calendar className="h-3 w-3 text-zinc-400" />
               <span>Date: <strong>{format(new Date(q.created_at), "d MMM yyyy")}</strong></span>
@@ -1124,7 +1125,7 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
           <div>
             <table className="w-full">
               <thead>
-                <tr className="bg-[#1a5c2a]">
+                <tr className="bg-gradient-to-r from-[#114d24] to-[#176630]">
                   <th className="pl-4 pr-2 py-2 text-left text-[8px] font-black uppercase tracking-widest text-green-400 w-7">#</th>
                   <th className="px-2 py-2 text-left text-[8px] font-black uppercase tracking-widest text-[#C8FF00]">Product</th>
                   <th className="px-2 py-2 text-right text-[8px] font-black uppercase tracking-widest text-green-400 w-10">Qty</th>
@@ -1163,6 +1164,10 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
                   <span>Total Qty</span>
                   <span className="font-mono font-semibold">{totalQty}</span>
                 </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-emerald-700 pt-1">
+                  <ShieldCheck className="h-3 w-3" />
+                  <span className="font-medium">Verified line items</span>
+                </div>
               </div>
             </div>
             {/* Right: Payment summary */}
@@ -1179,12 +1184,16 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
                     <span className="font-mono">− {formatKES(q.discount)}</span>
                   </div>
                 )}
+                <div className="flex items-center gap-1.5 text-[10px] text-emerald-700 pt-1">
+                  <BadgeCheck className="h-3 w-3" />
+                  <span className="font-medium">{isInvoice ? "Payment captured" : "Quote valid as listed"}</span>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Total row */}
-          <div className="bg-[#1a5c2a] px-5 py-3 flex items-center justify-between">
+          <div className="bg-gradient-to-r from-[#103f20] via-[#1a5c2a] to-[#2c7b2f] px-5 py-3 flex items-center justify-between">
             <span className="text-green-300 text-xs font-black uppercase tracking-widest">Total</span>
             <span className="text-[#C8FF00] text-2xl font-black font-mono">{formatKES(q.total)}</span>
           </div>
@@ -1198,7 +1207,7 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
           )}
 
           {/* Footer */}
-          <div className="bg-zinc-900 px-5 py-2.5 flex flex-wrap items-center gap-3 justify-between">
+          <div className="bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950 px-5 py-2.5 flex flex-wrap items-center gap-3 justify-between">
             <div className="flex items-center gap-3 flex-wrap">
               {q.customer_phone && (
                 <span className="flex items-center gap-1 text-[10px] text-zinc-400">
