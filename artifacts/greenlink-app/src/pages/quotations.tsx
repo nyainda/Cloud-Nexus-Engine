@@ -53,31 +53,27 @@ interface Quotation {
 const fetchQuotations = async (type?: string): Promise<Quotation[]> => {
   const params = new URLSearchParams({ shopId: shopId() });
   if (type) params.set("type", type);
-  const res = await customFetch(`/api/quotations?${params}`);
-  return res.json();
+  return customFetch<Quotation[]>(`/api/quotations?${params}`);
 };
 
 const fetchQuotation = async (id: string): Promise<Quotation> => {
-  const res = await customFetch(`/api/quotations/${id}`);
-  return res.json();
+  return customFetch<Quotation>(`/api/quotations/${id}`);
 };
 
 const createQuotation = async (data: any): Promise<Quotation> => {
-  const res = await customFetch("/api/quotations", {
+  return customFetch<Quotation>("/api/quotations", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...data, shopId: shopId() }),
   });
-  return res.json();
 };
 
 const updateQuotation = async (id: string, data: any): Promise<Quotation> => {
-  const res = await customFetch(`/api/quotations/${id}`, {
+  return customFetch<Quotation>(`/api/quotations/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  return res.json();
 };
 
 const deleteQuotation = async (id: string): Promise<void> => {
