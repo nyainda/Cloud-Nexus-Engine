@@ -1005,6 +1005,7 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
 }) {
   const [isSharing, setIsSharing] = useState(false);
   const [itemsExpanded, setItemsExpanded] = useState(false);
+  const [showAllItems, setShowAllItems] = useState(false);
   const qc = useQueryClient();
   const { data: q, isLoading } = useQuery({
     queryKey: ["quotations", id],
@@ -1048,7 +1049,6 @@ function QuoteDetail({ id, onBack, onEdit, onConverted }: {
 
   const totalQty = (q.items ?? []).reduce((s, i) => s + i.qty, 0);
   const safeItems = normalizeItems(q.items);
-  const [showAllItems, setShowAllItems] = useState(false);
   const maxVisibleItems = 6;
   const visibleItems = showAllItems ? safeItems : safeItems.slice(0, maxVisibleItems);
   const hiddenItemsCount = Math.max(0, safeItems.length - visibleItems.length);
