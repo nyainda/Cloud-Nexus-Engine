@@ -66,6 +66,35 @@ async function bootstrapD1(db: D1Database): Promise<void> {
        INSERT INTO products_fts(products_fts, rowid, id, shop_id, normalized_name, canonical_name, sku, category)
        VALUES ('delete', old.rowid, old.id, old.shop_id, old.normalized_name, old.canonical_name, COALESCE(old.sku,''), COALESCE(old.category,''));
      END`,
+    // Quotations feature
+    `CREATE TABLE IF NOT EXISTS quotations (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      quote_number TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'quotation',
+      customer_name TEXT NOT NULL,
+      customer_phone TEXT NOT NULL DEFAULT '',
+      customer_address TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',
+      valid_until TEXT,
+      notes TEXT,
+      subtotal REAL NOT NULL DEFAULT 0,
+      discount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS quotation_items (
+      id TEXT PRIMARY KEY,
+      quotation_id TEXT NOT NULL,
+      product_id TEXT,
+      product_name TEXT NOT NULL,
+      unit TEXT NOT NULL DEFAULT 'unit',
+      unit_price REAL NOT NULL,
+      qty REAL NOT NULL,
+      total REAL NOT NULL
+    )`,
   ];
   for (const m of MIGRATIONS) {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }

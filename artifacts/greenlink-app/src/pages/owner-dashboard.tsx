@@ -3,9 +3,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
 import {
   TrendingUp, CreditCard, Package, AlertTriangle, Store,
-  TrendingDown, ArrowUpRight, Percent
+  TrendingDown, ArrowUpRight, Percent, ChevronLeft, ChevronRight, CalendarDays
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, subDays, parseISO } from "date-fns";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -89,7 +90,12 @@ function ShopBreakdown({
 }
 
 export default function OwnerDashboard() {
-  const today = format(new Date(), "yyyy-MM-dd");
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [showDateInput, setShowDateInput] = useState(false);
+
+  const isToday = selectedDate === todayStr;
+  const isYesterday = selectedDate === format(subDays(new Date(), 1), "yyyy-MM-dd");
 
   const { data: shops } = useListShops();
   const shopA = shops?.[0];
@@ -100,11 +106,11 @@ export default function OwnerDashboard() {
   const SHOP_B_NAME = shopB?.name ?? "Shop B";
 
   const { data: dataA, isLoading: loadingA } = useGetDashboard(
-    { shopId: SHOP_A_ID, date: today },
+    { shopId: SHOP_A_ID, date: selectedDate },
     { query: { enabled: !!SHOP_A_ID } }
   );
   const { data: dataB, isLoading: loadingB } = useGetDashboard(
-    { shopId: SHOP_B_ID, date: today },
+    { shopId: SHOP_B_ID, date: selectedDate },
     { query: { enabled: !!SHOP_B_ID } }
   );
 
@@ -147,19 +153,79 @@ export default function OwnerDashboard() {
   return (
     <div className="flex flex-col min-h-full bg-background">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-border bg-card shrink-0">
+      <div className="px-4 py-3 border-b border-border bg-card shrink-0 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold font-display">Owner Dashboard</h1>
-            <p className="text-xs text-muted-foreground">{format(new Date(), "EEEE, d MMMM yyyy")} · All Shops</p>
+            <p className="text-xs text-muted-foreground">All Shops · Combined</p>
           </div>
           <div className={cn(
             "text-[10px] font-bold px-2 py-1 rounded-full border",
             "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
           )}>
-            Combined
+            {isToday ? "Today" : isYesterday ? "Yesterday" : format(parseISO(selectedDate), "d MMM")}
           </div>
         </div>
+
+        {/* Date picker row */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSelectedDate(format(subDays(parseISO(selectedDate), 1), "yyyy-MM-dd"))}
+            className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-muted/30 hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+
+          <div className="flex-1 flex gap-1.5">
+            {[
+              { label: "Today", date: todayStr },
+              { label: "Yesterday", date: format(subDays(new Date(), 1), "yyyy-MM-dd") },
+            ].map(opt => (
+              <button
+                key={opt.label}
+                onClick={() => { setSelectedDate(opt.date); setShowDateInput(false); }}
+                className={cn(
+                  "flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all",
+                  selectedDate === opt.date
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-muted/30 border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+            <button
+              onClick={() => setShowDateInput(v => !v)}
+              className={cn(
+                "flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all",
+                showDateInput || (!isToday && !isYesterday)
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-muted/30 border-border text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <CalendarDays className="h-3.5 w-3.5" />
+              Pick
+            </button>
+          </div>
+
+          <button
+            onClick={() => setSelectedDate(format(subDays(parseISO(selectedDate), -1), "yyyy-MM-dd"))}
+            disabled={selectedDate >= todayStr}
+            className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-muted/30 hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        {showDateInput && (
+          <input
+            type="date"
+            value={selectedDate}
+            max={todayStr}
+            onChange={e => { if (e.target.value) setSelectedDate(e.target.value); }}
+            className="w-full px-3 py-2 text-sm bg-muted/30 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all"
+          />
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-6">
@@ -173,7 +239,7 @@ export default function OwnerDashboard() {
           <>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 px-0.5">
-                Combined Today
+                {isToday ? "Combined Today" : isYesterday ? "Combined Yesterday" : `Combined · ${format(parseISO(selectedDate), "d MMM yyyy")}`}
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <StatCard
