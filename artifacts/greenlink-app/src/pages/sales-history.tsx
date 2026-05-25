@@ -14,7 +14,7 @@ import {
   Receipt, ChevronDown, ChevronUp, Trash2, Calendar,
   ChevronLeft, ChevronRight, CreditCard,
   TrendingUp, ShoppingBag, Banknote, Clock, User, Package,
-  RotateCcw, Minus, Plus, CheckCircle2,
+  RotateCcw, Minus, Plus, CheckCircle2, Search, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, addDays, subDays, isToday } from "date-fns";
@@ -553,6 +553,8 @@ export default function SalesHistory() {
   const isOwner = role === "owner";
 
   const [date, setDate] = useState(new Date());
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "cash" | "debt">("all");
   const dateStr = format(date, "yyyy-MM-dd");
 
   const { data: sales, isLoading } = useListSales(
@@ -566,6 +568,21 @@ export default function SalesHistory() {
   const cashCount = list.filter(s => s.saleType === "cash").length;
   const debtCount = list.filter(s => s.saleType === "debt").length;
   const todayFlag = isToday(date);
+
+  const filtered = useMemo(() => {
+    let result = list;
+    if (typeFilter !== "all") result = result.filter(s => s.saleType === typeFilter);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(s =>
+        (s.servedBy || "").toLowerCase().includes(q) ||
+        String(s.totalAmount ?? "").includes(q)
+      );
+    }
+    return result;
+  }, [list, typeFilter, search]);
+
+  const isFiltering = search.trim() !== "" || typeFilter !== "all";
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -593,6 +610,40 @@ export default function SalesHistory() {
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { if (!todayFlag) setDate(d => addDays(d, 1)); }} disabled={todayFlag}>
               <ChevronRight className="h-4 w-4" />
             </Button>
+          </div>
+        </div>
+
+        {/* Search + Filter */}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search by cashier or amount…"
+              className="w-full h-9 pl-9 pr-8 text-sm bg-muted/30 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <div className="flex items-center rounded-xl border border-border overflow-hidden shrink-0">
+            {(["all", "cash", "debt"] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(t)}
+                className={cn(
+                  "px-3 h-9 text-xs font-semibold transition-colors capitalize",
+                  typeFilter === t
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                )}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -643,8 +694,23 @@ export default function SalesHistory() {
               {todayFlag ? "Transactions will appear here as they're processed" : "Try a different date"}
             </p>
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+            <Search className="h-8 w-8 opacity-20 mb-3" />
+            <p className="font-bold text-sm">No matching transactions</p>
+            <button onClick={() => { setSearch(""); setTypeFilter("all"); }} className="text-xs text-primary mt-2 hover:underline">
+              Clear filters
+            </button>
+          </div>
         ) : (
-          list.map((sale: any) => <SaleRow key={sale.id} sale={sale} isOwner={isOwner} />)
+          <>
+            {isFiltering && (
+              <p className="text-[10px] text-muted-foreground px-0.5 pb-1">
+                Showing {filtered.length} of {list.length} transactions
+              </p>
+            )}
+            {filtered.map((sale: any) => <SaleRow key={sale.id} sale={sale} isOwner={isOwner} />)}
+          </>
         )}
       </div>
     </div>
