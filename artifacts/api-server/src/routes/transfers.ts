@@ -3,6 +3,7 @@ import { eq, or, desc, and } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
+import { kvDel, CK } from "../lib/cache";
 import { stockTransfers, products } from "@workspace/db/schema";
 
 const transfersRouter = new Hono<AppEnv>();
@@ -86,6 +87,12 @@ transfersRouter.delete("/transfers/:id", requireAuth, async (c) => {
     .run();
 
   await db.delete(stockTransfers).where(eq(stockTransfers.id, id)).run();
+
+  // Bust KV cache for both shops so restored quantities show immediately
+  await Promise.all([
+    kvDel(c.env.SESSIONS, CK.products(transfer.fromShopId)),
+    kvDel(c.env.SESSIONS, CK.products(transfer.toShopId)),
+  ]);
 
   return c.json({ ok: true, restored: transfer.qty, unit: transfer.unit });
 });

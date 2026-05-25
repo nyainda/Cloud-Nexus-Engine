@@ -640,6 +640,12 @@ productsRouter.post("/products/:productId/transfer", requireAuth, async (c) => {
     .set({ stockQty: newTargetQty, updatedAt: now })
     .where(eq(products.id, targetProduct!.id));
 
+  // Bust KV product cache for both shops so next fetch reflects updated quantities
+  await Promise.all([
+    kvDel(c.env.SESSIONS, CK.products(session.shopId)),
+    kvDel(c.env.SESSIONS, CK.products(body.targetShopId)),
+  ]);
+
   // Inventory movement logs
   await db.insert(inventoryMovements).values({
     id: crypto.randomUUID(),
