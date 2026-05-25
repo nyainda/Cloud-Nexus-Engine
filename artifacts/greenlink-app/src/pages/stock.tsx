@@ -700,15 +700,30 @@ function TransferHistory({ shopId, isOwner }: { shopId: string; isOwner: boolean
 // ── Bulk Restock Sheet ────────────────────────────────────────────────────────
 interface RestockEntry { productId: string; qty: string; }
 
-function BulkRestockSheet({ products: allProds, onDone }: { products: any[]; onDone: () => void }) {
+function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: any[]; shopId: string; onDone: () => void }) {
+  const DRAFT_KEY = `greenlink_restock_draft_${shopId}`;
+
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("all");
-  const [entries, setEntries] = useState<Record<string, string>>({});
+  const [entries, setEntries] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}"); } catch { return {}; }
+  });
   const [saving, setSaving] = useState(false);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [draftRestored, setDraftRestored] = useState(() => {
+    try {
+      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
+      return Object.values(d).some((v: any) => Number(v) > 0);
+    } catch { return false; }
+  });
   const qc = useQueryClient();
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // Persist draft on every change
+  useEffect(() => {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(entries)); } catch {}
+  }, [entries, DRAFT_KEY]);
 
   const debouncedSearch = useDebounce(search, 80);
 
@@ -786,12 +801,14 @@ function BulkRestockSheet({ products: allProds, onDone }: { products: any[]; onD
 
     setSaving(false);
     setSavedIds(newSaved);
-    // Clear saved entries
+    // Clear saved entries and wipe the persisted draft for saved items
     setEntries(prev => {
       const next = { ...prev };
       changedEntries.forEach(([id]) => { delete next[id]; });
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify(next)); } catch {}
       return next;
     });
+    setDraftRestored(false);
 
     if (ok > 0) toast.success(`Restocked ${ok} product${ok !== 1 ? "s" : ""} successfully`);
     if (fail > 0) toast.error(`${fail} product${fail !== 1 ? "s" : ""} failed — try again`);
@@ -803,26 +820,37 @@ function BulkRestockSheet({ products: allProds, onDone }: { products: any[]; onD
   const handleClear = () => {
     setEntries({});
     setSavedIds(new Set());
+    setDraftRestored(false);
+    try { localStorage.removeItem(DRAFT_KEY); } catch {}
   };
 
   return (
     <>
-      <Button size="sm" variant="outline" className="h-8 text-xs px-3 gap-1.5 border-primary/40 text-primary hover:bg-primary/10"
+      <Button size="sm" variant="outline"
+        className={cn(
+          "h-8 text-xs px-3 gap-1.5 relative",
+          draftRestored
+            ? "border-amber-500/60 text-amber-400 hover:bg-amber-500/10"
+            : "border-primary/40 text-primary hover:bg-primary/10"
+        )}
         onClick={() => setOpen(true)}>
         <Zap className="h-3.5 w-3.5" />
         Quick Restock
+        {draftRestored && (
+          <span className="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-amber-400 border-2 border-background animate-pulse" />
+        )}
       </Button>
 
       <Dialog open={open} onOpenChange={o => { setOpen(o); if (!o) { setSearch(""); setCatFilter("all"); } }}>
-        <DialogContent className="max-w-2xl w-full h-[90dvh] flex flex-col p-0 gap-0">
+        <DialogContent className="max-w-2xl w-full h-[90dvh] flex flex-col p-0 gap-0" aria-describedby={undefined}>
           {/* Header */}
           <div className="shrink-0 px-5 pt-5 pb-3 border-b border-border space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-bold flex items-center gap-2">
+                <DialogTitle className="text-lg font-bold flex items-center gap-2">
                   <Zap className="h-5 w-5 text-primary" />
                   Quick Restock
-                </h2>
+                </DialogTitle>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Enter quantities to add — Tab between rows — Save All at once
                 </p>
@@ -838,6 +866,17 @@ function BulkRestockSheet({ products: allProds, onDone }: { products: any[]; onD
                 </button>
               </div>
             </div>
+
+            {/* Draft restored banner */}
+            {draftRestored && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400">
+                <span className="text-sm">⚡</span>
+                <p className="text-xs font-semibold flex-1">Draft restored — your unsaved quantities are back</p>
+                <button onClick={() => setDraftRestored(false)} className="text-amber-400/60 hover:text-amber-400 transition-colors shrink-0">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
 
             {/* Search */}
             <div className="relative">
@@ -1097,7 +1136,7 @@ export default function Stock() {
             <p className="text-xs text-muted-foreground">{counts.all.toLocaleString()} products · {counts.totalItems.toLocaleString()} units</p>
           </div>
           <div className="flex gap-1.5 shrink-0">
-            <BulkRestockSheet products={allProducts} onDone={refresh} />
+            <BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} />
             {isOwner && <BulkImportDialog shopId={shopId} onSuccess={refresh} />}
             <AddProductDialog shopId={shopId} onSuccess={refresh} existingProducts={allProducts} isOwner={isOwner} />
           </div>
