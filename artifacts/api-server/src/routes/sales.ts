@@ -267,6 +267,93 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
   return c.body(null, 204);
 });
 
+// ─── POST /returns  (standalone — no original sale required) ─────────────────
+salesRouter.post("/returns", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const body = await c.req.json<{
+    shopId: string;
+    productId: string;
+    productName: string;
+    qty: number;
+    unitPrice?: number;
+    reason?: string;
+    processedBy?: string;
+  }>();
+
+  if (!body.productId || !body.qty || body.qty <= 0)
+    return c.json({ error: "productId and qty > 0 required" }, 400);
+
+  const now = new Date().toISOString();
+  const returnId = crypto.randomUUID();
+
+  const product = await db.select().from(products).where(eq(products.id, body.productId)).get();
+  if (!product) return c.json({ error: "Product not found" }, 404);
+
+  const beforeQty = product.stockQty;
+  const afterQty = beforeQty + body.qty;
+  const unitPrice = body.unitPrice ?? product.sellingPrice ?? 0;
+  const refundAmount = body.qty * unitPrice;
+
+  await db.update(products)
+    .set({ stockQty: afterQty, updatedAt: now })
+    .where(eq(products.id, body.productId));
+
+  await db.insert(inventoryMovements).values({
+    id: crypto.randomUUID(),
+    productId: body.productId,
+    productName: product.canonicalName,
+    movementType: "return",
+    qtyChange: body.qty,
+    beforeQty,
+    afterQty,
+    source: "standalone_return",
+    referenceId: returnId,
+    createdBy: body.processedBy ?? null,
+    createdAt: now,
+  });
+
+  // SQLite does not enforce FK by default — "standalone" is a valid TEXT value
+  await db.insert(saleReturns).values({
+    id: returnId,
+    shopId: body.shopId,
+    saleId: "standalone",
+    itemsJson: JSON.stringify([{
+      productId: body.productId,
+      productName: product.canonicalName,
+      qty: body.qty,
+      unitPrice,
+      refundAmount,
+    }]),
+    totalRefund: refundAmount,
+    reason: body.reason ?? null,
+    processedBy: body.processedBy ?? null,
+    createdAt: now,
+  });
+
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    shopId: body.shopId,
+    action: "standalone_return",
+    entityType: "sale_return",
+    entityId: returnId,
+    oldValueJson: null,
+    newValueJson: JSON.stringify({
+      productId: body.productId,
+      productName: product.canonicalName,
+      qty: body.qty,
+      refundAmount,
+      reason: body.reason,
+    }),
+    performedBy: body.processedBy ?? null,
+    createdAt: now,
+  });
+
+  const today = new Date().toISOString().slice(0, 10);
+  await kvDel(c.env.SESSIONS, CK.products(body.shopId), CK.dashboard(body.shopId, today));
+
+  return c.json({ id: returnId, totalRefund: refundAmount, beforeQty, afterQty, productName: product.canonicalName }, 201);
+});
+
 // ─── GET /sales/:saleId/returns ──────────────────────────────────────────────
 salesRouter.get("/sales/:saleId/returns", requireAuth, async (c) => {
   const db = createDb(c.env.DB);

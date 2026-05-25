@@ -3,7 +3,7 @@ import { useState } from "react";
 import {
   ShoppingCart, Package, Users, Bell, BarChart3,
   ScanLine, Settings, Leaf, LogOut, Store, LayoutDashboard, Receipt,
-  Sun, Moon, Download
+  Sun, Moon, Download, RotateCcw
 } from "lucide-react";
 import { useListNotifications, useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -170,6 +170,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <p className="text-[10px] font-bold text-sidebar-foreground/30 uppercase tracking-wider">History</p>
           </div>
           <SidebarNavItem href="/sales-history" icon={Receipt} label="Sales History" />
+          <SidebarNavItem href="/returns" icon={RotateCcw} label="Process Return" />
 
           {isOwner && (
             <>
@@ -262,13 +263,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <BottomNavItem href="/debts" icon={Users} label="Debts" />
           <BottomNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} />
           <BottomNavItem href="/sales-history" icon={Receipt} label="History" />
-          {isOwner ? (
-            <>
-              <BottomNavItem href="/owner-dashboard" icon={LayoutDashboard} label="Overview" />
-              <BottomNavItem href="/reports" icon={BarChart3} label="Reports" />
-            </>
-          ) : (
-            <BottomNavItem href="/settings" icon={Settings} label="Settings" />
+          <BottomNavItem href="/returns" icon={RotateCcw} label="Returns" />
+          {isOwner && (
+            <BottomNavItem href="/reports" icon={BarChart3} label="Reports" />
           )}
         </nav>
       </div>
