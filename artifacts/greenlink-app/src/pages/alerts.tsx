@@ -80,6 +80,46 @@ function buildStockWhatsAppUrl(ownerPhone: string, shopName: string, outOfStock:
   return `https://wa.me/${phone}?text=${encodeURIComponent(lines.join("\n"))}`;
 }
 
+function buildExpiryWhatsAppUrl(ownerPhone: string, shopName: string, expired: any[], soon: any[], warning: any[]) {
+  const lines: string[] = [];
+  lines.push(`*🗓️ Expiry Alert — ${shopName}*`);
+  lines.push(`_${new Date().toLocaleDateString("en-KE", { weekday: "long", day: "numeric", month: "short" })}_`);
+  lines.push("");
+
+  if (expired.length > 0) {
+    lines.push(`*🔴 Expired (${expired.length})*`);
+    expired.slice(0, 10).forEach(p => {
+      lines.push(`• ${p.canonicalName} — expired ${p.expiryDate}`);
+    });
+    if (expired.length > 10) lines.push(`  _...and ${expired.length - 10} more_`);
+    lines.push("");
+  }
+
+  if (soon.length > 0) {
+    lines.push(`*🟠 Expiring ≤ 30 Days (${soon.length})*`);
+    soon.slice(0, 10).forEach(p => {
+      const days = Math.ceil((new Date(p.expiryDate).getTime() - Date.now()) / 86400000);
+      lines.push(`• ${p.canonicalName} — ${days}d left (${p.expiryDate})`);
+    });
+    if (soon.length > 10) lines.push(`  _...and ${soon.length - 10} more_`);
+    lines.push("");
+  }
+
+  if (warning.length > 0) {
+    lines.push(`*🟡 Expiring 31–90 Days (${warning.length})*`);
+    warning.slice(0, 8).forEach(p => {
+      const days = Math.ceil((new Date(p.expiryDate).getTime() - Date.now()) / 86400000);
+      lines.push(`• ${p.canonicalName} — ${days}d left (${p.expiryDate})`);
+    });
+    if (warning.length > 8) lines.push(`  _...and ${warning.length - 8} more_`);
+    lines.push("");
+  }
+
+  lines.push(`_Sent from GreenLink OS_`);
+  const phone = ownerPhone.replace(/\D/g, "");
+  return `https://wa.me/${phone}?text=${encodeURIComponent(lines.join("\n"))}`;
+}
+
 function buildDebtWhatsAppUrl(ownerPhone: string, shopName: string, debts: any[]) {
   const activeDebts = debts.filter(d => d.status === "active" || d.status === "overdue");
   const total = activeDebts.reduce((sum, d) => sum + (d.balance || 0), 0);
@@ -436,7 +476,7 @@ export default function Alerts() {
             )}
 
             {/* ── WhatsApp Owner Alerts (owner only, phone required) ── */}
-            {isOwner && ownerPhone && (needsRestockCount > 0 || activeDebts.length > 0) && (
+            {isOwner && ownerPhone && (needsRestockCount > 0 || activeDebts.length > 0 || expiryCount > 0) && (
               <div className="px-4 pt-4 pb-3">
                 <div className="flex items-center gap-2 mb-2.5">
                   <MessageCircle className="h-4 w-4 text-[#25D366]" />
@@ -449,7 +489,7 @@ export default function Alerts() {
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20 hover:border-orange-500/50 transition-colors active:scale-95">
+                      <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-orange-500/10 border border-orange-500/30 text-orange-400">
                         <Send className="h-3.5 w-3.5" />
                         Stock Alert · {needsRestockCount} products
                       </button>
@@ -461,9 +501,21 @@ export default function Alerts() {
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/50 transition-colors active:scale-95">
+                      <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-blue-500/10 border border-blue-500/30 text-blue-400">
                         <Send className="h-3.5 w-3.5" />
                         Debt Report · {activeDebts.length} debtors
+                      </button>
+                    </a>
+                  )}
+                  {expiryCount > 0 && (
+                    <a
+                      href={buildExpiryWhatsAppUrl(ownerPhone, shopName, expiredProducts, expiringSoonProducts, expiryWarningProducts)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                        <Send className="h-3.5 w-3.5" />
+                        Expiry Alert · {expiryCount} products
                       </button>
                     </a>
                   )}
@@ -472,7 +524,7 @@ export default function Alerts() {
             )}
 
             {/* ── No phone set banner (owner only) ── */}
-            {isOwner && !ownerPhone && (needsRestockCount > 0 || activeDebts.length > 0) && (
+            {isOwner && !ownerPhone && (needsRestockCount > 0 || activeDebts.length > 0 || expiryCount > 0) && (
               <div className="mx-4 mt-4 flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/60">
                 <MessageCircle className="h-4 w-4 text-muted-foreground shrink-0" />
                 <p className="text-xs text-muted-foreground">

@@ -909,7 +909,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
           {/* Table */}
           <div className="flex-1 overflow-y-auto min-h-0">
             {/* Column headers */}
-            <div className="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border px-4 py-1.5 grid grid-cols-[1fr_80px_80px_72px] gap-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+            <div className="sticky top-0 z-10 bg-muted border-b border-border px-4 py-1.5 grid grid-cols-[1fr_80px_80px_72px] gap-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
               <span>Product</span>
               <span className="text-right">Current</span>
               <span className="text-center">Add qty</span>
