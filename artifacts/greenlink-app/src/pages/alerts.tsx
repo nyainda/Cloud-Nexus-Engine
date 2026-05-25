@@ -271,7 +271,7 @@ export default function Alerts() {
   const expiryWarningProducts = allProducts.filter(p => p.expiryDate && p.expiryDate > day30Str && p.expiryDate <= day90Str);
   const expiryCount = expiredProducts.length + expiringSoonProducts.length + expiryWarningProducts.length;
 
-  const ownerPhone = shop?.ownerWhatsapp || "";
+  const ownerPhones = (shop?.ownerWhatsapp || "").split(",").map((p: string) => p.trim()).filter(Boolean);
   const shopName = shop?.name || "the shop";
   const allDebts = (debtsData as any)?.debts || [];
   const activeDebts = allDebts.filter((d: any) => d.status === "active" || d.status === "overdue");
@@ -499,55 +499,67 @@ export default function Alerts() {
             )}
 
             {/* ── WhatsApp Owner Alerts (owner only, phone required) ── */}
-            {isOwner && ownerPhone && (needsRestockCount > 0 || activeDebts.length > 0 || expiryCount > 0) && (
-              <div className="px-4 pt-4 pb-3">
-                <div className="flex items-center gap-2 mb-2.5">
+            {isOwner && ownerPhones.length > 0 && (needsRestockCount > 0 || activeDebts.length > 0 || expiryCount > 0) && (
+              <div className="px-4 pt-4 pb-3 space-y-3">
+                <div className="flex items-center gap-2">
                   <MessageCircle className="h-4 w-4 text-[#25D366]" />
-                  <p className="text-xs font-bold text-foreground">Send WhatsApp Report to Owner</p>
+                  <p className="text-xs font-bold text-foreground">
+                    Send WhatsApp Report{ownerPhones.length > 1 ? ` · ${ownerPhones.length} owners` : ""}
+                  </p>
                 </div>
-                <div className="flex gap-2 flex-wrap">
-                  {needsRestockCount > 0 && (
-                    <a
-                      href={buildStockWhatsAppUrl(ownerPhone, shopName, outOfStockProducts, lowStockProducts)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-orange-500/10 border border-orange-500/30 text-orange-400">
-                        <Send className="h-3.5 w-3.5" />
-                        Stock Alert · {needsRestockCount} products
-                      </button>
-                    </a>
-                  )}
-                  {activeDebts.length > 0 && (
-                    <a
-                      href={buildDebtWhatsAppUrl(ownerPhone, shopName, allDebts)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-blue-500/10 border border-blue-500/30 text-blue-400">
-                        <Send className="h-3.5 w-3.5" />
-                        Debt Report · {activeDebts.length} debtors
-                      </button>
-                    </a>
-                  )}
-                  {expiryCount > 0 && (
-                    <a
-                      href={buildExpiryWhatsAppUrl(ownerPhone, shopName, expiredProducts, expiringSoonProducts, expiryWarningProducts)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-amber-500/10 border border-amber-500/30 text-amber-400">
-                        <Send className="h-3.5 w-3.5" />
-                        Expiry Alert · {expiryCount} products
-                      </button>
-                    </a>
-                  )}
-                </div>
+
+                {ownerPhones.map((phone, idx) => (
+                  <div key={idx}>
+                    {ownerPhones.length > 1 && (
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 mb-1.5">
+                        Owner {idx + 1} · <span className="font-mono">{phone}</span>
+                      </p>
+                    )}
+                    <div className="flex gap-2 flex-wrap">
+                      {needsRestockCount > 0 && (
+                        <a
+                          href={buildStockWhatsAppUrl(phone, shopName, outOfStockProducts, lowStockProducts)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-orange-500/10 border border-orange-500/30 text-orange-400">
+                            <Send className="h-3.5 w-3.5" />
+                            Stock · {needsRestockCount}
+                          </button>
+                        </a>
+                      )}
+                      {activeDebts.length > 0 && (
+                        <a
+                          href={buildDebtWhatsAppUrl(phone, shopName, allDebts)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-blue-500/10 border border-blue-500/30 text-blue-400">
+                            <Send className="h-3.5 w-3.5" />
+                            Debts · {activeDebts.length}
+                          </button>
+                        </a>
+                      )}
+                      {expiryCount > 0 && (
+                        <a
+                          href={buildExpiryWhatsAppUrl(phone, shopName, expiredProducts, expiringSoonProducts, expiryWarningProducts)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <button className="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-semibold bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                            <Send className="h-3.5 w-3.5" />
+                            Expiry · {expiryCount}
+                          </button>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
             {/* ── No phone set banner (owner only) ── */}
-            {isOwner && !ownerPhone && (needsRestockCount > 0 || activeDebts.length > 0 || expiryCount > 0) && (
+            {isOwner && ownerPhones.length === 0 && (needsRestockCount > 0 || activeDebts.length > 0 || expiryCount > 0) && (
               <div className="mx-4 mt-4 flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/60">
                 <MessageCircle className="h-4 w-4 text-muted-foreground shrink-0" />
                 <p className="text-xs text-muted-foreground">

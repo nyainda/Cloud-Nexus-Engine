@@ -14,7 +14,7 @@ import { useLocation } from "wouter";
 import {
   LogOut, Store, Shield, Truck, FileText, Plus, Edit2, Trash2,
   KeyRound, Eye, EyeOff, Bot, CheckCircle2, ChevronRight,
-  Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone
+  Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone, X, MessageCircle
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -87,6 +87,106 @@ function EditableField({
         </button>
       )}
       {hint && !editing && <p className="text-[10px] text-muted-foreground/40 mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+// ─── WhatsApp multi-number field ─────────────────────────────────────────────
+function WhatsAppField({
+  numbers,
+  onSave,
+}: {
+  numbers: string[];
+  onSave: (nums: string[]) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [newNum, setNewNum] = useState("");
+
+  const remove = (idx: number) => {
+    const updated = numbers.filter((_, i) => i !== idx);
+    toast.success("Number removed");
+    onSave(updated);
+  };
+
+  const add = () => {
+    const n = newNum.trim();
+    if (!n) return;
+    const updated = [...numbers, n];
+    toast.success("Number added");
+    onSave(updated);
+    setNewNum("");
+    setAdding(false);
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">WhatsApp Contacts</p>
+        {numbers.length > 1 && (
+          <span className="text-[10px] font-bold bg-[#25D366]/10 text-[#25D366] px-1.5 py-0.5 rounded-full">{numbers.length} owners</span>
+        )}
+      </div>
+      <div className="space-y-2">
+        {numbers.map((num, i) => (
+          <div key={i} className="flex items-center gap-2.5 bg-muted/20 border border-border rounded-xl px-3 py-2.5">
+            <MessageCircle className="h-3.5 w-3.5 text-[#25D366] shrink-0" />
+            <span className="text-sm font-medium flex-1 font-mono">{num}</span>
+            {numbers.length > 1 && (
+              <span className="text-[10px] text-muted-foreground/60 shrink-0">Owner {i + 1}</span>
+            )}
+            <button
+              onClick={() => remove(i)}
+              className="text-muted-foreground/40 hover:text-destructive transition-colors p-1 rounded"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+
+        {numbers.length === 0 && !adding && (
+          <p className="text-sm text-muted-foreground/40 italic py-1">No number set</p>
+        )}
+
+        {adding ? (
+          <div className="flex gap-2">
+            <input
+              value={newNum}
+              onChange={e => setNewNum(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") add();
+                if (e.key === "Escape") { setAdding(false); setNewNum(""); }
+              }}
+              autoFocus
+              placeholder="+254 700 000 000"
+              className="flex-1 h-10 bg-muted/40 border border-primary/40 rounded-xl px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/20"
+            />
+            <button
+              onClick={add}
+              className="px-4 h-10 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors"
+            >
+              Add
+            </button>
+            <button
+              onClick={() => { setAdding(false); setNewNum(""); }}
+              className="px-3 h-10 rounded-xl bg-muted text-muted-foreground text-xs hover:bg-muted/70 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1.5 text-xs text-primary font-semibold hover:underline mt-1"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {numbers.length === 0 ? "Add WhatsApp number" : "Add another owner"}
+          </button>
+        )}
+
+        <p className="text-[10px] text-muted-foreground/40 mt-0.5">
+          Used for WhatsApp stock, debt & expiry alert reports
+        </p>
+      </div>
     </div>
   );
 }
@@ -551,16 +651,10 @@ export default function Settings() {
                       }}
                     />
                     <div className="border-t border-border/30" />
-                    <EditableField
-                      label="WhatsApp Contact"
-                      value={shop?.ownerWhatsapp || ""}
-                      placeholder="+254 700 000 000"
-                      hint="Used for urgent stock and system alerts"
-                      onSave={(v) => {
-                        toast.success("WhatsApp updated");
-                        return new Promise<void>((_, rej) => {
-                          updateShop.mutate({ shopId, data: { ownerWhatsapp: v } }, { onError: rej });
-                        });
+                    <WhatsAppField
+                      numbers={(shop?.ownerWhatsapp || "").split(",").map(n => n.trim()).filter(Boolean)}
+                      onSave={(nums) => {
+                        updateShop.mutate({ shopId, data: { ownerWhatsapp: nums.join(",") } });
                       }}
                     />
                   </>
