@@ -2,8 +2,8 @@ import { Link, useRoute, useLocation } from "wouter";
 import { useState } from "react";
 import {
   ShoppingCart, Package, Users, Bell, BarChart3,
-  ScanLine, Settings, Leaf, LogOut, Store, LayoutDashboard, Receipt,
-  Sun, Moon, Download, RotateCcw
+  ScanLine, Settings, Leaf, LogOut, LayoutDashboard, Receipt,
+  Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen
 } from "lucide-react";
 import { useListNotifications, useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -16,25 +16,33 @@ interface NavItemProps {
   icon: React.ElementType;
   label: string;
   badge?: number;
+  collapsed?: boolean;
 }
 
-function SidebarNavItem({ href, icon: Icon, label, badge }: NavItemProps) {
+function SidebarNavItem({ href, icon: Icon, label, badge, collapsed }: NavItemProps) {
   const [isActive] = useRoute(href);
   return (
     <Link
       href={href}
+      title={collapsed ? label : undefined}
       className={cn(
         "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group relative",
+        collapsed ? "justify-center px-2" : "",
         isActive
           ? "bg-primary text-primary-foreground font-semibold"
           : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />
-      <span className="text-sm font-medium">{label}</span>
-      {!!badge && badge > 0 && (
+      {!collapsed && <span className="text-sm font-medium">{label}</span>}
+      {!!badge && badge > 0 && !collapsed && (
         <span className="ml-auto bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
           {badge > 99 ? "99+" : badge}
+        </span>
+      )}
+      {!!badge && badge > 0 && collapsed && (
+        <span className="absolute top-1 right-1 bg-destructive text-[8px] font-bold rounded-full w-3 h-3 flex items-center justify-center text-white">
+          {badge > 9 ? "9+" : badge}
         </span>
       )}
     </Link>
@@ -84,7 +92,7 @@ function MobileThemeToggle() {
   );
 }
 
-function ThemeToggle({ className }: { className?: string }) {
+function ThemeToggle({ collapsed, className }: { collapsed?: boolean; className?: string }) {
   const [theme, setThemeState] = useState<Theme>(getTheme);
   const toggle = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -94,14 +102,15 @@ function ThemeToggle({ className }: { className?: string }) {
   return (
     <button
       onClick={toggle}
-      title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      title={collapsed ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
       className={cn(
-        "flex items-center gap-2 px-3 py-2.5 rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all text-sm font-medium w-full",
+        "flex items-center gap-2 rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all text-sm font-medium w-full",
+        collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5",
         className
       )}
     >
       {theme === "dark" ? <Sun className="h-4 w-4 shrink-0" /> : <Moon className="h-4 w-4 shrink-0" />}
-      <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
+      {!collapsed && <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>}
     </button>
   );
 }
@@ -113,6 +122,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const userName = localStorage.getItem("greenlink_userName") || "";
   const isOwner = role === "owner";
   const { canInstall, install } = usePwaInstall();
+
+  // Collapsible sidebar state — persisted in localStorage
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("greenlink_sidebar_collapsed") === "1"; } catch { return false; }
+  });
+
+  const toggleCollapsed = () => {
+    setCollapsed(c => {
+      const next = !c;
+      try { localStorage.setItem("greenlink_sidebar_collapsed", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  };
 
   const { data: notifications } = useListNotifications(
     { shopId },
@@ -138,78 +160,120 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="fixed inset-0 flex flex-col lg:flex-row bg-background font-sans">
       {/* ── Desktop Sidebar ── */}
-      <aside className="hidden lg:flex flex-col w-56 border-r border-sidebar-border bg-sidebar shrink-0">
-        <div className="p-4 border-b border-sidebar-border">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
+      <aside className={cn(
+        "hidden lg:flex flex-col border-r border-sidebar-border bg-sidebar shrink-0 transition-all duration-200",
+        collapsed ? "w-14" : "w-56"
+      )}>
+        {/* Logo / header */}
+        <div className={cn(
+          "border-b border-sidebar-border flex items-center",
+          collapsed ? "p-2 justify-center" : "p-4 justify-between"
+        )}>
+          {!collapsed && (
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
+                <Leaf className="h-4 w-4 text-primary-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-sidebar-foreground leading-tight font-display">GreenLink OS</p>
+                <p className="text-[10px] text-sidebar-foreground/50 truncate">{shopName}</p>
+              </div>
+            </div>
+          )}
+          {collapsed && (
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <Leaf className="h-4 w-4 text-primary-foreground" />
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-bold text-sidebar-foreground leading-tight font-display">GreenLink OS</p>
-              <p className="text-[10px] text-sidebar-foreground/50 truncate">{shopName}</p>
+          )}
+          {/* Collapse toggle always visible */}
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={cn(
+              "flex items-center justify-center rounded-lg text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors",
+              collapsed ? "mt-2 w-8 h-8" : "w-7 h-7 shrink-0"
+            )}
+          >
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
+        </div>
+
+        {/* Role indicator — hidden when collapsed */}
+        {!collapsed && (
+          <div className="px-3 py-2 border-b border-sidebar-border/60">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <span className="text-sidebar-foreground/60 font-medium">
+                {userName || (isOwner ? "Owner" : "Cashier")} · <span className="capitalize">{role}</span>
+              </span>
             </div>
           </div>
-        </div>
+        )}
 
-        <div className="px-3 py-2 border-b border-sidebar-border/60">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            <span className="text-sidebar-foreground/60 font-medium">
-              {userName || (isOwner ? "Owner" : "Cashier")} · <span className="capitalize">{role}</span>
-            </span>
-          </div>
-        </div>
+        <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto overflow-x-hidden">
+          <SidebarNavItem href="/pos" icon={ShoppingCart} label="Point of Sale" collapsed={collapsed} />
+          <SidebarNavItem href="/stock" icon={Package} label="Inventory" collapsed={collapsed} />
+          <SidebarNavItem href="/debts" icon={Users} label="Customer Debts" collapsed={collapsed} />
+          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} collapsed={collapsed} />
 
-        <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
-          <SidebarNavItem href="/pos" icon={ShoppingCart} label="Point of Sale" />
-          <SidebarNavItem href="/stock" icon={Package} label="Inventory" />
-          <SidebarNavItem href="/debts" icon={Users} label="Customer Debts" />
-          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} />
-
-          <div className="pt-3 pb-1 px-3">
-            <p className="text-[10px] font-bold text-sidebar-foreground/30 uppercase tracking-wider">History</p>
-          </div>
-          <SidebarNavItem href="/sales-history" icon={Receipt} label="Sales History" />
-          <SidebarNavItem href="/returns" icon={RotateCcw} label="Process Return" />
+          {!collapsed && (
+            <div className="pt-3 pb-1 px-3">
+              <p className="text-[10px] font-bold text-sidebar-foreground/30 uppercase tracking-wider">History</p>
+            </div>
+          )}
+          {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
+          <SidebarNavItem href="/sales-history" icon={Receipt} label="Sales History" collapsed={collapsed} />
+          <SidebarNavItem href="/returns" icon={RotateCcw} label="Process Return" collapsed={collapsed} />
 
           {isOwner && (
             <>
-              <div className="pt-3 pb-1 px-3">
-                <p className="text-[10px] font-bold text-sidebar-foreground/30 uppercase tracking-wider">Management</p>
-              </div>
-              <SidebarNavItem href="/owner-dashboard" icon={LayoutDashboard} label="Owner Dashboard" />
-              <SidebarNavItem href="/reports" icon={BarChart3} label="Analytics" />
-              <SidebarNavItem href="/ocr" icon={ScanLine} label="Smart Scanner" />
+              {!collapsed && (
+                <div className="pt-3 pb-1 px-3">
+                  <p className="text-[10px] font-bold text-sidebar-foreground/30 uppercase tracking-wider">Management</p>
+                </div>
+              )}
+              {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
+              <SidebarNavItem href="/owner-dashboard" icon={LayoutDashboard} label="Owner Dashboard" collapsed={collapsed} />
+              <SidebarNavItem href="/reports" icon={BarChart3} label="Analytics" collapsed={collapsed} />
+              <SidebarNavItem href="/ocr" icon={ScanLine} label="Smart Scanner" collapsed={collapsed} />
             </>
           )}
         </nav>
 
-        <div className="p-2 border-t border-sidebar-border space-y-0.5">
-          <SidebarNavItem href="/settings" icon={Settings} label="Settings" />
-          <ThemeToggle />
+        <div className={cn("p-2 border-t border-sidebar-border space-y-0.5")}>
+          <SidebarNavItem href="/settings" icon={Settings} label="Settings" collapsed={collapsed} />
+          <ThemeToggle collapsed={collapsed} />
           {canInstall && (
             <button
               onClick={install}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-primary hover:bg-primary/10 transition-all text-sm font-medium"
+              title={collapsed ? "Install App" : undefined}
+              className={cn(
+                "w-full flex items-center gap-3 rounded-lg text-primary hover:bg-primary/10 transition-all text-sm font-medium",
+                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5"
+              )}
             >
               <Download className="h-4 w-4" />
-              Install App
+              {!collapsed && "Install App"}
             </button>
           )}
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all text-sm font-medium"
+            title={collapsed ? "Sign Out" : undefined}
+            className={cn(
+              "w-full flex items-center gap-3 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all text-sm font-medium",
+              collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5"
+            )}
           >
             <LogOut className="h-4 w-4" />
-            Sign Out
+            {!collapsed && "Sign Out"}
           </button>
         </div>
       </aside>
 
-      {/* ── Mobile/Tablet column ── fills the remaining width, scrolling inside */}
+      {/* ── Mobile/Tablet column ── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
-        {/* Mobile Topbar — never scrolls */}
+        {/* Mobile Topbar */}
         <div className="lg:hidden flex items-center justify-between px-4 py-2.5 border-b border-border bg-sidebar shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
@@ -246,14 +310,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Page content — only this scrolls */}
-        {/* transform: translateZ(0) forces a GPU composite layer, bypassing Chrome Android's
-            tile rasterizer which produces horizontal scan-line artifacts on near-black backgrounds */}
+        {/* Page content */}
         <main className="flex-1 overflow-y-auto min-h-0" style={{ WebkitTransform: 'translateZ(0)', transform: 'translateZ(0)' }}>
           {children}
         </main>
 
-        {/* Mobile Bottom Nav — sits below the scroll area, never fixed */}
+        {/* Mobile Bottom Nav */}
         <nav
           className="lg:hidden flex items-stretch bg-sidebar border-t border-border shrink-0"
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
