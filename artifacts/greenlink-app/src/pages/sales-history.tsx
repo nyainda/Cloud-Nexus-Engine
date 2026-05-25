@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   useListSales, useGetSale, useDeleteSale, getListSalesQueryKey,
   useListSaleReturns, useCreateSaleReturn,
@@ -14,7 +14,7 @@ import {
   Receipt, ChevronDown, ChevronUp, Trash2, Calendar,
   ChevronLeft, ChevronRight, CreditCard,
   TrendingUp, ShoppingBag, Banknote, Clock, User, Package,
-  RotateCcw, Minus, Plus,
+  RotateCcw, Minus, Plus, CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, addDays, subDays, isToday } from "date-fns";
@@ -31,30 +31,55 @@ function ReturnDialog({
   open,
   onClose,
   saleItems,
+  existingReturns,
 }: {
   saleId: string;
   open: boolean;
   onClose: () => void;
   saleItems: any[];
+  existingReturns: any[];
 }) {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "cashier";
   const qc = useQueryClient();
   const doReturn = useCreateSaleReturn();
 
-  // returnQtys: map of saleItem index → qty to return
+  // Compute already-returned qty per item index (match by productId or productName)
+  const alreadyReturnedByIdx = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const ret of existingReturns) {
+      const ritems: any[] = (() => { try { return JSON.parse(ret.itemsJson ?? "[]"); } catch { return []; } })();
+      for (const ri of ritems) {
+        const idx = saleItems.findIndex(si =>
+          (ri.productId && si.productId && ri.productId === si.productId) ||
+          ri.productName === si.productName
+        );
+        if (idx >= 0) map[idx] = (map[idx] ?? 0) + (ri.qty ?? 0);
+      }
+    }
+    return map;
+  }, [existingReturns, saleItems]);
+
+  // maxReturnable per item = sold - already returned
+  const maxReturnableByIdx = useMemo(() =>
+    Object.fromEntries(saleItems.map((item, i) => [i, Math.max(0, (item.qty ?? 0) - (alreadyReturnedByIdx[i] ?? 0))])),
+    [saleItems, alreadyReturnedByIdx]
+  );
+
+  const allFullyReturned = saleItems.every((_, i) => maxReturnableByIdx[i] === 0);
+
   const [returnQtys, setReturnQtys] = useState<Record<number, number>>(() =>
     Object.fromEntries(saleItems.map((_, i) => [i, 0]))
   );
   const [reason, setReason] = useState("");
 
   const totalRefund = saleItems.reduce((sum, item, i) => {
-    const qty = returnQtys[i] ?? 0;
-    return sum + qty * (item.unitPrice ?? 0);
+    return sum + (returnQtys[i] ?? 0) * (item.unitPrice ?? 0);
   }, 0);
   const hasSelection = Object.values(returnQtys).some(q => q > 0);
 
-  function setQty(idx: number, val: number, max: number) {
+  function setQty(idx: number, val: number) {
+    const max = maxReturnableByIdx[idx] ?? 0;
     setReturnQtys(prev => ({ ...prev, [idx]: Math.max(0, Math.min(max, val)) }));
   }
 
@@ -72,18 +97,10 @@ function ReturnDialog({
     if (items.length === 0) return;
 
     doReturn.mutate(
-      {
-        saleId,
-        data: {
-          shopId,
-          reason: reason.trim() || undefined,
-          processedBy: role,
-          items,
-        },
-      },
+      { saleId, data: { shopId, reason: reason.trim() || undefined, processedBy: role, items } },
       {
         onSuccess: () => {
-          toast.success(`Return processed — KES ${totalRefund.toLocaleString("en-KE", { maximumFractionDigits: 0 })} refund`);
+          toast.success(`Return processed — ${fmt(totalRefund)} refund`);
           qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
           qc.invalidateQueries({ queryKey: ["listSaleReturns", saleId] });
           setReturnQtys(Object.fromEntries(saleItems.map((_, i) => [i, 0])));
@@ -91,7 +108,8 @@ function ReturnDialog({
           onClose();
         },
         onError: (err: any) => {
-          toast.error(err?.response?.data?.error ?? "Failed to process return");
+          const msg = err?.response?.data?.error ?? err?.message ?? "Failed to process return";
+          toast.error(msg);
         },
       }
     );
@@ -99,100 +117,144 @@ function ReturnDialog({
 
   return (
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <RotateCcw className="h-4 w-4 text-amber-500" />
+      <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+        <DialogHeader className="px-5 pt-5 pb-4 border-b border-border shrink-0">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+              <RotateCcw className="h-3.5 w-3.5 text-primary" />
+            </div>
             Process Return
           </DialogTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Stock is automatically restored. Only unsold quantities can be returned.
+          </p>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto space-y-4 py-2">
-          <p className="text-sm text-muted-foreground">
-            Select the items the customer is returning. Stock will be restored and the return recorded in the audit log.
-          </p>
-
-          <div className="space-y-2">
-            {saleItems.map((item, i) => {
-              const maxQty = item.qty ?? 0;
-              const qty = returnQtys[i] ?? 0;
-              return (
-                <div
-                  key={i}
-                  className={cn(
-                    "rounded-lg border p-3 transition-colors",
-                    qty > 0 ? "border-amber-400/60 bg-amber-50/5" : "border-border"
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">{item.productName}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Sold: {maxQty} × {fmt(item.unitPrice)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        onClick={() => setQty(i, qty - 1, maxQty)}
-                        disabled={qty === 0}
-                        className="w-7 h-7 rounded-md border border-border flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 transition-colors"
-                      >
-                        <Minus className="h-3 w-3" />
-                      </button>
-                      <span className={cn(
-                        "w-7 text-center text-sm font-bold font-mono",
-                        qty > 0 ? "text-amber-500" : "text-muted-foreground"
-                      )}>
-                        {qty}
-                      </span>
-                      <button
-                        onClick={() => setQty(i, qty + 1, maxQty)}
-                        disabled={qty >= maxQty}
-                        className="w-7 h-7 rounded-md border border-border flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 transition-colors"
-                      >
-                        <Plus className="h-3 w-3" />
-                      </button>
-                    </div>
-                  </div>
-                  {qty > 0 && (
-                    <p className="text-xs text-amber-500 font-semibold mt-1.5 text-right font-mono">
-                      Refund: {fmt(qty * (item.unitPrice ?? 0))}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Reason (optional)</Label>
-            <input
-              value={reason}
-              onChange={e => setReason(e.target.value)}
-              placeholder="e.g. Wrong product, defective item…"
-              className="flex h-10 w-full rounded-lg border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-
-          {hasSelection && (
-            <div className="rounded-lg border border-amber-400/40 bg-amber-50/5 p-3 flex justify-between items-center">
-              <span className="text-sm font-bold text-amber-500">Total Refund</span>
-              <span className="text-lg font-bold font-mono text-amber-500">{fmt(totalRefund)}</span>
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          {allFullyReturned ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+              </div>
+              <p className="text-sm font-bold text-emerald-500">All Items Returned</p>
+              <p className="text-xs text-muted-foreground">Every item from this sale has already been returned.</p>
             </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {saleItems.map((item, i) => {
+                  const maxQty = maxReturnableByIdx[i] ?? 0;
+                  const alreadyRet = alreadyReturnedByIdx[i] ?? 0;
+                  const qty = returnQtys[i] ?? 0;
+                  const fullyReturned = maxQty === 0;
+
+                  return (
+                    <div
+                      key={i}
+                      className={cn(
+                        "rounded-xl border p-3.5 transition-all",
+                        fullyReturned ? "opacity-50 bg-muted/10 border-border/40"
+                          : qty > 0 ? "border-primary/40 bg-primary/5"
+                          : "border-border bg-card"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold truncate">{item.productName}</p>
+                          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              {item.qty} sold × {fmt(item.unitPrice)}
+                            </span>
+                            {alreadyRet > 0 && (
+                              <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded-md">
+                                {alreadyRet} already returned
+                              </span>
+                            )}
+                            {fullyReturned && (
+                              <span className="text-[10px] font-bold text-emerald-500 flex items-center gap-0.5">
+                                <CheckCircle2 className="h-3 w-3" /> fully returned
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {!fullyReturned && (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => setQty(i, qty - 1)}
+                              disabled={qty === 0}
+                              className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 transition-colors"
+                            >
+                              <Minus className="h-3 w-3" />
+                            </button>
+                            <span className={cn(
+                              "w-8 text-center text-sm font-bold font-mono tabular-nums",
+                              qty > 0 ? "text-primary" : "text-muted-foreground"
+                            )}>
+                              {qty}
+                            </span>
+                            <button
+                              onClick={() => setQty(i, qty + 1)}
+                              disabled={qty >= maxQty}
+                              className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 transition-colors"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {qty > 0 && (
+                        <div className="flex items-center justify-between bg-primary/10 rounded-lg px-2.5 py-1.5">
+                          <span className="text-[10px] text-muted-foreground">{qty} × {fmt(item.unitPrice)}</span>
+                          <span className="text-xs font-bold font-mono text-primary">+{fmt(qty * (item.unitPrice ?? 0))}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Reason (optional)</Label>
+                <input
+                  value={reason}
+                  onChange={e => setReason(e.target.value)}
+                  placeholder="e.g. Wrong product, defective item…"
+                  className="w-full h-10 px-3 text-sm bg-muted/30 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all"
+                />
+              </div>
+
+              {hasSelection && (
+                <div className="flex items-center justify-between bg-primary/10 border border-primary/20 rounded-xl px-4 py-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total Refund</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {Object.values(returnQtys).filter(q => q > 0).length} item type{Object.values(returnQtys).filter(q => q > 0).length !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  <span className="text-xl font-bold font-mono text-primary">{fmt(totalRefund)}</span>
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        <DialogFooter className="gap-2 pt-2 border-t border-border">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={!hasSelection || doReturn.isPending}
-            className="bg-amber-500 hover:bg-amber-600 text-white"
-          >
-            <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-            {doReturn.isPending ? "Processing…" : "Confirm Return"}
-          </Button>
-        </DialogFooter>
+        {!allFullyReturned && (
+          <DialogFooter className="px-5 pb-5 pt-3 border-t border-border gap-2 shrink-0">
+            <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={!hasSelection || doReturn.isPending}
+              className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {doReturn.isPending
+                ? <span className="h-4 w-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin mr-1.5" />
+                : <RotateCcw className="h-3.5 w-3.5 mr-1.5" />}
+              {doReturn.isPending ? "Processing…" : "Confirm Return"}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -330,6 +392,7 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
           open={returnOpen}
           onClose={() => setReturnOpen(false)}
           saleItems={items}
+          existingReturns={returns}
         />
       )}
     </div>

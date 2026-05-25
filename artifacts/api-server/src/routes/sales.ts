@@ -414,6 +414,41 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
   if (sale.isDeleted) return c.json({ error: "Cannot return items from a voided sale" }, 400);
   if (!body.items || body.items.length === 0) return c.json({ error: "No items to return" }, 400);
 
+  // ── Guard: compute already-returned qty per product for this sale ────────────
+  const existingReturnRows = await db
+    .select()
+    .from(saleReturns)
+    .where(eq(saleReturns.saleId, saleId))
+    .all();
+
+  const alreadyReturned: Record<string, number> = {};
+  for (const r of existingReturnRows) {
+    const ritems: any[] = (() => { try { return JSON.parse(r.itemsJson ?? "[]"); } catch { return []; } })();
+    for (const ri of ritems) {
+      if (ri.productId) alreadyReturned[ri.productId] = (alreadyReturned[ri.productId] ?? 0) + (ri.qty ?? 0);
+    }
+  }
+
+  // ── Fetch original sold quantities ───────────────────────────────────────────
+  const soldRows = await db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).all();
+  const soldQty: Record<string, number> = {};
+  for (const si of soldRows) {
+    if (si.productId) soldQty[si.productId] = (soldQty[si.productId] ?? 0) + si.qty;
+  }
+
+  // ── Validate each return item ────────────────────────────────────────────────
+  for (const item of body.items) {
+    if (!item.productId) continue;
+    const originalQty = soldQty[item.productId] ?? 0;
+    const prevReturned = alreadyReturned[item.productId] ?? 0;
+    const maxReturnable = originalQty - prevReturned;
+    if (item.qty > maxReturnable) {
+      return c.json({
+        error: `Cannot return ${item.qty}× "${item.productName}" — only ${maxReturnable} can be returned (${prevReturned} already returned of ${originalQty} sold)`,
+      }, 400);
+    }
+  }
+
   const now = new Date().toISOString();
   const returnId = crypto.randomUUID();
 
@@ -476,6 +511,16 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     performedBy: body.processedBy ?? null,
     createdAt: now,
   });
+
+  // ── Update sale totals to reflect the return ────────────────────────────────
+  const newTotal = Math.max(0, (sale.totalAmount ?? 0) - totalRefund);
+  // Estimate profit reduction: refund * (totalProfit / totalAmount) if ratio available
+  const profitRatio = (sale.totalAmount ?? 0) > 0
+    ? (sale.totalProfit ?? 0) / (sale.totalAmount ?? 1) : 0;
+  const newProfit = Math.max(0, (sale.totalProfit ?? 0) - totalRefund * profitRatio);
+  await db.update(sales)
+    .set({ totalAmount: newTotal, totalProfit: newProfit })
+    .where(eq(sales.id, saleId));
 
   // Bust cache so dashboard/products reflect restored stock
   const today = new Date().toISOString().slice(0, 10);

@@ -677,9 +677,14 @@ export default function POS() {
         </div>
       </div>
 
-      {/* Desktop Cart */}
-      <div className="hidden lg:flex flex-col w-[340px] xl:w-[380px] shrink-0 border-l border-border overflow-hidden">
-        <CartPanel {...cartPanelProps} />
+      {/* Desktop Cart — hidden until first item added, then slides in */}
+      <div className={cn(
+        "hidden lg:flex flex-col shrink-0 border-border overflow-hidden transition-all duration-300 ease-out",
+        cart.length > 0
+          ? "w-[340px] xl:w-[380px] border-l opacity-100"
+          : "w-0 opacity-0"
+      )}>
+        {cart.length > 0 && <CartPanel {...cartPanelProps} />}
       </div>
 
       {/* Mobile: Cart FAB — plain fixed button, no transforms */}
