@@ -354,9 +354,15 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
 
   const handleSubmit = () => {
     if (!name.trim()) return;
+    // Close + confirm immediately — don't wait for the network
+    toast.success("Product added!");
+    reset(); setOpen(false); onSuccess();
     createProduct.mutate(
       { data: { shopId, canonicalName: name.trim(), sku: sku || undefined, category: category || undefined, unit, purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: parseFloat(alertQty) || 5, stockQty: parseFloat(qty) || 0, expiryDate: expiryDate || undefined } as any },
-      { onSuccess: () => { toast.success("Product added!"); reset(); setOpen(false); onSuccess(); }, onError: () => toast.error("Failed to add product") }
+      {
+        onSuccess: () => { onSuccess(); }, // refresh list with real server ID
+        onError: () => { toast.error("Failed to add product — please retry"); onSuccess(); },
+      }
     );
   };
 
@@ -463,8 +469,10 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
         body: JSON.stringify({ targetShopId, qty, notes: notes || undefined }),
       });
     },
-    onSuccess: () => { toast.success(`Transferred ${qty} ${product.unit || "units"} to ${targetLabel}`); setOpen(false); setQty(1); setNotes(""); onSuccess(); },
-    onError: (e: any) => toast.error(e.message || "Transfer failed"),
+    onError: (e: any) => {
+      qc.refetchQueries({ queryKey: getListProductsQueryKey() });
+      toast.error(e.message || "Transfer failed — please retry");
+    },
   });
 
   return (
@@ -501,8 +509,20 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={() => transferMutation.mutate()} disabled={qty <= 0 || qty > product.stockQty || transferMutation.isPending}>
-            {transferMutation.isPending ? "Transferring…" : `Transfer ${qty} ${product.unit || "units"}`}
+          <Button
+            onClick={() => {
+              // Optimistic: reduce stock locally and close immediately
+              qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+                if (!old?.products) return old;
+                return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : { ...p, stockQty: Math.max(0, p.stockQty - qty) }) };
+              });
+              toast.success(`Transferred ${qty} ${product.unit || "units"} to ${targetLabel}`);
+              setOpen(false); setQty(1); setNotes(""); onSuccess();
+              transferMutation.mutate();
+            }}
+            disabled={qty <= 0 || qty > product.stockQty}
+          >
+            Transfer {qty} {product.unit || "units"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -520,9 +540,10 @@ function DeleteProductButton({ productId, productName, onSuccess }: { productId:
       if (!old?.products) return old;
       return { ...old, products: old.products.filter((p: any) => p.id !== productId) };
     });
+    // Optimistic update already applied — confirm immediately
+    toast.success("Product removed"); onSuccess();
     delProduct.mutate({ productId }, {
-      onSuccess: () => { toast.success("Product removed"); onSuccess(); },
-      onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to delete product"); },
+      onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to delete product — please retry"); },
       onSettled: () => {
         qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
         qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
@@ -618,8 +639,7 @@ function TransferHistory({ shopId, isOwner }: { shopId: string; isOwner: boolean
 
   const cancelTransfer = useMutation({
     mutationFn: (id: string) => customFetch<any>(`/api/transfers/${id}`, { method: "DELETE" }),
-    onSuccess: () => { toast.success("Transfer cancelled & stock restored"); refetch(); qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() }); },
-    onError: (e: any) => toast.error(e.message || "Failed to cancel transfer"),
+    onError: (e: any) => toast.error(e.message || "Failed to cancel transfer — please retry"),
   });
 
   if (isLoading) return (
@@ -680,7 +700,12 @@ function TransferHistory({ shopId, isOwner }: { shopId: string; isOwner: boolean
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Keep</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => cancelTransfer.mutate(t.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={cancelTransfer.isPending}>
+                    <AlertDialogAction onClick={() => {
+                      toast.success("Transfer cancelled & stock restored");
+                      cancelTransfer.mutate(t.id, {
+                        onSuccess: () => { refetch(); qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() }); },
+                      });
+                    }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                       Cancel Transfer
                     </AlertDialogAction>
                   </AlertDialogFooter>

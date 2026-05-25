@@ -303,9 +303,14 @@ function GeminiSection({ shopId, hasKey }: { shopId: string; hasKey: boolean }) 
           <DialogFooter className="gap-2">
             {hasKey && (
               <button
-                onClick={() => updateShop.mutate({ shopId, data: { geminiApiKey: null } as any }, {
-                  onSuccess: () => { toast.success("Key removed"); qc.invalidateQueries(); setOpen(false); },
-                })}
+                onClick={() => {
+                  toast.success("Key removed");
+                  setOpen(false);
+                  updateShop.mutate({ shopId, data: { geminiApiKey: null } as any }, {
+                    onSuccess: () => { qc.invalidateQueries(); },
+                    onError: () => toast.error("Failed to remove key — please retry"),
+                  });
+                }}
                 className="h-11 px-4 rounded-xl bg-destructive/10 text-destructive text-sm font-semibold hover:bg-destructive/20 transition-colors border border-destructive/20"
               >
                 Remove
@@ -418,8 +423,8 @@ export default function Settings() {
 
   const deleteSupplier = useDeleteSupplier({
     mutation: {
-      onSuccess: () => { qc.invalidateQueries({ queryKey: getListSuppliersQueryKey() }); toast.success("Supplier removed"); },
-      onError: () => toast.error("Failed to remove supplier"),
+      onSuccess: () => { qc.invalidateQueries({ queryKey: getListSuppliersQueryKey() }); },
+      onError: () => toast.error("Failed to remove supplier — please retry"),
     },
   });
 
@@ -538,9 +543,10 @@ export default function Settings() {
                     <EditableField
                       label="Shop Name"
                       value={shop?.name || ""}
-                      onSave={async (v) => {
-                        await new Promise<void>((res, rej) => {
-                          updateShop.mutate({ shopId, data: { name: v } }, { onSuccess: () => { toast.success("Name updated"); res(); }, onError: rej });
+                      onSave={(v) => {
+                        toast.success("Name updated");
+                        return new Promise<void>((_, rej) => {
+                          updateShop.mutate({ shopId, data: { name: v } }, { onError: rej });
                         });
                       }}
                     />
@@ -550,9 +556,10 @@ export default function Settings() {
                       value={shop?.ownerWhatsapp || ""}
                       placeholder="+254 700 000 000"
                       hint="Used for urgent stock and system alerts"
-                      onSave={async (v) => {
-                        await new Promise<void>((res, rej) => {
-                          updateShop.mutate({ shopId, data: { ownerWhatsapp: v } }, { onSuccess: () => { toast.success("WhatsApp updated"); res(); }, onError: rej });
+                      onSave={(v) => {
+                        toast.success("WhatsApp updated");
+                        return new Promise<void>((_, rej) => {
+                          updateShop.mutate({ shopId, data: { ownerWhatsapp: v } }, { onError: rej });
                         });
                       }}
                     />
@@ -726,7 +733,7 @@ export default function Settings() {
                           }
                         />
                         <button
-                          onClick={() => { if (confirm(`Remove ${s.name}?`)) deleteSupplier.mutate({ supplierId: s.id }); }}
+                          onClick={() => { if (confirm(`Remove ${s.name}?`)) { toast.success("Supplier removed"); deleteSupplier.mutate({ supplierId: s.id }); } }}
                           className="w-8 h-8 rounded-lg bg-muted hover:bg-destructive/15 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

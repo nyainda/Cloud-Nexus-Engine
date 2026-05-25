@@ -230,11 +230,13 @@ export default function Alerts() {
   };
 
   const handleMarkAllRead = () => {
+    // Confirm immediately — don't wait for the network
+    toast.success("All alerts marked as read");
     markAllRead.mutate(
       { params: { shopId } },
       {
-        onSuccess: () => { toast.success("All alerts marked as read"); refetch(); },
-        onError: () => toast.error("Failed to mark all as read"),
+        onSuccess: () => { refetch(); },
+        onError: () => toast.error("Failed to mark all as read — please retry"),
       }
     );
   };

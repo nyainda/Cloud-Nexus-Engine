@@ -444,11 +444,14 @@ function VoidDialog({ saleId, open, onClose }: { saleId: string | null; open: bo
 
   const handleVoid = () => {
     if (!saleId) return;
+    // Close + confirm immediately — don't wait for the network
+    toast.success("Sale voided");
+    setReason(""); onClose();
     del.mutate(
       { saleId, data: { reason: reason.trim() || "Voided by owner", performedBy: role } },
       {
-        onSuccess: () => { toast.success("Sale voided"); qc.invalidateQueries({ queryKey: getListSalesQueryKey() }); setReason(""); onClose(); },
-        onError: () => toast.error("Failed to void sale"),
+        onSuccess: () => { qc.invalidateQueries({ queryKey: getListSalesQueryKey() }); },
+        onError: () => toast.error("Failed to void sale — please retry"),
       }
     );
   };
