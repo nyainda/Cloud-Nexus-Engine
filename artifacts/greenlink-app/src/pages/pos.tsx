@@ -569,7 +569,9 @@ export default function POS() {
         </div>
 
         {/* Product Grid — plain overflow-y-auto */}
-        <div className="flex-1 overflow-y-auto p-3">
+        {/* contain:paint tells Chrome to rasterize this as an independent layer,
+            preventing tile-boundary scan-line artifacts when alpha cards repaint */}
+        <div className="flex-1 overflow-y-auto p-3" style={{ contain: "paint" }}>
           {isLoading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
               {Array.from({ length: 18 }).map((_, i) => (
