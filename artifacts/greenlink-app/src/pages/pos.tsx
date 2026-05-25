@@ -1,30 +1,23 @@
-import { useState, useMemo, useCallback, memo, useEffect, useRef } from "react";
-import {
-  useListProducts,
-  useCreateSale,
-  getListProductsQueryKey,
-  getListDebtsQueryKey,
-  getListInventoryMovementsQueryKey,
-} from "@workspace/api-client-react";
+import { useState, useMemo, useCallback, memo, useEffect } from "react";
+import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { formatKES } from "@/lib/format";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart,
-  PackageX, Package, CreditCard, Banknote, X,
-  ChevronRight, TrendingUp, Scale, AlertCircle,
+  AlertTriangle, PackageX, Package, CreditCard, Banknote, X,
+  ChevronRight, TrendingUp, Scale
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
+import { cn } from "@/lib/utils";
 
 const WEIGHT_UNITS = new Set(["kg", "g", "gram", "grams", "litre", "liter", "l", "ml", "ton", "tonne"]);
-function isWeighedUnit(unit: string) {
+function isWeighedUnit(unit: string): boolean {
   return WEIGHT_UNITS.has((unit || "").trim().toLowerCase());
-}
-
-function cls(...parts: (string | false | null | undefined)[]) {
-  return parts.filter(Boolean).join(" ");
 }
 
 interface CartItem {
@@ -33,18 +26,23 @@ interface CartItem {
   unitPrice: number;
 }
 
-// ─── QuickAdd sheet ────────────────────────────────────────────────────────────
+type StockFilter = "all" | "in_stock" | "low_stock" | "out_of_stock";
 
+const FILTERS: { value: StockFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "in_stock", label: "In Stock" },
+  { value: "low_stock", label: "Low" },
+  { value: "out_of_stock", label: "Out" },
+];
+
+// ── QuickAdd bottom sheet — no Radix Dialog, no CSS transforms ────────────────
 function QuickAddSheet({
   product, open, onClose, onAdd, isOwner,
 }: {
-  product: any | null;
-  open: boolean;
-  onClose: () => void;
-  onAdd: (product: any, qty: number, price: number) => void;
-  isOwner: boolean;
+  product: any | null; open: boolean; onClose: () => void;
+  onAdd: (product: any, qty: number, price: number) => void; isOwner: boolean;
 }) {
-  const [qty, setQty] = useState(1);
+  const [qty, setQty] = useState<number>(1);
   const [price, setPrice] = useState(0);
 
   useEffect(() => {
@@ -54,155 +52,93 @@ function QuickAddSheet({
     }
   }, [open, product]);
 
+  // Lock body scroll when open
+  useEffect(() => {
+    if (open) document.body.style.overflow = "hidden";
+    else document.body.style.overflow = "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
+
   if (!open || !product) return null;
 
   const weighed = isWeighedUnit(product.unit || "");
   const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
   const isOut = product.stockQty === 0;
   const margin = product.purchasePrice && price
-    ? (((price - product.purchasePrice) / price) * 100).toFixed(0)
-    : null;
-  const profit = product.purchasePrice ? qty * (price - product.purchasePrice) : null;
+    ? (((price - product.purchasePrice) / price) * 100).toFixed(0) : null;
+  const profit = product.purchasePrice
+    ? qty * (price - product.purchasePrice) : null;
+
   const qtyStep = weighed ? 0.25 : 1;
   const qtyMin = weighed ? 0.1 : 1;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 60,
-        display: "flex",
-        alignItems: "flex-end",
-        justifyContent: "center",
-      }}
-    >
-      {/* backdrop */}
-      <div
-        onClick={onClose}
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: "rgba(0,0,0,0.6)",
-        }}
-      />
-
-      {/* sheet */}
-      <div
-        style={{
-          position: "relative",
-          width: "100%",
-          maxWidth: 420,
-          borderRadius: "16px 16px 0 0",
-          borderTop: "1px solid var(--border)",
-          borderLeft: "1px solid var(--border)",
-          borderRight: "1px solid var(--border)",
-          background: "var(--card)",
-          overflow: "hidden",
-        }}
-      >
-        {/* header */}
-        <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-            <div style={{
-              width: 44, height: 44, borderRadius: 12, flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: weighed ? "rgba(var(--primary-rgb, 200 255 0)/0.1)" : "var(--muted)",
-              border: "1px solid var(--border)",
-              color: weighed ? "var(--primary)" : "var(--muted-foreground)",
-            }}>
-              {weighed ? <Scale size={18} /> : <Package size={18} />}
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative bg-card w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border border-border overflow-hidden">
+        <div className="px-5 pt-5 pb-4 border-b border-border/60">
+          <div className="flex items-start gap-3">
+            <div className={cn(
+              "w-11 h-11 rounded-xl border flex items-center justify-center shrink-0",
+              weighed ? "bg-primary/10 border-primary/20 text-primary" : "bg-muted/60 border-border/50 text-muted-foreground/50"
+            )}>
+              {weighed ? <Scale className="h-5 w-5" /> : <Package className="h-5 w-5" />}
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.3, color: "var(--foreground)" }}>
-                {product.canonicalName}
-              </p>
-              <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap", alignItems: "center" }}>
-                {product.category && (
-                  <span style={{ fontSize: 10, color: "var(--muted-foreground)" }}>{product.category}</span>
-                )}
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-foreground leading-snug">{product.canonicalName}</p>
+              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                {product.category && <span className="text-[10px] text-muted-foreground">{product.category}</span>}
                 {product.unit && (
-                  <span style={{
-                    fontSize: 10, fontWeight: 700, fontFamily: "monospace",
-                    padding: "1px 6px", borderRadius: 4,
-                    border: `1px solid ${weighed ? "var(--primary)" : "var(--border)"}`,
-                    color: weighed ? "var(--primary)" : "var(--muted-foreground)",
-                    background: weighed ? "rgba(200,255,0,0.06)" : "transparent",
-                  }}>
-                    {product.unit}
-                  </span>
+                  <span className={cn(
+                    "text-[10px] font-bold px-1.5 rounded border font-mono",
+                    weighed ? "text-primary/80 border-primary/20 bg-primary/5" : "text-muted-foreground/50 border-border/30"
+                  )}>{product.unit}</span>
                 )}
               </div>
             </div>
-            <div style={{
-              fontSize: 10, fontWeight: 700,
-              padding: "3px 8px", borderRadius: 999, flexShrink: 0,
-              background: isOut ? "rgba(239,68,68,0.15)" : isLow ? "rgba(249,115,22,0.15)" : "rgba(34,197,94,0.15)",
-              color: isOut ? "#f87171" : isLow ? "#fb923c" : "#4ade80",
-            }}>
+            <div className={cn(
+              "text-[10px] font-bold px-2 py-1 rounded-full shrink-0",
+              isOut ? "bg-destructive/15 text-destructive" :
+              isLow ? "bg-orange-500/15 text-orange-400" : "bg-emerald-500/15 text-emerald-400"
+            )}>
               {isOut ? "Out of Stock" : isLow ? `Low: ${product.stockQty}` : `${product.stockQty} ${product.unit || "units"}`}
             </div>
           </div>
         </div>
 
-        {/* body */}
-        <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* qty */}
+        <div className="px-5 py-4 space-y-4">
           <div>
-            <label style={{
-              display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-              textTransform: "uppercase", color: "var(--muted-foreground)", marginBottom: 8,
-            }}>
-              Quantity{weighed ? ` (${product.unit || "kg"})` : ` (${product.unit || "units"})`}
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
+              Quantity {weighed ? `(${product.unit || "kg"} — enter any amount)` : `(${product.unit || "units"})`}
+            </Label>
+            <div className="flex items-center gap-3">
               <button
+                className="w-11 h-11 rounded-xl bg-muted border border-border flex items-center justify-center"
                 onClick={() => setQty(q => Math.max(qtyMin, parseFloat((q - qtyStep).toFixed(2))))}
-                style={{
-                  width: 44, height: 44, borderRadius: 12, border: "1px solid var(--border)",
-                  background: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", color: "var(--foreground)",
-                }}
               >
-                <Minus size={16} />
+                <Minus className="h-4 w-4" />
               </button>
               <input
                 type="number" min={qtyMin} step={qtyStep} max={product.stockQty}
                 value={qty}
                 onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= qtyMin) setQty(v); }}
-                style={{
-                  flex: 1, height: 44, textAlign: "center", fontSize: 22, fontWeight: 700,
-                  fontFamily: "monospace", background: "var(--muted)", border: "1px solid var(--border)",
-                  borderRadius: 12, outline: "none", color: "var(--foreground)",
-                }}
+                className="flex-1 h-11 text-center text-2xl font-bold font-mono bg-muted/40 border border-border rounded-xl focus:outline-none focus:border-primary/60"
               />
               <button
+                className="w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-40"
                 onClick={() => setQty(q => Math.min(product.stockQty, parseFloat((q + qtyStep).toFixed(2))))}
                 disabled={qty >= product.stockQty}
-                style={{
-                  width: 44, height: 44, borderRadius: 12, border: "none",
-                  background: "var(--primary)", color: "var(--primary-foreground)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: qty >= product.stockQty ? "not-allowed" : "pointer",
-                  opacity: qty >= product.stockQty ? 0.4 : 1,
-                }}
               >
-                <Plus size={16} />
+                <Plus className="h-4 w-4" />
               </button>
             </div>
             {weighed && (
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+              <div className="flex gap-1.5 flex-wrap mt-2">
                 {(product.unit?.toLowerCase() === "g" ? [100, 250, 500, 1000] : [0.5, 1, 2, 5, 10]).map(v => (
-                  <button
-                    key={v} type="button" onClick={() => setQty(v)}
-                    style={{
-                      fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 999,
-                      border: `1px solid ${qty === v ? "var(--primary)" : "var(--border)"}`,
-                      background: qty === v ? "rgba(200,255,0,0.15)" : "var(--muted)",
-                      color: qty === v ? "var(--primary)" : "var(--muted-foreground)",
-                      cursor: "pointer",
-                    }}
-                  >
+                  <button key={v} type="button" onClick={() => setQty(v)} className={cn(
+                    "text-[11px] font-bold px-2.5 py-1 rounded-full border",
+                    qty === v ? "bg-primary/20 border-primary/50 text-primary" : "bg-muted/50 border-border/50 text-muted-foreground"
+                  )}>
                     {v}{product.unit}
                   </button>
                 ))}
@@ -210,58 +146,34 @@ function QuickAddSheet({
             )}
           </div>
 
-          {/* price */}
           <div>
-            <label style={{
-              display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-              textTransform: "uppercase", color: "var(--muted-foreground)", marginBottom: 8,
-            }}>
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
               Unit Price (KES)
-            </label>
+            </Label>
             <input
-              type="number" value={price}
-              onChange={e => setPrice(Number(e.target.value))}
-              style={{
-                width: "100%", height: 44, textAlign: "right", fontSize: 20, fontWeight: 700,
-                fontFamily: "monospace", background: "var(--muted)", border: "1px solid var(--border)",
-                borderRadius: 12, padding: "0 14px", outline: "none", color: "var(--foreground)",
-                boxSizing: "border-box",
-              }}
+              type="number" value={price} onChange={e => setPrice(Number(e.target.value))}
+              className="w-full h-11 text-right text-xl font-bold font-mono bg-muted/40 border border-border rounded-xl px-4 focus:outline-none focus:border-primary/60"
             />
           </div>
 
-          {/* summary box */}
-          <div style={{
-            background: "var(--muted)", borderRadius: 12, border: "1px solid var(--border)",
-            padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6,
-          }}>
+          <div className="bg-muted/40 rounded-xl border border-border p-3 space-y-1.5">
             {product.purchasePrice > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Buy price</span>
-                <span style={{ fontSize: 12, fontFamily: "monospace", color: "var(--muted-foreground)" }}>
-                  {formatKES(product.purchasePrice)}
-                </span>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">Buy price</span>
+                <span className="font-mono text-xs text-muted-foreground">{formatKES(product.purchasePrice)}</span>
               </div>
             )}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Subtotal</span>
-              <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "monospace", color: "var(--foreground)" }}>
-                {formatKES(qty * price)}
-              </span>
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-muted-foreground">Subtotal</span>
+              <span className="font-bold font-mono text-foreground">{formatKES(qty * price)}</span>
             </div>
             {profit !== null && (
-              <div style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                paddingTop: 6, marginTop: 2, borderTop: "1px solid var(--border)",
-              }}>
-                <span style={{ fontSize: 12, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 4 }}>
-                  <TrendingUp size={12} style={{ color: "#4ade80" }} />
-                  Est. Profit {margin && <span style={{ fontSize: 10, color: "#4ade80" }}>({margin}%)</span>}
+              <div className="flex justify-between items-center pt-1 border-t border-border/40">
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <TrendingUp className="h-3 w-3 text-emerald-400" />
+                  Est. Profit {margin && <span className="text-[10px] text-emerald-400">({margin}%)</span>}
                 </span>
-                <span style={{
-                  fontSize: 13, fontWeight: 700, fontFamily: "monospace",
-                  color: profit >= 0 ? "#4ade80" : "var(--destructive)",
-                }}>
+                <span className={cn("font-bold font-mono text-sm", profit >= 0 ? "text-emerald-400" : "text-destructive")}>
                   {formatKES(profit)}
                 </span>
               </div>
@@ -269,133 +181,23 @@ function QuickAddSheet({
           </div>
         </div>
 
-        {/* footer */}
-        <div style={{ padding: "0 20px 20px", display: "flex", gap: 8 }}>
-          <button
-            onClick={onClose}
-            style={{
-              flex: 1, height: 48, borderRadius: 12, border: "1px solid var(--border)",
-              background: "transparent", color: "var(--foreground)", fontWeight: 700,
-              fontSize: 14, cursor: "pointer",
-            }}
-          >
-            Cancel
-          </button>
-          <button
+        <div className="px-5 pb-5 flex gap-2">
+          <Button variant="outline" className="flex-1 h-12" onClick={onClose}>Cancel</Button>
+          <Button
+            className="flex-1 h-12 font-bold text-sm bg-primary text-primary-foreground"
             disabled={isOut}
             onClick={() => { onAdd(product, qty, price); onClose(); }}
-            style={{
-              flex: 1, height: 48, borderRadius: 12, border: "none",
-              background: isOut ? "var(--muted)" : "var(--primary)",
-              color: isOut ? "var(--muted-foreground)" : "var(--primary-foreground)",
-              fontWeight: 700, fontSize: 14,
-              cursor: isOut ? "not-allowed" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            }}
           >
-            <ShoppingCart size={16} />
+            <ShoppingCart className="h-4 w-4 mr-2" />
             Add to Cart
-          </button>
+          </Button>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Cart item row ────────────────────────────────────────────────────────────
-
-function CartItemRow({
-  item, isOwner, onQtyDec, onQtyInc, onRemove, onPriceChange,
-}: {
-  item: CartItem;
-  isOwner: boolean;
-  onQtyDec: () => void;
-  onQtyInc: () => void;
-  onRemove: () => void;
-  onPriceChange: (p: number) => void;
-}) {
-  const itemProfit = isOwner && item.product.purchasePrice
-    ? item.qty * (item.unitPrice - item.product.purchasePrice)
-    : null;
-
-  return (
-    <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)", flex: 1, lineHeight: 1.3 }}>
-          {item.product.canonicalName}
-        </span>
-        <button
-          onClick={onRemove}
-          style={{ flexShrink: 0, background: "none", border: "none", cursor: "pointer", padding: 2, color: "var(--muted-foreground)" }}
-        >
-          <X size={14} />
-        </button>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        {/* qty stepper */}
-        <div style={{
-          display: "flex", alignItems: "center",
-          background: "var(--muted)", borderRadius: 8, border: "1px solid var(--border)", overflow: "hidden",
-        }}>
-          <button
-            onClick={onQtyDec}
-            style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: "var(--muted-foreground)" }}
-          >
-            <Minus size={13} />
-          </button>
-          <span style={{ width: 28, textAlign: "center", fontSize: 13, fontWeight: 700, color: "var(--foreground)" }}>
-            {item.qty}
-          </span>
-          <button
-            onClick={onQtyInc}
-            disabled={item.qty >= item.product.stockQty}
-            style={{
-              width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center",
-              background: "none", border: "none",
-              cursor: item.qty >= item.product.stockQty ? "not-allowed" : "pointer",
-              color: item.qty >= item.product.stockQty ? "var(--muted-foreground)" : "var(--primary)",
-              opacity: item.qty >= item.product.stockQty ? 0.4 : 1,
-            }}
-          >
-            <Plus size={13} />
-          </button>
-        </div>
-
-        {/* unit price input */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 10, color: "var(--muted-foreground)" }}>KSh</span>
-          <input
-            type="number" value={item.unitPrice}
-            onChange={e => onPriceChange(Number(e.target.value))}
-            style={{
-              width: 70, height: 30, textAlign: "right", fontSize: 13, fontWeight: 600,
-              background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 6,
-              padding: "0 6px", outline: "none", color: "var(--foreground)",
-            }}
-          />
-        </div>
-
-        {/* total */}
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <p style={{ fontSize: 13, fontWeight: 700, fontFamily: "monospace", color: "var(--foreground)", margin: 0 }}>
-            {formatKES(item.qty * item.unitPrice)}
-          </p>
-          {isOwner && itemProfit !== null && (
-            <p style={{
-              fontSize: 10, fontFamily: "monospace", margin: 0,
-              color: itemProfit >= 0 ? "#4ade80" : "var(--destructive)",
-            }}>
-              +{formatKES(itemProfit)}
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Cart panel (rendered both in desktop sidebar and mobile sheet) ────────────
-
+// ── CartPanel — plain divs, no Radix ScrollArea ───────────────────────────────
 interface CartPanelProps {
   cart: CartItem[];
   discount: number;
@@ -410,8 +212,8 @@ interface CartPanelProps {
   setDiscount: (v: number) => void;
   setDebtCustomerName: (v: string) => void;
   setDebtCustomerPhone: (v: string) => void;
-  onClear: () => void;
-  onClose?: () => void;
+  setCart: React.Dispatch<React.SetStateAction<CartItem[]>>;
+  setShowCartMobile: (v: boolean) => void;
   updateQty: (id: string, delta: number) => void;
   removeFromCart: (id: string) => void;
   updatePrice: (id: string, price: number) => void;
@@ -421,319 +223,165 @@ interface CartPanelProps {
 const CartPanel = memo(function CartPanel({
   cart, discount, debtCustomerName, debtCustomerPhone, isOwner,
   createSalePending, subtotal, total, totalProfit, cartCount,
-  setDiscount, setDebtCustomerName, setDebtCustomerPhone,
-  onClear, onClose, updateQty, removeFromCart, updatePrice, handleCheckout,
+  setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
+  setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout,
 }: CartPanelProps) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--card)" }}>
-
-      {/* header */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "12px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <ShoppingCart size={16} style={{ color: "var(--primary)" }} />
-          <span style={{ fontWeight: 700, fontSize: 14, color: "var(--foreground)" }}>Cart</span>
+    <div className="flex flex-col h-full bg-card">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+        <div className="flex items-center gap-2">
+          <ShoppingCart className="h-4 w-4 text-primary" />
+          <span className="font-bold text-sm">Cart</span>
           {cartCount > 0 && (
-            <span style={{
-              fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 999,
-              background: "rgba(200,255,0,0.15)", color: "var(--primary)",
-            }}>
+            <Badge className="bg-primary/20 text-primary border-0 text-[10px] font-bold px-1.5 py-0.5 h-auto">
               {cartCount} {cartCount === 1 ? "item" : "items"}
-            </span>
+            </Badge>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {onClose && (
-            <button
-              onClick={onClose}
-              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted-foreground)", padding: 4 }}
-            >
-              <X size={16} />
-            </button>
-          )}
+        <div className="flex items-center gap-2">
+          <button className="lg:hidden text-muted-foreground p-1" onClick={() => setShowCartMobile(false)}>
+            <X className="h-4 w-4" />
+          </button>
           {cartCount > 0 && (
-            <button
-              onClick={onClear}
-              style={{ fontSize: 11, color: "var(--muted-foreground)", background: "none", border: "none", cursor: "pointer" }}
-            >
+            <button className="text-[11px] text-muted-foreground hover:text-destructive" onClick={() => { setCart([]); setDiscount(0); }}>
               Clear all
             </button>
           )}
         </div>
       </div>
 
-      {/* scrollable items list */}
-      <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+      {/* Plain overflow div — no Radix ScrollArea */}
+      <div className="flex-1 overflow-y-auto">
         {cart.length === 0 ? (
-          <div style={{
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-            height: 180, gap: 8, color: "var(--muted-foreground)",
-          }}>
-            <ShoppingCart size={36} style={{ opacity: 0.2 }} />
-            <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Cart is empty</p>
-            <p style={{ fontSize: 11, margin: 0, opacity: 0.5, textAlign: "center", padding: "0 24px" }}>
-              Tap any product to add it
-            </p>
+          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
+            <ShoppingCart className="h-10 w-10 text-muted-foreground/20" />
+            <p className="text-sm font-medium">Cart is empty</p>
+            <p className="text-xs text-muted-foreground/50 text-center px-6">Tap any product to add it</p>
           </div>
         ) : (
-          cart.map(item => (
-            <CartItemRow
-              key={item.product.id}
-              item={item}
-              isOwner={isOwner}
-              onQtyDec={() => updateQty(item.product.id, -1)}
-              onQtyInc={() => updateQty(item.product.id, 1)}
-              onRemove={() => removeFromCart(item.product.id)}
-              onPriceChange={p => updatePrice(item.product.id, p)}
-            />
-          ))
+          <div className="divide-y divide-border/50">
+            {cart.map(item => {
+              const itemProfit = isOwner && item.product.purchasePrice
+                ? item.qty * (item.unitPrice - item.product.purchasePrice) : null;
+              return (
+                <div key={item.product.id} className="px-4 py-3">
+                  <div className="flex justify-between items-start gap-2 mb-2.5">
+                    <span className="text-sm font-semibold text-foreground leading-snug flex-1 pr-1">{item.product.canonicalName}</span>
+                    <button onClick={() => removeFromCart(item.product.id)} className="text-muted-foreground/40 hover:text-destructive shrink-0 p-0.5">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center bg-muted/50 rounded-lg border border-border/60 overflow-hidden">
+                      <button className="h-8 w-8 flex items-center justify-center text-muted-foreground" onClick={() => updateQty(item.product.id, -1)}>
+                        <Minus className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="w-8 text-center text-sm font-bold">{item.qty}</span>
+                      <button className="h-8 w-8 flex items-center justify-center text-primary" onClick={() => updateQty(item.product.id, 1)} disabled={item.qty >= item.product.stockQty}>
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-muted-foreground">KSh</span>
+                      <input type="number" value={item.unitPrice} onChange={e => updatePrice(item.product.id, Number(e.target.value))}
+                        className="w-20 h-8 text-right text-sm font-medium bg-muted/30 border border-border/60 rounded-lg px-2 focus:outline-none focus:border-primary/60" />
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-sm font-mono">{formatKES(item.qty * item.unitPrice)}</p>
+                      {isOwner && itemProfit !== null && (
+                        <p className={cn("text-[10px] font-mono", itemProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                          +{formatKES(itemProfit)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {/* footer (totals + checkout) — only when cart has items */}
       {cart.length > 0 && (
-        <div style={{ flexShrink: 0, borderTop: "1px solid var(--border)" }}>
-
-          {/* totals */}
-          <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--muted-foreground)" }}>
+        <div className="shrink-0 border-t border-border">
+          <div className="px-4 py-3 space-y-1.5 bg-card">
+            <div className="flex justify-between text-sm text-muted-foreground">
               <span>Subtotal ({cartCount} items)</span>
-              <span style={{ fontFamily: "monospace" }}>{formatKES(subtotal)}</span>
+              <span className="font-mono">{formatKES(subtotal)}</span>
             </div>
-
-            {/* discount row */}
-            <div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <span style={{ fontSize: 13, color: "var(--muted-foreground)" }}>Discount (KSh)</span>
-                <input
-                  type="number" min={0} max={subtotal}
-                  value={discount || ""}
-                  onChange={e => setDiscount(Number(e.target.value))}
-                  placeholder="0"
-                  style={{
-                    width: 80, height: 28, textAlign: "right", fontSize: 13, fontFamily: "monospace",
-                    background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 6,
-                    padding: "0 8px", outline: "none", color: "var(--foreground)",
-                  }}
-                />
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Discount (KSh)</span>
+                <input type="number" min={0} max={subtotal} value={discount || ""} onChange={e => setDiscount(Number(e.target.value))}
+                  placeholder="0" className="w-24 h-7 text-right text-sm font-mono bg-muted/30 border border-border/60 rounded-lg px-2 focus:outline-none focus:border-primary/60" />
               </div>
-              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              <div className="flex gap-1.5 flex-wrap">
                 {[5, 10, 15, 20].map(pct => (
-                  <button
-                    key={pct}
-                    onClick={() => setDiscount(Math.round(subtotal * pct / 100))}
-                    style={{
-                      fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 999,
-                      border: "none", cursor: "pointer",
-                      background: discount === Math.round(subtotal * pct / 100)
-                        ? "var(--primary)" : "var(--muted)",
-                      color: discount === Math.round(subtotal * pct / 100)
-                        ? "var(--primary-foreground)" : "var(--muted-foreground)",
-                    }}
-                  >
+                  <button key={pct} onClick={() => setDiscount(Math.round(subtotal * pct / 100))} className={cn(
+                    "text-[10px] font-bold px-2 py-1 rounded-full",
+                    discount === Math.round(subtotal * pct / 100) ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground"
+                  )}>
                     {pct}%
                   </button>
                 ))}
                 {discount > 0 && (
-                  <button
-                    onClick={() => setDiscount(0)}
-                    style={{
-                      fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 999,
-                      border: "none", cursor: "pointer",
-                      background: "rgba(239,68,68,0.15)", color: "#f87171",
-                    }}
-                  >
+                  <button onClick={() => setDiscount(0)} className="text-[10px] font-bold px-2 py-1 rounded-full bg-destructive/15 text-destructive">
                     Clear
                   </button>
                 )}
               </div>
             </div>
-
-            {/* grand total */}
-            <div style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              paddingTop: 8, borderTop: "1px solid var(--border)",
-            }}>
-              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted-foreground)" }}>
-                Total
-              </span>
-              <span style={{ fontSize: 24, fontWeight: 700, fontFamily: "monospace", color: "var(--primary)" }}>
-                {formatKES(total)}
-              </span>
+            <div className="flex justify-between items-center pt-1.5 border-t border-border/60">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total</span>
+              <span className="text-2xl font-bold text-primary font-mono">{formatKES(total)}</span>
             </div>
-
             {isOwner && totalProfit > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-                <span style={{ color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 4 }}>
-                  <TrendingUp size={11} style={{ color: "#4ade80" }} /> Est. Profit
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground/60 flex items-center gap-1">
+                  <TrendingUp className="h-3 w-3 text-emerald-400" />Est. Profit
                 </span>
-                <span style={{ fontFamily: "monospace", color: "#4ade80", fontWeight: 600 }}>{formatKES(totalProfit)}</span>
+                <span className="font-mono text-emerald-400 font-semibold">{formatKES(totalProfit)}</span>
               </div>
             )}
           </div>
 
-          {/* customer fields */}
-          <div style={{ padding: "0 14px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{
-              fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-              textTransform: "uppercase", color: "var(--muted-foreground)", display: "block", marginBottom: 2,
-            }}>
-              Customer name (required for debt)
-            </label>
-            <input
-              type="text" placeholder="e.g. John Kamau"
-              value={debtCustomerName}
-              onChange={e => setDebtCustomerName(e.target.value)}
-              style={{
-                height: 36, width: "100%", boxSizing: "border-box",
-                borderRadius: 8, border: "1px solid var(--border)", background: "var(--muted)",
-                padding: "0 12px", fontSize: 13, outline: "none", color: "var(--foreground)",
-              }}
-            />
-            <input
-              type="tel" placeholder="Phone (optional)"
-              value={debtCustomerPhone}
-              onChange={e => setDebtCustomerPhone(e.target.value)}
-              style={{
-                height: 36, width: "100%", boxSizing: "border-box",
-                borderRadius: 8, border: "1px solid var(--border)", background: "var(--muted)",
-                padding: "0 12px", fontSize: 13, outline: "none", color: "var(--foreground)",
-              }}
-            />
+          <div className="px-4 pb-3 space-y-2 bg-card">
+            <div className="space-y-1.5">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">
+                Customer name (required for debt)
+              </Label>
+              <input
+                type="text"
+                placeholder="e.g. John Kamau"
+                value={debtCustomerName}
+                onChange={e => setDebtCustomerName(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
+              />
+            </div>
+            <div>
+              <input
+                type="tel"
+                placeholder="Phone (optional)"
+                value={debtCustomerPhone}
+                onChange={e => setDebtCustomerPhone(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
+              />
+            </div>
           </div>
 
-          {/* checkout buttons */}
-          <div style={{ padding: "0 14px 14px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <button
-              disabled={createSalePending}
-              onClick={() => handleCheckout("debt")}
-              style={{
-                height: 48, borderRadius: 12, border: "1px solid rgba(239,68,68,0.4)",
-                background: "transparent", color: "#f87171",
-                fontWeight: 700, fontSize: 13, cursor: createSalePending ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                opacity: createSalePending ? 0.6 : 1,
-              }}
-            >
-              <CreditCard size={15} /> Debt Sale
-            </button>
-            <button
-              disabled={createSalePending}
-              onClick={() => handleCheckout("cash")}
-              style={{
-                height: 48, borderRadius: 12, border: "none",
-                background: "var(--primary)", color: "var(--primary-foreground)",
-                fontWeight: 700, fontSize: 13, cursor: createSalePending ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                opacity: createSalePending ? 0.6 : 1,
-              }}
-            >
-              <Banknote size={15} /> Cash Sale
-            </button>
+          <div className="px-4 pb-4 grid grid-cols-2 gap-2 bg-card">
+            <Button variant="outline" className="h-12 font-bold text-sm border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={createSalePending} onClick={() => handleCheckout("debt")}>
+              <CreditCard className="h-4 w-4 mr-1.5" />Debt Sale
+            </Button>
+            <Button className="h-12 font-bold text-sm bg-primary text-primary-foreground" disabled={createSalePending} onClick={() => handleCheckout("cash")}>
+              <Banknote className="h-4 w-4 mr-1.5" />Cash Sale
+            </Button>
           </div>
         </div>
       )}
     </div>
   );
 });
-
-// ─── Product card ─────────────────────────────────────────────────────────────
-
-const ProductCard = memo(function ProductCard({
-  product, inCart, onClick,
-}: {
-  product: any;
-  inCart: CartItem | undefined;
-  onClick: () => void;
-}) {
-  const weighed = isWeighedUnit(product.unit || "");
-  const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
-  const isOut = product.stockQty === 0;
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={isOut}
-      style={{
-        display: "flex", flexDirection: "column", textAlign: "left",
-        borderRadius: 12, padding: "10px 10px 8px",
-        border: `1px solid ${inCart ? "var(--primary)" : "var(--border)"}`,
-        background: isOut
-          ? "var(--muted)"
-          : inCart
-          ? "rgba(200,255,0,0.07)"
-          : "var(--card)",
-        cursor: isOut ? "not-allowed" : "pointer",
-        opacity: isOut ? 0.45 : 1,
-        width: "100%",
-      }}
-    >
-      {/* top row: icon + stock dot */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{
-          width: 28, height: 28, borderRadius: 8,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: weighed ? "rgba(200,255,0,0.1)" : "var(--muted)",
-          color: weighed ? "var(--primary)" : "var(--muted-foreground)",
-        }}>
-          {weighed ? <Scale size={13} /> : <Package size={13} />}
-        </div>
-        <div style={{
-          width: 8, height: 8, borderRadius: "50%",
-          background: isOut ? "#ef4444" : isLow ? "#f97316" : "#22c55e",
-        }} />
-      </div>
-
-      {/* name */}
-      <p style={{
-        fontSize: 11, fontWeight: 600, color: "var(--foreground)",
-        lineHeight: 1.35, flex: 1, margin: "0 0 6px 0",
-        overflow: "hidden", display: "-webkit-box",
-        WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-      }}>
-        {product.canonicalName}
-      </p>
-
-      {/* stock qty */}
-      <p style={{
-        fontSize: 10, fontFamily: "monospace", fontWeight: 700, margin: "0 0 6px 0",
-        color: isOut ? "#f87171" : isLow ? "#fb923c" : "var(--muted-foreground)",
-      }}>
-        {isOut ? "Out of stock" : `${product.stockQty} ${product.unit || "units"}`}
-      </p>
-
-      {/* price + cart indicator */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "monospace", color: "var(--foreground)" }}>
-          {formatKES(product.sellingPrice || 0)}
-        </span>
-        <div style={{
-          width: 22, height: 22, borderRadius: "50%",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: inCart ? "var(--primary)" : "var(--muted)",
-          color: inCart ? "var(--primary-foreground)" : "var(--muted-foreground)",
-        }}>
-          {inCart
-            ? <span style={{ fontSize: 9, fontWeight: 700 }}>{inCart.qty}</span>
-            : <Plus size={11} />}
-        </div>
-      </div>
-    </button>
-  );
-});
-
-// ─── Main POS ─────────────────────────────────────────────────────────────────
-
-type StockFilter = "all" | "in_stock" | "low_stock" | "out_of_stock";
-
-const FILTERS: { value: StockFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "in_stock", label: "In Stock" },
-  { value: "low_stock", label: "Low" },
-  { value: "out_of_stock", label: "Out" },
-];
 
 export default function POS() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
@@ -745,7 +393,6 @@ export default function POS() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 100);
   const [stockFilter, setStockFilter] = useState<StockFilter>("all");
-  const searchRef = useRef<HTMLInputElement>(null);
 
   const { data: productsData, isLoading } = useListProducts(
     { shopId, limit: 3000 },
@@ -788,6 +435,13 @@ export default function POS() {
   const [quickAddProduct, setQuickAddProduct] = useState<any | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
+  // Lock body scroll when mobile cart is open
+  useEffect(() => {
+    if (showCartMobile) document.body.style.overflow = "hidden";
+    else document.body.style.overflow = "";
+    return () => { document.body.style.overflow = ""; };
+  }, [showCartMobile]);
+
   const openQuickAdd = (product: any) => {
     if (product.stockQty === 0) { toast.error("Out of stock"); return; }
     setQuickAddProduct(product);
@@ -811,57 +465,38 @@ export default function POS() {
 
   const updateQty = useCallback((productId: string, delta: number) => {
     setCart(prev =>
-      prev
-        .map(i => i.product.id === productId ? { ...i, qty: Math.max(0, i.qty + delta) } : i)
+      prev.map(i => i.product.id === productId ? { ...i, qty: Math.max(0, i.qty + delta) } : i)
         .filter(i => i.qty > 0)
     );
   }, []);
 
-  const removeFromCart = useCallback(
-    (productId: string) => setCart(prev => prev.filter(i => i.product.id !== productId)),
-    []
-  );
-
-  const updatePrice = useCallback(
-    (productId: string, price: number) =>
-      setCart(prev => prev.map(i => i.product.id === productId ? { ...i, unitPrice: price } : i)),
-    []
-  );
+  const removeFromCart = useCallback((productId: string) => setCart(prev => prev.filter(i => i.product.id !== productId)), []);
+  const updatePrice = useCallback((productId: string, price: number) => setCart(prev => prev.map(i => i.product.id === productId ? { ...i, unitPrice: price } : i)), []);
 
   const subtotal = useMemo(() => cart.reduce((s, i) => s + i.qty * i.unitPrice, 0), [cart]);
   const total = Math.max(0, subtotal - discount);
-  const totalProfit = useMemo(() =>
-    cart.reduce((s, i) => s + i.qty * (i.unitPrice - (i.product.purchasePrice || 0)), 0), [cart]);
+  const totalProfit = useMemo(() => cart.reduce((s, i) => {
+    const cost = i.product.purchasePrice || 0;
+    return s + i.qty * (i.unitPrice - cost);
+  }, 0), [cart]);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
   const handleCheckout = useCallback(async (saleType: "cash" | "debt") => {
     if (cart.length === 0) { toast.error("Cart is empty"); return; }
-    if (saleType === "debt" && !debtCustomerName.trim()) {
-      toast.error("Enter customer name for debt sale"); return;
-    }
+    if (saleType === "debt" && !debtCustomerName.trim()) { toast.error("Enter customer name for debt sale"); return; }
     const cartSnapshot = [...cart];
     const discountSnapshot = discount;
     const debtName = debtCustomerName;
     const debtPhone = debtCustomerPhone;
     const productsSnapshot = qc.getQueryData(getListProductsQueryKey());
-
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
-      return {
-        ...old,
-        products: old.products.map((p: any) => {
-          const ci = cartSnapshot.find(i => i.product.id === p.id);
-          return ci ? { ...p, stockQty: Math.max(0, p.stockQty - ci.qty) } : p;
-        }),
-      };
+      return { ...old, products: old.products.map((p: any) => {
+        const cartItem = cartSnapshot.find(i => i.product.id === p.id);
+        return cartItem ? { ...p, stockQty: Math.max(0, p.stockQty - cartItem.qty) } : p;
+      }) };
     });
-
-    setCart([]);
-    setDiscount(0);
-    setDebtCustomerName("");
-    setDebtCustomerPhone("");
-    setShowCartMobile(false);
-
+    setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setShowCartMobile(false);
     createSale.mutate(
       {
         data: {
@@ -882,8 +517,7 @@ export default function POS() {
         },
         onError: (err: any) => {
           qc.setQueryData(getListProductsQueryKey(), productsSnapshot);
-          setCart(cartSnapshot);
-          setDiscount(discountSnapshot);
+          setCart(cartSnapshot); setDiscount(discountSnapshot);
           toast.error(err?.message || "Sale failed");
         },
       }
@@ -895,186 +529,138 @@ export default function POS() {
     cart, discount, debtCustomerName, debtCustomerPhone, isOwner,
     createSalePending: createSale.isPending,
     subtotal, total, totalProfit, cartCount,
-    setDiscount, setDebtCustomerName, setDebtCustomerPhone,
-    onClear: () => { setCart([]); setDiscount(0); },
-    updateQty, removeFromCart, updatePrice, handleCheckout,
+    setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
+    setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout,
   };
 
-  const visibleProducts = debouncedSearch || stockFilter !== "all"
-    ? filteredProducts
-    : filteredProducts.slice(0, 200);
-
   return (
-    <>
-      {/*
-        ═══════════════════════════════════════════════════════════
-        ROOT: absolute inset-0, flex row (desktop) / col (mobile)
-        NO transforms, NO overflow:hidden on parents
-        ═══════════════════════════════════════════════════════════
-      */}
-      <div style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        flexDirection: "row",
-        background: "var(--background)",
-      }}>
+    <div className="flex flex-col lg:flex-row h-full bg-background overflow-hidden">
+      {/* Products Panel */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Search + Filter Header */}
+        <div className="p-3 md:p-4 border-b border-border bg-card shrink-0 space-y-2.5">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="Search products…"
+              className="pl-9 h-10 text-sm bg-muted/50 border-border/80 rounded-xl"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
+            {FILTERS.map(f => (
+              <button key={f.value} onClick={() => setStockFilter(f.value)} className={cn(
+                "shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold",
+                stockFilter === f.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+              )}>
+                {f.label}
+                <span className={cn("text-[10px] font-bold", stockFilter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/50")}>
+                  {filterCounts[f.value]}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
 
-        {/* ── LEFT: Products panel ── */}
-        <div style={{
-          flex: 1,
-          minWidth: 0,
-          display: "flex",
-          flexDirection: "column",
-          borderRight: "1px solid var(--border)",
-        }}>
-
-          {/* Search + filter bar — fixed height, never scrolls */}
-          <div style={{
-            flexShrink: 0,
-            padding: "10px 12px 8px",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--card)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}>
-            {/* search input */}
-            <div style={{ position: "relative" }}>
-              <Search
-                size={15}
-                style={{
-                  position: "absolute", left: 12,
-                  top: "50%", marginTop: -7.5,
-                  color: "var(--muted-foreground)", pointerEvents: "none",
-                }}
-              />
-              <input
-                ref={searchRef}
-                type="search"
-                placeholder="Search products…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                style={{
-                  width: "100%", boxSizing: "border-box",
-                  height: 40, paddingLeft: 36, paddingRight: search ? 36 : 12,
-                  fontSize: 14, borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background: "var(--muted)",
-                  outline: "none", color: "var(--foreground)",
-                }}
-              />
-              {search && (
-                <button
-                  onClick={() => { setSearch(""); searchRef.current?.focus(); }}
-                  style={{
-                    position: "absolute", right: 10, top: "50%", marginTop: -10,
-                    background: "none", border: "none", cursor: "pointer",
-                    color: "var(--muted-foreground)", padding: 2,
-                  }}
-                >
-                  <X size={16} />
-                </button>
-              )}
-            </div>
-
-            {/* filter pills */}
-            <div style={{
-              display: "flex", gap: 6,
-              overflowX: "auto", paddingBottom: 2,
-            }}>
-              {FILTERS.map(f => (
-                <button
-                  key={f.value}
-                  onClick={() => setStockFilter(f.value)}
-                  style={{
-                    flexShrink: 0,
-                    display: "flex", alignItems: "center", gap: 4,
-                    padding: "5px 12px", borderRadius: 999,
-                    border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
-                    background: stockFilter === f.value ? "var(--primary)" : "var(--muted)",
-                    color: stockFilter === f.value ? "var(--primary-foreground)" : "var(--muted-foreground)",
-                  }}
-                >
-                  {f.label}
-                  <span style={{
-                    fontSize: 10, fontWeight: 700,
-                    opacity: stockFilter === f.value ? 0.7 : 0.5,
-                  }}>
-                    {filterCounts[f.value]}
-                  </span>
-                </button>
+        {/* Product Grid — plain overflow-y-auto */}
+        <div className="flex-1 overflow-y-auto p-3">
+          {isLoading ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+              {Array.from({ length: 18 }).map((_, i) => (
+                <div key={i} className="rounded-xl border border-border/40 bg-card/60 p-3 space-y-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="w-7 h-7 rounded-lg bg-muted/40" />
+                    <div className="w-2 h-2 rounded-full bg-muted/40" />
+                  </div>
+                  <div className="h-3 bg-muted/40 rounded w-4/5" />
+                  <div className="h-2.5 bg-muted/30 rounded w-3/5" />
+                  <div className="h-3.5 bg-muted/40 rounded w-2/5 mt-1" />
+                </div>
               ))}
             </div>
-          </div>
-
-          {/* Product grid — this is the only thing that scrolls */}
-          <div style={{ flex: 1, overflowY: "auto", padding: 10 }}>
-            {isLoading ? (
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
-                gap: 8,
-              }}>
-                {Array.from({ length: 18 }).map((_, i) => (
-                  <div key={i} style={{
-                    borderRadius: 12, border: "1px solid var(--border)",
-                    background: "var(--card)", padding: "10px 10px 8px",
-                    display: "flex", flexDirection: "column", gap: 6,
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <div style={{ width: 28, height: 28, borderRadius: 8, background: "var(--muted)" }} />
-                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--muted)" }} />
-                    </div>
-                    <div style={{ height: 10, background: "var(--muted)", borderRadius: 4, width: "80%" }} />
-                    <div style={{ height: 9, background: "var(--muted)", borderRadius: 4, width: "60%" }} />
-                    <div style={{ height: 11, background: "var(--muted)", borderRadius: 4, width: "45%" }} />
-                  </div>
-                ))}
-              </div>
-            ) : filteredProducts.length === 0 ? (
-              <div style={{
-                display: "flex", flexDirection: "column", alignItems: "center",
-                justifyContent: "center", height: 200, gap: 8, color: "var(--muted-foreground)",
-              }}>
-                <PackageX size={40} style={{ opacity: 0.2 }} />
-                <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>No products found</p>
-                {search && <p style={{ fontSize: 11, margin: 0, opacity: 0.5 }}>Try a different search term</p>}
-              </div>
-            ) : (
-              <>
-                {!debouncedSearch && stockFilter === "all" && filteredProducts.length > 200 && (
-                  <div style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    marginBottom: 10, padding: "8px 12px",
-                    borderRadius: 10, background: "var(--muted)",
-                    border: "1px solid var(--border)",
-                  }}>
-                    <Search size={13} style={{ opacity: 0.4, flexShrink: 0 }} />
-                    <p style={{ fontSize: 11, margin: 0, color: "var(--muted-foreground)" }}>
-                      Showing first <strong>200</strong> of{" "}
-                      <strong>{filteredProducts.length.toLocaleString()}</strong> products — search to find any product instantly
-                    </p>
-                  </div>
-                )}
-                <div style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
-                  gap: 8,
-                }}>
-                  {visibleProducts.map(product => (
-                    <ProductCard
-                      key={product.id}
-                      product={product}
-                      inCart={cart.find(i => i.product.id === product.id)}
-                      onClick={() => openQuickAdd(product)}
-                    />
-                  ))}
+          ) : filteredProducts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
+              <PackageX className="w-10 h-10 text-muted-foreground/20" />
+              <p className="text-sm font-medium">No products found</p>
+              {search && <p className="text-xs text-muted-foreground/50">Try a different search term</p>}
+            </div>
+          ) : (
+            <>
+              {!debouncedSearch && stockFilter === "all" && filteredProducts.length > 200 && (
+                <div className="flex items-center gap-2 mb-3 px-1 py-2.5 rounded-xl bg-muted/30 border border-border/40">
+                  <Search className="h-3.5 w-3.5 text-muted-foreground/50 ml-2 shrink-0" />
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Showing first <span className="font-bold text-foreground/60">200</span> of{" "}
+                    <span className="font-bold text-foreground/60">{filteredProducts.length.toLocaleString()}</span>{" "}
+                    products — search above to find any product instantly
+                  </p>
                 </div>
-                <p style={{
-                  textAlign: "center", fontSize: 11, color: "var(--muted-foreground)",
-                  opacity: 0.4, marginTop: 16, paddingBottom: 8,
-                }}>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+                {(debouncedSearch || stockFilter !== "all" ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
+                  const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
+                  const isOut = product.stockQty === 0;
+                  const weighed = isWeighedUnit(product.unit || "");
+                  const inCart = cart.find(i => i.product.id === product.id);
+
+                  return (
+                    <button
+                      key={product.id}
+                      onClick={() => !isOut && openQuickAdd(product)}
+                      disabled={isOut}
+                      className={cn(
+                        "relative flex flex-col text-left rounded-xl border p-3",
+                        isOut
+                          ? "opacity-40 cursor-not-allowed bg-muted/30 border-border/40"
+                          : inCart
+                          ? "bg-primary/10 border-primary/50"
+                          : "bg-card border-border cursor-pointer"
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className={cn(
+                          "w-7 h-7 rounded-lg flex items-center justify-center",
+                          weighed ? "bg-primary/10 text-primary" : "bg-muted/60 text-muted-foreground/40"
+                        )}>
+                          {weighed ? <Scale className="h-3.5 w-3.5" /> : <Package className="h-3.5 w-3.5" />}
+                        </div>
+                        <div className={cn(
+                          "w-2 h-2 rounded-full",
+                          isOut ? "bg-destructive" : isLow ? "bg-orange-400" : "bg-emerald-500"
+                        )} />
+                      </div>
+
+                      <p className="text-xs font-semibold text-foreground leading-tight line-clamp-2 mb-1.5 flex-1">{product.canonicalName}</p>
+
+                      <p className={cn(
+                        "text-[10px] font-mono font-bold mb-2",
+                        isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-muted-foreground/50"
+                      )}>
+                        {isOut ? "Out of stock" : `${product.stockQty} ${product.unit || "units"}`}
+                      </p>
+
+                      <div className="flex items-center justify-between mt-auto">
+                        <span className="text-sm font-bold font-mono text-foreground">{formatKES(product.sellingPrice || 0)}</span>
+                        <div className={cn(
+                          "w-6 h-6 rounded-full flex items-center justify-center",
+                          inCart ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground/50"
+                        )}>
+                          {inCart ? <span className="text-[9px] font-bold">{inCart.qty}</span> : <Plus className="h-3 w-3" />}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {filteredProducts.length > 0 && (
+                <p className="text-center text-[11px] text-muted-foreground/40 mt-4 pb-2">
                   {debouncedSearch
                     ? `${filteredProducts.length.toLocaleString()} results`
                     : stockFilter !== "all"
@@ -1083,111 +669,52 @@ export default function POS() {
                     ? `Showing 200 of ${filteredProducts.length.toLocaleString()} — search to see all`
                     : `${filteredProducts.length.toLocaleString()} products`}
                 </p>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* ── RIGHT: Desktop-only Cart sidebar ── */}
-        <div style={{
-          width: 340,
-          flexShrink: 0,
-          display: "none",
-          flexDirection: "column",
-          background: "var(--card)",
-        }}
-          className="pos-desktop-cart"
-        >
-          <CartPanel {...cartPanelProps} />
+              )}
+            </>
+          )}
         </div>
       </div>
 
-      {/* ── Mobile: Cart FAB ── */}
+      {/* Desktop Cart */}
+      <div className="hidden lg:flex flex-col w-[340px] xl:w-[380px] shrink-0 border-l border-border overflow-hidden">
+        <CartPanel {...cartPanelProps} />
+      </div>
+
+      {/* Mobile: Cart FAB — plain fixed button, no transforms */}
       {cartCount > 0 && !showCartMobile && (
         <button
+          className="lg:hidden fixed bottom-[4.5rem] right-4 z-40 bg-primary text-primary-foreground rounded-2xl h-14 px-4 flex items-center gap-2 border border-primary/40"
           onClick={() => setShowCartMobile(true)}
-          style={{
-            position: "fixed",
-            bottom: "calc(env(safe-area-inset-bottom) + 56px + 12px)",
-            right: 16,
-            zIndex: 40,
-            background: "var(--primary)",
-            color: "var(--primary-foreground)",
-            border: "none",
-            borderRadius: 16,
-            height: 52,
-            padding: "0 14px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            cursor: "pointer",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.35)",
-          }}
-          className="pos-cart-fab"
         >
-          <ShoppingCart size={18} />
-          <div style={{ textAlign: "left" }}>
-            <p style={{ fontSize: 10, fontWeight: 700, margin: 0, opacity: 0.8 }}>{cartCount} items</p>
-            <p style={{ fontSize: 14, fontWeight: 700, fontFamily: "monospace", margin: 0, lineHeight: 1.2 }}>
-              {formatKES(total)}
-            </p>
+          <ShoppingCart className="h-5 w-5" />
+          <div className="text-left">
+            <p className="text-[10px] font-bold leading-none text-primary-foreground/80">{cartCount} items</p>
+            <p className="text-sm font-bold font-mono leading-tight">{formatKES(total)}</p>
           </div>
-          <ChevronRight size={14} style={{ opacity: 0.6 }} />
+          <ChevronRight className="h-4 w-4 text-primary-foreground/60" />
         </button>
       )}
 
-      {/* ── Mobile: Cart bottom sheet ── */}
+      {/* Mobile: Cart overlay — plain div, no Radix Dialog, no CSS transforms */}
       {showCartMobile && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 50,
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "flex-end",
-          }}
-          className="pos-cart-sheet"
-        >
-          {/* backdrop */}
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col">
           <div
+            className="flex-1 bg-black/60"
             onClick={() => setShowCartMobile(false)}
-            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)" }}
           />
-          {/* sheet */}
-          <div style={{
-            position: "relative",
-            height: "92svh",
-            borderRadius: "18px 18px 0 0",
-            border: "1px solid var(--border)",
-            borderBottom: "none",
-            background: "var(--card)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}>
-            <CartPanel {...cartPanelProps} onClose={() => setShowCartMobile(false)} />
+          <div className="bg-card h-[92svh] flex flex-col rounded-t-2xl border-t border-border overflow-hidden">
+            <div className="flex-1 flex flex-col min-h-0">
+              <CartPanel {...cartPanelProps} />
+            </div>
           </div>
         </div>
       )}
 
-      {/* ── QuickAdd sheet ── */}
+      {/* QuickAdd bottom sheet — plain div, no Radix Dialog */}
       <QuickAddSheet
-        product={quickAddProduct}
-        open={quickAddOpen}
-        onClose={() => setQuickAddOpen(false)}
-        onAdd={handleQuickAdd}
-        isOwner={isOwner}
+        product={quickAddProduct} open={quickAddOpen}
+        onClose={() => setQuickAddOpen(false)} onAdd={handleQuickAdd} isOwner={isOwner}
       />
-
-      {/* ── Inline styles for desktop cart and mobile FAB visibility ── */}
-      <style>{`
-        @media (min-width: 1024px) {
-          .pos-desktop-cart { display: flex !important; }
-          .pos-cart-fab { display: none !important; }
-          .pos-cart-sheet { display: none !important; }
-        }
-      `}</style>
-    </>
+    </div>
   );
 }
