@@ -398,6 +398,27 @@ export default function Alerts() {
     );
   };
 
+  const PREVIEW = 5;
+  const [showAllOutOfStock, setShowAllOutOfStock] = useState(false);
+  const [showAllLowStock, setShowAllLowStock] = useState(false);
+  const [showAllExpired, setShowAllExpired] = useState(false);
+  const [showAllExpiringSoon, setShowAllExpiringSoon] = useState(false);
+  const [showAllExpiryWarning, setShowAllExpiryWarning] = useState(false);
+  const [showAllNotifs, setShowAllNotifs] = useState(false);
+
+  const ShowMore = ({ total, shown, onToggle }: { total: number; shown: boolean; onToggle: () => void }) => {
+    const hidden = total - PREVIEW;
+    if (total <= PREVIEW) return null;
+    return (
+      <button
+        onClick={onToggle}
+        className="w-full text-center text-[11px] font-semibold text-primary/70 hover:text-primary py-2 transition-colors"
+      >
+        {shown ? "Show fewer ↑" : `Show ${hidden} more ↓`}
+      </button>
+    );
+  };
+
   const isLoading = notifsLoading;
 
   return (
@@ -553,14 +574,10 @@ export default function Alerts() {
                         Out of Stock — {outOfStockProducts.length}
                       </p>
                       <div className="space-y-2">
-                        {outOfStockProducts.slice(0, 10).map(p => (
+                        {outOfStockProducts.slice(0, showAllOutOfStock ? 1000 : PREVIEW).map(p => (
                           <ProductRestockCard key={p.id} product={p} urgent={true} />
                         ))}
-                        {outOfStockProducts.length > 10 && (
-                          <p className="text-[11px] text-muted-foreground/50 text-center py-1">
-                            +{outOfStockProducts.length - 10} more out of stock
-                          </p>
-                        )}
+                        <ShowMore total={outOfStockProducts.length} shown={showAllOutOfStock} onToggle={() => setShowAllOutOfStock(v => !v)} />
                       </div>
                     </div>
                   )}
@@ -571,14 +588,10 @@ export default function Alerts() {
                         Low Stock — {lowStockProducts.length}
                       </p>
                       <div className="space-y-2">
-                        {lowStockProducts.slice(0, 10).map(p => (
+                        {lowStockProducts.slice(0, showAllLowStock ? 1000 : PREVIEW).map(p => (
                           <ProductRestockCard key={p.id} product={p} urgent={false} />
                         ))}
-                        {lowStockProducts.length > 10 && (
-                          <p className="text-[11px] text-muted-foreground/50 text-center py-1">
-                            +{lowStockProducts.length - 10} more running low
-                          </p>
-                        )}
+                        <ShowMore total={lowStockProducts.length} shown={showAllLowStock} onToggle={() => setShowAllLowStock(v => !v)} />
                       </div>
                     </div>
                   )}
@@ -613,14 +626,10 @@ export default function Alerts() {
                         Expired — {expiredProducts.length}
                       </p>
                       <div className="space-y-2">
-                        {expiredProducts.slice(0, 10).map(p => (
+                        {expiredProducts.slice(0, showAllExpired ? 1000 : PREVIEW).map(p => (
                           <ExpiryCard key={p.id} product={p} state="expired" />
                         ))}
-                        {expiredProducts.length > 10 && (
-                          <p className="text-[11px] text-muted-foreground/50 text-center py-1">
-                            +{expiredProducts.length - 10} more expired
-                          </p>
-                        )}
+                        <ShowMore total={expiredProducts.length} shown={showAllExpired} onToggle={() => setShowAllExpired(v => !v)} />
                       </div>
                     </div>
                   )}
@@ -633,14 +642,10 @@ export default function Alerts() {
                       <div className="space-y-2">
                         {expiringSoonProducts
                           .sort((a, b) => (a.expiryDate || "").localeCompare(b.expiryDate || ""))
-                          .slice(0, 10).map(p => (
+                          .slice(0, showAllExpiringSoon ? 1000 : PREVIEW).map(p => (
                             <ExpiryCard key={p.id} product={p} state="soon" />
                           ))}
-                        {expiringSoonProducts.length > 10 && (
-                          <p className="text-[11px] text-muted-foreground/50 text-center py-1">
-                            +{expiringSoonProducts.length - 10} more expiring soon
-                          </p>
-                        )}
+                        <ShowMore total={expiringSoonProducts.length} shown={showAllExpiringSoon} onToggle={() => setShowAllExpiringSoon(v => !v)} />
                       </div>
                     </div>
                   )}
@@ -653,14 +658,10 @@ export default function Alerts() {
                       <div className="space-y-2">
                         {expiryWarningProducts
                           .sort((a, b) => (a.expiryDate || "").localeCompare(b.expiryDate || ""))
-                          .slice(0, 10).map(p => (
+                          .slice(0, showAllExpiryWarning ? 1000 : PREVIEW).map(p => (
                             <ExpiryCard key={p.id} product={p} state="warning" />
                           ))}
-                        {expiryWarningProducts.length > 10 && (
-                          <p className="text-[11px] text-muted-foreground/50 text-center py-1">
-                            +{expiryWarningProducts.length - 10} more within 90 days
-                          </p>
-                        )}
+                        <ShowMore total={expiryWarningProducts.length} shown={showAllExpiryWarning} onToggle={() => setShowAllExpiryWarning(v => !v)} />
                       </div>
                     </div>
                   )}
@@ -682,30 +683,25 @@ export default function Alerts() {
               </div>
             ) : notifications && notifications.length > 0 ? (
               <div className="mt-2">
-                {stockAlerts.length > 0 && (
-                  <>
-                    <SectionHeader title="Stock Notifications" count={stockAlerts.length} />
-                    {stockAlerts.map(alert => <AlertItem key={alert.id} alert={alert} />)}
-                  </>
-                )}
-                {debtAlerts.length > 0 && (
-                  <>
-                    <SectionHeader title="Debt Reminders" count={debtAlerts.length} />
-                    {debtAlerts.map(alert => <AlertItem key={alert.id} alert={alert} />)}
-                  </>
-                )}
-                {expiryAlerts.length > 0 && (
-                  <>
-                    <SectionHeader title="Expiry Alerts" count={expiryAlerts.length} />
-                    {expiryAlerts.map(alert => <AlertItem key={alert.id} alert={alert} />)}
-                  </>
-                )}
-                {otherAlerts.length > 0 && (
-                  <>
-                    <SectionHeader title="General" count={otherAlerts.length} />
-                    {otherAlerts.map(alert => <AlertItem key={alert.id} alert={alert} />)}
-                  </>
-                )}
+                {(() => {
+                  const allAlerts = [
+                    ...stockAlerts,
+                    ...debtAlerts,
+                    ...expiryAlerts,
+                    ...otherAlerts,
+                  ];
+                  const visible = showAllNotifs ? allAlerts : allAlerts.slice(0, PREVIEW);
+                  return (
+                    <>
+                      {visible.map(alert => <AlertItem key={alert.id} alert={alert} />)}
+                      {allAlerts.length > PREVIEW && (
+                        <div className="px-4">
+                          <ShowMore total={allAlerts.length} shown={showAllNotifs} onToggle={() => setShowAllNotifs(v => !v)} />
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 {unreadCount === 0 && totalCount > 0 && (
                   <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground/50">
                     <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500/40" />

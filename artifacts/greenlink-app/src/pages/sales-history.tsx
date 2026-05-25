@@ -597,52 +597,31 @@ export default function SalesHistory() {
         </div>
 
         {/* Summary strip */}
-        <div className="grid grid-cols-2 gap-2">
-          <Card className="shadow-none">
-            <CardContent className="p-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <ShoppingBag className="h-3.5 w-3.5 text-muted-foreground" />
-                <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Transactions</p>
-              </div>
-              <p className="text-xl font-bold font-mono">{list.length}</p>
-              <p className="text-xs text-muted-foreground">{cashCount} cash · {debtCount} debt</p>
-            </CardContent>
-          </Card>
-          <Card className="shadow-none">
-            <CardContent className="p-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <Banknote className="h-3.5 w-3.5 text-muted-foreground" />
-                <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Revenue</p>
-              </div>
-              <p className="text-xl font-bold font-mono">
-                {totalRevenue > 0 ? "KES " + totalRevenue.toLocaleString("en-KE", { maximumFractionDigits: 0 }) : "—"}
-              </p>
-            </CardContent>
-          </Card>
+        <div className="flex items-center gap-0 rounded-xl border border-border overflow-hidden divide-x divide-border">
+          <div className="flex-1 px-3 py-2 text-center">
+            <p className="text-base font-bold font-mono leading-tight">{list.length}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{cashCount}c · {debtCount}d</p>
+          </div>
+          <div className="flex-1 px-3 py-2 text-center">
+            <p className="text-base font-bold font-mono leading-tight">
+              {totalRevenue > 0 ? totalRevenue.toLocaleString("en-KE", { maximumFractionDigits: 0 }) : "—"}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Revenue</p>
+          </div>
           {isOwner && (
             <>
-              <Card className="shadow-none">
-                <CardContent className="p-3">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Profit</p>
-                  </div>
-                  <p className={cn("text-xl font-bold font-mono", totalProfit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
-                    {totalProfit !== 0 ? "KES " + totalProfit.toLocaleString("en-KE", { maximumFractionDigits: 0 }) : "—"}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-none">
-                <CardContent className="p-3">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Margin</p>
-                  </div>
-                  <p className="text-xl font-bold font-mono">
-                    {totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) + "%" : "—"}
-                  </p>
-                </CardContent>
-              </Card>
+              <div className="flex-1 px-3 py-2 text-center">
+                <p className={cn("text-base font-bold font-mono leading-tight", totalProfit >= 0 ? "text-emerald-500" : "text-destructive")}>
+                  {totalProfit !== 0 ? totalProfit.toLocaleString("en-KE", { maximumFractionDigits: 0 }) : "—"}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Profit</p>
+              </div>
+              <div className="flex-1 px-3 py-2 text-center">
+                <p className="text-base font-bold font-mono leading-tight">
+                  {totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) + "%" : "—"}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Margin</p>
+              </div>
             </>
           )}
         </div>
