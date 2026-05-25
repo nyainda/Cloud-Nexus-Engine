@@ -107,7 +107,7 @@ function QuickAddDialog({
                 </Label>
                 <div className="flex items-center gap-3">
                   <button
-                    className="w-11 h-11 rounded-xl bg-muted border border-border flex items-center justify-center hover:bg-muted/60 active:scale-95 transition-all"
+                    className="w-11 h-11 rounded-xl bg-muted border border-border flex items-center justify-center hover:bg-muted/60 transition-colors"
                     onClick={() => setQty(q => Math.max(qtyMin, parseFloat((q - qtyStep).toFixed(2))))}
                   >
                     <Minus className="h-4 w-4" />
@@ -119,7 +119,7 @@ function QuickAddDialog({
                     className="flex-1 h-11 text-center text-2xl font-bold font-mono bg-muted/40 border border-border rounded-xl focus:outline-none focus:border-primary/60"
                   />
                   <button
-                    className="w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-40"
+                    className="w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-40"
                     onClick={() => setQty(q => Math.min(product.stockQty, parseFloat((q + qtyStep).toFixed(2))))}
                     disabled={qty >= product.stockQty}
                   >
@@ -130,7 +130,7 @@ function QuickAddDialog({
                   <div className="flex gap-1.5 flex-wrap mt-2">
                     {(product.unit?.toLowerCase() === "g" ? [100, 250, 500, 1000] : [0.5, 1, 2, 5, 10]).map(v => (
                       <button key={v} type="button" onClick={() => setQty(v)} className={cn(
-                        "text-[11px] font-bold px-2.5 py-1 rounded-full border transition-all",
+                        "text-[11px] font-bold px-2.5 py-1 rounded-full border transition-colors",
                         qty === v ? "bg-primary/20 border-primary/50 text-primary" : "bg-muted/50 border-border/50 text-muted-foreground hover:border-primary/30 hover:text-primary"
                       )}>
                         {v}{product.unit}
@@ -249,9 +249,9 @@ const CartPanel = memo(function CartPanel({
       <ScrollArea className="flex-1 overflow-y-auto">
         {cart.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
-            <ShoppingCart className="h-10 w-10 opacity-10" />
+            <ShoppingCart className="h-10 w-10 text-muted-foreground/20" />
             <p className="text-sm font-medium">Cart is empty</p>
-            <p className="text-xs opacity-50 text-center px-6">Tap any product to add it</p>
+            <p className="text-xs text-muted-foreground/50 text-center px-6">Tap any product to add it</p>
           </div>
         ) : (
           <div className="divide-y divide-border/50">
@@ -313,14 +313,14 @@ const CartPanel = memo(function CartPanel({
               <div className="flex gap-1.5 flex-wrap">
                 {[5, 10, 15, 20].map(pct => (
                   <button key={pct} onClick={() => setDiscount(Math.round(subtotal * pct / 100))} className={cn(
-                    "text-[10px] font-bold px-2 py-1 rounded-full transition-all",
+                    "text-[10px] font-bold px-2 py-1 rounded-full transition-colors",
                     discount === Math.round(subtotal * pct / 100) ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground hover:bg-primary/20 hover:text-primary"
                   )}>
                     {pct}%
                   </button>
                 ))}
                 {discount > 0 && (
-                  <button onClick={() => setDiscount(0)} className="text-[10px] font-bold px-2 py-1 rounded-full bg-destructive/15 text-destructive hover:bg-destructive/25 transition-all">
+                  <button onClick={() => setDiscount(0)} className="text-[10px] font-bold px-2 py-1 rounded-full bg-destructive/15 text-destructive hover:bg-destructive/25 transition-colors">
                     Clear
                   </button>
                 )}
@@ -368,7 +368,7 @@ const CartPanel = memo(function CartPanel({
             <Button variant="outline" className="h-12 font-bold text-sm border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={createSalePending} onClick={() => handleCheckout("debt")}>
               <CreditCard className="h-4 w-4 mr-1.5" />Debt Sale
             </Button>
-            <Button className="h-12 font-bold text-sm bg-primary hover:bg-primary/90 text-primary-foreground active:scale-[0.98] transition-all shadow-lg shadow-primary/20" disabled={createSalePending} onClick={() => handleCheckout("cash")}>
+            <Button className="h-12 font-bold text-sm bg-primary hover:bg-primary/90 text-primary-foreground transition-colors" disabled={createSalePending} onClick={() => handleCheckout("cash")}>
               <Banknote className="h-4 w-4 mr-1.5" />Cash Sale
             </Button>
           </div>
@@ -547,8 +547,8 @@ export default function POS() {
           <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
             {FILTERS.map(f => (
               <button key={f.value} onClick={() => setStockFilter(f.value)} className={cn(
-                "shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold transition-all",
-                stockFilter === f.value ? "bg-primary text-primary-foreground shadow-sm shadow-primary/30" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                "shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors",
+                stockFilter === f.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
               )}>
                 {f.label}
                 <span className={cn("text-[10px] font-bold", stockFilter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/50")}>
@@ -564,22 +564,22 @@ export default function POS() {
           {isLoading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
               {Array.from({ length: 18 }).map((_, i) => (
-                <div key={i} className="rounded-xl border border-border/50 bg-card p-3 space-y-2 animate-pulse">
+                <div key={i} className="rounded-xl border border-border/40 bg-card/60 p-3 space-y-2">
                   <div className="flex items-center justify-between mb-2">
-                    <div className="w-7 h-7 rounded-lg bg-muted/60" />
-                    <div className="w-2 h-2 rounded-full bg-muted/60" />
+                    <div className="w-7 h-7 rounded-lg bg-muted/40" />
+                    <div className="w-2 h-2 rounded-full bg-muted/40" />
                   </div>
-                  <div className="h-3 bg-muted/60 rounded-full w-4/5" />
-                  <div className="h-2.5 bg-muted/40 rounded-full w-3/5" />
-                  <div className="h-3.5 bg-muted/50 rounded-full w-2/5 mt-1" />
+                  <div className="h-3 bg-muted/40 rounded w-4/5" />
+                  <div className="h-2.5 bg-muted/30 rounded w-3/5" />
+                  <div className="h-3.5 bg-muted/40 rounded w-2/5 mt-1" />
                 </div>
               ))}
             </div>
           ) : filteredProducts.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
-              <PackageX className="w-10 h-10 opacity-20" />
+              <PackageX className="w-10 h-10 text-muted-foreground/20" />
               <p className="text-sm font-medium">No products found</p>
-              {search && <p className="text-xs opacity-50">Try a different search term</p>}
+              {search && <p className="text-xs text-muted-foreground/50">Try a different search term</p>}
             </div>
           ) : (
             <>
@@ -606,12 +606,12 @@ export default function POS() {
                       onClick={() => !isOut && openQuickAdd(product)}
                       disabled={isOut}
                       className={cn(
-                        "relative flex flex-col text-left rounded-xl border p-3 transition-all active:scale-[0.97]",
+                        "relative flex flex-col text-left rounded-xl border p-3 transition-colors",
                         isOut
                           ? "opacity-40 cursor-not-allowed bg-muted/30 border-border/40"
                           : inCart
-                          ? "bg-primary/10 border-primary/50 hover:bg-primary/15 shadow-sm shadow-primary/10"
-                          : "bg-card border-border hover:border-primary/50 hover:bg-muted/20 cursor-pointer shadow-sm"
+                          ? "bg-primary/10 border-primary/50 hover:bg-primary/15"
+                          : "bg-card border-border hover:border-primary/40 hover:bg-muted/20 cursor-pointer"
                       )}
                     >
                       {/* Status dot */}
@@ -643,7 +643,7 @@ export default function POS() {
                       <div className="flex items-center justify-between mt-auto">
                         <span className="text-sm font-bold font-mono text-foreground">{formatKES(product.sellingPrice || 0)}</span>
                         <div className={cn(
-                          "w-6 h-6 rounded-full flex items-center justify-center transition-all",
+                          "w-6 h-6 rounded-full flex items-center justify-center transition-colors",
                           inCart ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground/50"
                         )}>
                           {inCart ? <span className="text-[9px] font-bold">{inCart.qty}</span> : <Plus className="h-3 w-3" />}
@@ -678,15 +678,15 @@ export default function POS() {
       {/* Mobile: Cart FAB */}
       {cartCount > 0 && !showCartMobile && (
         <button
-          className="lg:hidden fixed bottom-[4.5rem] right-4 z-40 bg-primary text-primary-foreground rounded-2xl h-14 px-4 flex items-center gap-2 shadow-xl shadow-primary/40 active:scale-95 transition-all"
+          className="lg:hidden fixed bottom-[4.5rem] right-4 z-40 bg-primary text-primary-foreground rounded-2xl h-14 px-4 flex items-center gap-2 border border-primary/40 transition-colors"
           onClick={() => setShowCartMobile(true)}
         >
           <ShoppingCart className="h-5 w-5" />
           <div className="text-left">
-            <p className="text-[10px] font-bold leading-none opacity-80">{cartCount} items</p>
+            <p className="text-[10px] font-bold leading-none text-primary-foreground/80">{cartCount} items</p>
             <p className="text-sm font-bold font-mono leading-tight">{formatKES(total)}</p>
           </div>
-          <ChevronRight className="h-4 w-4 opacity-60" />
+          <ChevronRight className="h-4 w-4 text-primary-foreground/60" />
         </button>
       )}
 
