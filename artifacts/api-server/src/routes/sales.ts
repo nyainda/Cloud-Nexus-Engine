@@ -204,17 +204,12 @@ salesRouter.post("/sales", requireAuth, async (c) => {
 
 salesRouter.get("/sales/:saleId", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const sale = await db
-    .select()
-    .from(sales)
-    .where(eq(sales.id, c.req.param("saleId")))
-    .get();
+  const saleId = c.req.param("saleId");
+  const [sale, items] = await Promise.all([
+    db.select().from(sales).where(eq(sales.id, saleId)).get(),
+    db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).all(),
+  ]);
   if (!sale) return c.json({ error: "Not found" }, 404);
-  const items = await db
-    .select()
-    .from(saleItems)
-    .where(eq(saleItems.saleId, sale.id))
-    .all();
   return c.json({ ...sale, items });
 });
 
@@ -263,6 +258,12 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
     }
   }
 
+  const today = new Date().toISOString().slice(0, 10);
+  await kvDel(
+    c.env.SESSIONS,
+    CK.products(sale.shopId),
+    CK.dashboard(sale.shopId, today),
+  );
   return c.body(null, 204);
 });
 

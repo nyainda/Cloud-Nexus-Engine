@@ -111,7 +111,8 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
     db.select().from(shops).where(eq(shops.id, body.shopId)).get(),
   ]);
 
-  const geminiKey = c.env.GEMINI_API_KEY || shopRow?.geminiApiKey || null;
+  // Shop-specific key takes priority so owners can use their own quota; Worker secret is the fallback
+  const geminiKey = shopRow?.geminiApiKey || c.env.GEMINI_API_KEY || null;
 
   let lines: Array<{ text?: string; productName?: string; qty?: number; totalPrice?: number; unitPrice?: number }> = [];
 

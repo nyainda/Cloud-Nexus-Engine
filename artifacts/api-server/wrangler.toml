@@ -17,6 +17,9 @@ preview_id = "3b54b79e2afa4320ba1eb8567e48e54b"
 NODE_ENV = "production"
 VAPID_PUBLIC_KEY = "BLz3z93Sl59ncADzvPxnUVCW2z-2b9dWOZeiBqV-YuyTqg8rq1kZ9TX7JY4i7PZDHzVjb6GKUiSrLy4_U02khUY"
 
+[limits]
+cpu_ms = 50
+
 [dev]
 port = 8080
 inspector_port = 0

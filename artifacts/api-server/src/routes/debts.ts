@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { debts, debtPayments, notifications } from "@workspace/db/schema";
+import { kvDel, CK } from "../lib/cache";
 
 const debtsRouter = new Hono<AppEnv>();
 
@@ -63,22 +64,19 @@ debtsRouter.post("/debts", requireAuth, async (c) => {
     createdAt: now,
   });
   const debt = await db.select().from(debts).where(eq(debts.id, id)).get();
+  const today = new Date().toISOString().slice(0, 10);
+  await kvDel(c.env.SESSIONS, CK.dashboard(body.shopId, today));
   return c.json(debt!, 201);
 });
 
 debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const debt = await db
-    .select()
-    .from(debts)
-    .where(eq(debts.id, c.req.param("debtId")))
-    .get();
+  const debtId = c.req.param("debtId");
+  const [debt, payments] = await Promise.all([
+    db.select().from(debts).where(eq(debts.id, debtId)).get(),
+    db.select().from(debtPayments).where(eq(debtPayments.debtId, debtId)).all(),
+  ]);
   if (!debt) return c.json({ error: "Not found" }, 404);
-  const payments = await db
-    .select()
-    .from(debtPayments)
-    .where(eq(debtPayments.debtId, debt.id))
-    .all();
   return c.json({ ...debt, payments });
 });
 
@@ -104,6 +102,8 @@ debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
     .where(eq(debts.id, c.req.param("debtId")))
     .get();
   if (!debt) return c.json({ error: "Not found" }, 404);
+  const today = new Date().toISOString().slice(0, 10);
+  await kvDel(c.env.SESSIONS, CK.dashboard(debtRecord.shopId, today));
   return c.json(debt);
 });
 
@@ -152,6 +152,9 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
         ),
       );
   }
+
+  const today = new Date().toISOString().slice(0, 10);
+  await kvDel(c.env.SESSIONS, CK.dashboard(debt.shopId, today));
 
   const payment = await db
     .select()
