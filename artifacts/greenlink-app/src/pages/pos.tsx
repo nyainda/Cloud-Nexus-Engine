@@ -1,9 +1,8 @@
-import { useState, useMemo, useCallback, memo } from "react";
+import { useState, useMemo, useCallback, memo, useEffect } from "react";
 import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { formatKES } from "@/lib/format";
@@ -15,7 +14,6 @@ import {
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { cn } from "@/lib/utils";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const WEIGHT_UNITS = new Set(["kg", "g", "gram", "grams", "litre", "liter", "l", "ml", "ton", "tonne"]);
 function isWeighedUnit(unit: string): boolean {
@@ -37,7 +35,8 @@ const FILTERS: { value: StockFilter; label: string }[] = [
   { value: "out_of_stock", label: "Out" },
 ];
 
-function QuickAddDialog({
+// ── QuickAdd bottom sheet — no Radix Dialog, no CSS transforms ────────────────
+function QuickAddSheet({
   product, open, onClose, onAdd, isOwner,
 }: {
   product: any | null; open: boolean; onClose: () => void;
@@ -46,154 +45,159 @@ function QuickAddDialog({
   const [qty, setQty] = useState<number>(1);
   const [price, setPrice] = useState(0);
 
-  const handleOpen = () => {
-    if (product) {
+  useEffect(() => {
+    if (open && product) {
       setQty(isWeighedUnit(product.unit || "") ? 0.5 : 1);
       setPrice(product.sellingPrice || 0);
     }
-  };
+  }, [open, product]);
 
-  const weighed = product ? isWeighedUnit(product.unit || "") : false;
-  const isLow = product && product.stockQty > 0 && product.stockQty <= product.alertQty;
-  const isOut = product && product.stockQty === 0;
-  const margin = product && product.purchasePrice && price
+  // Lock body scroll when open
+  useEffect(() => {
+    if (open) document.body.style.overflow = "hidden";
+    else document.body.style.overflow = "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
+
+  if (!open || !product) return null;
+
+  const weighed = isWeighedUnit(product.unit || "");
+  const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
+  const isOut = product.stockQty === 0;
+  const margin = product.purchasePrice && price
     ? (((price - product.purchasePrice) / price) * 100).toFixed(0) : null;
-  const profit = product && product.purchasePrice
+  const profit = product.purchasePrice
     ? qty * (price - product.purchasePrice) : null;
 
   const qtyStep = weighed ? 0.25 : 1;
   const qtyMin = weighed ? 0.1 : 1;
 
   return (
-    <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-sm p-0 overflow-hidden border-border bg-card" onOpenAutoFocus={() => handleOpen()}>
-        <DialogHeader className="sr-only"><DialogTitle>Add to Cart</DialogTitle></DialogHeader>
-        {product && (
-          <div className="flex flex-col">
-            <div className="px-5 pt-5 pb-4 border-b border-border/60">
-              <div className="flex items-start gap-3">
-                <div className={cn(
-                  "w-11 h-11 rounded-xl border flex items-center justify-center shrink-0",
-                  weighed ? "bg-primary/10 border-primary/20 text-primary" : "bg-muted/60 border-border/50 text-muted-foreground/50"
-                )}>
-                  {weighed ? <Scale className="h-5 w-5" /> : <Package className="h-5 w-5" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold text-foreground leading-snug">{product.canonicalName}</p>
-                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                    {product.category && <span className="text-[10px] text-muted-foreground">{product.category}</span>}
-                    {product.unit && (
-                      <span className={cn(
-                        "text-[10px] font-bold px-1.5 rounded border font-mono",
-                        weighed ? "text-primary/80 border-primary/20 bg-primary/5" : "text-muted-foreground/50 border-border/30"
-                      )}>{product.unit}</span>
-                    )}
-                  </div>
-                </div>
-                <div className={cn(
-                  "text-[10px] font-bold px-2 py-1 rounded-full shrink-0",
-                  isOut ? "bg-destructive/15 text-destructive" :
-                  isLow ? "bg-orange-500/15 text-orange-400" : "bg-emerald-500/15 text-emerald-400"
-                )}>
-                  {isOut ? "Out of Stock" : isLow ? `Low: ${product.stockQty}` : `${product.stockQty} ${product.unit || "units"}`}
-                </div>
-              </div>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative bg-card w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border border-border overflow-hidden">
+        <div className="px-5 pt-5 pb-4 border-b border-border/60">
+          <div className="flex items-start gap-3">
+            <div className={cn(
+              "w-11 h-11 rounded-xl border flex items-center justify-center shrink-0",
+              weighed ? "bg-primary/10 border-primary/20 text-primary" : "bg-muted/60 border-border/50 text-muted-foreground/50"
+            )}>
+              {weighed ? <Scale className="h-5 w-5" /> : <Package className="h-5 w-5" />}
             </div>
-
-            <div className="px-5 py-4 space-y-4">
-              <div>
-                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
-                  Quantity {weighed ? `(${product.unit || "kg"} — enter any amount)` : `(${product.unit || "units"})`}
-                </Label>
-                <div className="flex items-center gap-3">
-                  <button
-                    className="w-11 h-11 rounded-xl bg-muted border border-border flex items-center justify-center hover:bg-muted/60 transition-colors"
-                    onClick={() => setQty(q => Math.max(qtyMin, parseFloat((q - qtyStep).toFixed(2))))}
-                  >
-                    <Minus className="h-4 w-4" />
-                  </button>
-                  <input
-                    type="number" min={qtyMin} step={qtyStep} max={product.stockQty}
-                    value={qty}
-                    onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= qtyMin) setQty(v); }}
-                    className="flex-1 h-11 text-center text-2xl font-bold font-mono bg-muted/40 border border-border rounded-xl focus:outline-none focus:border-primary/60"
-                  />
-                  <button
-                    className="w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-40"
-                    onClick={() => setQty(q => Math.min(product.stockQty, parseFloat((q + qtyStep).toFixed(2))))}
-                    disabled={qty >= product.stockQty}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                </div>
-                {weighed && (
-                  <div className="flex gap-1.5 flex-wrap mt-2">
-                    {(product.unit?.toLowerCase() === "g" ? [100, 250, 500, 1000] : [0.5, 1, 2, 5, 10]).map(v => (
-                      <button key={v} type="button" onClick={() => setQty(v)} className={cn(
-                        "text-[11px] font-bold px-2.5 py-1 rounded-full border transition-colors",
-                        qty === v ? "bg-primary/20 border-primary/50 text-primary" : "bg-muted/50 border-border/50 text-muted-foreground hover:border-primary/30 hover:text-primary"
-                      )}>
-                        {v}{product.unit}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
-                  Unit Price (KES)
-                </Label>
-                <input
-                  type="number" value={price} onChange={e => setPrice(Number(e.target.value))}
-                  className="w-full h-11 text-right text-xl font-bold font-mono bg-muted/40 border border-border rounded-xl px-4 focus:outline-none focus:border-primary/60"
-                />
-              </div>
-
-              <div className="bg-muted/40 rounded-xl border border-border p-3 space-y-1.5">
-                {product.purchasePrice > 0 && (
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Buy price</span>
-                    <span className="font-mono text-xs text-muted-foreground">{formatKES(product.purchasePrice)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Subtotal</span>
-                  <span className="font-bold font-mono text-foreground">{formatKES(qty * price)}</span>
-                </div>
-                {profit !== null && (
-                  <div className="flex justify-between items-center pt-1 border-t border-border/40">
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <TrendingUp className="h-3 w-3 text-emerald-400" />
-                      Est. Profit {margin && <span className="text-[10px] text-emerald-400">({margin}%)</span>}
-                    </span>
-                    <span className={cn("font-bold font-mono text-sm", profit >= 0 ? "text-emerald-400" : "text-destructive")}>
-                      {formatKES(profit)}
-                    </span>
-                  </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-foreground leading-snug">{product.canonicalName}</p>
+              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                {product.category && <span className="text-[10px] text-muted-foreground">{product.category}</span>}
+                {product.unit && (
+                  <span className={cn(
+                    "text-[10px] font-bold px-1.5 rounded border font-mono",
+                    weighed ? "text-primary/80 border-primary/20 bg-primary/5" : "text-muted-foreground/50 border-border/30"
+                  )}>{product.unit}</span>
                 )}
               </div>
             </div>
-
-            <div className="px-5 pb-5 flex gap-2">
-              <Button variant="outline" className="flex-1 h-12" onClick={onClose}>Cancel</Button>
-              <Button
-                className="flex-1 h-12 font-bold text-sm bg-primary hover:bg-primary/90 text-primary-foreground"
-                disabled={isOut}
-                onClick={() => { onAdd(product, qty, price); onClose(); }}
-              >
-                <ShoppingCart className="h-4 w-4 mr-2" />
-                Add to Cart
-              </Button>
+            <div className={cn(
+              "text-[10px] font-bold px-2 py-1 rounded-full shrink-0",
+              isOut ? "bg-destructive/15 text-destructive" :
+              isLow ? "bg-orange-500/15 text-orange-400" : "bg-emerald-500/15 text-emerald-400"
+            )}>
+              {isOut ? "Out of Stock" : isLow ? `Low: ${product.stockQty}` : `${product.stockQty} ${product.unit || "units"}`}
             </div>
           </div>
-        )}
-      </DialogContent>
-    </Dialog>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
+              Quantity {weighed ? `(${product.unit || "kg"} — enter any amount)` : `(${product.unit || "units"})`}
+            </Label>
+            <div className="flex items-center gap-3">
+              <button
+                className="w-11 h-11 rounded-xl bg-muted border border-border flex items-center justify-center"
+                onClick={() => setQty(q => Math.max(qtyMin, parseFloat((q - qtyStep).toFixed(2))))}
+              >
+                <Minus className="h-4 w-4" />
+              </button>
+              <input
+                type="number" min={qtyMin} step={qtyStep} max={product.stockQty}
+                value={qty}
+                onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= qtyMin) setQty(v); }}
+                className="flex-1 h-11 text-center text-2xl font-bold font-mono bg-muted/40 border border-border rounded-xl focus:outline-none focus:border-primary/60"
+              />
+              <button
+                className="w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-40"
+                onClick={() => setQty(q => Math.min(product.stockQty, parseFloat((q + qtyStep).toFixed(2))))}
+                disabled={qty >= product.stockQty}
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+            {weighed && (
+              <div className="flex gap-1.5 flex-wrap mt-2">
+                {(product.unit?.toLowerCase() === "g" ? [100, 250, 500, 1000] : [0.5, 1, 2, 5, 10]).map(v => (
+                  <button key={v} type="button" onClick={() => setQty(v)} className={cn(
+                    "text-[11px] font-bold px-2.5 py-1 rounded-full border",
+                    qty === v ? "bg-primary/20 border-primary/50 text-primary" : "bg-muted/50 border-border/50 text-muted-foreground"
+                  )}>
+                    {v}{product.unit}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
+              Unit Price (KES)
+            </Label>
+            <input
+              type="number" value={price} onChange={e => setPrice(Number(e.target.value))}
+              className="w-full h-11 text-right text-xl font-bold font-mono bg-muted/40 border border-border rounded-xl px-4 focus:outline-none focus:border-primary/60"
+            />
+          </div>
+
+          <div className="bg-muted/40 rounded-xl border border-border p-3 space-y-1.5">
+            {product.purchasePrice > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">Buy price</span>
+                <span className="font-mono text-xs text-muted-foreground">{formatKES(product.purchasePrice)}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-muted-foreground">Subtotal</span>
+              <span className="font-bold font-mono text-foreground">{formatKES(qty * price)}</span>
+            </div>
+            {profit !== null && (
+              <div className="flex justify-between items-center pt-1 border-t border-border/40">
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <TrendingUp className="h-3 w-3 text-emerald-400" />
+                  Est. Profit {margin && <span className="text-[10px] text-emerald-400">({margin}%)</span>}
+                </span>
+                <span className={cn("font-bold font-mono text-sm", profit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                  {formatKES(profit)}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="px-5 pb-5 flex gap-2">
+          <Button variant="outline" className="flex-1 h-12" onClick={onClose}>Cancel</Button>
+          <Button
+            className="flex-1 h-12 font-bold text-sm bg-primary text-primary-foreground"
+            disabled={isOut}
+            onClick={() => { onAdd(product, qty, price); onClose(); }}
+          >
+            <ShoppingCart className="h-4 w-4 mr-2" />
+            Add to Cart
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
-// ── CartPanel extracted outside POS to prevent remount-on-rerender focus loss ──
+// ── CartPanel — plain divs, no Radix ScrollArea ───────────────────────────────
 interface CartPanelProps {
   cart: CartItem[];
   discount: number;
@@ -235,18 +239,19 @@ const CartPanel = memo(function CartPanel({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button className="lg:hidden text-muted-foreground hover:text-foreground p-1" onClick={() => setShowCartMobile(false)}>
+          <button className="lg:hidden text-muted-foreground p-1" onClick={() => setShowCartMobile(false)}>
             <X className="h-4 w-4" />
           </button>
           {cartCount > 0 && (
-            <button className="text-[11px] text-muted-foreground hover:text-destructive transition-colors" onClick={() => { setCart([]); setDiscount(0); }}>
+            <button className="text-[11px] text-muted-foreground hover:text-destructive" onClick={() => { setCart([]); setDiscount(0); }}>
               Clear all
             </button>
           )}
         </div>
       </div>
 
-      <ScrollArea className="flex-1 overflow-y-auto">
+      {/* Plain overflow div — no Radix ScrollArea */}
+      <div className="flex-1 overflow-y-auto">
         {cart.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
             <ShoppingCart className="h-10 w-10 text-muted-foreground/20" />
@@ -262,17 +267,17 @@ const CartPanel = memo(function CartPanel({
                 <div key={item.product.id} className="px-4 py-3">
                   <div className="flex justify-between items-start gap-2 mb-2.5">
                     <span className="text-sm font-semibold text-foreground leading-snug flex-1 pr-1">{item.product.canonicalName}</span>
-                    <button onClick={() => removeFromCart(item.product.id)} className="text-muted-foreground/40 hover:text-destructive transition-colors shrink-0 p-0.5">
+                    <button onClick={() => removeFromCart(item.product.id)} className="text-muted-foreground/40 hover:text-destructive shrink-0 p-0.5">
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center bg-muted/50 rounded-lg border border-border/60 overflow-hidden">
-                      <button className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" onClick={() => updateQty(item.product.id, -1)}>
+                      <button className="h-8 w-8 flex items-center justify-center text-muted-foreground" onClick={() => updateQty(item.product.id, -1)}>
                         <Minus className="h-3.5 w-3.5" />
                       </button>
                       <span className="w-8 text-center text-sm font-bold">{item.qty}</span>
-                      <button className="h-8 w-8 flex items-center justify-center text-primary hover:bg-primary/10 transition-colors" onClick={() => updateQty(item.product.id, 1)} disabled={item.qty >= item.product.stockQty}>
+                      <button className="h-8 w-8 flex items-center justify-center text-primary" onClick={() => updateQty(item.product.id, 1)} disabled={item.qty >= item.product.stockQty}>
                         <Plus className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -295,7 +300,7 @@ const CartPanel = memo(function CartPanel({
             })}
           </div>
         )}
-      </ScrollArea>
+      </div>
 
       {cart.length > 0 && (
         <div className="shrink-0 border-t border-border">
@@ -313,14 +318,14 @@ const CartPanel = memo(function CartPanel({
               <div className="flex gap-1.5 flex-wrap">
                 {[5, 10, 15, 20].map(pct => (
                   <button key={pct} onClick={() => setDiscount(Math.round(subtotal * pct / 100))} className={cn(
-                    "text-[10px] font-bold px-2 py-1 rounded-full transition-colors",
-                    discount === Math.round(subtotal * pct / 100) ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground hover:bg-primary/20 hover:text-primary"
+                    "text-[10px] font-bold px-2 py-1 rounded-full",
+                    discount === Math.round(subtotal * pct / 100) ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground"
                   )}>
                     {pct}%
                   </button>
                 ))}
                 {discount > 0 && (
-                  <button onClick={() => setDiscount(0)} className="text-[10px] font-bold px-2 py-1 rounded-full bg-destructive/15 text-destructive hover:bg-destructive/25 transition-colors">
+                  <button onClick={() => setDiscount(0)} className="text-[10px] font-bold px-2 py-1 rounded-full bg-destructive/15 text-destructive">
                     Clear
                   </button>
                 )}
@@ -368,7 +373,7 @@ const CartPanel = memo(function CartPanel({
             <Button variant="outline" className="h-12 font-bold text-sm border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={createSalePending} onClick={() => handleCheckout("debt")}>
               <CreditCard className="h-4 w-4 mr-1.5" />Debt Sale
             </Button>
-            <Button className="h-12 font-bold text-sm bg-primary hover:bg-primary/90 text-primary-foreground transition-colors" disabled={createSalePending} onClick={() => handleCheckout("cash")}>
+            <Button className="h-12 font-bold text-sm bg-primary text-primary-foreground" disabled={createSalePending} onClick={() => handleCheckout("cash")}>
               <Banknote className="h-4 w-4 mr-1.5" />Cash Sale
             </Button>
           </div>
@@ -430,6 +435,13 @@ export default function POS() {
   const [quickAddProduct, setQuickAddProduct] = useState<any | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
+  // Lock body scroll when mobile cart is open
+  useEffect(() => {
+    if (showCartMobile) document.body.style.overflow = "hidden";
+    else document.body.style.overflow = "";
+    return () => { document.body.style.overflow = ""; };
+  }, [showCartMobile]);
+
   const openQuickAdd = (product: any) => {
     if (product.stockQty === 0) { toast.error("Out of stock"); return; }
     setQuickAddProduct(product);
@@ -472,12 +484,10 @@ export default function POS() {
   const handleCheckout = useCallback(async (saleType: "cash" | "debt") => {
     if (cart.length === 0) { toast.error("Cart is empty"); return; }
     if (saleType === "debt" && !debtCustomerName.trim()) { toast.error("Enter customer name for debt sale"); return; }
-    // Capture values before clearing state
     const cartSnapshot = [...cart];
     const discountSnapshot = discount;
     const debtName = debtCustomerName;
     const debtPhone = debtCustomerPhone;
-    // Optimistically deduct stock from cache
     const productsSnapshot = qc.getQueryData(getListProductsQueryKey());
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
@@ -486,7 +496,6 @@ export default function POS() {
         return cartItem ? { ...p, stockQty: Math.max(0, p.stockQty - cartItem.qty) } : p;
       }) };
     });
-    // Clear UI immediately — feels instant
     setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setShowCartMobile(false);
     createSale.mutate(
       {
@@ -539,7 +548,7 @@ export default function POS() {
               onChange={e => setSearch(e.target.value)}
             />
             {search && (
-              <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground">
+              <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50">
                 <X className="h-4 w-4" />
               </button>
             )}
@@ -547,8 +556,8 @@ export default function POS() {
           <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
             {FILTERS.map(f => (
               <button key={f.value} onClick={() => setStockFilter(f.value)} className={cn(
-                "shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors",
-                stockFilter === f.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                "shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold",
+                stockFilter === f.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
               )}>
                 {f.label}
                 <span className={cn("text-[10px] font-bold", stockFilter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/50")}>
@@ -559,7 +568,7 @@ export default function POS() {
           </div>
         </div>
 
-        {/* Product Grid */}
+        {/* Product Grid — plain overflow-y-auto */}
         <div className="flex-1 overflow-y-auto p-3">
           {isLoading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
@@ -606,15 +615,14 @@ export default function POS() {
                       onClick={() => !isOut && openQuickAdd(product)}
                       disabled={isOut}
                       className={cn(
-                        "relative flex flex-col text-left rounded-xl border p-3 transition-colors",
+                        "relative flex flex-col text-left rounded-xl border p-3",
                         isOut
                           ? "opacity-40 cursor-not-allowed bg-muted/30 border-border/40"
                           : inCart
-                          ? "bg-primary/10 border-primary/50 hover:bg-primary/15"
-                          : "bg-card border-border hover:border-primary/40 hover:bg-muted/20 cursor-pointer"
+                          ? "bg-primary/10 border-primary/50"
+                          : "bg-card border-border cursor-pointer"
                       )}
                     >
-                      {/* Status dot */}
                       <div className="flex items-center justify-between mb-2">
                         <div className={cn(
                           "w-7 h-7 rounded-lg flex items-center justify-center",
@@ -628,10 +636,8 @@ export default function POS() {
                         )} />
                       </div>
 
-                      {/* Name */}
                       <p className="text-xs font-semibold text-foreground leading-tight line-clamp-2 mb-1.5 flex-1">{product.canonicalName}</p>
 
-                      {/* Stock */}
                       <p className={cn(
                         "text-[10px] font-mono font-bold mb-2",
                         isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-muted-foreground/50"
@@ -639,11 +645,10 @@ export default function POS() {
                         {isOut ? "Out of stock" : `${product.stockQty} ${product.unit || "units"}`}
                       </p>
 
-                      {/* Price + add indicator */}
                       <div className="flex items-center justify-between mt-auto">
                         <span className="text-sm font-bold font-mono text-foreground">{formatKES(product.sellingPrice || 0)}</span>
                         <div className={cn(
-                          "w-6 h-6 rounded-full flex items-center justify-center transition-colors",
+                          "w-6 h-6 rounded-full flex items-center justify-center",
                           inCart ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground/50"
                         )}>
                           {inCart ? <span className="text-[9px] font-bold">{inCart.qty}</span> : <Plus className="h-3 w-3" />}
@@ -675,10 +680,10 @@ export default function POS() {
         <CartPanel {...cartPanelProps} />
       </div>
 
-      {/* Mobile: Cart FAB */}
+      {/* Mobile: Cart FAB — plain fixed button, no transforms */}
       {cartCount > 0 && !showCartMobile && (
         <button
-          className="lg:hidden fixed bottom-[4.5rem] right-4 z-40 bg-primary text-primary-foreground rounded-2xl h-14 px-4 flex items-center gap-2 border border-primary/40 transition-colors"
+          className="lg:hidden fixed bottom-[4.5rem] right-4 z-40 bg-primary text-primary-foreground rounded-2xl h-14 px-4 flex items-center gap-2 border border-primary/40"
           onClick={() => setShowCartMobile(true)}
         >
           <ShoppingCart className="h-5 w-5" />
@@ -690,15 +695,23 @@ export default function POS() {
         </button>
       )}
 
-      {/* Mobile: Cart Sheet */}
-      <Dialog open={showCartMobile} onOpenChange={setShowCartMobile}>
-        <DialogContent className="p-0 h-[92svh] max-h-[92svh] flex flex-col sm:max-w-md border-border bg-card rounded-t-2xl">
-          <DialogHeader className="sr-only"><DialogTitle>Cart</DialogTitle></DialogHeader>
-          <div className="flex-1 flex flex-col min-h-0"><CartPanel {...cartPanelProps} /></div>
-        </DialogContent>
-      </Dialog>
+      {/* Mobile: Cart overlay — plain div, no Radix Dialog, no CSS transforms */}
+      {showCartMobile && (
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col">
+          <div
+            className="flex-1 bg-black/60"
+            onClick={() => setShowCartMobile(false)}
+          />
+          <div className="bg-card h-[92svh] flex flex-col rounded-t-2xl border-t border-border overflow-hidden">
+            <div className="flex-1 flex flex-col min-h-0">
+              <CartPanel {...cartPanelProps} />
+            </div>
+          </div>
+        </div>
+      )}
 
-      <QuickAddDialog
+      {/* QuickAdd bottom sheet — plain div, no Radix Dialog */}
+      <QuickAddSheet
         product={quickAddProduct} open={quickAddOpen}
         onClose={() => setQuickAddOpen(false)} onAdd={handleQuickAdd} isOwner={isOwner}
       />
