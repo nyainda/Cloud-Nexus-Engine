@@ -522,6 +522,39 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     .set({ totalAmount: newTotal, totalProfit: newProfit })
     .where(eq(sales.id, saleId));
 
+  // ── Auto-credit debt balance when this is a debt sale ──────────────────────
+  if (sale.saleType === "debt") {
+    const debt = await db.select().from(debts).where(eq(debts.saleId, saleId)).get();
+    if (debt) {
+      const newBalance = Math.max(0, (debt.balance ?? 0) - totalRefund);
+      const newTotalAmount = Math.max(0, (debt.totalAmount ?? 0) - totalRefund);
+      const newStatus: "unpaid" | "partial" | "paid" = newBalance <= 0
+        ? "paid"
+        : (debt.amountPaid ?? 0) > 0
+          ? "partial"
+          : "unpaid";
+      await db.update(debts)
+        .set({
+          balance: newBalance,
+          totalAmount: newTotalAmount,
+          status: newStatus,
+          paidAt: newStatus === "paid" ? now : (debt.paidAt ?? null),
+        })
+        .where(eq(debts.id, debt.id));
+      await db.insert(auditLog).values({
+        id: crypto.randomUUID(),
+        shopId: body.shopId,
+        action: "debt_return_credit",
+        entityType: "debt",
+        entityId: debt.id,
+        oldValueJson: JSON.stringify({ balance: debt.balance, totalAmount: debt.totalAmount, status: debt.status }),
+        newValueJson: JSON.stringify({ balance: newBalance, totalAmount: newTotalAmount, status: newStatus, returnId }),
+        performedBy: body.processedBy ?? null,
+        createdAt: now,
+      });
+    }
+  }
+
   // Bust cache so dashboard/products reflect restored stock
   const today = new Date().toISOString().slice(0, 10);
   await kvDel(

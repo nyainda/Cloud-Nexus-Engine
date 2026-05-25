@@ -32,12 +32,16 @@ function ReturnDialog({
   onClose,
   saleItems,
   existingReturns,
+  isDebtSale,
+  debtCustomerName,
 }: {
   saleId: string;
   open: boolean;
   onClose: () => void;
   saleItems: any[];
   existingReturns: any[];
+  isDebtSale?: boolean;
+  debtCustomerName?: string;
 }) {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "cashier";
@@ -141,6 +145,22 @@ function ReturnDialog({
             </div>
           ) : (
             <>
+              {/* Debt sale notice */}
+              {isDebtSale && (
+                <div className="flex items-start gap-2.5 bg-blue-500/8 border border-blue-500/20 rounded-xl px-3.5 py-3">
+                  <CreditCard className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-blue-400">Debt Sale</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                      {debtCustomerName
+                        ? <><span className="font-medium text-foreground">{debtCustomerName}</span>'s debt balance will automatically be reduced by the refund amount.</>
+                        : "The customer's outstanding debt balance will automatically be reduced by the refund amount."
+                      }
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2">
                 {saleItems.map((item, i) => {
                   const maxQty = maxReturnableByIdx[i] ?? 0;
@@ -360,6 +380,18 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
         </>
       )}
 
+      {/* Debt sale indicator */}
+      {(sale as any).saleType === "debt" && (
+        <>
+          <Separator />
+          <div className="px-4 py-2.5 flex items-center gap-2">
+            <CreditCard className="h-3.5 w-3.5 text-blue-400" />
+            <span className="text-xs text-blue-400 font-semibold">Debt Sale</span>
+            <span className="text-[10px] text-muted-foreground">· balance auto-credited on return</span>
+          </div>
+        </>
+      )}
+
       {/* Action buttons */}
       <div className="flex items-center justify-between px-4 pb-3 gap-3">
         <div className="text-xs text-muted-foreground space-y-0.5">
@@ -367,13 +399,12 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
           <p className="font-mono text-muted-foreground/60">{sale.id.slice(0, 8).toUpperCase()}</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Process Return — available to both roles */}
           {!sale.isDeleted && items.length > 0 && (
             <Button
               variant="outline"
               size="sm"
               onClick={() => setReturnOpen(true)}
-              className="text-xs h-8 border-amber-400/40 text-amber-500 hover:bg-amber-50/10"
+              className="text-xs h-8 border-primary/40 text-primary hover:bg-primary/10"
             >
               <RotateCcw className="h-3 w-3 mr-1" />Return
             </Button>
@@ -393,6 +424,7 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
           onClose={() => setReturnOpen(false)}
           saleItems={items}
           existingReturns={returns}
+          isDebtSale={(sale as any).saleType === "debt"}
         />
       )}
     </div>
