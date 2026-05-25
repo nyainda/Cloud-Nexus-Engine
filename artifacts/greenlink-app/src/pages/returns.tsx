@@ -132,11 +132,8 @@ export default function ReturnsPage() {
 
   const { data: returnHistory, isLoading } = useQuery<any[]>({
     queryKey: ["returns", shopId, date],
-    queryFn: async () => {
-      const res = await customFetch(`/api/returns?shopId=${shopId}&date=${date}`);
-      if (!res.ok) return [];
-      return res.json();
-    },
+    queryFn: () =>
+      customFetch<any[]>(`/api/returns?shopId=${shopId}&date=${date}`),
     enabled: !!shopId,
     refetchInterval: 30_000,
   });

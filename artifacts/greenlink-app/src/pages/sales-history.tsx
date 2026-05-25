@@ -105,8 +105,12 @@ function ReturnDialog({
       {
         onSuccess: () => {
           toast.success(`Return processed — ${fmt(totalRefund)} refund`);
+          // Invalidate sales list so totals update immediately
           qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
+          // Invalidate the returns shown inside this sale's detail panel
           qc.invalidateQueries({ queryKey: ["listSaleReturns", saleId] });
+          // Invalidate the Returns page ("returns" prefix covers all dates/shops)
+          qc.invalidateQueries({ queryKey: ["returns"] });
           setReturnQtys(Object.fromEntries(saleItems.map((_, i) => [i, 0])));
           setReason("");
           onClose();
