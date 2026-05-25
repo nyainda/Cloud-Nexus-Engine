@@ -42,11 +42,12 @@ function PaymentDialog({ debt }: { debt: any }) {
       });
     });
     setOpen(false); setAmount("");
+    // Confirm immediately — don't wait for the network
+    toast.success("Payment recorded!");
     recordPayment.mutate(
       { debtId: debt.id, data: { amount: paid, recordedBy: userName } },
       {
-        onSuccess: () => { toast.success("Payment recorded!"); },
-        onError: () => { qc.setQueryData(getListDebtsQueryKey(), snapshot); toast.error("Failed to record payment"); },
+        onError: () => { qc.setQueryData(getListDebtsQueryKey(), snapshot); toast.error("Failed to record payment — please retry"); },
         onSettled: () => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() }),
       }
     );

@@ -91,16 +91,15 @@ function RestockDialog({ product }: { product: any }) {
         ...(sellingPrice && { sellingPrice: Number(sellingPrice) }),
       }) };
     });
+    // Close + confirm immediately — don't wait for the network
+    toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`);
+    setOpen(false);
+    setQty(1);
     restockMutation.mutate(
       { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
       {
         onSuccess: (updatedProduct: any) => {
-          toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`);
-          setOpen(false);
-          setQty(1);
-          // Update cache directly from confirmed server response — avoids KV cache race
-          // (GET /api/products uses KV caching; refetching immediately after restock
-          //  can return the stale cached value before KV is invalidated)
+          // Sync cache with confirmed server values (avoids KV cache race on GET)
           qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
             if (!old?.products) return old;
             return { ...old, products: old.products.map((p: any) =>
@@ -112,9 +111,8 @@ function RestockDialog({ product }: { product: any }) {
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
         },
         onError: () => {
-          // Revert optimistic update by refetching fresh data from server
           qc.refetchQueries({ queryKey: getListProductsQueryKey() });
-          toast.error("Failed to update stock");
+          toast.error("Restock failed — please retry");
         },
       }
     );
@@ -224,22 +222,21 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : { ...p, ...patch }) };
     });
+    // Close + confirm immediately — don't wait for the network
+    toast.success("Product updated");
+    setOpen(false);
+    onSuccess();
     updateProduct.mutate(
       { productId: product.id, data: patch },
       {
         onSuccess: () => {
-          toast.success("Product updated");
-          setOpen(false);
-          onSuccess();
-          // Optimistic update already applied the correct values to the cache.
-          // Do NOT refetch — the GET uses KV caching and a refetch right after
-          // the write races the KV invalidation, returning the stale old value.
+          // Optimistic update already applied correct values; don't refetch
+          // (GET uses KV caching — refetch right after write races KV invalidation)
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
         },
         onError: () => {
-          // Revert optimistic update by refetching fresh data from server
           qc.refetchQueries({ queryKey: getListProductsQueryKey() });
-          toast.error("Failed to update product");
+          toast.error("Failed to update product — please retry");
         },
       }
     );

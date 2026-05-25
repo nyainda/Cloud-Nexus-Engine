@@ -497,6 +497,8 @@ export default function POS() {
       }) };
     });
     setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setShowCartMobile(false);
+    // Show confirmation immediately — don't wait for the network
+    toast.success(saleType === "cash" ? "✓ Cash sale complete!" : "✓ Debt recorded!");
     createSale.mutate(
       {
         data: {
@@ -510,7 +512,6 @@ export default function POS() {
       },
       {
         onSuccess: () => {
-          toast.success(saleType === "cash" ? "✓ Cash sale complete!" : "✓ Debt recorded!");
           if (saleType === "debt") qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
@@ -518,7 +519,7 @@ export default function POS() {
         onError: (err: any) => {
           qc.setQueryData(getListProductsQueryKey(), productsSnapshot);
           setCart(cartSnapshot); setDiscount(discountSnapshot);
-          toast.error(err?.message || "Sale failed");
+          toast.error(err?.message || "Sale failed — please retry");
         },
       }
     );

@@ -40,12 +40,11 @@ function EditableField({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
-  const [saving, setSaving] = useState(false);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (draft === value) { setEditing(false); return; }
-    setSaving(true);
-    try { await onSave(draft); setEditing(false); } finally { setSaving(false); }
+    setEditing(false); // close immediately
+    onSave(draft).catch(() => toast.error("Failed to save — please retry"));
   };
 
   return (
@@ -63,10 +62,9 @@ function EditableField({
           />
           <button
             onClick={handleSave}
-            disabled={saving}
-            className="px-4 h-10 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors disabled:opacity-50"
+            className="px-4 h-10 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors"
           >
-            {saving ? "…" : "Save"}
+            Save
           </button>
           <button
             onClick={() => { setDraft(value); setEditing(false); }}
@@ -110,9 +108,11 @@ function PinRow({ shopId, roleLabel }: { shopId: string; roleLabel: "owner" | "c
     if (newPin.length < 4) { toast.error("PIN must be at least 4 digits"); return; }
     if (!match) { toast.error("PINs do not match"); return; }
     const data = roleLabel === "owner" ? { ownerPin: newPin } : { cashierPin: newPin };
+    // Close + confirm immediately
+    toast.success(`${label} PIN updated`);
+    reset(); setOpen(false);
     updateShop.mutate({ shopId, data }, {
-      onSuccess: () => { toast.success(`${label} PIN updated`); reset(); setOpen(false); },
-      onError: () => toast.error("Failed to update PIN"),
+      onError: () => toast.error("Failed to update PIN — please retry"),
     });
   };
 
@@ -215,15 +215,15 @@ function GeminiSection({ shopId, hasKey }: { shopId: string; hasKey: boolean }) 
   const qc = useQueryClient();
 
   const handleSave = () => {
+    const trimmedKey = key.trim();
+    // Close + confirm immediately
+    toast.success(trimmedKey ? "Gemini key saved — Smart Scanner active" : "Key removed");
+    setOpen(false); setKey(""); setShow(false);
     updateShop.mutate(
-      { shopId, data: { geminiApiKey: key.trim() || null } as any },
+      { shopId, data: { geminiApiKey: trimmedKey || null } as any },
       {
-        onSuccess: () => {
-          toast.success(key.trim() ? "Gemini key saved — Smart Scanner active" : "Key removed");
-          qc.invalidateQueries();
-          setOpen(false); setKey(""); setShow(false);
-        },
-        onError: () => toast.error("Failed to save API key"),
+        onSuccess: () => { qc.invalidateQueries(); },
+        onError: () => toast.error("Failed to save API key — please retry"),
       }
     );
   };
@@ -348,14 +348,16 @@ function SupplierFormDialog({
   const handleSubmit = () => {
     if (!name.trim()) return;
     if (supplier) {
+      // Close + confirm immediately — don't wait for the network
+      toast.success("Supplier updated"); setOpen(false); onSuccess();
       update.mutate({ supplierId: supplier.id, data: { name, phone: phone || undefined, notes: notes || undefined } }, {
-        onSuccess: () => { toast.success("Supplier updated"); setOpen(false); onSuccess(); },
-        onError: () => toast.error("Failed to update"),
+        onError: () => toast.error("Failed to update supplier — please retry"),
       });
     } else {
+      // Close + confirm immediately — don't wait for the network
+      toast.success("Supplier added"); setOpen(false); reset(); onSuccess();
       create.mutate({ data: { shopId, name, phone: phone || undefined, notes: notes || undefined } }, {
-        onSuccess: () => { toast.success("Supplier added"); setOpen(false); reset(); onSuccess(); },
-        onError: () => toast.error("Failed to add"),
+        onError: () => toast.error("Failed to add supplier — please retry"),
       });
     }
   };
