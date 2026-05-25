@@ -367,6 +367,31 @@ salesRouter.get("/sales/:saleId/returns", requireAuth, async (c) => {
 });
 
 // ─── POST /sales/:saleId/returns ─────────────────────────────────────────────
+// ─── List all returns for a shop on a date ───────────────────────────────────
+salesRouter.get("/returns", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const shopId = c.req.query("shopId");
+  const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
+
+  const startOfDay = `${date}T00:00:00.000Z`;
+  const endOfDay   = `${date}T23:59:59.999Z`;
+
+  const rows = await db
+    .select()
+    .from(saleReturns)
+    .where(
+      and(
+        shopId ? eq(saleReturns.shopId, shopId) : undefined,
+        gte(saleReturns.createdAt, startOfDay),
+        lte(saleReturns.createdAt, endOfDay),
+      )
+    )
+    .orderBy(sql`${saleReturns.createdAt} DESC`)
+    .all();
+
+  return c.json(rows);
+});
+
 salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const saleId = c.req.param("saleId");
