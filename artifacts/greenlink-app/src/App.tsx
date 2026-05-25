@@ -27,11 +27,11 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      refetchOnWindowFocus: true,
-      refetchOnReconnect: true,
+      refetchOnWindowFocus: false,  // POS: tab switches must never fire background requests
+      refetchOnReconnect: false,    // reconnect refetch disabled — mutations invalidate cache explicitly
       refetchOnMount: true,
-      staleTime: 30_000,        // 30s — mutations invalidate immediately; fallback keeps data fresh
-      gcTime: 30 * 60_000,     // 30 min in memory
+      staleTime: 5 * 60_000,        // 5 min — matches KV cache TTL; mutations invalidate immediately
+      gcTime: 30 * 60_000,          // 30 min in memory
     },
   },
 });

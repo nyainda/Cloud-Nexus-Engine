@@ -1,0 +1,288 @@
+# Greenlink POS — CF Worker + React Diagnostic Guide
+> For AI Agent use. Follow sequentially. Diagnose first, fix second.
+
+---
+
+## ISSUE 1 — High CPU Time (18.4ms, limit is 10ms)
+
+### Step 1: Check Worker Entry Point
+Open `src/index.js` or `worker.js` (main Worker file).
+
+**Look for:**
+```javascript
+// ❌ BAD - Heavy logic running on EVERY request before routing
+export default {
+  async fetch(request, env) {
+    const token = await verifyJWT(request)      // crypto = expensive
+    const user = await env.DB.prepare(...).first() // D1 on every request
+    const config = await env.KV.get('config')    // even before routing
+  }
+}
+```
+
+**Fix — move auth only to protected routes, not globally:**
+```javascript
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url)
+    
+    // Public routes - no auth overhead
+    if (url.pathname === '/health') return new Response('ok')
+    
+    // Only verify JWT on protected routes
+    if (url.pathname.startsWith('/api/')) {
+      const token = await verifyJWT(request) // only here
+    }
+  }
+}
+```
+
+---
+
+### Step 2: Check for Sequential Awaits
+Search entire Worker codebase for patterns like:
+
+```javascript
+// ❌ BAD - Sequential (each waits for previous = CPU stacks up)
+const products = await env.KV.get('products')
+const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first()
+const shop = await env.DB.prepare('SELECT * FROM shops WHERE id = ?').bind(shopId).first()
+
+// ✅ GOOD - Parallel (all run simultaneously)
+const [products, user, shop] = await Promise.all([
+  env.KV.get('products'),
+  env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first(),
+  env.DB.prepare('SELECT * FROM shops WHERE id = ?').bind(shopId).first()
+])
+```
+
+**Rule:** Any time you see 2+ `await` lines back to back touching KV or D1 — convert to `Promise.all()`
+
+---
+
+### Step 3: Check D1 Queries for Missing Indexes
+Open your D1 database schema (migration files or `schema.sql`).
+
+**Check every table that gets queried frequently:**
+```sql
+-- ❌ BAD - No indexes, full table scan every query
+CREATE TABLE sales (
+  id INTEGER PRIMARY KEY,
+  shop_id INTEGER,
+  created_at TEXT,
+  seedling_type TEXT
+);
+
+-- ✅ GOOD - Add indexes on columns used in WHERE/JOIN
+CREATE INDEX idx_sales_shop ON sales(shop_id);
+CREATE INDEX idx_sales_date ON sales(created_at);
+CREATE INDEX idx_sales_shop_date ON sales(shop_id, created_at);
+```
+
+**Run this in D1 SQL console to check existing indexes:**
+```sql
+SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index';
+```
+
+If result is empty or missing key columns → add indexes immediately.
+
+---
+
+### Step 4: Check JWT / Auth Implementation
+Search for `jwt`, `verify`, `crypto`, `sign` in Worker code.
+
+```javascript
+// ❌ BAD - Using heavy crypto library
+import { verify } from 'jsonwebtoken' // large bundle + slow
+
+// ✅ GOOD - Use CF's native crypto (Web Crypto API)
+const isValid = await crypto.subtle.verify(
+  { name: 'HMAC', hash: 'SHA-256' },
+  key,
+  signature,
+  data
+)
+```
+
+Also check: are you importing any npm packages that are large?
+```javascript
+// ❌ These inflate bundle size and cold start time
+import _ from 'lodash'
+import moment from 'moment'
+import axios from 'axios'
+
+// ✅ Use native alternatives
+// fetch() instead of axios
+// Date() instead of moment
+// native array methods instead of lodash
+```
+
+---
+
+### Step 5: Check Worker Bundle Size
+Run in project root:
+```bash
+npx wrangler deploy --dry-run --outdir=dist
+ls -lh dist/
+```
+
+**If bundle > 500KB → that's hurting cold starts and CPU**
+
+Fix: audit imports, remove unused packages, use dynamic imports for heavy stuff.
+
+---
+
+## ISSUE 2 — Too Many Invocations (1.49k/day for 8 users)
+
+### Step 1: Check React useEffect Dependencies
+Search entire React codebase for `useEffect`.
+
+**Flag every useEffect that fetches data:**
+```javascript
+// ❌ CRITICAL BUG - No dependency array = runs on EVERY render
+useEffect(() => {
+  fetchSales()
+}) // 👈 missing [] = could fire hundreds of times
+
+// ❌ BAD - Wrong dependency causing loop
+useEffect(() => {
+  fetchSales(filters)
+}, [filters]) // if filters = {} object, this loops forever
+
+// ✅ CORRECT - Runs once on mount
+useEffect(() => {
+  fetchSales()
+}, [])
+
+// ✅ CORRECT - Runs when specific primitive value changes
+useEffect(() => {
+  fetchSales(shopId)
+}, [shopId]) // shopId is a string/number, not object
+```
+
+**Action:** List every useEffect in codebase. Check each one has `[]` or correct primitive dependencies.
+
+---
+
+### Step 2: Check for Polling / setInterval
+Search codebase for: `setInterval`, `setTimeout`, `polling`, `refetch`, `refetchInterval`
+
+```javascript
+// ❌ BAD - Polling every 5 seconds = 17,280 calls/day per user
+const interval = setInterval(() => {
+  fetchSales()
+}, 5000)
+
+// ❌ BAD - React Query with aggressive refetch
+useQuery({
+  queryFn: fetchSales,
+  refetchInterval: 3000,      // every 3 seconds 💀
+  refetchOnWindowFocus: true, // every tab switch 💀
+})
+
+// ✅ GOOD - Only refetch on user action
+useQuery({
+  queryFn: fetchSales,
+  staleTime: 60000,           // cache for 1 minute
+  refetchOnWindowFocus: false,
+  refetchInterval: false,
+})
+```
+
+---
+
+### Step 3: Check React Query / SWR Config (if used)
+If using React Query, find `QueryClient` configuration:
+
+```javascript
+// ❌ BAD defaults that hammer your API
+const queryClient = new QueryClient()
+
+// ✅ GOOD - Conservative config for a POS app
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60,        // 1 minute
+      cacheTime: 1000 * 60 * 5,    // 5 minutes
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      retry: 1,
+    }
+  }
+})
+```
+
+---
+
+### Step 4: Check CORS Preflight Requests
+Every API call from browser sends an OPTIONS preflight before the real request.
+That means 1 fetch = 2 Worker invocations.
+
+**Check your Worker handles OPTIONS cheaply:**
+```javascript
+// ✅ Return OPTIONS immediately without touching D1/KV
+if (request.method === 'OPTIONS') {
+  return new Response(null, {
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    }
+  })
+}
+```
+
+If OPTIONS is going through full middleware/auth logic → fix this first, it halves your invocations instantly.
+
+---
+
+### Step 5: Check Network Tab in Browser
+Open the POS app → F12 → Network tab → watch for 10 seconds without clicking.
+
+**Document what you see:**
+- Is any endpoint firing repeatedly? Which one?
+- How often? Every X seconds?
+- Is it the same request or different?
+
+This confirms whether the issue is frontend polling or something else.
+
+---
+
+## Fix Priority Order
+
+| Priority | Issue | Expected Impact |
+|---|---|---|
+| 🔴 1st | `useEffect` missing `[]` | Could cut invocations by 50%+ |
+| 🔴 2nd | OPTIONS preflight not short-circuited | Halves all invocations |
+| 🟡 3rd | Sequential awaits → Promise.all | Cuts CPU by 30-50% |
+| 🟡 4th | Missing D1 indexes | Cuts CPU on heavy queries |
+| 🟢 5th | Remove heavy npm imports | Improves cold start |
+| 🟢 6th | React Query staleTime config | Reduces unnecessary refetches |
+
+---
+
+## After Fixes — Target Metrics
+
+| Metric | Current | Target |
+|---|---|---|
+| CPU time P90 | 18.4ms | < 8ms |
+| Daily invocations | 1,490 | < 300 |
+| Worker errors | 0 | 0 (keep) |
+
+---
+
+## Files to Check (give agent access to these)
+
+```
+worker/
+├── src/index.js          ← Main Worker entry point
+├── src/routes/           ← Individual route handlers  
+├── src/middleware/       ← Auth/CORS middleware
+└── wrangler.toml         ← Config + bindings
+
+frontend/
+├── src/hooks/            ← Custom fetch hooks
+├── src/components/       ← Check all useEffect usage
+├── src/lib/queryClient.js ← React Query config
+└── package.json          ← Check for heavy dependencies
+```

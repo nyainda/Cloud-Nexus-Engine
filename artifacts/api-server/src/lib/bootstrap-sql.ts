@@ -185,4 +185,21 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   keys_auth TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_products_shop_active ON products(shop_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
+CREATE INDEX IF NOT EXISTS idx_sales_shop_date ON sales(shop_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(created_at);
+CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
+CREATE INDEX IF NOT EXISTS idx_sale_items_product ON sale_items(product_id);
+CREATE INDEX IF NOT EXISTS idx_debts_shop_status ON debts(shop_id, status);
+CREATE INDEX IF NOT EXISTS idx_debts_shop_date ON debts(shop_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_debt_payments_debt ON debt_payments(debt_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_product_date ON inventory_movements(product_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_shop_read ON notifications(shop_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_notifications_shop_date ON notifications(shop_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_shop_date ON audit_log(shop_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_aliases_product ON product_aliases(product_id);
+CREATE INDEX IF NOT EXISTS idx_suppliers_shop ON suppliers(shop_id);
 `;

@@ -22,18 +22,27 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
 
-  const daySales = await db
-    .select()
-    .from(sales)
-    .where(
+  // All 5 D1 reads are independent — fire them in parallel to cut CPU time ~4×
+  const [daySales, allProducts, pendingDebts, unreadNotifications, itemsSold] = await Promise.all([
+    db.select().from(sales).where(
       and(
         shopId ? eq(sales.shopId, shopId) : undefined,
         eq(sales.isDeleted, false),
         gte(sales.createdAt, startOfDay),
         lte(sales.createdAt, endOfDay),
       ),
-    )
-    .all();
+    ).all(),
+    db.select().from(products).where(shopId ? eq(products.shopId, shopId) : undefined).all(),
+    db.select().from(debts).where(
+      and(shopId ? eq(debts.shopId, shopId) : undefined, sql`status != 'paid'`),
+    ).all(),
+    db.select().from(notifications).where(
+      and(shopId ? eq(notifications.shopId, shopId) : undefined, eq(notifications.isRead, false)),
+    ).all(),
+    db.select().from(saleItems).where(
+      sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${startOfDay} AND created_at <= ${endOfDay}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
+    ).all(),
+  ]);
 
   const totalRevenue = daySales.reduce((s, sale) => s + sale.totalAmount, 0);
   const totalCost = daySales.reduce((s, sale) => s + (sale.totalCost ?? 0), 0);
@@ -41,44 +50,9 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const cashSales = daySales.filter((s) => s.saleType === "cash").reduce((sum, s) => sum + s.totalAmount, 0);
   const debtSales = daySales.filter((s) => s.saleType === "debt").reduce((sum, s) => sum + s.totalAmount, 0);
 
-  const allProducts = await db
-    .select()
-    .from(products)
-    .where(shopId ? eq(products.shopId, shopId) : undefined)
-    .all();
   const lowStockCount = allProducts.filter((p) => p.isActive && p.stockQty <= p.alertQty && p.stockQty > 0).length;
   const outOfStockCount = allProducts.filter((p) => p.isActive && p.stockQty === 0).length;
-
-  const pendingDebts = await db
-    .select()
-    .from(debts)
-    .where(
-      and(
-        shopId ? eq(debts.shopId, shopId) : undefined,
-        sql`status != 'paid'`,
-      ),
-    )
-    .all();
   const pendingDebtsTotal = pendingDebts.reduce((s, d) => s + d.balance, 0);
-
-  const unreadNotifications = await db
-    .select()
-    .from(notifications)
-    .where(
-      and(
-        shopId ? eq(notifications.shopId, shopId) : undefined,
-        eq(notifications.isRead, false),
-      ),
-    )
-    .all();
-
-  const itemsSold = await db
-    .select()
-    .from(saleItems)
-    .where(
-      sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${startOfDay} AND created_at <= ${endOfDay}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-    )
-    .all();
 
   const productSales = new Map<string, { productId: string; productName: string; totalQtySold: number; totalRevenue: number; totalProfit: number | null }>();
   for (const item of itemsSold) {
@@ -229,15 +203,12 @@ reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
 
-  const items = await db
-    .select()
-    .from(saleItems)
-    .where(
+  const [items, allProducts] = await Promise.all([
+    db.select().from(saleItems).where(
       sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${fromTs} AND created_at <= ${toTs}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-    )
-    .all();
-
-  const allProducts = await db.select().from(products).where(shopId ? eq(products.shopId, shopId) : undefined).all();
+    ).all(),
+    db.select().from(products).where(shopId ? eq(products.shopId, shopId) : undefined).all(),
+  ]);
   const productCategoryMap = new Map(allProducts.map((p) => [p.id, p.category ?? "Uncategorized"]));
 
   const map = new Map<string, { category: string; totalRevenue: number; totalProfit: number; salesCount: number }>();
