@@ -3,7 +3,7 @@ import { eq, and, gte, lte, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
-import { sales, saleItems, products, debts, inventoryMovements, notifications } from "@workspace/db/schema";
+import { sales, saleItems, products, debts, inventoryMovements, notifications, saleReturns, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
 
 const salesRouter = new Hono<AppEnv>();
@@ -265,6 +265,120 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
     CK.dashboard(sale.shopId, today),
   );
   return c.body(null, 204);
+});
+
+// ─── GET /sales/:saleId/returns ──────────────────────────────────────────────
+salesRouter.get("/sales/:saleId/returns", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const saleId = c.req.param("saleId");
+  const rows = await db
+    .select()
+    .from(saleReturns)
+    .where(eq(saleReturns.saleId, saleId))
+    .all();
+  return c.json(rows);
+});
+
+// ─── POST /sales/:saleId/returns ─────────────────────────────────────────────
+salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const saleId = c.req.param("saleId");
+
+  const body = await c.req.json<{
+    shopId: string;
+    reason?: string;
+    processedBy?: string;
+    items: Array<{
+      productId?: string | null;
+      productName: string;
+      qty: number;
+      unitPrice: number;
+      refundAmount: number;
+    }>;
+  }>();
+
+  const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
+  if (!sale) return c.json({ error: "Sale not found" }, 404);
+  if (sale.isDeleted) return c.json({ error: "Cannot return items from a voided sale" }, 400);
+  if (!body.items || body.items.length === 0) return c.json({ error: "No items to return" }, 400);
+
+  const now = new Date().toISOString();
+  const returnId = crypto.randomUUID();
+
+  const totalRefund = body.items.reduce((sum, it) => sum + it.refundAmount, 0);
+
+  // Restore stock for each returned product
+  for (const item of body.items) {
+    if (!item.productId) continue;
+    const product = await db
+      .select()
+      .from(products)
+      .where(eq(products.id, item.productId))
+      .get();
+    if (!product) continue;
+
+    const beforeQty = product.stockQty;
+    const afterQty = beforeQty + item.qty;
+
+    await db
+      .update(products)
+      .set({ stockQty: afterQty, updatedAt: now })
+      .where(eq(products.id, item.productId));
+
+    await db.insert(inventoryMovements).values({
+      id: crypto.randomUUID(),
+      productId: item.productId,
+      productName: product.canonicalName,
+      movementType: "return",
+      qtyChange: item.qty,
+      beforeQty,
+      afterQty,
+      source: "sale_return",
+      referenceId: returnId,
+      createdBy: body.processedBy ?? null,
+      createdAt: now,
+    });
+  }
+
+  // Persist the return record
+  await db.insert(saleReturns).values({
+    id: returnId,
+    shopId: body.shopId,
+    saleId,
+    itemsJson: JSON.stringify(body.items),
+    totalRefund,
+    reason: body.reason ?? null,
+    processedBy: body.processedBy ?? null,
+    createdAt: now,
+  });
+
+  // Audit trail
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    shopId: body.shopId,
+    action: "sale_return",
+    entityType: "sale_return",
+    entityId: returnId,
+    oldValueJson: null,
+    newValueJson: JSON.stringify({ saleId, totalRefund, items: body.items, reason: body.reason }),
+    performedBy: body.processedBy ?? null,
+    createdAt: now,
+  });
+
+  // Bust cache so dashboard/products reflect restored stock
+  const today = new Date().toISOString().slice(0, 10);
+  await kvDel(
+    c.env.SESSIONS,
+    CK.products(body.shopId),
+    CK.dashboard(body.shopId, today),
+  );
+
+  const result = await db
+    .select()
+    .from(saleReturns)
+    .where(eq(saleReturns.id, returnId))
+    .get();
+  return c.json(result!, 201);
 });
 
 export default salesRouter;

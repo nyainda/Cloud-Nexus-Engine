@@ -259,6 +259,25 @@ export const stockTransfers = sqliteTable("stock_transfers", {
 export type StockTransfer = typeof stockTransfers.$inferSelect;
 export type InsertStockTransfer = typeof stockTransfers.$inferInsert;
 
+// ─── sale returns ────────────────────────────────────────────────────────────
+export const saleReturns = sqliteTable("sale_returns", {
+  id: pk(),
+  shopId: text("shop_id")
+    .notNull()
+    .references(() => shops.id),
+  saleId: text("sale_id")
+    .notNull()
+    .references(() => sales.id),
+  itemsJson: text("items_json").notNull(),
+  totalRefund: real("total_refund").notNull(),
+  reason: text("reason"),
+  processedBy: text("processed_by"),
+  createdAt: createdAt(),
+});
+
+export type SaleReturn = typeof saleReturns.$inferSelect;
+export type InsertSaleReturn = typeof saleReturns.$inferInsert;
+
 // ─── scan sessions ───────────────────────────────────────────────────────────
 export const scanSessions = sqliteTable("scan_sessions", {
   id: pk(),

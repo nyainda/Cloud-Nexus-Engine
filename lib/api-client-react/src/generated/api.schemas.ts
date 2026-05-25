@@ -323,6 +323,37 @@ export interface DeleteSaleInput {
   performedBy?: string | null;
 }
 
+export interface SaleReturn {
+  id: string;
+  shopId: string;
+  saleId: string;
+  itemsJson: string;
+  totalRefund: number;
+  /** @nullable */
+  reason?: string | null;
+  /** @nullable */
+  processedBy?: string | null;
+  createdAt: string;
+}
+
+export interface SaleReturnItem {
+  /** @nullable */
+  productId?: string | null;
+  productName: string;
+  qty: number;
+  unitPrice: number;
+  refundAmount: number;
+}
+
+export interface SaleReturnInput {
+  shopId: string;
+  /** @nullable */
+  reason?: string | null;
+  /** @nullable */
+  processedBy?: string | null;
+  items: SaleReturnItem[];
+}
+
 export type DebtStatus = typeof DebtStatus[keyof typeof DebtStatus];
 
 

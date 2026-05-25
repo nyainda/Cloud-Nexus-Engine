@@ -89,6 +89,19 @@ async function bootstrapD1(db: D1Database): Promise<void> {
        INSERT INTO products_fts(products_fts, rowid, id, shop_id, normalized_name, canonical_name, sku, category)
        VALUES ('delete', old.rowid, old.id, old.shop_id, old.normalized_name, old.canonical_name, COALESCE(old.sku,''), COALESCE(old.category,''));
      END`,
+    // Customer returns table
+    `CREATE TABLE IF NOT EXISTS sale_returns (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      sale_id TEXT NOT NULL,
+      items_json TEXT NOT NULL,
+      total_refund REAL NOT NULL,
+      reason TEXT,
+      processed_by TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_sale_returns_sale ON sale_returns(sale_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sale_returns_shop ON sale_returns(shop_id, created_at)",
   ];
   for (const m of MIGRATIONS) {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }

@@ -537,6 +537,62 @@ paths:
         "204":
           description: Sale removed
 
+  /sales/{saleId}/returns:
+    get:
+      operationId: listSaleReturns
+      tags: [sales]
+      summary: List returns for a sale
+      parameters:
+        - name: saleId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Returns list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SaleReturn"
+    post:
+      operationId: createSaleReturn
+      tags: [sales]
+      summary: Process a customer return (partial or full)
+      parameters:
+        - name: saleId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleReturnInput"
+      responses:
+        "201":
+          description: Return processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleReturn"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Sale not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   # ─── DEBTS ───────────────────────────────────────────────
   /debts:
     get:
@@ -1569,6 +1625,57 @@ components:
           type: ["string", "null"]
         performedBy:
           type: ["string", "null"]
+
+    SaleReturn:
+      type: object
+      properties:
+        id:
+          type: string
+        shopId:
+          type: string
+        saleId:
+          type: string
+        itemsJson:
+          type: string
+        totalRefund:
+          type: number
+        reason:
+          type: ["string", "null"]
+        processedBy:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required: [id, shopId, saleId, itemsJson, totalRefund, createdAt]
+
+    SaleReturnItem:
+      type: object
+      properties:
+        productId:
+          type: ["string", "null"]
+        productName:
+          type: string
+        qty:
+          type: number
+        unitPrice:
+          type: number
+        refundAmount:
+          type: number
+      required: [productName, qty, unitPrice, refundAmount]
+
+    SaleReturnInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        reason:
+          type: ["string", "null"]
+        processedBy:
+          type: ["string", "null"]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SaleReturnItem"
+      required: [shopId, items]
 
     # ─── DEBTS ────────────────────────────────────────────
     Debt:

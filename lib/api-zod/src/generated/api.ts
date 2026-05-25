@@ -476,6 +476,47 @@ export const DeleteSaleBody = zod.object({
 
 
 /**
+ * @summary List returns for a sale
+ */
+export const ListSaleReturnsParams = zod.object({
+  "saleId": zod.coerce.string()
+})
+
+export const ListSaleReturnsResponseItem = zod.object({
+  "id": zod.string(),
+  "shopId": zod.string(),
+  "saleId": zod.string(),
+  "itemsJson": zod.string(),
+  "totalRefund": zod.number(),
+  "reason": zod.string().nullish(),
+  "processedBy": zod.string().nullish(),
+  "createdAt": zod.string()
+})
+export const ListSaleReturnsResponse = zod.array(ListSaleReturnsResponseItem)
+
+
+/**
+ * @summary Process a customer return (partial or full)
+ */
+export const CreateSaleReturnParams = zod.object({
+  "saleId": zod.coerce.string()
+})
+
+export const CreateSaleReturnBody = zod.object({
+  "shopId": zod.string(),
+  "reason": zod.string().nullish(),
+  "processedBy": zod.string().nullish(),
+  "items": zod.array(zod.object({
+  "productId": zod.string().nullish(),
+  "productName": zod.string(),
+  "qty": zod.number(),
+  "unitPrice": zod.number(),
+  "refundAmount": zod.number()
+}))
+})
+
+
+/**
  * @summary List debts
  */
 export const ListDebtsQueryParams = zod.object({

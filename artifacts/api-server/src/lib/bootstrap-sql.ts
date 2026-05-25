@@ -166,6 +166,17 @@ CREATE TABLE IF NOT EXISTS stock_transfers (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sale_returns (
+  id TEXT PRIMARY KEY,
+  shop_id TEXT NOT NULL REFERENCES shops(id),
+  sale_id TEXT NOT NULL REFERENCES sales(id),
+  items_json TEXT NOT NULL,
+  total_refund REAL NOT NULL,
+  reason TEXT,
+  processed_by TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS scan_sessions (
   id TEXT PRIMARY KEY,
   shop_id TEXT NOT NULL REFERENCES shops(id),
@@ -202,4 +213,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_shop_date ON audit_log(shop_id, created_at)
 CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id);
 CREATE INDEX IF NOT EXISTS idx_product_aliases_product ON product_aliases(product_id);
 CREATE INDEX IF NOT EXISTS idx_suppliers_shop ON suppliers(shop_id);
+CREATE INDEX IF NOT EXISTS idx_sale_returns_sale ON sale_returns(sale_id);
+CREATE INDEX IF NOT EXISTS idx_sale_returns_shop ON sale_returns(shop_id, created_at);
 `;

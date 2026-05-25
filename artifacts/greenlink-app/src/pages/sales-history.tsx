@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { useListSales, useGetSale, useDeleteSale, getListSalesQueryKey } from "@workspace/api-client-react";
+import {
+  useListSales, useGetSale, useDeleteSale, getListSalesQueryKey,
+  useListSaleReturns, useCreateSaleReturn,
+} from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -10,7 +13,8 @@ import { Separator } from "@/components/ui/separator";
 import {
   Receipt, ChevronDown, ChevronUp, Trash2, Calendar,
   ChevronLeft, ChevronRight, CreditCard,
-  TrendingUp, ShoppingBag, Banknote, Clock, User, Package
+  TrendingUp, ShoppingBag, Banknote, Clock, User, Package,
+  RotateCcw, Minus, Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, addDays, subDays, isToday } from "date-fns";
@@ -21,8 +25,184 @@ function fmt(n: number | null | undefined) {
   return "KES " + Number(n).toLocaleString("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
+// ─── Return Dialog ────────────────────────────────────────────────────────────
+function ReturnDialog({
+  saleId,
+  open,
+  onClose,
+  saleItems,
+}: {
+  saleId: string;
+  open: boolean;
+  onClose: () => void;
+  saleItems: any[];
+}) {
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const role = localStorage.getItem("greenlink_role") || "cashier";
+  const qc = useQueryClient();
+  const doReturn = useCreateSaleReturn();
+
+  // returnQtys: map of saleItem index → qty to return
+  const [returnQtys, setReturnQtys] = useState<Record<number, number>>(() =>
+    Object.fromEntries(saleItems.map((_, i) => [i, 0]))
+  );
+  const [reason, setReason] = useState("");
+
+  const totalRefund = saleItems.reduce((sum, item, i) => {
+    const qty = returnQtys[i] ?? 0;
+    return sum + qty * (item.unitPrice ?? 0);
+  }, 0);
+  const hasSelection = Object.values(returnQtys).some(q => q > 0);
+
+  function setQty(idx: number, val: number, max: number) {
+    setReturnQtys(prev => ({ ...prev, [idx]: Math.max(0, Math.min(max, val)) }));
+  }
+
+  function handleSubmit() {
+    const items = saleItems
+      .map((item, i) => ({
+        productId: item.productId ?? null,
+        productName: item.productName,
+        qty: returnQtys[i] ?? 0,
+        unitPrice: item.unitPrice ?? 0,
+        refundAmount: (returnQtys[i] ?? 0) * (item.unitPrice ?? 0),
+      }))
+      .filter(it => it.qty > 0);
+
+    if (items.length === 0) return;
+
+    doReturn.mutate(
+      {
+        saleId,
+        data: {
+          shopId,
+          reason: reason.trim() || undefined,
+          processedBy: role,
+          items,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Return processed — KES ${totalRefund.toLocaleString("en-KE", { maximumFractionDigits: 0 })} refund`);
+          qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
+          qc.invalidateQueries({ queryKey: ["listSaleReturns", saleId] });
+          setReturnQtys(Object.fromEntries(saleItems.map((_, i) => [i, 0])));
+          setReason("");
+          onClose();
+        },
+        onError: (err: any) => {
+          toast.error(err?.response?.data?.error ?? "Failed to process return");
+        },
+      }
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <RotateCcw className="h-4 w-4 text-amber-500" />
+            Process Return
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto space-y-4 py-2">
+          <p className="text-sm text-muted-foreground">
+            Select the items the customer is returning. Stock will be restored and the return recorded in the audit log.
+          </p>
+
+          <div className="space-y-2">
+            {saleItems.map((item, i) => {
+              const maxQty = item.qty ?? 0;
+              const qty = returnQtys[i] ?? 0;
+              return (
+                <div
+                  key={i}
+                  className={cn(
+                    "rounded-lg border p-3 transition-colors",
+                    qty > 0 ? "border-amber-400/60 bg-amber-50/5" : "border-border"
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{item.productName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Sold: {maxQty} × {fmt(item.unitPrice)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => setQty(i, qty - 1, maxQty)}
+                        disabled={qty === 0}
+                        className="w-7 h-7 rounded-md border border-border flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+                      >
+                        <Minus className="h-3 w-3" />
+                      </button>
+                      <span className={cn(
+                        "w-7 text-center text-sm font-bold font-mono",
+                        qty > 0 ? "text-amber-500" : "text-muted-foreground"
+                      )}>
+                        {qty}
+                      </span>
+                      <button
+                        onClick={() => setQty(i, qty + 1, maxQty)}
+                        disabled={qty >= maxQty}
+                        className="w-7 h-7 rounded-md border border-border flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  {qty > 0 && (
+                    <p className="text-xs text-amber-500 font-semibold mt-1.5 text-right font-mono">
+                      Refund: {fmt(qty * (item.unitPrice ?? 0))}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Reason (optional)</Label>
+            <input
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              placeholder="e.g. Wrong product, defective item…"
+              className="flex h-10 w-full rounded-lg border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+
+          {hasSelection && (
+            <div className="rounded-lg border border-amber-400/40 bg-amber-50/5 p-3 flex justify-between items-center">
+              <span className="text-sm font-bold text-amber-500">Total Refund</span>
+              <span className="text-lg font-bold font-mono text-amber-500">{fmt(totalRefund)}</span>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 pt-2 border-t border-border">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={!hasSelection || doReturn.isPending}
+            className="bg-amber-500 hover:bg-amber-600 text-white"
+          >
+            <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+            {doReturn.isPending ? "Processing…" : "Confirm Return"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Sale Detail ──────────────────────────────────────────────────────────────
 function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: boolean; onVoid: () => void }) {
   const { data: sale, isLoading } = useGetSale(saleId, { query: { enabled: !!saleId } });
+  const { data: existingReturns } = useListSaleReturns(saleId, { query: { enabled: !!saleId } });
+  const [returnOpen, setReturnOpen] = useState(false);
 
   if (isLoading) return (
     <div className="px-4 py-4 space-y-2 animate-pulse">
@@ -31,10 +211,14 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
   );
   if (!sale) return null;
 
+  const items = (sale.items || []) as any[];
+  const returns = (existingReturns || []) as any[];
+
   return (
     <div className="border-t border-border">
+      {/* Items */}
       <div className="px-4 py-3 space-y-1.5">
-        {(sale.items || []).map((item: any, i: number) => (
+        {items.map((item: any, i: number) => (
           <div key={i} className="flex items-center justify-between gap-3 py-1">
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-6 h-6 rounded border border-border flex items-center justify-center shrink-0">
@@ -52,6 +236,7 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
 
       <Separator />
 
+      {/* Totals */}
       <div className="px-4 py-3 space-y-1.5">
         {sale.discount > 0 && (
           <div className="flex justify-between text-sm">
@@ -73,21 +258,85 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
         )}
       </div>
 
+      {/* Existing returns */}
+      {returns.length > 0 && (
+        <>
+          <Separator />
+          <div className="px-4 py-3 space-y-2">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-amber-500 flex items-center gap-1">
+              <RotateCcw className="h-3 w-3" /> Returns Processed
+            </p>
+            {returns.map((r: any) => {
+              const returnedItems: any[] = (() => {
+                try { return JSON.parse(r.itemsJson); } catch { return []; }
+              })();
+              return (
+                <div key={r.id} className="rounded-lg border border-amber-400/30 bg-amber-50/5 p-2.5 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-amber-500 font-semibold font-mono">
+                      - {fmt(r.totalRefund)}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {format(new Date(r.createdAt), "d MMM, HH:mm")}
+                    </span>
+                  </div>
+                  {returnedItems.map((it: any, j: number) => (
+                    <p key={j} className="text-xs text-muted-foreground">
+                      {it.productName} × {it.qty}
+                    </p>
+                  ))}
+                  {r.reason && (
+                    <p className="text-xs text-muted-foreground italic">"{r.reason}"</p>
+                  )}
+                  {r.processedBy && (
+                    <p className="text-xs text-muted-foreground">by {r.processedBy}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Action buttons */}
       <div className="flex items-center justify-between px-4 pb-3 gap-3">
         <div className="text-xs text-muted-foreground space-y-0.5">
           {sale.servedBy && <p>Served by <span className="font-medium text-foreground">{sale.servedBy}</span></p>}
           <p className="font-mono text-muted-foreground/60">{sale.id.slice(0, 8).toUpperCase()}</p>
         </div>
-        {isOwner && (
-          <Button variant="destructive" size="sm" onClick={onVoid} className="text-xs h-8">
-            <Trash2 className="h-3 w-3 mr-1" />Void Sale
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Process Return — available to both roles */}
+          {!sale.isDeleted && items.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setReturnOpen(true)}
+              className="text-xs h-8 border-amber-400/40 text-amber-500 hover:bg-amber-50/10"
+            >
+              <RotateCcw className="h-3 w-3 mr-1" />Return
+            </Button>
+          )}
+          {isOwner && (
+            <Button variant="destructive" size="sm" onClick={onVoid} className="text-xs h-8">
+              <Trash2 className="h-3 w-3 mr-1" />Void Sale
+            </Button>
+          )}
+        </div>
       </div>
+
+      {returnOpen && (
+        <ReturnDialog
+          saleId={saleId}
+          open={returnOpen}
+          onClose={() => setReturnOpen(false)}
+          saleItems={items}
+        />
+      )}
     </div>
   );
 }
 
+// ─── Void Dialog ──────────────────────────────────────────────────────────────
 function VoidDialog({ saleId, open, onClose }: { saleId: string | null; open: boolean; onClose: () => void }) {
   const [reason, setReason] = useState("");
   const qc = useQueryClient();
@@ -133,6 +382,7 @@ function VoidDialog({ saleId, open, onClose }: { saleId: string | null; open: bo
   );
 }
 
+// ─── Sale Row ─────────────────────────────────────────────────────────────────
 function SaleRow({ sale, isOwner }: { sale: any; isOwner: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const [voidTarget, setVoidTarget] = useState<string | null>(null);
@@ -194,6 +444,7 @@ function SaleRow({ sale, isOwner }: { sale: any; isOwner: boolean }) {
   );
 }
 
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function SalesHistory() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "cashier";
