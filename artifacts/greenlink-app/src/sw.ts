@@ -12,12 +12,20 @@ declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: { url: string; r
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
-// Network-first for all API calls (5 s timeout → serve cached on slow connections)
+// ── Instant activation — no Chrome flash on reopen ───────────────────────────
+// skipWaiting: new SW takes control immediately without waiting for old tabs to close
+// clients.claim: SW controls all open clients instantly after activation
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) =>
+  e.waitUntil(self.clients.claim())
+);
+
+// Network-first for all API calls (5s timeout → serve cached on slow connections)
 registerRoute(
   ({ url }) => url.pathname.startsWith("/api/"),
   new NetworkFirst({
     cacheName: "api-cache",
-    networkTimeoutSeconds: 2,
+    networkTimeoutSeconds: 5, // bumped from 2s → handles CF Worker cold starts
     plugins: [
       new CacheableResponsePlugin({ statuses: [0, 200] }),
       new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 86_400 }),
