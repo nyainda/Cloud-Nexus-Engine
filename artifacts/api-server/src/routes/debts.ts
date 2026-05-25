@@ -4,7 +4,7 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { debts, debtPayments, notifications } from "@workspace/db/schema";
-import { kvDel, CK } from "../lib/cache";
+import { kvGet, kvSet, kvDel, CK, CACHE_TTL } from "../lib/cache";
 
 const debtsRouter = new Hono<AppEnv>();
 
@@ -13,6 +13,12 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
   const shopId = c.req.query("shopId");
   const status = c.req.query("status");
   const q = c.req.query("q");
+
+  // Cache the full unfiltered list per shop — status/search filters are applied in-memory below
+  if (shopId && !status && !q) {
+    const cached = await kvGet<object[]>(c.env.SESSIONS, CK.debts(shopId));
+    if (cached) return c.json(cached);
+  }
 
   let rows = await db
     .select()
@@ -32,6 +38,11 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
         d.customerName.toLowerCase().includes(lower) ||
         d.customerPhone.includes(q),
     );
+  }
+
+  // Write the unfiltered full list to KV so subsequent reads are instant
+  if (shopId && !status && !q) {
+    await kvSet(c.env.SESSIONS, CK.debts(shopId), rows, CACHE_TTL.debts);
   }
 
   return c.json(rows);
@@ -65,7 +76,7 @@ debtsRouter.post("/debts", requireAuth, async (c) => {
   });
   const debt = await db.select().from(debts).where(eq(debts.id, id)).get();
   const today = new Date().toISOString().slice(0, 10);
-  await kvDel(c.env.SESSIONS, CK.dashboard(body.shopId, today));
+  await kvDel(c.env.SESSIONS, CK.debts(body.shopId), CK.dashboard(body.shopId, today));
   return c.json(debt!, 201);
 });
 
@@ -103,7 +114,7 @@ debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
     .get();
   if (!debt) return c.json({ error: "Not found" }, 404);
   const today = new Date().toISOString().slice(0, 10);
-  await kvDel(c.env.SESSIONS, CK.dashboard(debtRecord.shopId, today));
+  await kvDel(c.env.SESSIONS, CK.debts(debtRecord.shopId), CK.dashboard(debtRecord.shopId, today));
   return c.json(debt);
 });
 
@@ -154,7 +165,7 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  await kvDel(c.env.SESSIONS, CK.dashboard(debt.shopId, today));
+  await kvDel(c.env.SESSIONS, CK.debts(debt.shopId), CK.dashboard(debt.shopId, today));
 
   const payment = await db
     .select()
