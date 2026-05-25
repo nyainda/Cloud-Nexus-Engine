@@ -1083,20 +1083,20 @@ export default function Stock() {
     if (view === "out") list = list.filter(p => p.stockQty === 0);
     else if (view === "low") list = list.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty);
     else if (view === "expiring") {
-      const soonStr = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-      list = list.filter(p => p.expiryDate && p.expiryDate <= soonStr);
+      const day90Str = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      list = list.filter(p => p.expiryDate && p.expiryDate <= day90Str);
     }
     if (categoryFilter !== "all") list = list.filter(p => p.category === categoryFilter);
     return list;
   }, [allProducts, debouncedSearch, view, categoryFilter]);
 
   const counts = useMemo(() => {
-    const soonStr = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const day90Str = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
     return {
       all: allProducts.length,
       low: allProducts.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty).length,
       out: allProducts.filter(p => p.stockQty === 0).length,
-      expiring: allProducts.filter(p => p.expiryDate && p.expiryDate <= soonStr).length,
+      expiring: allProducts.filter(p => p.expiryDate && p.expiryDate <= day90Str).length,
       totalItems: allProducts.reduce((s, p) => s + p.stockQty, 0),
     };
   }, [allProducts]);
@@ -1108,6 +1108,7 @@ export default function Stock() {
 
   const todayStr = new Date().toISOString().split("T")[0];
   const soonStr = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const day90Str = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
   // The list's own scroll container ref — fixes the black-screen bug caused by
   // useWindowVirtualizer listening to window.scrollY while the actual scroll
@@ -1242,6 +1243,7 @@ export default function Stock() {
                 const isOut = p.stockQty === 0;
                 const isExpired = p.expiryDate && p.expiryDate < todayStr;
                 const isExpiringSoon = p.expiryDate && !isExpired && p.expiryDate <= soonStr;
+                const isExpiryWarning = p.expiryDate && !isExpired && !isExpiringSoon && p.expiryDate <= day90Str;
                 const margin = p.purchasePrice && p.sellingPrice
                   ? (((p.sellingPrice - p.purchasePrice) / p.sellingPrice) * 100).toFixed(0) : null;
                 const cat = getCategoryStyle(p.category);
@@ -1274,7 +1276,8 @@ export default function Stock() {
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-sm font-semibold text-foreground leading-tight">{p.canonicalName}</span>
                           {isExpired && <Badge variant="destructive" className="text-[9px] h-3.5 px-1 shrink-0">Exp!</Badge>}
-                          {isExpiringSoon && !isExpired && <Badge className="bg-amber-500/15 text-amber-400 border-0 text-[9px] h-3.5 px-1 shrink-0">Soon</Badge>}
+                          {isExpiringSoon && <Badge className="bg-amber-500/15 text-amber-400 border-0 text-[9px] h-3.5 px-1 shrink-0">≤30d</Badge>}
+                          {isExpiryWarning && <Badge className="bg-yellow-500/15 text-yellow-400 border-0 text-[9px] h-3.5 px-1 shrink-0">≤90d</Badge>}
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
                           {p.sku && <span className="text-[10px] font-mono text-muted-foreground/50">{p.sku}</span>}

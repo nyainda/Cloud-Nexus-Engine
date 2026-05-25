@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import {
   Bell, PackageX, Users, CheckCheck, Info, AlertTriangle,
   CheckCircle2, BellOff, Package, Scale, Calendar, RefreshCw,
-  ShieldAlert, MessageCircle, Send
+  ShieldAlert, MessageCircle, Send, Clock
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -35,6 +35,8 @@ function getAlertConfig(type: AlertType) {
       return { icon: Calendar, color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20", dot: "bg-amber-400", label: "Expiring Soon" };
     case "expired":
       return { icon: ShieldAlert, color: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/20", dot: "bg-red-400", label: "Expired" };
+    case "expiry_warning":
+      return { icon: Clock, color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20", dot: "bg-yellow-400", label: "Expiry Warning" };
     default:
       return { icon: Info, color: "text-primary", bg: "bg-primary/10", border: "border-primary/20", dot: "bg-primary", label: "Notice" };
   }
@@ -208,10 +210,10 @@ export default function Alerts() {
 
   const stockAlerts = notifications?.filter(n => n.type === "low_stock" || n.type === "out_of_stock") || [];
   const debtAlerts = notifications?.filter(n => n.type === "debt_reminder") || [];
-  const expiryAlerts = notifications?.filter(n => n.type === "expiry_soon" || n.type === "expired") || [];
+  const expiryAlerts = notifications?.filter(n => n.type === "expiry_soon" || n.type === "expired" || n.type === "expiry_warning") || [];
   const otherAlerts = notifications?.filter(n =>
     n.type !== "low_stock" && n.type !== "out_of_stock" &&
-    n.type !== "debt_reminder" && n.type !== "expiry_soon" && n.type !== "expired"
+    n.type !== "debt_reminder" && n.type !== "expiry_soon" && n.type !== "expired" && n.type !== "expiry_warning"
   ) || [];
 
   const allProducts = productsData?.products || [];
@@ -220,10 +222,12 @@ export default function Alerts() {
   const needsRestockCount = outOfStockProducts.length + lowStockProducts.length;
 
   const today = new Date().toISOString().split("T")[0];
-  const soonDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const day30Str = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const day90Str = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
   const expiredProducts = allProducts.filter(p => p.expiryDate && p.expiryDate < today);
-  const expiringSoonProducts = allProducts.filter(p => p.expiryDate && p.expiryDate >= today && p.expiryDate <= soonDate);
-  const expiryCount = expiredProducts.length + expiringSoonProducts.length;
+  const expiringSoonProducts = allProducts.filter(p => p.expiryDate && p.expiryDate >= today && p.expiryDate <= day30Str);
+  const expiryWarningProducts = allProducts.filter(p => p.expiryDate && p.expiryDate > day30Str && p.expiryDate <= day90Str);
+  const expiryCount = expiredProducts.length + expiringSoonProducts.length + expiryWarningProducts.length;
 
   const ownerPhone = shop?.ownerWhatsapp || "";
   const shopName = shop?.name || "the shop";
@@ -317,27 +321,26 @@ export default function Alerts() {
     );
   };
 
-  const ExpiryCard = ({ product, expired }: { product: any; expired: boolean }) => {
-    const daysLeft = expired
+  const ExpiryCard = ({ product, state }: { product: any; state: "expired" | "soon" | "warning" }) => {
+    const daysLeft = state === "expired"
       ? null
       : Math.ceil((new Date(product.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    const colors = {
+      expired: { card: "bg-red-500/5 border-red-500/20", icon: "bg-red-500/15 text-red-400/70", text: "text-red-400", badge: "bg-red-500/15 text-red-400" },
+      soon:    { card: "bg-amber-500/5 border-amber-500/20", icon: "bg-amber-500/15 text-amber-400/70", text: "text-amber-400", badge: "bg-amber-500/15 text-amber-400" },
+      warning: { card: "bg-yellow-500/5 border-yellow-500/20", icon: "bg-yellow-500/15 text-yellow-400/70", text: "text-yellow-400", badge: "bg-yellow-500/15 text-yellow-400" },
+    }[state];
     return (
-      <div className={cn(
-        "flex items-center gap-3 p-3 rounded-xl border transition-colors",
-        expired ? "bg-red-500/5 border-red-500/20" : "bg-amber-500/5 border-amber-500/20"
-      )}>
-        <div className={cn(
-          "w-9 h-9 rounded-lg flex items-center justify-center shrink-0",
-          expired ? "bg-red-500/15 text-red-400/70" : "bg-amber-500/15 text-amber-400/70"
-        )}>
-          <Calendar className="h-4 w-4" />
+      <div className={cn("flex items-center gap-3 p-3 rounded-xl border transition-colors", colors.card)}>
+        <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center shrink-0", colors.icon)}>
+          {state === "warning" ? <Clock className="h-4 w-4" /> : <Calendar className="h-4 w-4" />}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground leading-tight truncate">{product.canonicalName}</p>
           <div className="flex items-center gap-2 mt-0.5">
             {product.category && <span className="text-[10px] text-muted-foreground/60">{product.category}</span>}
-            <span className={cn("text-[10px] font-mono font-bold", expired ? "text-red-400" : "text-amber-400")}>
-              {expired ? `Expired ${product.expiryDate}` : `${daysLeft}d left · ${product.expiryDate}`}
+            <span className={cn("text-[10px] font-mono font-bold", colors.text)}>
+              {state === "expired" ? `Expired ${product.expiryDate}` : `${daysLeft}d left · ${product.expiryDate}`}
             </span>
           </div>
         </div>
@@ -345,11 +348,8 @@ export default function Alerts() {
           {product.stockQty > 0 && (
             <p className="text-[10px] font-mono text-muted-foreground/60">{product.stockQty} {product.unit || "units"}</p>
           )}
-          <span className={cn(
-            "text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full",
-            expired ? "bg-red-500/15 text-red-400" : "bg-amber-500/15 text-amber-400"
-          )}>
-            {expired ? "Expired" : "Soon"}
+          <span className={cn("text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full", colors.badge)}>
+            {state === "expired" ? "Expired" : state === "soon" ? "≤30d" : "≤90d"}
           </span>
         </div>
       </div>
@@ -560,7 +560,7 @@ export default function Alerts() {
                       </p>
                       <div className="space-y-2">
                         {expiredProducts.slice(0, 10).map(p => (
-                          <ExpiryCard key={p.id} product={p} expired={true} />
+                          <ExpiryCard key={p.id} product={p} state="expired" />
                         ))}
                         {expiredProducts.length > 10 && (
                           <p className="text-[11px] text-muted-foreground/50 text-center py-1">
@@ -572,19 +572,39 @@ export default function Alerts() {
                   )}
 
                   {expiringSoonProducts.length > 0 && (
-                    <div>
+                    <div className={expiredProducts.length > 0 ? "mt-3" : ""}>
                       <p className="text-[10px] font-bold uppercase tracking-wider text-amber-400/70 mb-2">
-                        Expiring Within 30 Days — {expiringSoonProducts.length}
+                        Expiring ≤ 30 Days — {expiringSoonProducts.length}
                       </p>
                       <div className="space-y-2">
                         {expiringSoonProducts
                           .sort((a, b) => (a.expiryDate || "").localeCompare(b.expiryDate || ""))
                           .slice(0, 10).map(p => (
-                            <ExpiryCard key={p.id} product={p} expired={false} />
+                            <ExpiryCard key={p.id} product={p} state="soon" />
                           ))}
                         {expiringSoonProducts.length > 10 && (
                           <p className="text-[11px] text-muted-foreground/50 text-center py-1">
                             +{expiringSoonProducts.length - 10} more expiring soon
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {expiryWarningProducts.length > 0 && (
+                    <div className={(expiredProducts.length > 0 || expiringSoonProducts.length > 0) ? "mt-3" : ""}>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-yellow-400/70 mb-2">
+                        Expiring 31–90 Days — {expiryWarningProducts.length}
+                      </p>
+                      <div className="space-y-2">
+                        {expiryWarningProducts
+                          .sort((a, b) => (a.expiryDate || "").localeCompare(b.expiryDate || ""))
+                          .slice(0, 10).map(p => (
+                            <ExpiryCard key={p.id} product={p} state="warning" />
+                          ))}
+                        {expiryWarningProducts.length > 10 && (
+                          <p className="text-[11px] text-muted-foreground/50 text-center py-1">
+                            +{expiryWarningProducts.length - 10} more within 90 days
                           </p>
                         )}
                       </div>
