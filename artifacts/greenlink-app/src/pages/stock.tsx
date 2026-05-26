@@ -455,6 +455,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
 }
 
 function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: string; onSuccess: () => void }) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState<number>(1);
   const [notes, setNotes] = useState("");
