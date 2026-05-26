@@ -105,6 +105,9 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     )`,
     "CREATE INDEX IF NOT EXISTS idx_sale_returns_sale ON sale_returns(sale_id)",
     "CREATE INDEX IF NOT EXISTS idx_sale_returns_shop ON sale_returns(shop_id, created_at)",
+    "ALTER TABLE scan_sessions ADD COLUMN supplier_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_scan_sessions_supplier ON scan_sessions(supplier_id)",
+    "CREATE INDEX IF NOT EXISTS idx_scan_sessions_shop_date ON scan_sessions(shop_id, created_at)",
   ];
   for (const m of MIGRATIONS) {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }

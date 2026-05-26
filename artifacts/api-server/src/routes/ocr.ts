@@ -10,6 +10,7 @@ import {
   inventoryMovements,
   shops,
   priceHistory,
+  suppliers,
 } from "@workspace/db/schema";
 
 const ocrRouter = new Hono<AppEnv>();
@@ -29,11 +30,47 @@ interface InvoiceMeta {
   grandTotal?: number | null;
 }
 
-// ── Image storage helpers ──────────────────────────────────────────────────
+// ── KV cache helpers ───────────────────────────────────────────────────────
+// Sessions list is cached in KV (shared with auth sessions namespace) for 90s.
+// Cache key is prefixed to avoid collisions with UUID-based session tokens.
 
-// Thumbnail is generated on the frontend (canvas resize → ~8 KB JPEG data URL)
-// and stored directly in D1 as the image_url column — zero external storage cost.
-// The full-resolution image never touches the server.
+const KV_TTL = 90;
+function ocrCacheKey(shopId: string) { return `ocr_sess_v1:${shopId}`; }
+
+async function invalidateOcrCache(kv: KVNamespace, shopId: string) {
+  try { await kv.delete(ocrCacheKey(shopId)); } catch { /* non-fatal */ }
+}
+
+// ── Auto-supplier detection ────────────────────────────────────────────────
+// Fuzzy-matches supplierName from OCR against existing suppliers.
+// Auto-creates a new supplier record if no match found.
+
+async function findOrCreateSupplier(
+  db: ReturnType<typeof createDb>,
+  shopId: string,
+  supplierName: string | null | undefined,
+): Promise<string | null> {
+  if (!supplierName?.trim()) return null;
+  const name = supplierName.trim();
+  const norm = name.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+
+  const existing = await db.select().from(suppliers).where(eq(suppliers.shopId, shopId)).all();
+
+  for (const s of existing) {
+    const sNorm = s.name.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    if (sNorm === norm) return s.id;
+    if (sNorm.includes(norm) || norm.includes(sNorm)) return s.id;
+    const words = norm.split(" ").filter(Boolean);
+    const sWords = sNorm.split(" ").filter(Boolean);
+    const overlap = words.filter((w) => sWords.includes(w)).length;
+    if (words.length > 1 && overlap / Math.max(words.length, sWords.length) >= 0.6) return s.id;
+  }
+
+  // Auto-create — name is new
+  const id = crypto.randomUUID();
+  await db.insert(suppliers).values({ id, shopId, name, createdAt: new Date().toISOString() });
+  return id;
+}
 
 // ── Gemini Vision call ─────────────────────────────────────────────────────
 
@@ -175,6 +212,23 @@ function findProductMatches(
   return scored.sort((a, b) => b.confidence - a.confidence).slice(0, 3);
 }
 
+// ── Normalise raw DB row to camelCase session object ───────────────────────
+
+function normalizeSessionRow(r: any) {
+  return {
+    id: r.id,
+    shopId: r.shop_id ?? r.shopId,
+    scanType: r.scan_type ?? r.scanType,
+    totalImages: r.total_images ?? r.totalImages ?? 0,
+    totalProducts: r.total_products ?? r.totalProducts ?? 0,
+    status: r.status,
+    resultJson: r.result_json ?? r.resultJson ?? null,
+    imageUrl: r.image_url ?? r.imageUrl ?? null,
+    supplierId: r.supplier_id ?? r.supplierId ?? null,
+    createdAt: r.created_at ?? r.createdAt,
+  };
+}
+
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
@@ -275,9 +329,27 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
     })
     .where(eq(scanSessions.id, sessionId));
 
+  // Auto-link supplier from OCR invoice metadata
+  let linkedSupplierId: string | null = null;
+  if (body.scanType === "invoice" && invoiceMeta?.supplierName) {
+    try {
+      linkedSupplierId = await findOrCreateSupplier(db, body.shopId, invoiceMeta.supplierName);
+      if (linkedSupplierId) {
+        await c.env.DB.prepare("UPDATE scan_sessions SET supplier_id = ? WHERE id = ?")
+          .bind(linkedSupplierId, sessionId).run();
+      }
+    } catch (err) {
+      console.error("[ocr] supplier link error:", err);
+    }
+  }
+
+  // Invalidate sessions cache for this shop
+  await invalidateOcrCache(c.env.SESSIONS, body.shopId);
+
   return c.json({
     sessionId,
     imageUrl: thumbnailDataUrl ?? null,
+    supplierId: linkedSupplierId,
     lines: results,
     invoiceMeta,
     totalDetected: results.length,
@@ -288,43 +360,46 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   });
 });
 
-// Note: invoice thumbnails are stored as data URLs directly in D1 (image_url column).
-// No file-serving endpoint needed — the frontend renders them inline.
-
-// ── Session CRUD ───────────────────────────────────────────────────────────
+// ── Session list — KV-cached ───────────────────────────────────────────────
 
 ocrRouter.get("/ocr/sessions", requireAuth, async (c) => {
-  const db = createDb(c.env.DB);
   const shopId = c.req.query("shopId");
 
-  // Use raw query to include image_url column added via migration
+  // Try KV cache first — avoids DB round-trip for repeated loads
+  if (shopId) {
+    try {
+      const cached = await c.env.SESSIONS.get(ocrCacheKey(shopId));
+      if (cached) return c.json(JSON.parse(cached));
+    } catch { /* cache miss — fall through to DB */ }
+  }
+
   let rows: any[];
   try {
     const result = await c.env.DB.prepare(
       shopId
-        ? "SELECT * FROM scan_sessions WHERE shop_id = ? ORDER BY created_at DESC LIMIT 50"
-        : "SELECT * FROM scan_sessions ORDER BY created_at DESC LIMIT 50"
+        ? "SELECT * FROM scan_sessions WHERE shop_id = ? ORDER BY created_at DESC LIMIT 200"
+        : "SELECT * FROM scan_sessions ORDER BY created_at DESC LIMIT 200"
     ).bind(...(shopId ? [shopId] : [])).all();
     rows = result.results as any[];
   } catch {
+    const db = createDb(c.env.DB);
     rows = await db.select().from(scanSessions).all();
-    rows = rows.filter((r: any) => !shopId || r.shopId === shopId)
-              .sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt))
-              .slice(0, 50);
+    rows = rows
+      .filter((r: any) => !shopId || r.shopId === shopId)
+      .sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 200);
   }
 
-  // Normalise snake_case from raw SQL to camelCase expected by frontend
-  return c.json(rows.map((r: any) => ({
-    id: r.id,
-    shopId: r.shop_id ?? r.shopId,
-    scanType: r.scan_type ?? r.scanType,
-    totalImages: r.total_images ?? r.totalImages ?? 0,
-    totalProducts: r.total_products ?? r.totalProducts ?? 0,
-    status: r.status,
-    resultJson: r.result_json ?? r.resultJson ?? null,
-    imageUrl: r.image_url ?? r.imageUrl ?? null,
-    createdAt: r.created_at ?? r.createdAt,
-  })));
+  const normalized = rows.map(normalizeSessionRow);
+
+  // Store in KV — subsequent reads within TTL skip the DB entirely
+  if (shopId) {
+    try {
+      await c.env.SESSIONS.put(ocrCacheKey(shopId), JSON.stringify(normalized), { expirationTtl: KV_TTL });
+    } catch { /* non-fatal */ }
+  }
+
+  return c.json(normalized);
 });
 
 ocrRouter.post("/ocr/sessions", requireAuth, async (c) => {
@@ -384,7 +459,6 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
       const newPrice = line.unitPrice && line.unitPrice > 0 ? line.unitPrice : null;
       const oldPrice = product.purchasePrice ?? null;
 
-      // Update price only if different (handles both up and down)
       if (newPrice !== null && newPrice !== oldPrice) {
         updates.purchasePrice = newPrice;
         priceUpdated++;
@@ -396,9 +470,7 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
             newPurchasePrice: newPrice,
             oldSellingPrice: product.sellingPrice,
             newSellingPrice: product.sellingPrice,
-            pctChange: oldPrice
-              ? ((newPrice - oldPrice) / oldPrice) * 100
-              : null,
+            pctChange: oldPrice ? ((newPrice - oldPrice) / oldPrice) * 100 : null,
             changedBy: body.performedBy ?? "ocr",
             changedAt: now,
           });
@@ -434,7 +506,6 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
       const newId = crypto.randomUUID();
       const normalized = normalizeProductName(np.name);
 
-      // Derive profit margin if both prices known
       const profitMargin = np.sellingPrice && np.buyingPrice
         ? ((np.sellingPrice - np.buyingPrice) / np.buyingPrice) * 100
         : null;
@@ -487,6 +558,9 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
     .set({ status: "applied", totalProducts: totalRecords, resultJson: metaPayload })
     .where(eq(scanSessions.id, sessionId));
 
+  // Invalidate cache
+  await invalidateOcrCache(c.env.SESSIONS, body.shopId);
+
   return c.json({ applied, skipped, priceUpdated, newAdded, errors });
 });
 
@@ -494,16 +568,28 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
 
 ocrRouter.delete("/ocr/sessions/:sessionId", requireAuth, async (c) => {
   const sessionId = c.req.param("sessionId");
+
+  // Get shopId before deleting (for cache invalidation)
+  let shopId: string | null = null;
+  try {
+    const row: any = await c.env.DB.prepare("SELECT shop_id FROM scan_sessions WHERE id = ?")
+      .bind(sessionId).first();
+    shopId = row?.shop_id ?? null;
+  } catch {}
+
   try {
     await c.env.DB.prepare("DELETE FROM scan_sessions WHERE id = ?").bind(sessionId).run();
   } catch {
     const db = createDb(c.env.DB);
     await db.delete(scanSessions).where(eq(scanSessions.id, sessionId));
   }
+
+  if (shopId) await invalidateOcrCache(c.env.SESSIONS, shopId);
+
   return c.json({ deleted: true });
 });
 
-// ── Update invoice metadata for a scan session ────────────────────────────
+// ── Update invoice metadata / supplier link ────────────────────────────────
 
 ocrRouter.patch("/ocr/sessions/:sessionId", requireAuth, async (c) => {
   const sessionId = c.req.param("sessionId");
@@ -512,11 +598,11 @@ ocrRouter.patch("/ocr/sessions/:sessionId", requireAuth, async (c) => {
     invoiceNumber?: string | null;
     invoiceDate?: string | null;
     grandTotal?: number | null;
+    supplierId?: string | null;
   }>();
 
-  // Read current resultJson and merge the meta patch in
   const row: any = await c.env.DB.prepare(
-    "SELECT result_json FROM scan_sessions WHERE id = ?"
+    "SELECT result_json, shop_id FROM scan_sessions WHERE id = ?"
   ).bind(sessionId).first();
 
   if (!row) return c.json({ error: "Session not found" }, 404);
@@ -532,17 +618,24 @@ ocrRouter.patch("/ocr/sessions/:sessionId", requireAuth, async (c) => {
     ...(body.grandTotal !== undefined ? { grandTotal: body.grandTotal } : {}),
   };
 
-  // Preserve existing structure whether it was { items, meta } or { applied, invoiceMeta }
-  let updatedJson: any;
-  if ("invoiceMeta" in current) {
-    updatedJson = { ...current, invoiceMeta: updatedMeta };
+  const updatedJson = "invoiceMeta" in current
+    ? { ...current, invoiceMeta: updatedMeta }
+    : { ...current, meta: updatedMeta };
+
+  // Batch: update resultJson + optionally supplier_id
+  if ("supplierId" in body) {
+    await c.env.DB.prepare(
+      "UPDATE scan_sessions SET result_json = ?, supplier_id = ? WHERE id = ?"
+    ).bind(JSON.stringify(updatedJson), body.supplierId ?? null, sessionId).run();
   } else {
-    updatedJson = { ...current, meta: updatedMeta };
+    await c.env.DB.prepare(
+      "UPDATE scan_sessions SET result_json = ? WHERE id = ?"
+    ).bind(JSON.stringify(updatedJson), sessionId).run();
   }
 
-  await c.env.DB.prepare(
-    "UPDATE scan_sessions SET result_json = ? WHERE id = ?"
-  ).bind(JSON.stringify(updatedJson), sessionId).run();
+  // Invalidate cache
+  const shopId: string | null = row.shop_id ?? null;
+  if (shopId) await invalidateOcrCache(c.env.SESSIONS, shopId);
 
   return c.json({ updated: true, meta: updatedMeta });
 });
