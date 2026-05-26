@@ -277,7 +277,7 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
 
   return c.json({
     sessionId,
-    imageUrl,
+    imageUrl: thumbnailDataUrl ?? null,
     lines: results,
     invoiceMeta,
     totalDetected: results.length,
@@ -488,6 +488,63 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
     .where(eq(scanSessions.id, sessionId));
 
   return c.json({ applied, skipped, priceUpdated, newAdded, errors });
+});
+
+// ── Delete a scan session ──────────────────────────────────────────────────
+
+ocrRouter.delete("/ocr/sessions/:sessionId", requireAuth, async (c) => {
+  const sessionId = c.req.param("sessionId");
+  try {
+    await c.env.DB.prepare("DELETE FROM scan_sessions WHERE id = ?").bind(sessionId).run();
+  } catch {
+    const db = createDb(c.env.DB);
+    await db.delete(scanSessions).where(eq(scanSessions.id, sessionId));
+  }
+  return c.json({ deleted: true });
+});
+
+// ── Update invoice metadata for a scan session ────────────────────────────
+
+ocrRouter.patch("/ocr/sessions/:sessionId", requireAuth, async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const body = await c.req.json<{
+    supplierName?: string | null;
+    invoiceNumber?: string | null;
+    invoiceDate?: string | null;
+    grandTotal?: number | null;
+  }>();
+
+  // Read current resultJson and merge the meta patch in
+  const row: any = await c.env.DB.prepare(
+    "SELECT result_json FROM scan_sessions WHERE id = ?"
+  ).bind(sessionId).first();
+
+  if (!row) return c.json({ error: "Session not found" }, 404);
+
+  let current: any = {};
+  try { current = JSON.parse(row.result_json ?? "{}"); } catch {}
+
+  const updatedMeta = {
+    ...(current.meta ?? current.invoiceMeta ?? {}),
+    ...(body.supplierName !== undefined ? { supplierName: body.supplierName } : {}),
+    ...(body.invoiceNumber !== undefined ? { invoiceNumber: body.invoiceNumber } : {}),
+    ...(body.invoiceDate !== undefined ? { invoiceDate: body.invoiceDate } : {}),
+    ...(body.grandTotal !== undefined ? { grandTotal: body.grandTotal } : {}),
+  };
+
+  // Preserve existing structure whether it was { items, meta } or { applied, invoiceMeta }
+  let updatedJson: any;
+  if ("invoiceMeta" in current) {
+    updatedJson = { ...current, invoiceMeta: updatedMeta };
+  } else {
+    updatedJson = { ...current, meta: updatedMeta };
+  }
+
+  await c.env.DB.prepare(
+    "UPDATE scan_sessions SET result_json = ? WHERE id = ?"
+  ).bind(JSON.stringify(updatedJson), sessionId).run();
+
+  return c.json({ updated: true, meta: updatedMeta });
 });
 
 export default ocrRouter;
