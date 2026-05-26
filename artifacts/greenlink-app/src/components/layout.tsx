@@ -4,7 +4,7 @@ import {
   ShoppingCart, Package, Users, Bell, BarChart3,
   ScanLine, Settings, Leaf, LogOut, LayoutDashboard, Receipt,
   Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
-  MoreHorizontal, X
+  MoreHorizontal, X, Truck
 } from "lucide-react";
 import { useListNotifications, useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -175,6 +175,7 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
                 <>
                   <MoreSheetItem href="/reports" icon={BarChart3} label="Analytics" />
                   <MoreSheetItem href="/owner-dashboard" icon={LayoutDashboard} label="Overview" />
+                  <MoreSheetItem href="/invoices" icon={Truck} label="Purchase History" />
                   <MoreSheetItem href="/ocr" icon={ScanLine} label="Smart Scanner" />
                 </>
               )}
@@ -325,6 +326,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
               <SidebarNavItem href="/owner-dashboard" icon={LayoutDashboard} label="Owner Dashboard" collapsed={collapsed} />
               <SidebarNavItem href="/reports" icon={BarChart3} label="Analytics" collapsed={collapsed} />
+              <SidebarNavItem href="/invoices" icon={Truck} label="Purchase History" collapsed={collapsed} />
               <SidebarNavItem href="/ocr" icon={ScanLine} label="Smart Scanner" collapsed={collapsed} />
             </>
           )}

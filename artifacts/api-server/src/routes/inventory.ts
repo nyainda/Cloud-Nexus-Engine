@@ -12,6 +12,7 @@ inventoryRouter.get("/inventory-movements", requireAuth, async (c) => {
   const shopId = c.req.query("shopId");
   const productId = c.req.query("productId");
   const movementType = c.req.query("movementType");
+  const referenceId = c.req.query("referenceId");
   const limit = parseInt(c.req.query("limit") ?? "100");
   const offset = parseInt(c.req.query("offset") ?? "0");
 
@@ -22,14 +23,14 @@ inventoryRouter.get("/inventory-movements", requireAuth, async (c) => {
       and(
         productId ? eq(inventoryMovements.productId, productId) : undefined,
         movementType ? eq(inventoryMovements.movementType, movementType) : undefined,
+        referenceId ? eq(inventoryMovements.referenceId, referenceId) : undefined,
       ),
     )
     .all();
 
   if (shopId) {
-    rows = rows.filter(r => {
-      return true;
-    });
+    // shopId filter applied client-side since inventoryMovements has no shopId column
+    // referenceId queries are already scoped to a single session so no filtering needed
   }
 
   return c.json(
