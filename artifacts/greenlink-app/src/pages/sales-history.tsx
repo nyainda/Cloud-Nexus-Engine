@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import {
   useListSales, useGetSale, useDeleteSale, getListSalesQueryKey,
   useListSaleReturns, useCreateSaleReturn, getListSaleReturnsQueryKey,
+  getListProductsQueryKey, getListInventoryMovementsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -111,6 +112,9 @@ function ReturnDialog({
           qc.invalidateQueries({ queryKey: getListSaleReturnsQueryKey(saleId) });
           // Invalidate the Returns page ("returns" prefix covers all dates/shops)
           qc.invalidateQueries({ queryKey: ["returns"] });
+          // Stock is restored on return — refresh products + inventory immediately
+          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
           setReturnQtys(Object.fromEntries(saleItems.map((_, i) => [i, 0])));
           setReason("");
           onClose();
@@ -450,7 +454,12 @@ function VoidDialog({ saleId, open, onClose }: { saleId: string | null; open: bo
     del.mutate(
       { saleId, data: { reason: reason.trim() || "Voided by owner", performedBy: role } },
       {
-        onSuccess: () => { qc.invalidateQueries({ queryKey: getListSalesQueryKey() }); },
+        onSuccess: () => {
+          // Sale voided — restore stock and update inventory immediately
+          qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
+          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+        },
         onError: () => toast.error("Failed to void sale — please retry"),
       }
     );

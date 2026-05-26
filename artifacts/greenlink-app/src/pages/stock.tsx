@@ -230,8 +230,8 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
       { productId: product.id, data: patch },
       {
         onSuccess: () => {
-          // Optimistic update already applied correct values; don't refetch
-          // (GET uses KV caching — refetch right after write races KV invalidation)
+          // Confirm with server — ensures POS and all other tabs see the new price
+          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
         },
         onError: () => {
@@ -488,6 +488,7 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
     onSuccess: () => {
       // Sync with server after API confirms — keeps list accurate
       qc.invalidateQueries({ queryKey: productsKey });
+      qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       qc.invalidateQueries({ queryKey: ["transfers", shopId] });
       onSuccess();
     },
@@ -857,6 +858,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
     if (ok > 0) toast.success(`Restocked ${ok} product${ok !== 1 ? "s" : ""} successfully`);
     if (fail > 0) toast.error(`${fail} product${fail !== 1 ? "s" : ""} failed — try again`);
 
+    qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
     qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
     if (ok > 0) onDone();
   };
