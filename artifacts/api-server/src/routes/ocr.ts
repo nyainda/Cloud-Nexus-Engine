@@ -394,8 +394,17 @@ ocrRouter.post("/ocr/sessions", requireAuth, async (c) => {
 
 ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
   const body = await c.req.json<{
+    shopId: string;
     scanType: "notebook" | "invoice";
     lines: Array<{ productId: string; qty: number; unitPrice?: number }>;
+    newProducts?: Array<{
+      name: string;
+      category?: string;
+      unit?: string;
+      buyingPrice: number;
+      sellingPrice?: number;
+      qty: number;
+    }>;
     invoiceMeta?: InvoiceMeta;
     performedBy?: string;
   }>();
@@ -405,8 +414,11 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
   const sessionId = c.req.param("sessionId");
   let applied = 0;
   let skipped = 0;
+  let priceUpdated = 0;
+  let newAdded = 0;
   const errors: string[] = [];
 
+  // ── 1. Apply existing product restocks ───────────────────────────────────
   for (const line of body.lines) {
     try {
       const product = await db.select().from(products).where(eq(products.id, line.productId)).get();
@@ -417,23 +429,27 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
       const updates: Record<string, unknown> = { stockQty: afterQty, updatedAt: now };
 
       const newPrice = line.unitPrice && line.unitPrice > 0 ? line.unitPrice : null;
-      if (newPrice && newPrice !== product.purchasePrice) {
+      const oldPrice = product.purchasePrice ?? null;
+
+      // Update price only if different (handles both up and down)
+      if (newPrice !== null && newPrice !== oldPrice) {
         updates.purchasePrice = newPrice;
+        priceUpdated++;
         try {
           await db.insert(priceHistory).values({
             id: crypto.randomUUID(),
             productId: line.productId,
-            oldPurchasePrice: product.purchasePrice,
+            oldPurchasePrice: oldPrice,
             newPurchasePrice: newPrice,
             oldSellingPrice: product.sellingPrice,
             newSellingPrice: product.sellingPrice,
-            pctChange: product.purchasePrice
-              ? ((newPrice - (product.purchasePrice ?? 0)) / (product.purchasePrice ?? 1)) * 100
+            pctChange: oldPrice
+              ? ((newPrice - oldPrice) / oldPrice) * 100
               : null,
             changedBy: body.performedBy ?? "ocr",
             changedAt: now,
           });
-        } catch { /* price history write is non-fatal */ }
+        } catch { /* price history is non-fatal */ }
       }
 
       await db.update(products).set(updates).where(eq(products.id, line.productId));
@@ -458,16 +474,67 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
     }
   }
 
+  // ── 2. Create new products ────────────────────────────────────────────────
+  for (const np of body.newProducts ?? []) {
+    try {
+      if (!np.name?.trim() || !body.shopId) continue;
+      const newId = crypto.randomUUID();
+      const normalized = normalizeProductName(np.name);
+
+      // Derive profit margin if both prices known
+      const profitMargin = np.sellingPrice && np.buyingPrice
+        ? ((np.sellingPrice - np.buyingPrice) / np.buyingPrice) * 100
+        : null;
+
+      await db.insert(products).values({
+        id: newId,
+        shopId: body.shopId,
+        canonicalName: np.name.trim(),
+        normalizedName: normalized,
+        category: np.category ?? "Agrochemicals",
+        unit: np.unit ?? "unit",
+        purchasePrice: np.buyingPrice,
+        sellingPrice: np.sellingPrice ?? null,
+        profitMargin,
+        stockQty: np.qty,
+        alertQty: 5,
+        isActive: true,
+        updatedAt: now,
+      });
+
+      await db.insert(inventoryMovements).values({
+        id: crypto.randomUUID(),
+        productId: newId,
+        productName: np.name.trim(),
+        movementType: body.scanType === "invoice" ? "invoice_restock" : "notebook_restock",
+        qtyChange: np.qty,
+        beforeQty: 0,
+        afterQty: np.qty,
+        source: "ocr_new",
+        referenceId: sessionId,
+        createdBy: body.performedBy ?? null,
+        createdAt: now,
+      });
+
+      newAdded++;
+    } catch (err) {
+      errors.push(`new:${np.name}: ${String(err)}`);
+    }
+  }
+
+  const totalRecords = applied + newAdded;
   const metaPayload = JSON.stringify({
-    applied,
+    applied: totalRecords,
+    priceUpdated,
+    newAdded,
     invoiceMeta: body.invoiceMeta ?? null,
   });
   await db
     .update(scanSessions)
-    .set({ status: "applied", totalProducts: applied, resultJson: metaPayload })
+    .set({ status: "applied", totalProducts: totalRecords, resultJson: metaPayload })
     .where(eq(scanSessions.id, sessionId));
 
-  return c.json({ applied, skipped, errors });
+  return c.json({ applied, skipped, priceUpdated, newAdded, errors });
 });
 
 export default ocrRouter;

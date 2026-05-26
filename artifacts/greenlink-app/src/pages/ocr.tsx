@@ -5,7 +5,6 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -13,12 +12,33 @@ import {
   Zap, Cpu, AlertCircle, ChevronDown, ChevronUp,
   Package, Minus, Plus, Check, ClipboardList,
   Building2, Hash, Calendar, Banknote, ArrowRight, ImageIcon,
+  TrendingUp, TrendingDown, Equal, ShieldCheck, ArrowLeft, PlusCircle, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 
 type Engine = "ai" | "free";
+
+// ─── types ────────────────────────────────────────────────────────────────────
+
+interface EditedItem {
+  checked: boolean;
+  qty: number;
+  unitPrice: string;
+  productId: string | null;
+  productName: string | null;
+  rawText: string;
+  status: string;
+  currentBuyingPrice: number | null;
+  currentStock: number | null;
+  // For unresolved → new product
+  addAsNew: boolean;
+  newName: string;
+  newCategory: string;
+  newUnit: string;
+  newSellingPrice: string;
+}
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,13 +61,12 @@ function extractQtyFromLine(line: string): number {
   return 1;
 }
 
-function extractPricesFromLine(line: string): { unitPrice: number | null; totalPrice: number | null } {
+function extractPricesFromLine(line: string): { unitPrice: number | null } {
   const numbers = [...line.matchAll(/\b(\d{1,3}(?:,\d{3})*(?:\.\d{0,2})?|\d{4,}(?:\.\d{0,2})?)\b/g)]
     .map((m) => parseFloat(m[1].replace(/,/g, "")))
     .filter((n) => n >= 5 && n <= 999999);
-  if (numbers.length === 0) return { unitPrice: null, totalPrice: null };
-  if (numbers.length === 1) return { unitPrice: numbers[0], totalPrice: null };
-  return { unitPrice: numbers[numbers.length - 2] ?? null, totalPrice: numbers[numbers.length - 1] ?? null };
+  if (numbers.length === 0) return { unitPrice: null };
+  return { unitPrice: numbers[numbers.length - 1] ?? null };
 }
 
 function matchLine(line: string, products: any[]): { product: any; score: number } | null {
@@ -84,7 +103,6 @@ function buildFreeResult(rawText: string, products: any[]) {
         rawText: line, productName: null, productId: null,
         qty: extractQtyFromLine(line),
         inferredUnitPrice: prices.unitPrice,
-        inferredTotal: prices.totalPrice,
         confidence: 0, status: "unresolved",
       });
       continue;
@@ -98,7 +116,6 @@ function buildFreeResult(rawText: string, products: any[]) {
       productId: pid,
       qty: extractQtyFromLine(line),
       inferredUnitPrice: prices.unitPrice,
-      inferredTotal: prices.totalPrice,
       confidence: hit.score,
       status: hit.score >= 0.7 ? "confirmed" : "review",
     });
@@ -109,40 +126,58 @@ function buildFreeResult(rawText: string, products: any[]) {
   const unresolved = result.filter((r) => r.status === "unresolved").length;
 
   return {
-    sessionId: null,
-    imageUrl: null,
-    engine: "free",
-    invoiceMeta: null,
-    totalDetected: result.length,
-    confirmedCount: confirmed,
-    reviewCount: review,
-    unresolvedCount: unresolved,
-    lines: result,
+    sessionId: null, imageUrl: null, engine: "free", invoiceMeta: null,
+    totalDetected: result.length, confirmedCount: confirmed,
+    reviewCount: review, unresolvedCount: unresolved, lines: result,
   };
 }
 
-// ─── EditableItem ─────────────────────────────────────────────────────────────
-
-interface EditedItem {
-  checked: boolean;
-  qty: number;
-  unitPrice: string;
-  productId: string | null;
-  productName: string | null;
-  rawText: string;
-  status: string;
+function fmtKes(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return "KES " + n.toLocaleString("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
-function initEditedItems(lines: any[]): EditedItem[] {
-  return lines.map((line: any) => ({
-    checked: line.status === "confirmed" || line.status === "review",
-    qty: Math.max(1, line.qty ?? line.inferredQty ?? 1),
-    unitPrice: line.inferredUnitPrice ? String(line.inferredUnitPrice) : "",
-    productId: line.productId ?? null,
-    productName: line.productName ?? null,
-    rawText: line.rawText ?? "",
-    status: line.status ?? "unresolved",
-  }));
+function priceDiff(oldP: number | null, newP: number | null): "up" | "down" | "same" | null {
+  if (oldP == null || newP == null || newP <= 0) return null;
+  if (newP > oldP) return "up";
+  if (newP < oldP) return "down";
+  return "same";
+}
+
+function pctChange(oldP: number, newP: number): string {
+  if (!oldP) return "";
+  const pct = ((newP - oldP) / oldP) * 100;
+  return (pct > 0 ? "+" : "") + pct.toFixed(1) + "%";
+}
+
+const CATEGORIES = [
+  "Herbicides", "Fungicides", "Insecticides", "Fertilizers", "Seeds",
+  "Equipment", "Acaricides", "Animal Health", "Agrochemicals",
+];
+const UNITS = ["unit", "kg", "g", "litre", "ml", "bag", "box", "piece", "pack"];
+
+// ─── init state ───────────────────────────────────────────────────────────────
+
+function initEditedItems(lines: any[], productsMap: Map<string, any>): EditedItem[] {
+  return lines.map((line: any) => {
+    const dbProduct = line.productId ? productsMap.get(line.productId) : null;
+    return {
+      checked: line.status === "confirmed" || line.status === "review",
+      qty: Math.max(1, line.qty ?? line.inferredQty ?? 1),
+      unitPrice: line.inferredUnitPrice ? String(line.inferredUnitPrice) : "",
+      productId: line.productId ?? null,
+      productName: line.productName ?? null,
+      rawText: line.rawText ?? "",
+      status: line.status ?? "unresolved",
+      currentBuyingPrice: dbProduct?.purchasePrice ?? null,
+      currentStock: dbProduct?.stockQty ?? null,
+      addAsNew: false,
+      newName: line.rawText ?? "",
+      newCategory: "Agrochemicals",
+      newUnit: "unit",
+      newSellingPrice: "",
+    };
+  });
 }
 
 // ─── OCR Page ─────────────────────────────────────────────────────────────────
@@ -150,16 +185,18 @@ function initEditedItems(lines: any[]): EditedItem[] {
 export default function OCR() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "owner";
+
   const [engine, setEngine] = useState<Engine>("free");
   const [image, setImage] = useState<string | null>(null);
   const [scanType, setScanType] = useState<"notebook" | "invoice">("invoice");
   const [scanResult, setScanResult] = useState<any>(null);
   const [freeLoading, setFreeLoading] = useState(false);
   const [showAllLines, setShowAllLines] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [applied, setApplied] = useState(false);
 
   const [editedItems, setEditedItems] = useState<EditedItem[]>([]);
   const [invoiceMeta, setInvoiceMeta] = useState({ supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "" });
-  const [applied, setApplied] = useState(false);
 
   const qc = useQueryClient();
   const ocrScan = useOcrScan();
@@ -174,11 +211,17 @@ export default function OCR() {
     { query: { enabled: !!shopId } },
   );
   const products = useMemo(() => productsData?.products ?? [], [productsData]);
+  const productsMap = useMemo(() => {
+    const m = new Map<string, any>();
+    products.forEach((p: any) => m.set(p.id, p));
+    return m;
+  }, [products]);
 
   useEffect(() => {
     if (!scanResult?.lines) return;
-    setEditedItems(initEditedItems(scanResult.lines));
+    setEditedItems(initEditedItems(scanResult.lines, productsMap));
     setApplied(false);
+    setApproving(false);
     if (scanResult.invoiceMeta) {
       setInvoiceMeta({
         supplierName: scanResult.invoiceMeta.supplierName ?? "",
@@ -189,7 +232,7 @@ export default function OCR() {
     } else {
       setInvoiceMeta({ supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "" });
     }
-  }, [scanResult]);
+  }, [scanResult, productsMap]);
 
   const handleCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -200,53 +243,37 @@ export default function OCR() {
       setScanResult(null);
       setShowAllLines(false);
       setApplied(false);
+      setApproving(false);
     };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
 
-  // ── Hybrid AI scan: Tesseract → Gemini ────────────────────────────────────
+  // ── Hybrid AI scan ────────────────────────────────────────────────────────
   const processAI = async () => {
     if (!image) return;
-
     const mimeType = getMimeTypeFromDataUrl(image);
     const imageBase64 = image.split(",")[1];
-
-    // Step 1: run Tesseract locally to get a text hint for Gemini
     let tesseractText = "";
     try {
-      toast.info("Pre-scanning with OCR engine…", { duration: 3000 });
+      toast.info("Pre-scanning on device…", { duration: 3000 });
       const { default: Tesseract } = await import("tesseract.js");
       const { data: { text } } = await (Tesseract as any).recognize(image, "eng", { logger: () => {} });
       tesseractText = text ?? "";
-    } catch {
-      // Tesseract failure is non-fatal — Gemini will work without the hint
-    }
+    } catch { /* non-fatal */ }
 
-    // Step 2: send image + tesseract hint to Gemini via API
     ocrScan.mutate(
-      {
-        data: {
-          shopId,
-          imageBase64,
-          mimeType,
-          scanType,
-          tesseractText: tesseractText || undefined,
-        } as any,
-      },
+      { data: { shopId, imageBase64, mimeType, scanType, tesseractText: tesseractText || undefined } as any },
       {
         onSuccess: (data: any) => {
           setScanResult({ ...data, engine: "ai" });
-          if (data.warning) {
-            toast.warning(data.warning);
-          } else {
-            toast.success(`AI detected ${data.totalDetected} items`);
-          }
+          if (data.warning) toast.warning(data.warning);
+          else toast.success(`AI detected ${data.totalDetected} items`);
           refetchSessions();
         },
         onError: (err: any) => {
           const msg = err?.data?.warning ?? err?.message ?? "";
-          if (msg.includes("Gemini API key") || msg.includes("API key") || msg.includes("Settings")) {
+          if (msg.includes("API key") || msg.includes("Gemini")) {
             toast.error("Add your Gemini API key in Settings → Shop to use AI scanning.");
           } else {
             toast.error("AI scan failed — " + (msg || "check your Gemini API key in Settings"));
@@ -256,12 +283,12 @@ export default function OCR() {
     );
   };
 
-  // ── Free OCR scan (Tesseract only) ────────────────────────────────────────
+  // ── Free OCR (Tesseract only) ─────────────────────────────────────────────
   const processFree = async () => {
     if (!image) return;
     setFreeLoading(true);
     try {
-      toast.info("Loading OCR engine… (first use downloads ~4 MB)", { duration: 5000 });
+      toast.info("Loading OCR engine… (~4 MB cached after first use)", { duration: 5000 });
       const { default: Tesseract } = await import("tesseract.js");
       const { data: { text } } = await (Tesseract as any).recognize(image, "eng", { logger: () => {} });
       const result = buildFreeResult(text, products);
@@ -274,7 +301,7 @@ export default function OCR() {
     }
   };
 
-  // ── Apply to stock ─────────────────────────────────────────────────────────
+  // ── Apply mutation ────────────────────────────────────────────────────────
   const applyMutation = useMutation({
     mutationFn: async () => {
       const linesToApply = editedItems
@@ -285,10 +312,20 @@ export default function OCR() {
           unitPrice: item.unitPrice ? parseFloat(item.unitPrice) : undefined,
         }));
 
-      if (linesToApply.length === 0) throw new Error("No items selected");
+      const newProductsToAdd = editedItems
+        .filter((item) => !item.productId && item.addAsNew && item.newName.trim() && parseFloat(item.unitPrice) > 0)
+        .map((item) => ({
+          name: item.newName.trim(),
+          category: item.newCategory,
+          unit: item.newUnit,
+          buyingPrice: parseFloat(item.unitPrice),
+          sellingPrice: item.newSellingPrice ? parseFloat(item.newSellingPrice) : undefined,
+          qty: item.qty,
+        }));
+
+      if (linesToApply.length === 0 && newProductsToAdd.length === 0) throw new Error("No items selected");
 
       let sessionId = scanResult?.sessionId as string | null;
-
       if (!sessionId) {
         const session = await customFetch<{ id: string }>("/api/ocr/sessions", {
           method: "POST",
@@ -304,13 +341,15 @@ export default function OCR() {
         grandTotal: invoiceMeta.grandTotal ? parseFloat(invoiceMeta.grandTotal) : undefined,
       };
 
-      return customFetch<{ applied: number; skipped: number; errors: string[] }>(
+      return customFetch<{ applied: number; skipped: number; priceUpdated: number; newAdded: number; errors: string[] }>(
         `/api/ocr/sessions/${sessionId}/apply`,
         {
           method: "POST",
           body: JSON.stringify({
+            shopId,
             scanType,
             lines: linesToApply,
+            newProducts: newProductsToAdd.length > 0 ? newProductsToAdd : undefined,
             invoiceMeta: Object.values(meta).some(Boolean) ? meta : undefined,
             performedBy: role,
           }),
@@ -318,27 +357,189 @@ export default function OCR() {
       );
     },
     onSuccess: (data) => {
-      toast.success(`Applied ${data.applied} item${data.applied !== 1 ? "s" : ""} to stock`);
+      const parts = [];
+      if (data.applied > 0) parts.push(`${data.applied} restocked`);
+      if (data.priceUpdated > 0) parts.push(`${data.priceUpdated} prices updated`);
+      if (data.newAdded > 0) parts.push(`${data.newAdded} new products added`);
+      toast.success("Stock updated — " + (parts.join(", ") || "done"));
       if (data.skipped > 0) toast.warning(`${data.skipped} items skipped — product not found`);
       setApplied(true);
+      setApproving(false);
       qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
       qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       refetchSessions();
     },
     onError: (err: any) => {
-      toast.error(err?.message ?? "Failed to apply items — please retry");
+      toast.error(err?.message ?? "Failed to apply — please retry");
+      setApproving(false);
     },
   });
-
-  const isProcessing = ocrScan.isPending || freeLoading;
-  const recentSessions = (sessions || []).slice(0, 8);
-  const checkedCount = editedItems.filter((i) => i.checked && i.productId).length;
-  const totalCheckedQty = editedItems.filter((i) => i.checked && i.productId).reduce((s, i) => s + i.qty, 0);
 
   const updateItem = (idx: number, patch: Partial<EditedItem>) => {
     setEditedItems((prev) => prev.map((item, i) => i === idx ? { ...item, ...patch } : item));
   };
 
+  const isProcessing = ocrScan.isPending || freeLoading;
+  const recentSessions = (sessions || []).slice(0, 8);
+
+  // Derived approval summary data
+  const checkedRestocks = editedItems.filter((i) => i.checked && i.productId);
+  const priceChanges = checkedRestocks.filter((i) => {
+    const np = i.unitPrice ? parseFloat(i.unitPrice) : null;
+    return np && np > 0 && np !== i.currentBuyingPrice;
+  });
+  const newProductItems = editedItems.filter((i) => !i.productId && i.addAsNew && i.newName.trim() && parseFloat(i.unitPrice) > 0);
+  const totalActions = checkedRestocks.length + newProductItems.length;
+
+  // ── Approval summary panel ────────────────────────────────────────────────
+  if (scanResult && approving && !applied) {
+    return (
+      <div className="flex flex-col h-full min-h-0 bg-background">
+        <div className="px-4 py-3 border-b border-border bg-card shrink-0">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-primary" />
+            <h1 className="text-lg font-bold font-display">Approve Changes</h1>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">Review carefully — this will update your stock database</p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+          {/* Restocks section */}
+          {checkedRestocks.length > 0 && (
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border/60 flex items-center gap-2">
+                <Package className="h-4 w-4 text-emerald-400" />
+                <span className="text-sm font-bold">Restock {checkedRestocks.length} Product{checkedRestocks.length !== 1 ? "s" : ""}</span>
+              </div>
+              {checkedRestocks.map((item, i) => (
+                <div key={i} className="px-4 py-3 border-b border-border/20 last:border-0">
+                  <p className="text-xs font-semibold text-foreground mb-1">{item.productName}</p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-[11px] text-muted-foreground">
+                      Qty: <span className="text-emerald-400 font-bold font-mono">+{item.qty}</span>
+                    </span>
+                    {item.currentStock != null && (
+                      <span className="text-[11px] text-muted-foreground font-mono">
+                        Stock: {item.currentStock} → <span className="text-foreground font-bold">{item.currentStock + item.qty}</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Price changes section */}
+          {priceChanges.length > 0 && (
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border/60 flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-amber-400" />
+                <span className="text-sm font-bold">Price Updates ({priceChanges.length})</span>
+              </div>
+              {priceChanges.map((item, i) => {
+                const oldP = item.currentBuyingPrice;
+                const newP = parseFloat(item.unitPrice);
+                const dir = priceDiff(oldP, newP);
+                return (
+                  <div key={i} className="px-4 py-3 border-b border-border/20 last:border-0">
+                    <p className="text-xs font-semibold text-foreground mb-1.5">{item.productName}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono text-muted-foreground">{fmtKes(oldP)}</span>
+                      <ArrowRight className="h-3 w-3 text-muted-foreground/50" />
+                      <span className={cn(
+                        "text-[11px] font-bold font-mono",
+                        dir === "up" ? "text-rose-400" : dir === "down" ? "text-emerald-400" : "text-foreground",
+                      )}>
+                        {fmtKes(newP)}
+                      </span>
+                      {dir === "up" && <TrendingUp className="h-3 w-3 text-rose-400" />}
+                      {dir === "down" && <TrendingDown className="h-3 w-3 text-emerald-400" />}
+                      {oldP != null && (
+                        <span className={cn(
+                          "text-[10px] font-bold ml-1",
+                          dir === "up" ? "text-rose-400" : "text-emerald-400",
+                        )}>
+                          {pctChange(oldP, newP)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      {dir === "up" ? "⚠️ Price increased — consider updating selling price" :
+                       dir === "down" ? "✓ Price decreased — you may reduce selling price" : ""}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* New products section */}
+          {newProductItems.length > 0 && (
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border/60 flex items-center gap-2">
+                <PlusCircle className="h-4 w-4 text-primary" />
+                <span className="text-sm font-bold">Add {newProductItems.length} New Product{newProductItems.length !== 1 ? "s" : ""}</span>
+              </div>
+              {newProductItems.map((item, i) => (
+                <div key={i} className="px-4 py-3 border-b border-border/20 last:border-0">
+                  <p className="text-xs font-semibold text-foreground mb-1">{item.newName}</p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-[10px] bg-muted px-2 py-0.5 rounded-full">{item.newCategory}</span>
+                    <span className="text-[10px] bg-muted px-2 py-0.5 rounded-full">{item.newUnit}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground">Buy: {fmtKes(parseFloat(item.unitPrice))}</span>
+                    {item.newSellingPrice && (
+                      <span className="text-[10px] font-mono text-muted-foreground">Sell: {fmtKes(parseFloat(item.newSellingPrice))}</span>
+                    )}
+                    <span className="text-[10px] text-emerald-400 font-mono">Stock: {item.qty}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* No-action state */}
+          {totalActions === 0 && (
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
+              <AlertCircle className="h-8 w-8 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">Nothing to apply yet</p>
+              <p className="text-xs text-muted-foreground/60">Go back and select items or add new products</p>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex gap-3 pt-2 pb-4">
+            <Button
+              variant="outline"
+              className="flex-1 h-12 font-bold"
+              onClick={() => setApproving(false)}
+              disabled={applyMutation.isPending}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />Back & Edit
+            </Button>
+            <Button
+              className={cn(
+                "flex-1 h-12 font-bold",
+                totalActions > 0
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "opacity-40 cursor-not-allowed",
+              )}
+              onClick={() => totalActions > 0 && applyMutation.mutate()}
+              disabled={applyMutation.isPending || totalActions === 0}
+            >
+              {applyMutation.isPending ? (
+                "Applying…"
+              ) : (
+                <><ShieldCheck className="h-4 w-4 mr-2" />Confirm & Apply</>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main view ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Header */}
@@ -375,14 +576,14 @@ export default function OCR() {
                   <span className={cn("text-xs font-bold", engine === eng ? "text-primary" : "text-foreground")}>
                     {eng === "free" ? "Free OCR" : "Hybrid AI"}
                   </span>
-                  <Badge className={cn(
-                    "text-[9px] px-1.5 py-0 h-4 border-0",
+                  <span className={cn(
+                    "text-[9px] font-bold px-1.5 py-0.5 rounded-full",
                     eng === "free"
                       ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                       : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
                   )}>
                     {eng === "free" ? "Offline" : "Gemini"}
-                  </Badge>
+                  </span>
                 </div>
                 <p className="text-[10px] text-muted-foreground leading-snug">
                   {eng === "free"
@@ -393,25 +594,7 @@ export default function OCR() {
             ))}
           </div>
 
-          {/* Engine notice */}
-          {engine === "ai" && (
-            <div className="flex items-start gap-3 bg-amber-500/8 border border-amber-500/20 rounded-xl px-3 py-2.5">
-              <Zap className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                <strong className="text-foreground">Hybrid mode:</strong> OCR pre-scans on-device, then <strong className="text-foreground">Gemini Vision</strong> refines the result using both image and extracted text. Requires a Gemini API key in <strong className="text-foreground">Settings → Shop</strong>.
-              </p>
-            </div>
-          )}
-          {engine === "free" && (
-            <div className="flex items-start gap-3 bg-emerald-500/8 border border-emerald-500/20 rounded-xl px-3 py-2.5">
-              <Cpu className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                OCR runs <strong className="text-foreground">entirely on this device</strong> — no internet needed. ~4 MB downloaded once and cached.
-              </p>
-            </div>
-          )}
-
-          {/* Scan type toggle (AI mode only) */}
+          {/* Scan type (AI only) */}
           {engine === "ai" && (
             <div className="flex gap-1 bg-muted/40 p-1 rounded-xl border border-border/60">
               {(["invoice", "notebook"] as const).map((type) => (
@@ -419,20 +602,20 @@ export default function OCR() {
                   key={type}
                   onClick={() => setScanType(type)}
                   className={cn(
-                    "flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all capitalize flex items-center justify-center gap-1.5",
+                    "flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
                     scanType === type
                       ? "bg-primary text-primary-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   <FileText className="h-3.5 w-3.5" />
-                  {type === "invoice" ? "Supplier Invoice" : "Notebook Scan"}
+                  {type === "invoice" ? "Supplier Invoice" : "Notebook"}
                 </button>
               ))}
             </div>
           )}
 
-          {/* Camera / Preview */}
+          {/* Camera preview */}
           <div className="relative bg-muted/30 border border-border/60 rounded-2xl overflow-hidden aspect-[4/3] flex items-center justify-center">
             {image ? (
               <>
@@ -441,9 +624,8 @@ export default function OCR() {
                   <div className="absolute inset-0 bg-background/90 flex flex-col items-center justify-center gap-3">
                     <ScanLine className="h-8 w-8 text-primary animate-pulse" />
                     <p className="text-sm font-bold">
-                      {engine === "free" ? "Running OCR on device…" : "OCR pre-scan → Gemini AI…"}
+                      {engine === "free" ? "Running OCR on device…" : "OCR → Gemini AI…"}
                     </p>
-                    <p className="text-xs text-muted-foreground">Extracting products and quantities</p>
                   </div>
                 )}
                 <div className="absolute top-3 left-3 w-5 h-5 border-t-2 border-l-2 border-primary rounded-tl" />
@@ -475,7 +657,7 @@ export default function OCR() {
             <div className="grid grid-cols-2 gap-2">
               <label className="cursor-pointer">
                 <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={handleCapture} />
-                <div className="flex items-center justify-center gap-2 h-12 rounded-xl bg-primary text-primary-foreground font-bold text-sm border border-primary/20 hover:bg-primary/90 transition-colors">
+                <div className="flex items-center justify-center gap-2 h-12 rounded-xl bg-primary text-primary-foreground font-bold text-sm hover:bg-primary/90 transition-colors">
                   <Camera className="h-4 w-4" />Camera
                 </div>
               </label>
@@ -491,7 +673,7 @@ export default function OCR() {
               <Button
                 variant="outline"
                 className="h-12 font-bold"
-                onClick={() => { setImage(null); setScanResult(null); setApplied(false); }}
+                onClick={() => { setImage(null); setScanResult(null); setApplied(false); setApproving(false); }}
                 disabled={isProcessing}
               >
                 Retake
@@ -508,20 +690,16 @@ export default function OCR() {
             </div>
           )}
 
-          {/* ── Scan Result + Review Panel ── */}
-          {scanResult && !applied && (
+          {/* ── Review Panel ── */}
+          {scanResult && !applied && !approving && (
             <div className="bg-card border border-border rounded-2xl overflow-hidden">
 
-              {/* Summary header */}
+              {/* Summary counts */}
               <div className="px-4 pt-4 pb-3 border-b border-border/60">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                    <span className="text-sm font-bold">Scan Complete</span>
-                    <span className="text-[10px] text-muted-foreground">
-                      via {scanResult.engine === "free" ? "Free OCR" : "Hybrid AI"}
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2 mb-3">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  <span className="text-sm font-bold">Scan Complete</span>
+                  <span className="text-[10px] text-muted-foreground">via {scanResult.engine === "free" ? "Free OCR" : "Hybrid AI"}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="bg-emerald-500/10 rounded-lg p-2">
@@ -539,7 +717,7 @@ export default function OCR() {
                 </div>
               </div>
 
-              {/* Invoice metadata form */}
+              {/* Invoice metadata */}
               {(scanResult.scanType === "invoice" || scanType === "invoice") && (
                 <div className="px-4 py-3 border-b border-border/60 space-y-3">
                   <div className="flex items-center gap-2">
@@ -551,52 +729,39 @@ export default function OCR() {
                       <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
                         <Building2 className="h-3 w-3" />Supplier
                       </Label>
-                      <Input
-                        value={invoiceMeta.supplierName}
+                      <Input value={invoiceMeta.supplierName}
                         onChange={(e) => setInvoiceMeta((m) => ({ ...m, supplierName: e.target.value }))}
-                        placeholder="Supplier name"
-                        className="h-8 text-xs"
-                      />
+                        placeholder="Supplier name" className="h-8 text-xs" />
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
                         <Hash className="h-3 w-3" />Invoice No.
                       </Label>
-                      <Input
-                        value={invoiceMeta.invoiceNumber}
+                      <Input value={invoiceMeta.invoiceNumber}
                         onChange={(e) => setInvoiceMeta((m) => ({ ...m, invoiceNumber: e.target.value }))}
-                        placeholder="e.g. INV-0234"
-                        className="h-8 text-xs"
-                      />
+                        placeholder="e.g. INV-0234" className="h-8 text-xs" />
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
                         <Calendar className="h-3 w-3" />Date
                       </Label>
-                      <Input
-                        type="date"
-                        value={invoiceMeta.invoiceDate}
+                      <Input type="date" value={invoiceMeta.invoiceDate}
                         onChange={(e) => setInvoiceMeta((m) => ({ ...m, invoiceDate: e.target.value }))}
-                        className="h-8 text-xs"
-                      />
+                        className="h-8 text-xs" />
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
                         <Banknote className="h-3 w-3" />Grand Total (KES)
                       </Label>
-                      <Input
-                        type="number"
-                        value={invoiceMeta.grandTotal}
+                      <Input type="number" value={invoiceMeta.grandTotal}
                         onChange={(e) => setInvoiceMeta((m) => ({ ...m, grandTotal: e.target.value }))}
-                        placeholder="0"
-                        className="h-8 text-xs font-mono"
-                      />
+                        placeholder="0" className="h-8 text-xs font-mono" />
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Line items — editable */}
+              {/* Line items */}
               {editedItems.length > 0 && (
                 <div className="border-b border-border/60">
                   <div className="px-4 py-2.5 flex items-center justify-between">
@@ -612,7 +777,7 @@ export default function OCR() {
                       </button>
                       <span className="text-[10px] text-muted-foreground">·</span>
                       <button
-                        onClick={() => setEditedItems((prev) => prev.map((i) => ({ ...i, checked: false })))}
+                        onClick={() => setEditedItems((prev) => prev.map((i) => ({ ...i, checked: false, addAsNew: false })))}
                         className="text-[10px] text-muted-foreground hover:text-foreground"
                       >
                         Clear all
@@ -620,34 +785,44 @@ export default function OCR() {
                     </div>
                   </div>
 
-                  {(showAllLines ? editedItems : editedItems.slice(0, 8)).map((item, idx) => (
-                    <div
-                      key={idx}
-                      className={cn(
-                        "px-3 py-3 border-b border-border/20 last:border-0 transition-colors",
-                        item.checked && item.productId ? "bg-primary/3" : "",
-                      )}
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <button
-                          onClick={() => updateItem(idx, { checked: !item.checked })}
-                          className={cn(
-                            "mt-0.5 w-4.5 h-4.5 rounded border shrink-0 flex items-center justify-center transition-all",
-                            item.checked && item.productId
-                              ? "bg-primary border-primary"
-                              : "border-border bg-muted/40",
-                            !item.productId ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
-                          )}
-                          disabled={!item.productId}
-                        >
-                          {item.checked && item.productId && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-                        </button>
+                  {(showAllLines ? editedItems : editedItems.slice(0, 8)).map((item, idx) => {
+                    const newP = item.unitPrice ? parseFloat(item.unitPrice) : null;
+                    const dir = item.productId ? priceDiff(item.currentBuyingPrice, newP) : null;
 
-                        <div className="flex-1 min-w-0 space-y-2">
-                          <div>
+                    return (
+                      <div
+                        key={idx}
+                        className={cn(
+                          "px-3 py-3 border-b border-border/20 last:border-0",
+                          item.checked && (item.productId || item.addAsNew) ? "bg-primary/3" : "",
+                          !item.productId && !item.addAsNew ? "opacity-70" : "",
+                        )}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          {/* Checkbox */}
+                          <button
+                            onClick={() => {
+                              if (item.productId) updateItem(idx, { checked: !item.checked });
+                              else if (!item.addAsNew) updateItem(idx, { addAsNew: true, checked: true });
+                              else updateItem(idx, { addAsNew: false, checked: false });
+                            }}
+                            className={cn(
+                              "mt-0.5 w-4.5 h-4.5 rounded border shrink-0 flex items-center justify-center transition-all cursor-pointer",
+                              item.checked && (item.productId || item.addAsNew)
+                                ? "bg-primary border-primary"
+                                : "border-border bg-muted/40",
+                            )}
+                          >
+                            {item.checked && (item.productId || item.addAsNew) && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                          </button>
+
+                          <div className="flex-1 min-w-0 space-y-2">
+                            {/* Product name / status */}
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {item.productId ? (
                                 <span className="text-xs font-semibold text-foreground">{item.productName}</span>
+                              ) : item.addAsNew ? (
+                                <span className="text-xs font-semibold text-primary">New product</span>
                               ) : (
                                 <span className="text-xs text-muted-foreground italic truncate max-w-[180px]">{item.rawText}</span>
                               )}
@@ -655,28 +830,160 @@ export default function OCR() {
                                 "text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0",
                                 item.status === "confirmed" ? "bg-emerald-500/15 text-emerald-400" :
                                 item.status === "review" ? "bg-orange-500/15 text-orange-400" :
+                                item.addAsNew ? "bg-primary/15 text-primary" :
                                 "bg-muted text-muted-foreground",
                               )}>
-                                {item.status}
+                                {item.addAsNew ? "new" : item.status}
                               </span>
                             </div>
-                            {item.productId && item.rawText && (
-                              <p className="text-[10px] text-muted-foreground/60 truncate mt-0.5">{item.rawText}</p>
-                            )}
-                            {!item.productId && (
-                              <p className="text-[10px] text-muted-foreground/50 mt-0.5 flex items-center gap-1">
-                                <Package className="h-2.5 w-2.5" />No product match — add manually if needed
-                              </p>
-                            )}
-                          </div>
 
-                          {item.productId && (
-                            <div className="flex items-center gap-2">
+                            {/* Raw text hint */}
+                            {item.productId && item.rawText && (
+                              <p className="text-[10px] text-muted-foreground/50 truncate">{item.rawText}</p>
+                            )}
+
+                            {/* Unresolved — not adding as new */}
+                            {!item.productId && !item.addAsNew && (
+                              <button
+                                onClick={() => updateItem(idx, { addAsNew: true, checked: true })}
+                                className="flex items-center gap-1 text-[10px] text-primary hover:underline"
+                              >
+                                <PlusCircle className="h-3 w-3" />Add as new product
+                              </button>
+                            )}
+
+                            {/* New product form */}
+                            {!item.productId && item.addAsNew && (
+                              <div className="space-y-2 pt-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-bold text-primary uppercase tracking-wide">New Product Details</span>
+                                  <button onClick={() => updateItem(idx, { addAsNew: false, checked: false })}>
+                                    <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                  </button>
+                                </div>
+                                <Input
+                                  value={item.newName}
+                                  onChange={(e) => updateItem(idx, { newName: e.target.value })}
+                                  placeholder="Product name"
+                                  className="h-7 text-xs"
+                                />
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <select
+                                    value={item.newCategory}
+                                    onChange={(e) => updateItem(idx, { newCategory: e.target.value })}
+                                    className="h-7 text-xs rounded-md border border-border bg-background px-2"
+                                  >
+                                    {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                                  </select>
+                                  <select
+                                    value={item.newUnit}
+                                    onChange={(e) => updateItem(idx, { newUnit: e.target.value })}
+                                    className="h-7 text-xs rounded-md border border-border bg-background px-2"
+                                  >
+                                    {UNITS.map((u) => <option key={u}>{u}</option>)}
+                                  </select>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <div>
+                                    <p className="text-[9px] text-muted-foreground mb-0.5">Buy price (KES) *</p>
+                                    <Input
+                                      type="number"
+                                      value={item.unitPrice}
+                                      onChange={(e) => updateItem(idx, { unitPrice: e.target.value })}
+                                      placeholder="0"
+                                      className="h-7 text-xs font-mono"
+                                    />
+                                  </div>
+                                  <div>
+                                    <p className="text-[9px] text-muted-foreground mb-0.5">Sell price (KES)</p>
+                                    <Input
+                                      type="number"
+                                      value={item.newSellingPrice}
+                                      onChange={(e) => updateItem(idx, { newSellingPrice: e.target.value })}
+                                      placeholder="0"
+                                      className="h-7 text-xs font-mono"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Qty + price row (matched items) */}
+                            {item.productId && (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {/* Qty stepper */}
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => updateItem(idx, { qty: Math.max(1, item.qty - 1) })}
+                                      className="h-6 w-6 rounded border border-border bg-muted/60 flex items-center justify-center hover:bg-muted"
+                                    >
+                                      <Minus className="h-3 w-3" />
+                                    </button>
+                                    <input
+                                      type="number"
+                                      value={item.qty}
+                                      min={1}
+                                      onChange={(e) => updateItem(idx, { qty: Math.max(1, parseInt(e.target.value) || 1) })}
+                                      className="h-6 w-12 text-center text-xs font-bold font-mono border border-border rounded bg-background"
+                                    />
+                                    <button
+                                      onClick={() => updateItem(idx, { qty: item.qty + 1 })}
+                                      className="h-6 w-6 rounded border border-border bg-muted/60 flex items-center justify-center hover:bg-muted"
+                                    >
+                                      <Plus className="h-3 w-3" />
+                                    </button>
+                                    <span className="text-[10px] text-muted-foreground">units</span>
+                                  </div>
+
+                                  {/* Buy price with current price hint */}
+                                  <div className="flex items-center gap-1 ml-auto">
+                                    <span className="text-[10px] text-muted-foreground">Buy KES</span>
+                                    <input
+                                      type="number"
+                                      value={item.unitPrice}
+                                      onChange={(e) => updateItem(idx, { unitPrice: e.target.value })}
+                                      placeholder="—"
+                                      className="h-6 w-20 text-xs font-mono border border-border rounded bg-background px-1.5"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Price diff indicator */}
+                                {newP && newP > 0 && item.currentBuyingPrice != null && (
+                                  <div className={cn(
+                                    "flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-lg",
+                                    dir === "up" ? "bg-rose-500/10 text-rose-400" :
+                                    dir === "down" ? "bg-emerald-500/10 text-emerald-400" :
+                                    "bg-muted/60 text-muted-foreground",
+                                  )}>
+                                    {dir === "up" && <TrendingUp className="h-3 w-3 shrink-0" />}
+                                    {dir === "down" && <TrendingDown className="h-3 w-3 shrink-0" />}
+                                    {dir === "same" && <Equal className="h-3 w-3 shrink-0" />}
+                                    <span>
+                                      {dir === "same"
+                                        ? `Same as current (${fmtKes(item.currentBuyingPrice)}) — no change`
+                                        : dir === "up"
+                                        ? `Price up from ${fmtKes(item.currentBuyingPrice)} → ${fmtKes(newP)}  ${pctChange(item.currentBuyingPrice, newP)}`
+                                        : dir === "down"
+                                        ? `Price down from ${fmtKes(item.currentBuyingPrice)} → ${fmtKes(newP)}  ${pctChange(item.currentBuyingPrice, newP)}`
+                                        : `Current price: ${fmtKes(item.currentBuyingPrice)}`}
+                                    </span>
+                                  </div>
+                                )}
+                                {(!newP || newP <= 0) && item.currentBuyingPrice != null && (
+                                  <p className="text-[10px] text-muted-foreground/60 pl-1">
+                                    Current buy price: {fmtKes(item.currentBuyingPrice)} — enter new price to update
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* New product qty */}
+                            {!item.productId && item.addAsNew && (
                               <div className="flex items-center gap-1">
-                                <button
-                                  onClick={() => updateItem(idx, { qty: Math.max(1, item.qty - 1) })}
-                                  className="h-6 w-6 rounded border border-border bg-muted/60 flex items-center justify-center hover:bg-muted transition-colors"
-                                >
+                                <span className="text-[10px] text-muted-foreground">Opening stock:</span>
+                                <button onClick={() => updateItem(idx, { qty: Math.max(1, item.qty - 1) })} className="h-6 w-6 rounded border border-border bg-muted/60 flex items-center justify-center hover:bg-muted">
                                   <Minus className="h-3 w-3" />
                                 </button>
                                 <input
@@ -686,36 +993,22 @@ export default function OCR() {
                                   onChange={(e) => updateItem(idx, { qty: Math.max(1, parseInt(e.target.value) || 1) })}
                                   className="h-6 w-12 text-center text-xs font-bold font-mono border border-border rounded bg-background"
                                 />
-                                <button
-                                  onClick={() => updateItem(idx, { qty: item.qty + 1 })}
-                                  className="h-6 w-6 rounded border border-border bg-muted/60 flex items-center justify-center hover:bg-muted transition-colors"
-                                >
+                                <button onClick={() => updateItem(idx, { qty: item.qty + 1 })} className="h-6 w-6 rounded border border-border bg-muted/60 flex items-center justify-center hover:bg-muted">
                                   <Plus className="h-3 w-3" />
                                 </button>
                                 <span className="text-[10px] text-muted-foreground">units</span>
                               </div>
-
-                              <div className="flex items-center gap-1 ml-auto">
-                                <span className="text-[10px] text-muted-foreground">Buy KES</span>
-                                <input
-                                  type="number"
-                                  value={item.unitPrice}
-                                  onChange={(e) => updateItem(idx, { unitPrice: e.target.value })}
-                                  placeholder="—"
-                                  className="h-6 w-20 text-xs font-mono border border-border rounded bg-background px-1.5"
-                                />
-                              </div>
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
 
                   {editedItems.length > 8 && (
                     <button
                       onClick={() => setShowAllLines((v) => !v)}
-                      className="w-full py-2.5 text-xs text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 transition-colors"
+                      className="w-full py-2.5 text-xs text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5"
                     >
                       {showAllLines
                         ? <><ChevronUp className="h-3.5 w-3.5" />Show less</>
@@ -725,45 +1018,38 @@ export default function OCR() {
                 </div>
               )}
 
-              {/* Free OCR no-match tip */}
+              {/* Free OCR tip */}
               {scanResult.engine === "free" && scanResult.confirmedCount === 0 && (
                 <div className="mx-4 my-3 rounded-lg bg-amber-500/10 border border-amber-400/20 px-3 py-2.5">
                   <div className="flex items-start gap-2">
                     <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
                     <p className="text-[11px] text-muted-foreground leading-snug">
-                      No matches found. Free OCR works best on <strong className="text-foreground">clear printed text</strong>. For handwritten invoices, try <strong className="text-foreground">Hybrid AI</strong>.
+                      No matches found. Free OCR works best on clear printed text. For handwritten invoices, try <strong className="text-foreground">Hybrid AI</strong>.
                     </p>
                   </div>
                 </div>
               )}
 
-              {/* Apply to Stock button */}
+              {/* Review & Approve button */}
               <div className="px-4 py-3">
-                {checkedCount > 0 ? (
+                {totalActions > 0 ? (
                   <Button
                     className="w-full h-12 font-bold bg-primary text-primary-foreground hover:bg-primary/90"
-                    onClick={() => applyMutation.mutate()}
-                    disabled={applyMutation.isPending}
+                    onClick={() => setApproving(true)}
                   >
-                    {applyMutation.isPending ? (
-                      "Restocking…"
-                    ) : (
-                      <>
-                        <ArrowRight className="h-4 w-4 mr-2" />
-                        Apply {checkedCount} item{checkedCount !== 1 ? "s" : ""} · {totalCheckedQty} units to Stock
-                      </>
-                    )}
+                    <ShieldCheck className="h-4 w-4 mr-2" />
+                    Review & Approve ({totalActions} action{totalActions !== 1 ? "s" : ""})
                   </Button>
                 ) : (
                   <p className="text-center text-xs text-muted-foreground py-1">
-                    Select matched items above to apply them to your inventory
+                    Select matched items or add new products above
                   </p>
                 )}
               </div>
             </div>
           )}
 
-          {/* Applied success state */}
+          {/* Applied success */}
           {scanResult && applied && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-5 flex flex-col items-center gap-3 text-center">
               <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
@@ -772,21 +1058,19 @@ export default function OCR() {
               <div>
                 <p className="text-sm font-bold text-emerald-400">Stock Updated</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Products restocked and buying prices updated where provided.
+                  Products restocked, prices updated, and new products added to your inventory.
                 </p>
               </div>
               <Button
-                variant="outline"
-                size="sm"
-                className="text-xs"
-                onClick={() => { setImage(null); setScanResult(null); setApplied(false); }}
+                variant="outline" size="sm" className="text-xs"
+                onClick={() => { setImage(null); setScanResult(null); setApplied(false); setApproving(false); }}
               >
                 Scan Another Invoice
               </Button>
             </div>
           )}
 
-          {/* Recent Scans */}
+          {/* Recent scans */}
           {recentSessions.length > 0 && (
             <div>
               <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Invoice History</h2>
@@ -798,30 +1082,23 @@ export default function OCR() {
 
                   return (
                     <div key={session.id} className="flex items-center gap-3 bg-card border border-border/60 rounded-xl p-3">
-                      {/* Invoice thumbnail or icon */}
                       <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-muted/60 border border-border/40 flex items-center justify-center">
                         {hasImage ? (
                           <img
                             src={session.imageUrl}
                             alt="Invoice"
                             className="w-full h-full object-cover"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = "none";
-                              (e.target as HTMLImageElement).parentElement!.innerHTML =
-                                '<div class="flex items-center justify-center w-full h-full"><svg class="h-5 w-5 text-muted-foreground/40" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg></div>';
-                            }}
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                           />
                         ) : (
                           <ImageIcon className="h-5 w-5 text-muted-foreground/40" />
                         )}
                       </div>
-
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-foreground capitalize">
+                        <p className="text-xs font-semibold text-foreground">
                           {meta?.supplierName
                             ? <><span className="text-primary">{meta.supplierName}</span> · {session.scanType}</>
-                            : <>{session.scanType === "notebook" ? "Notebook" : "Invoice"} Scan</>
-                          }
+                            : <>{session.scanType === "notebook" ? "Notebook" : "Invoice"} Scan</>}
                         </p>
                         <p className="text-[10px] text-muted-foreground">
                           {format(new Date(session.createdAt), "MMM d, h:mm a")}
@@ -834,8 +1111,6 @@ export default function OCR() {
                         "text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0",
                         session.status === "complete" || session.status === "applied"
                           ? "bg-emerald-500/15 text-emerald-400"
-                          : session.status === "processing"
-                          ? "bg-orange-500/15 text-orange-400"
                           : "bg-muted text-muted-foreground",
                       )}>
                         {session.status === "applied" ? "Applied" : session.status}
