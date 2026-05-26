@@ -31,58 +31,9 @@ interface InvoiceMeta {
 
 // ── Image storage helpers ──────────────────────────────────────────────────
 
-function extFromMime(mimeType: string): string {
-  if (mimeType.includes("png")) return "png";
-  if (mimeType.includes("webp")) return "webp";
-  return "jpg";
-}
-
-async function saveInvoiceImage(
-  env: { INVOICES?: R2Bucket; DATA_DIR?: string },
-  shopId: string,
-  sessionId: string,
-  imageBase64: string,
-  mimeType: string,
-): Promise<{ imageUrl: string | null; r2Key: string | null }> {
-  const ext = extFromMime(mimeType);
-  const now = new Date();
-  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-
-  // ── R2 path (production + local-dev mock) ─────────────────────────────
-  if (env.INVOICES) {
-    try {
-      const r2Key = `invoices/${shopId}/${ym}/${sessionId}.${ext}`;
-      // Decode base64 → Uint8Array (CF Workers compatible, no Buffer)
-      const binary = atob(imageBase64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-
-      await env.INVOICES.put(r2Key, bytes, {
-        httpMetadata: { contentType: mimeType },
-        customMetadata: { shopId, sessionId, uploadedAt: now.toISOString() },
-      });
-      return { imageUrl: `/api/ocr/invoices/${r2Key}`, r2Key };
-    } catch (err) {
-      console.error("[ocr] R2 upload failed:", err);
-      return { imageUrl: null, r2Key: null };
-    }
-  }
-
-  // ── Filesystem fallback (legacy local dev without R2 mock) ─────────────
-  if (env.DATA_DIR) {
-    try {
-      const { default: fs } = await import("node:fs");
-      const { default: path } = await import("node:path");
-      const filename = `${sessionId}.${ext}`;
-      const dir = path.join(env.DATA_DIR, "invoices");
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, filename), Buffer.from(imageBase64, "base64"));
-      return { imageUrl: `/api/ocr/invoices/${filename}`, r2Key: null };
-    } catch { return { imageUrl: null, r2Key: null }; }
-  }
-
-  return { imageUrl: null, r2Key: null };
-}
+// Thumbnail is generated on the frontend (canvas resize → ~8 KB JPEG data URL)
+// and stored directly in D1 as the image_url column — zero external storage cost.
+// The full-resolution image never touches the server.
 
 // ── Gemini Vision call ─────────────────────────────────────────────────────
 
@@ -240,11 +191,9 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   const sessionId = body.sessionId ?? crypto.randomUUID();
   const mimeType = body.mimeType ?? "image/jpeg";
 
-  // Save invoice image to R2 (production) or filesystem mock (local dev)
-  const { imageUrl, r2Key } = await saveInvoiceImage(
-    { INVOICES: c.env.INVOICES, DATA_DIR: c.env.DATA_DIR },
-    body.shopId, sessionId, body.imageBase64, mimeType,
-  );
+  // thumbnailDataUrl is a ~8 KB data URL generated on the frontend (200px canvas resize).
+  // Stored directly in D1 image_url column — no external storage needed.
+  const thumbnailDataUrl = (body as any).thumbnailDataUrl ?? null;
 
   if (!body.sessionId) {
     await db.insert(scanSessions).values({
@@ -257,12 +206,11 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
       resultJson: null,
       createdAt: new Date().toISOString(),
     });
-    // Store image_url + r2_key via migration columns
-    if (imageUrl || r2Key) {
+    if (thumbnailDataUrl) {
       try {
-        await c.env.DB.prepare("UPDATE scan_sessions SET image_url = ?, r2_key = ? WHERE id = ?")
-          .bind(imageUrl ?? null, r2Key ?? null, sessionId).run();
-      } catch { /* columns might not exist yet — non-fatal */ }
+        await c.env.DB.prepare("UPDATE scan_sessions SET image_url = ? WHERE id = ?")
+          .bind(thumbnailDataUrl, sessionId).run();
+      } catch { /* column might not exist yet — non-fatal */ }
     }
   }
 
@@ -340,47 +288,8 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   });
 });
 
-// ── Serve stored invoice images (R2 or filesystem fallback) ───────────────
-// Wildcard route handles both flat filenames (legacy) and
-// R2 keys like invoices/{shopId}/{YYYY-MM}/{sessionId}.jpg
-
-ocrRouter.get("/ocr/invoices/*", requireAuth, async (c) => {
-  // Extract everything after /ocr/invoices/
-  const rawPath = new URL(c.req.url).pathname;
-  const key = rawPath.replace(/^.*\/ocr\/invoices\//, "");
-
-  if (!key || key.includes("..")) return c.json({ error: "Invalid path" }, 400);
-
-  // ── R2 path ────────────────────────────────────────────────────────────
-  if (c.env.INVOICES) {
-    const obj = await c.env.INVOICES.get(key);
-    if (!obj) return c.json({ error: "Not found" }, 404);
-    const headers = new Headers();
-    obj.writeHttpMetadata(headers);
-    headers.set("Cache-Control", "public, max-age=31536000, immutable");
-    return new Response(obj.body, { headers });
-  }
-
-  // ── Filesystem fallback (DATA_DIR, legacy flat filenames) ──────────────
-  if (c.env.DATA_DIR) {
-    try {
-      const { default: fs } = await import("node:fs");
-      const { default: path } = await import("node:path");
-      // Support both flat filename and subpath — just take the last segment
-      const filename = key.split("/").pop() ?? key;
-      const filePath = path.join(c.env.DATA_DIR, "invoices", filename);
-      if (!fs.existsSync(filePath)) return c.json({ error: "Not found" }, 404);
-      const buf = fs.readFileSync(filePath);
-      const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
-      const ct = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
-      return new Response(buf, { headers: { "Content-Type": ct, "Cache-Control": "private, max-age=86400" } });
-    } catch {
-      return c.json({ error: "Failed to read image" }, 500);
-    }
-  }
-
-  return c.json({ error: "Image storage not configured" }, 503);
-});
+// Note: invoice thumbnails are stored as data URLs directly in D1 (image_url column).
+// No file-serving endpoint needed — the frontend renders them inline.
 
 // ── Session CRUD ───────────────────────────────────────────────────────────
 

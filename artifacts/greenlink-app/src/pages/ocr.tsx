@@ -41,6 +41,29 @@ async function compressImage(dataUrl: string, maxPx = 1200, quality = 0.82): Pro
   });
 }
 
+// Generates a tiny 200×150px thumbnail (~8–12 KB) stored in D1 — zero storage cost.
+async function makeThumbnail(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const W = 200, H = 150;
+      const ratio = Math.min(W / img.width, H / img.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "#111";
+      ctx.fillRect(0, 0, W, H);
+      const dw = Math.round(img.width * ratio);
+      const dh = Math.round(img.height * ratio);
+      ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      resolve(canvas.toDataURL("image/jpeg", 0.72));
+    };
+    img.onerror = () => resolve("");
+    img.src = dataUrl;
+  });
+}
+
 // ─── types ────────────────────────────────────────────────────────────────────
 
 interface EditedItem {
@@ -278,16 +301,28 @@ export default function OCR() {
     if (!image) return;
     const mimeType = getMimeTypeFromDataUrl(image);
     const imageBase64 = image.split(",")[1];
-    let tesseractText = "";
-    try {
-      toast.info("Pre-scanning on device…", { duration: 3000 });
-      const { default: Tesseract } = await import("tesseract.js");
-      const { data: { text } } = await (Tesseract as any).recognize(image, "eng", { logger: () => {} });
-      tesseractText = text ?? "";
-    } catch { /* non-fatal */ }
+
+    // Generate thumbnail in parallel with Tesseract pre-scan
+    const [thumbnailDataUrl, tesseractText] = await Promise.all([
+      makeThumbnail(image),
+      (async () => {
+        try {
+          toast.info("Pre-scanning on device…", { duration: 3000 });
+          const { default: Tesseract } = await import("tesseract.js");
+          const { data: { text } } = await (Tesseract as any).recognize(image, "eng", { logger: () => {} });
+          return text ?? "";
+        } catch { return ""; }
+      })(),
+    ]);
 
     ocrScan.mutate(
-      { data: { shopId, imageBase64, mimeType, scanType, tesseractText: tesseractText || undefined } as any },
+      {
+        data: {
+          shopId, imageBase64, mimeType, scanType,
+          tesseractText: tesseractText || undefined,
+          thumbnailDataUrl: thumbnailDataUrl || undefined,
+        } as any,
+      },
       {
         onSuccess: (data: any) => {
           setScanResult({ ...data, engine: "ai" });
@@ -315,8 +350,10 @@ export default function OCR() {
       toast.info("Loading OCR engine… (~4 MB cached after first use)", { duration: 5000 });
       const { default: Tesseract } = await import("tesseract.js");
       const { data: { text } } = await (Tesseract as any).recognize(image, "eng", { logger: () => {} });
+      const thumbnail = await makeThumbnail(image);
       const result = buildFreeResult(text, products);
-      setScanResult(result);
+      // For free scans, store thumbnail locally in result (no server session)
+      setScanResult({ ...result, localThumbnail: thumbnail });
       toast.success(`Free OCR found ${result.totalDetected} items`);
     } catch (err: any) {
       toast.error("Free OCR failed — " + (err?.message ?? "unknown error"));
