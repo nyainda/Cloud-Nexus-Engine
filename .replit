@@ -115,10 +115,6 @@ externalPort = 3000
 [userenv]
 
 [userenv.shared]
-VITE_API_BASE_URL = "https://greenlink-pos-api.bruce42oyugi.workers.dev"
-CF_ACCOUNT_ID = "92ab55789050f5c4a2f3077ecb7ac148"
-CF_D1_DATABASE_ID = "e3598c00-9fda-4e77-8c5b-8515a94d3de7"
-CF_KV_NAMESPACE_ID = "3b54b79e2afa4320ba1eb8567e48e54b"
 
 [userenv.production]
 
