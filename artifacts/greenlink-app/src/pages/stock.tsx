@@ -463,6 +463,21 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
   const targetShopId = shopId === "shop-greenlink" ? "shop-sunrise" : "shop-greenlink";
   const targetLabel = targetShopId === "shop-greenlink" ? "GreenLink" : "Sunrise Agrovet";
 
+  // The exact key the stock page uses — must match useListProducts({ shopId, limit: 3000 })
+  const productsKey = getListProductsQueryKey({ shopId, limit: 3000 });
+
+  const applyOptimistic = () => {
+    qc.setQueryData(productsKey, (old: any) => {
+      if (!old?.products) return old;
+      return {
+        ...old,
+        products: old.products.map((p: any) =>
+          p.id !== product.id ? p : { ...p, stockQty: Math.max(0, p.stockQty - qty) }
+        ),
+      };
+    });
+  };
+
   const transferMutation = useMutation({
     mutationFn: async () => {
       return await customFetch<any>(`/api/products/${product.id}/transfer`, {
@@ -471,12 +486,14 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+      // Sync with server after API confirms — keeps list accurate
+      qc.invalidateQueries({ queryKey: productsKey });
       qc.invalidateQueries({ queryKey: ["transfers", shopId] });
       onSuccess();
     },
     onError: (e: any) => {
-      qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+      // Revert the optimistic update
+      qc.invalidateQueries({ queryKey: productsKey });
       toast.error(e.message || "Transfer failed — please retry");
     },
   });
@@ -517,16 +534,10 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           <Button
             onClick={() => {
-              // Optimistic: reduce stock locally and close immediately
-              qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
-                if (!old?.products) return old;
-                return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : { ...p, stockQty: Math.max(0, p.stockQty - qty) }) };
-              });
+              applyOptimistic();            // instant screen update
               toast.success(`Transferred ${qty} ${product.unit || "units"} to ${targetLabel}`);
               setOpen(false); setQty(1); setNotes("");
-              // NOTE: Do NOT call onSuccess() here — the mutation's onSuccess handles
-              // the refresh after the API confirms, keeping the optimistic update intact.
-              transferMutation.mutate();
+              transferMutation.mutate();   // background API call
             }}
             disabled={qty <= 0 || qty > product.stockQty}
           >
