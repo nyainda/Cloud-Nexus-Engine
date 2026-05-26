@@ -9,19 +9,74 @@ import {
   productAliases,
   inventoryMovements,
   shops,
+  priceHistory,
 } from "@workspace/db/schema";
 
 const ocrRouter = new Hono<AppEnv>();
+
+interface GeminiItem {
+  text?: string;
+  productName?: string;
+  qty?: number;
+  totalPrice?: number;
+  unitPrice?: number;
+}
+
+interface InvoiceMeta {
+  supplierName?: string | null;
+  invoiceNumber?: string | null;
+  invoiceDate?: string | null;
+  grandTotal?: number | null;
+}
 
 async function callGeminiOCR(
   apiKey: string,
   imageBase64: string,
   scanType: string,
-): Promise<Array<{ text?: string; productName?: string; qty?: number; totalPrice?: number; unitPrice?: number }>> {
-  const prompt =
-    scanType === "notebook"
-      ? "This is a handwritten inventory notebook. Extract each product entry as a list. For each line, identify: product name, quantity, and price if visible. Return as JSON array of objects with fields: text (raw line), productName, qty (number or null), totalPrice (number or null)."
-      : "This is a supplier invoice. Extract all product line items. For each item identify: product name, quantity, unit price, total price. Return as JSON array of objects with fields: text (raw line), productName, qty (number or null), unitPrice (number or null), totalPrice (number or null).";
+): Promise<{ items: GeminiItem[]; meta: InvoiceMeta | null }> {
+  let prompt: string;
+
+  if (scanType === "invoice") {
+    prompt = `Analyze this supplier invoice carefully. Extract all information precisely.
+Return ONLY a valid JSON object (no markdown, no code blocks, no extra text) with this exact structure:
+{
+  "meta": {
+    "supplierName": "the supplier or company name, or null if not visible",
+    "invoiceNumber": "invoice/receipt/delivery note number, or null",
+    "invoiceDate": "date formatted as YYYY-MM-DD, or null if not visible",
+    "grandTotal": total invoice amount as a plain number (no currency symbols like KES/Ksh), or null
+  },
+  "items": [
+    {
+      "text": "exact raw line from invoice",
+      "productName": "clean product/item name only",
+      "qty": quantity as a plain number or null,
+      "unitPrice": unit buying price as a plain number (no currency symbols) or null,
+      "totalPrice": line total as a plain number (no currency symbols) or null
+    }
+  ]
+}
+
+Rules:
+- Strip all currency symbols (KES, Ksh, Sh, K) from numeric values
+- Remove commas from numbers (1,200 → 1200)
+- Extract EVERY product line item, including those with missing prices
+- If a field is not clearly visible, use null
+- Do not include header rows, subtotals, or tax rows in items`;
+  } else {
+    prompt = `This is a handwritten inventory notebook. Extract each product entry carefully.
+Return ONLY a valid JSON array (no markdown, no code blocks, no extra text):
+[
+  {
+    "text": "raw handwritten line",
+    "productName": "clean product name",
+    "qty": quantity as a plain number or null,
+    "unitPrice": unit price as a plain number (no currency symbols) or null,
+    "totalPrice": total price as a plain number (no currency symbols) or null
+  }
+]
+Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entries.`;
+  }
 
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
@@ -46,7 +101,21 @@ async function callGeminiOCR(
     candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
   }>();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
-  return JSON.parse(text);
+
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return { items: parsed, meta: null };
+    } else if (parsed && typeof parsed === "object") {
+      return {
+        items: Array.isArray(parsed.items) ? parsed.items : [],
+        meta: parsed.meta ?? null,
+      };
+    }
+    return { items: [], meta: null };
+  } catch {
+    return { items: [], meta: null };
+  }
 }
 
 function findProductMatches(
@@ -111,14 +180,16 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
     db.select().from(shops).where(eq(shops.id, body.shopId)).get(),
   ]);
 
-  // Shop-specific key takes priority so owners can use their own quota; Worker secret is the fallback
   const geminiKey = shopRow?.geminiApiKey || c.env.GEMINI_API_KEY || null;
 
-  let lines: Array<{ text?: string; productName?: string; qty?: number; totalPrice?: number; unitPrice?: number }> = [];
+  let lines: GeminiItem[] = [];
+  let invoiceMeta: InvoiceMeta | null = null;
 
   if (geminiKey) {
     try {
-      lines = await callGeminiOCR(geminiKey, body.imageBase64, body.scanType);
+      const result = await callGeminiOCR(geminiKey, body.imageBase64, body.scanType);
+      lines = result.items;
+      invoiceMeta = result.meta;
     } catch {
       lines = [];
     }
@@ -130,16 +201,18 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
     const bestMatch = suggestions[0];
     const confidence = bestMatch?.confidence ?? 0;
     const inferredQty = line.qty ?? null;
+    const inferredUnitPrice = line.unitPrice ?? null;
     const inferredTotal = line.totalPrice ?? (line.unitPrice && line.qty ? line.unitPrice * line.qty : null);
 
     return {
       rawText,
-      productId: confidence > 0.7 ? bestMatch?.productId ?? null : null,
-      productName: confidence > 0.7 ? bestMatch?.productName ?? null : null,
+      productId: confidence > 0.7 ? (bestMatch?.productId ?? null) : null,
+      productName: confidence > 0.7 ? (bestMatch?.productName ?? null) : null,
       inferredQty,
+      inferredUnitPrice,
       inferredTotal,
       confidence,
-      status: confidence > 0.85 ? "confirmed" : confidence > 0.5 ? "review" : "unresolved" as "confirmed" | "review" | "unresolved",
+      status: (confidence > 0.85 ? "confirmed" : confidence > 0.5 ? "review" : "unresolved") as "confirmed" | "review" | "unresolved",
       suggestions,
     };
   });
@@ -153,13 +226,14 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
     .set({
       totalProducts: results.length,
       status: "complete",
-      resultJson: JSON.stringify(results),
+      resultJson: JSON.stringify({ items: results, meta: invoiceMeta }),
     })
     .where(eq(scanSessions.id, sessionId));
 
   return c.json({
     sessionId,
     lines: results,
+    invoiceMeta,
     totalDetected: results.length,
     confirmedCount: confirmed,
     reviewCount: review,
@@ -200,10 +274,13 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
   const body = await c.req.json<{
     scanType: "notebook" | "invoice";
     lines: Array<{ productId: string; qty: number; unitPrice?: number }>;
+    invoiceMeta?: InvoiceMeta;
     performedBy?: string;
   }>();
+
   const db = createDb(c.env.DB);
   const now = new Date().toISOString();
+  const sessionId = c.req.param("sessionId");
   let applied = 0;
   let skipped = 0;
   const errors: string[] = [];
@@ -212,9 +289,35 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
     try {
       const product = await db.select().from(products).where(eq(products.id, line.productId)).get();
       if (!product) { skipped++; continue; }
+
       const beforeQty = product.stockQty;
       const afterQty = beforeQty + line.qty;
-      await db.update(products).set({ stockQty: afterQty, updatedAt: now }).where(eq(products.id, line.productId));
+      const updates: Record<string, unknown> = { stockQty: afterQty, updatedAt: now };
+
+      // Update purchase price if a new unit price is provided and it differs
+      const newPrice = line.unitPrice && line.unitPrice > 0 ? line.unitPrice : null;
+      if (newPrice && newPrice !== product.purchasePrice) {
+        updates.purchasePrice = newPrice;
+        // Record the price change in price history
+        try {
+          await db.insert(priceHistory).values({
+            id: crypto.randomUUID(),
+            productId: line.productId,
+            oldPurchasePrice: product.purchasePrice,
+            newPurchasePrice: newPrice,
+            oldSellingPrice: product.sellingPrice,
+            newSellingPrice: product.sellingPrice,
+            pctChange: product.purchasePrice
+              ? ((newPrice - (product.purchasePrice ?? 0)) / (product.purchasePrice ?? 1)) * 100
+              : null,
+            changedBy: body.performedBy ?? "ocr",
+            changedAt: now,
+          });
+        } catch { /* price history write is non-fatal */ }
+      }
+
+      await db.update(products).set(updates).where(eq(products.id, line.productId));
+
       await db.insert(inventoryMovements).values({
         id: crypto.randomUUID(),
         productId: line.productId,
@@ -224,17 +327,26 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
         beforeQty,
         afterQty,
         source: "ocr",
-        referenceId: c.req.param("sessionId"),
+        referenceId: sessionId,
         createdBy: body.performedBy ?? null,
         createdAt: now,
       });
+
       applied++;
     } catch (err) {
       errors.push(`${line.productId}: ${String(err)}`);
     }
   }
 
-  await db.update(scanSessions).set({ status: "applied" }).where(eq(scanSessions.id, c.req.param("sessionId")));
+  // Save invoice meta + applied count back to session
+  const metaPayload = JSON.stringify({
+    applied,
+    invoiceMeta: body.invoiceMeta ?? null,
+  });
+  await db
+    .update(scanSessions)
+    .set({ status: "applied", totalProducts: applied, resultJson: metaPayload })
+    .where(eq(scanSessions.id, sessionId));
 
   return c.json({ applied, skipped, errors });
 });
