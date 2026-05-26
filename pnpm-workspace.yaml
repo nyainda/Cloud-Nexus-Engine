@@ -71,8 +71,11 @@ autoInstallPeers: false
 onlyBuiltDependencies:
   - '@swc/core'
   - better-sqlite3
+  - core-js
   - esbuild
   - msw
+  - sharp
+  - tesseract.js
   - unrs-resolver
   - workerd
 
