@@ -561,7 +561,14 @@ export default function POS() {
     const discountSnapshot = discount;
     const debtName = debtCustomerName;
     const debtPhone = debtCustomerPhone;
-    const productsSnapshot = qc.getQueryData(getListProductsQueryKey());
+
+    // Cancel in-flight fetches BEFORE optimistic update — prevents stale refetch overwriting our state
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+
+    // Snapshot all matching entries for rollback on error
+    const productsSnapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
+
+    // Optimistic: immediately deduct sold quantities from stock
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => {
@@ -569,6 +576,7 @@ export default function POS() {
         return cartItem ? { ...p, stockQty: Math.max(0, p.stockQty - cartItem.qty) } : p;
       }) };
     });
+
     setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setShowCartMobile(false);
     // Show confirmation immediately — don't wait for the network
     toast.success(saleType === "cash" ? "✓ Cash sale complete!" : "✓ Debt recorded!");
@@ -584,15 +592,17 @@ export default function POS() {
         },
       },
       {
-        onSuccess: () => {
+        onError: (err: any) => {
+          // Rollback all product cache entries to pre-sale state
+          productsSnapshot.forEach(([key, data]) => qc.setQueryData(key, data));
+          setCart(cartSnapshot); setDiscount(discountSnapshot);
+          toast.error(err?.message || "Sale failed — please retry");
+        },
+        onSettled: () => {
+          // Invalidate only after mutation is committed — avoids stale-refetch race
           if (saleType === "debt") qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
-        },
-        onError: (err: any) => {
-          qc.setQueryData(getListProductsQueryKey(), productsSnapshot);
-          setCart(cartSnapshot); setDiscount(discountSnapshot);
-          toast.error(err?.message || "Sale failed — please retry");
         },
       }
     );

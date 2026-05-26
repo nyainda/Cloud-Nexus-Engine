@@ -82,6 +82,13 @@ function RestockDialog({ product }: { product: any }) {
   const handleRestock = async () => {
     const qtyNum = Number(qty);
     if (!qtyNum || qtyNum <= 0) return;
+
+    // Cancel any in-flight fetches so they don't overwrite our optimistic update
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+
+    // Snapshot for rollback on error
+    const snapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
+
     // Optimistic update: immediately show new stock qty in the list
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
@@ -91,6 +98,7 @@ function RestockDialog({ product }: { product: any }) {
         ...(sellingPrice && { sellingPrice: Number(sellingPrice) }),
       }) };
     });
+
     // Close + confirm immediately — don't wait for the network
     toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`);
     setOpen(false);
@@ -99,7 +107,7 @@ function RestockDialog({ product }: { product: any }) {
       { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
       {
         onSuccess: (updatedProduct: any) => {
-          // Sync cache with confirmed server values (avoids KV cache race on GET)
+          // Sync cache with server-confirmed values (authoritative values replace optimistic)
           qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
             if (!old?.products) return old;
             return { ...old, products: old.products.map((p: any) =>
@@ -108,11 +116,15 @@ function RestockDialog({ product }: { product: any }) {
                 : p
             )};
           });
-          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
         },
         onError: () => {
-          qc.refetchQueries({ queryKey: getListProductsQueryKey() });
+          // Rollback to snapshot, never leave UI in an inconsistent state
+          snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
           toast.error("Restock failed — please retry");
+        },
+        onSettled: () => {
+          // Sync movements after mutation settles (DB write is committed by this point)
+          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
         },
       }
     );
@@ -217,11 +229,19 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
 
   const handleSubmit = async () => {
     const patch: any = { canonicalName: name.trim() || undefined, sku: sku || undefined, category: category || undefined, unit: unit || undefined, purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: alertQty ? parseFloat(alertQty) : undefined, expiryDate: expiryDate || undefined };
-    // Optimistic update
+
+    // Cancel in-flight fetches so they don't race and overwrite our optimistic update
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+
+    // Snapshot all matching cache entries for rollback on error
+    const snapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
+
+    // Optimistic update — user sees change instantly
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : { ...p, ...patch }) };
     });
+
     // Close + confirm immediately — don't wait for the network
     toast.success("Product updated");
     setOpen(false);
@@ -229,14 +249,15 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     updateProduct.mutate(
       { productId: product.id, data: patch },
       {
-        onSuccess: () => {
-          // Confirm with server — ensures POS and all other tabs see the new price
+        onError: () => {
+          // Rollback to pre-edit state on failure
+          snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
+          toast.error("Failed to update product — please retry");
+        },
+        onSettled: () => {
+          // Sync with server only after the mutation has fully settled (DB write committed)
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
-        },
-        onError: () => {
-          qc.refetchQueries({ queryKey: getListProductsQueryKey() });
-          toast.error("Failed to update product — please retry");
         },
       }
     );
@@ -466,18 +487,6 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
   // The exact key the stock page uses — must match useListProducts({ shopId, limit: 3000 })
   const productsKey = getListProductsQueryKey({ shopId, limit: 3000 });
 
-  const applyOptimistic = () => {
-    qc.setQueryData(productsKey, (old: any) => {
-      if (!old?.products) return old;
-      return {
-        ...old,
-        products: old.products.map((p: any) =>
-          p.id !== product.id ? p : { ...p, stockQty: Math.max(0, p.stockQty - qty) }
-        ),
-      };
-    });
-  };
-
   const transferMutation = useMutation({
     mutationFn: async () => {
       return await customFetch<any>(`/api/products/${product.id}/transfer`, {
@@ -485,17 +494,33 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
         body: JSON.stringify({ targetShopId, qty, notes: notes || undefined }),
       });
     },
-    onSuccess: () => {
-      // Sync with server after API confirms — keeps list accurate
+    onMutate: async () => {
+      // Cancel in-flight fetches — stops stale data overwriting optimistic state
+      await qc.cancelQueries({ queryKey: productsKey });
+      const snapshot = qc.getQueryData(productsKey);
+      // Optimistic: deduct qty immediately
+      qc.setQueryData(productsKey, (old: any) => {
+        if (!old?.products) return old;
+        return {
+          ...old,
+          products: old.products.map((p: any) =>
+            p.id !== product.id ? p : { ...p, stockQty: Math.max(0, p.stockQty - qty) }
+          ),
+        };
+      });
+      return { snapshot };
+    },
+    onError: (e: any, _, context: any) => {
+      // Rollback to pre-transfer state
+      if (context?.snapshot !== undefined) qc.setQueryData(productsKey, context.snapshot);
+      toast.error(e.message || "Transfer failed — please retry");
+    },
+    onSettled: () => {
+      // Invalidate after mutation is fully committed — DB write is done by now
       qc.invalidateQueries({ queryKey: productsKey });
       qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       qc.invalidateQueries({ queryKey: ["transfers", shopId] });
       onSuccess();
-    },
-    onError: (e: any) => {
-      // Revert the optimistic update
-      qc.invalidateQueries({ queryKey: productsKey });
-      toast.error(e.message || "Transfer failed — please retry");
     },
   });
 
@@ -535,10 +560,9 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           <Button
             onClick={() => {
-              applyOptimistic();            // instant screen update
               toast.success(`Transferred ${qty} ${product.unit || "units"} to ${targetLabel}`);
               setOpen(false); setQty(1); setNotes("");
-              transferMutation.mutate();   // background API call
+              transferMutation.mutate();   // onMutate handles the optimistic update + cancelQueries
             }}
             disabled={qty <= 0 || qty > product.stockQty}
           >
@@ -815,6 +839,9 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
     let ok = 0; let fail = 0;
     const newSaved = new Set(savedIds);
 
+    // Cancel any in-flight product fetches so they don't overwrite cache updates mid-batch
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+
     await Promise.all(
       changedEntries.map(async ([productId, qtyStr]) => {
         const qty = Number(qtyStr);
@@ -824,7 +851,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
             method: "POST",
             body: JSON.stringify({ qty }),
           });
-          // Optimistically update query cache
+          // Update cache with server-confirmed value (not guessed)
           qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
             if (!old?.products) return old;
             return {
