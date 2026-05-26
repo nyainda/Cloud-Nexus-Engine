@@ -10,9 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Camera, Upload, ScanLine, FileText, CheckCircle2, Image,
-  Zap, Cpu, Lock, AlertCircle, ChevronDown, ChevronUp,
+  Zap, Cpu, AlertCircle, ChevronDown, ChevronUp,
   Package, Minus, Plus, Check, ClipboardList,
-  Building2, Hash, Calendar, Banknote, ArrowRight,
+  Building2, Hash, Calendar, Banknote, ArrowRight, ImageIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,11 @@ import { format } from "date-fns";
 type Engine = "ai" | "free";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+
+function getMimeTypeFromDataUrl(dataUrl: string): string {
+  const match = dataUrl.match(/^data:([^;]+);base64,/);
+  return match?.[1] ?? "image/jpeg";
+}
 
 function normalizeText(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
@@ -105,6 +110,7 @@ function buildFreeResult(rawText: string, products: any[]) {
 
   return {
     sessionId: null,
+    imageUrl: null,
     engine: "free",
     invoiceMeta: null,
     totalDetected: result.length,
@@ -151,7 +157,6 @@ export default function OCR() {
   const [freeLoading, setFreeLoading] = useState(false);
   const [showAllLines, setShowAllLines] = useState(false);
 
-  // Review state
   const [editedItems, setEditedItems] = useState<EditedItem[]>([]);
   const [invoiceMeta, setInvoiceMeta] = useState({ supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "" });
   const [applied, setApplied] = useState(false);
@@ -170,12 +175,10 @@ export default function OCR() {
   );
   const products = useMemo(() => productsData?.products ?? [], [productsData]);
 
-  // Initialize review state when scan result arrives
   useEffect(() => {
     if (!scanResult?.lines) return;
     setEditedItems(initEditedItems(scanResult.lines));
     setApplied(false);
-    // Pre-fill invoice meta from AI result
     if (scanResult.invoiceMeta) {
       setInvoiceMeta({
         supplierName: scanResult.invoiceMeta.supplierName ?? "",
@@ -202,28 +205,58 @@ export default function OCR() {
     e.target.value = "";
   };
 
-  const processAI = () => {
+  // ── Hybrid AI scan: Tesseract → Gemini ────────────────────────────────────
+  const processAI = async () => {
     if (!image) return;
+
+    const mimeType = getMimeTypeFromDataUrl(image);
+    const imageBase64 = image.split(",")[1];
+
+    // Step 1: run Tesseract locally to get a text hint for Gemini
+    let tesseractText = "";
+    try {
+      toast.info("Pre-scanning with OCR engine…", { duration: 3000 });
+      const { default: Tesseract } = await import("tesseract.js");
+      const { data: { text } } = await (Tesseract as any).recognize(image, "eng", { logger: () => {} });
+      tesseractText = text ?? "";
+    } catch {
+      // Tesseract failure is non-fatal — Gemini will work without the hint
+    }
+
+    // Step 2: send image + tesseract hint to Gemini via API
     ocrScan.mutate(
-      { data: { shopId, imageBase64: image.split(",")[1], scanType } },
       {
-        onSuccess: (data) => {
+        data: {
+          shopId,
+          imageBase64,
+          mimeType,
+          scanType,
+          tesseractText: tesseractText || undefined,
+        } as any,
+      },
+      {
+        onSuccess: (data: any) => {
           setScanResult({ ...data, engine: "ai" });
-          toast.success(`AI detected ${data.totalDetected} items`);
+          if (data.warning) {
+            toast.warning(data.warning);
+          } else {
+            toast.success(`AI detected ${data.totalDetected} items`);
+          }
           refetchSessions();
         },
         onError: (err: any) => {
-          const msg = err?.message ?? "";
-          if (msg.includes("API key") || msg.includes("GEMINI")) {
-            toast.error("GEMINI_API_KEY not configured — switch to Free OCR");
+          const msg = err?.data?.warning ?? err?.message ?? "";
+          if (msg.includes("Gemini API key") || msg.includes("API key") || msg.includes("Settings")) {
+            toast.error("Add your Gemini API key in Settings → Shop to use AI scanning.");
           } else {
-            toast.error("AI scan failed. Try the Free OCR engine instead.");
+            toast.error("AI scan failed — " + (msg || "check your Gemini API key in Settings"));
           }
         },
       },
     );
   };
 
+  // ── Free OCR scan (Tesseract only) ────────────────────────────────────────
   const processFree = async () => {
     if (!image) return;
     setFreeLoading(true);
@@ -241,7 +274,7 @@ export default function OCR() {
     }
   };
 
-  // Apply to stock mutation
+  // ── Apply to stock ─────────────────────────────────────────────────────────
   const applyMutation = useMutation({
     mutationFn: async () => {
       const linesToApply = editedItems
@@ -256,7 +289,6 @@ export default function OCR() {
 
       let sessionId = scanResult?.sessionId as string | null;
 
-      // Free OCR has no session yet — create one first
       if (!sessionId) {
         const session = await customFetch<{ id: string }>("/api/ocr/sessions", {
           method: "POST",
@@ -311,15 +343,9 @@ export default function OCR() {
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border bg-card shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ScanLine className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-bold font-display">Smart Scanner</h1>
-          </div>
-          <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
-            <Lock className="h-3 w-3 text-emerald-500" />
-            <span className="text-[10px] font-bold text-emerald-500">Images never stored</span>
-          </div>
+        <div className="flex items-center gap-2">
+          <ScanLine className="h-5 w-5 text-primary" />
+          <h1 className="text-lg font-bold font-display">Smart Scanner</h1>
         </div>
         <p className="text-xs text-muted-foreground mt-0.5">
           Scan supplier invoices · match products · restock instantly
@@ -347,7 +373,7 @@ export default function OCR() {
                     ? <Cpu className={cn("h-4 w-4", engine === "free" ? "text-primary" : "text-muted-foreground")} />
                     : <Zap className={cn("h-4 w-4", engine === "ai" ? "text-primary" : "text-muted-foreground")} />}
                   <span className={cn("text-xs font-bold", engine === eng ? "text-primary" : "text-foreground")}>
-                    {eng === "free" ? "Free OCR" : "AI Scanner"}
+                    {eng === "free" ? "Free OCR" : "Hybrid AI"}
                   </span>
                   <Badge className={cn(
                     "text-[9px] px-1.5 py-0 h-4 border-0",
@@ -355,13 +381,13 @@ export default function OCR() {
                       ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                       : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
                   )}>
-                    {eng === "free" ? "No key" : "Gemini"}
+                    {eng === "free" ? "Offline" : "Gemini"}
                   </Badge>
                 </div>
                 <p className="text-[10px] text-muted-foreground leading-snug">
                   {eng === "free"
-                    ? "Runs on-device. Best for printed invoices."
-                    : "Gemini Vision. Handles handwriting & complex layouts."}
+                    ? "Runs on-device. Best for clear printed text."
+                    : "OCR + Gemini Vision. Handles handwriting & complex layouts."}
                 </p>
               </button>
             ))}
@@ -372,8 +398,7 @@ export default function OCR() {
             <div className="flex items-start gap-3 bg-amber-500/8 border border-amber-500/20 rounded-xl px-3 py-2.5">
               <Zap className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
               <p className="text-[11px] text-muted-foreground leading-relaxed">
-                Image is sent to <strong className="text-foreground">Google Gemini</strong> for analysis, then discarded. Requires{" "}
-                <code className="font-mono bg-muted/60 px-1 py-0.5 rounded text-[10px]">GEMINI_API_KEY</code>.
+                <strong className="text-foreground">Hybrid mode:</strong> OCR pre-scans on-device, then <strong className="text-foreground">Gemini Vision</strong> refines the result using both image and extracted text. Requires a Gemini API key in <strong className="text-foreground">Settings → Shop</strong>.
               </p>
             </div>
           )}
@@ -386,7 +411,7 @@ export default function OCR() {
             </div>
           )}
 
-          {/* Scan type toggle */}
+          {/* Scan type toggle (AI mode only) */}
           {engine === "ai" && (
             <div className="flex gap-1 bg-muted/40 p-1 rounded-xl border border-border/60">
               {(["invoice", "notebook"] as const).map((type) => (
@@ -416,7 +441,7 @@ export default function OCR() {
                   <div className="absolute inset-0 bg-background/90 flex flex-col items-center justify-center gap-3">
                     <ScanLine className="h-8 w-8 text-primary animate-pulse" />
                     <p className="text-sm font-bold">
-                      {engine === "free" ? "Running OCR on device…" : "Analyzing with AI…"}
+                      {engine === "free" ? "Running OCR on device…" : "OCR pre-scan → Gemini AI…"}
                     </p>
                     <p className="text-xs text-muted-foreground">Extracting products and quantities</p>
                   </div>
@@ -478,7 +503,7 @@ export default function OCR() {
               >
                 {engine === "free"
                   ? <><Cpu className="h-4 w-4 mr-2" />{freeLoading ? "Scanning…" : "Free Scan"}</>
-                  : <><Zap className="h-4 w-4 mr-2" />{ocrScan.isPending ? "Scanning…" : "AI Scan"}</>}
+                  : <><Zap className="h-4 w-4 mr-2" />{ocrScan.isPending ? "Scanning…" : "Hybrid Scan"}</>}
               </Button>
             </div>
           )}
@@ -494,7 +519,7 @@ export default function OCR() {
                     <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                     <span className="text-sm font-bold">Scan Complete</span>
                     <span className="text-[10px] text-muted-foreground">
-                      via {scanResult.engine === "free" ? "Free OCR" : "Gemini AI"}
+                      via {scanResult.engine === "free" ? "Free OCR" : "Hybrid AI"}
                     </span>
                   </div>
                 </div>
@@ -604,7 +629,6 @@ export default function OCR() {
                       )}
                     >
                       <div className="flex items-start gap-2.5">
-                        {/* Checkbox */}
                         <button
                           onClick={() => updateItem(idx, { checked: !item.checked })}
                           className={cn(
@@ -620,7 +644,6 @@ export default function OCR() {
                         </button>
 
                         <div className="flex-1 min-w-0 space-y-2">
-                          {/* Product name + raw text */}
                           <div>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {item.productId ? (
@@ -647,10 +670,8 @@ export default function OCR() {
                             )}
                           </div>
 
-                          {/* Qty + price row */}
                           {item.productId && (
                             <div className="flex items-center gap-2">
-                              {/* Qty stepper */}
                               <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => updateItem(idx, { qty: Math.max(1, item.qty - 1) })}
@@ -674,7 +695,6 @@ export default function OCR() {
                                 <span className="text-[10px] text-muted-foreground">units</span>
                               </div>
 
-                              {/* Unit price */}
                               <div className="flex items-center gap-1 ml-auto">
                                 <span className="text-[10px] text-muted-foreground">Buy KES</span>
                                 <input
@@ -711,7 +731,7 @@ export default function OCR() {
                   <div className="flex items-start gap-2">
                     <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
                     <p className="text-[11px] text-muted-foreground leading-snug">
-                      No product matches found. Free OCR works best on <strong className="text-foreground">clear printed text</strong>. For handwritten invoices, try the <strong className="text-foreground">AI Scanner</strong>.
+                      No matches found. Free OCR works best on <strong className="text-foreground">clear printed text</strong>. For handwritten invoices, try <strong className="text-foreground">Hybrid AI</strong>.
                     </p>
                   </div>
                 </div>
@@ -769,16 +789,33 @@ export default function OCR() {
           {/* Recent Scans */}
           {recentSessions.length > 0 && (
             <div>
-              <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Recent Scans</h2>
+              <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Invoice History</h2>
               <div className="space-y-2">
                 {recentSessions.map((session: any) => {
                   let meta: any = null;
                   try { if (session.resultJson) { const p = JSON.parse(session.resultJson); meta = p.invoiceMeta ?? null; } } catch {}
+                  const hasImage = !!session.imageUrl;
+
                   return (
                     <div key={session.id} className="flex items-center gap-3 bg-card border border-border/60 rounded-xl p-3">
-                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                        <ScanLine className="h-4 w-4 text-primary" />
+                      {/* Invoice thumbnail or icon */}
+                      <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-muted/60 border border-border/40 flex items-center justify-center">
+                        {hasImage ? (
+                          <img
+                            src={session.imageUrl}
+                            alt="Invoice"
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = "none";
+                              (e.target as HTMLImageElement).parentElement!.innerHTML =
+                                '<div class="flex items-center justify-center w-full h-full"><svg class="h-5 w-5 text-muted-foreground/40" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg></div>';
+                            }}
+                          />
+                        ) : (
+                          <ImageIcon className="h-5 w-5 text-muted-foreground/40" />
+                        )}
                       </div>
+
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-foreground capitalize">
                           {meta?.supplierName
@@ -790,6 +827,7 @@ export default function OCR() {
                           {format(new Date(session.createdAt), "MMM d, h:mm a")}
                           {session.totalProducts > 0 && ` · ${session.totalProducts} items`}
                           {meta?.grandTotal && ` · KES ${Number(meta.grandTotal).toLocaleString("en-KE")}`}
+                          {meta?.invoiceNumber && ` · #${meta.invoiceNumber}`}
                         </p>
                       </div>
                       <span className={cn(

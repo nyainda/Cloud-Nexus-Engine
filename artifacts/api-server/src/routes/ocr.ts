@@ -29,11 +29,42 @@ interface InvoiceMeta {
   grandTotal?: number | null;
 }
 
+// ── Image storage helpers (filesystem when DATA_DIR is available) ───────────
+
+async function saveInvoiceImage(
+  dataDir: string | undefined,
+  sessionId: string,
+  imageBase64: string,
+  mimeType: string,
+): Promise<string | null> {
+  if (!dataDir) return null;
+  try {
+    const { default: fs } = await import("node:fs");
+    const { default: path } = await import("node:path");
+    const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
+    const filename = `${sessionId}.${ext}`;
+    const dir = path.join(dataDir, "invoices");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, filename), Buffer.from(imageBase64, "base64"));
+    return `/api/ocr/invoices/${filename}`;
+  } catch {
+    return null;
+  }
+}
+
+// ── Gemini Vision call ─────────────────────────────────────────────────────
+
 async function callGeminiOCR(
   apiKey: string,
   imageBase64: string,
+  mimeType: string,
   scanType: string,
+  tesseractText?: string,
 ): Promise<{ items: GeminiItem[]; meta: InvoiceMeta | null }> {
+  const ocrHint = tesseractText?.trim()
+    ? `\n\nA basic OCR engine pre-scanned this image and extracted the following raw text. Use it as an additional hint to improve accuracy — cross-reference it with what you see in the image:\n\n"""\n${tesseractText.slice(0, 3000)}\n"""`
+    : "";
+
   let prompt: string;
 
   if (scanType === "invoice") {
@@ -62,7 +93,7 @@ Rules:
 - Remove commas from numbers (1,200 → 1200)
 - Extract EVERY product line item, including those with missing prices
 - If a field is not clearly visible, use null
-- Do not include header rows, subtotals, or tax rows in items`;
+- Do not include header rows, subtotals, or tax rows in items${ocrHint}`;
   } else {
     prompt = `This is a handwritten inventory notebook. Extract each product entry carefully.
 Return ONLY a valid JSON array (no markdown, no code blocks, no extra text):
@@ -75,7 +106,7 @@ Return ONLY a valid JSON array (no markdown, no code blocks, no extra text):
     "totalPrice": total price as a plain number (no currency symbols) or null
   }
 ]
-Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entries.`;
+Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entries.${ocrHint}`;
   }
 
   const resp = await fetch(
@@ -88,7 +119,7 @@ Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entri
           {
             parts: [
               { text: prompt },
-              { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
+              { inline_data: { mime_type: mimeType, data: imageBase64 } },
             ],
           },
         ],
@@ -97,9 +128,18 @@ Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entri
     },
   );
 
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Gemini API error ${resp.status}: ${errText.slice(0, 200)}`);
+  }
+
   const data = await resp.json<{
     candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
+    error?: { message: string };
   }>();
+
+  if (data.error) throw new Error(`Gemini: ${data.error.message}`);
+
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
 
   try {
@@ -117,6 +157,8 @@ Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entri
     return { items: [], meta: null };
   }
 }
+
+// ── Product matching ───────────────────────────────────────────────────────
 
 function findProductMatches(
   rawText: string,
@@ -150,16 +192,24 @@ function findProductMatches(
   return scored.sort((a, b) => b.confidence - a.confidence).slice(0, 3);
 }
 
+// ── Routes ─────────────────────────────────────────────────────────────────
+
 ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   const body = await c.req.json<{
     shopId: string;
     imageBase64: string;
+    mimeType?: string;
     scanType: "notebook" | "invoice";
     sessionId?: string;
+    tesseractText?: string;
   }>();
 
   const db = createDb(c.env.DB);
   const sessionId = body.sessionId ?? crypto.randomUUID();
+  const mimeType = body.mimeType ?? "image/jpeg";
+
+  // Save invoice image to filesystem (local dev) or skip gracefully (CF production without R2)
+  const imageUrl = await saveInvoiceImage(c.env.DATA_DIR, sessionId, body.imageBase64, mimeType);
 
   if (!body.sessionId) {
     await db.insert(scanSessions).values({
@@ -172,6 +222,13 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
       resultJson: null,
       createdAt: new Date().toISOString(),
     });
+    // Store imageUrl via migration column (use raw D1 to avoid Drizzle schema mismatch)
+    if (imageUrl) {
+      try {
+        await c.env.DB.prepare("UPDATE scan_sessions SET image_url = ? WHERE id = ?")
+          .bind(imageUrl, sessionId).run();
+      } catch { /* column might not exist yet — non-fatal */ }
+    }
   }
 
   const [allProducts, allAliases, shopRow] = await Promise.all([
@@ -184,15 +241,20 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
 
   let lines: GeminiItem[] = [];
   let invoiceMeta: InvoiceMeta | null = null;
+  let geminiError: string | null = null;
 
   if (geminiKey) {
     try {
-      const result = await callGeminiOCR(geminiKey, body.imageBase64, body.scanType);
+      const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText);
       lines = result.items;
       invoiceMeta = result.meta;
-    } catch {
+    } catch (err: any) {
+      geminiError = err?.message ?? "Gemini call failed";
+      console.error("[ocr] Gemini error:", geminiError);
       lines = [];
     }
+  } else {
+    geminiError = "No Gemini API key configured. Add it in Settings → Shop.";
   }
 
   const results = lines.map((line) => {
@@ -232,24 +294,84 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
 
   return c.json({
     sessionId,
+    imageUrl,
     lines: results,
     invoiceMeta,
     totalDetected: results.length,
     confirmedCount: confirmed,
     reviewCount: review,
     unresolvedCount: unresolved,
+    ...(geminiError ? { warning: geminiError } : {}),
   });
 });
+
+// ── Serve stored invoice images ────────────────────────────────────────────
+
+ocrRouter.get("/ocr/invoices/:filename", requireAuth, async (c) => {
+  const filename = c.req.param("filename");
+  // Sanitize: only allow alphanumeric + dash/dot
+  if (!/^[\w\-]+\.(jpg|jpeg|png|webp)$/i.test(filename)) {
+    return c.json({ error: "Invalid filename" }, 400);
+  }
+
+  const dataDir = c.env.DATA_DIR;
+  if (!dataDir) return c.json({ error: "Image storage not available" }, 404);
+
+  try {
+    const { default: fs } = await import("node:fs");
+    const { default: path } = await import("node:path");
+    const filePath = path.join(dataDir, "invoices", filename);
+    if (!fs.existsSync(filePath)) return c.json({ error: "Not found" }, 404);
+
+    const buf = fs.readFileSync(filePath);
+    const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
+    const contentType = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+
+    return new Response(buf, {
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "private, max-age=31536000",
+      },
+    });
+  } catch {
+    return c.json({ error: "Failed to read image" }, 500);
+  }
+});
+
+// ── Session CRUD ───────────────────────────────────────────────────────────
 
 ocrRouter.get("/ocr/sessions", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const shopId = c.req.query("shopId");
-  const rows = await db
-    .select()
-    .from(scanSessions)
-    .where(shopId ? eq(scanSessions.shopId, shopId) : undefined)
-    .all();
-  return c.json(rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+
+  // Use raw query to include image_url column added via migration
+  let rows: any[];
+  try {
+    const result = await c.env.DB.prepare(
+      shopId
+        ? "SELECT * FROM scan_sessions WHERE shop_id = ? ORDER BY created_at DESC LIMIT 50"
+        : "SELECT * FROM scan_sessions ORDER BY created_at DESC LIMIT 50"
+    ).bind(...(shopId ? [shopId] : [])).all();
+    rows = result.results as any[];
+  } catch {
+    rows = await db.select().from(scanSessions).all();
+    rows = rows.filter((r: any) => !shopId || r.shopId === shopId)
+              .sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt))
+              .slice(0, 50);
+  }
+
+  // Normalise snake_case from raw SQL to camelCase expected by frontend
+  return c.json(rows.map((r: any) => ({
+    id: r.id,
+    shopId: r.shop_id ?? r.shopId,
+    scanType: r.scan_type ?? r.scanType,
+    totalImages: r.total_images ?? r.totalImages ?? 0,
+    totalProducts: r.total_products ?? r.totalProducts ?? 0,
+    status: r.status,
+    resultJson: r.result_json ?? r.resultJson ?? null,
+    imageUrl: r.image_url ?? r.imageUrl ?? null,
+    createdAt: r.created_at ?? r.createdAt,
+  })));
 });
 
 ocrRouter.post("/ocr/sessions", requireAuth, async (c) => {
@@ -294,11 +416,9 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
       const afterQty = beforeQty + line.qty;
       const updates: Record<string, unknown> = { stockQty: afterQty, updatedAt: now };
 
-      // Update purchase price if a new unit price is provided and it differs
       const newPrice = line.unitPrice && line.unitPrice > 0 ? line.unitPrice : null;
       if (newPrice && newPrice !== product.purchasePrice) {
         updates.purchasePrice = newPrice;
-        // Record the price change in price history
         try {
           await db.insert(priceHistory).values({
             id: crypto.randomUUID(),
@@ -338,7 +458,6 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
     }
   }
 
-  // Save invoice meta + applied count back to session
   const metaPayload = JSON.stringify({
     applied,
     invoiceMeta: body.invoiceMeta ?? null,

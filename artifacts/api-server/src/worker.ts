@@ -28,6 +28,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   }
 
   const MIGRATIONS = [
+    "ALTER TABLE scan_sessions ADD COLUMN image_url TEXT",
     "ALTER TABLE price_history ADD COLUMN changed_at TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE price_history ADD COLUMN created_at TEXT",
     "ALTER TABLE shops ADD COLUMN gemini_api_key TEXT",

@@ -139,7 +139,7 @@ function makeKV(): KVNamespace {
 
 // ── Bootstrap SQLite database ─────────────────────────────────────────────────
 
-async function initDatabase(): Promise<ReturnType<typeof Database>> {
+async function initDatabase(): Promise<{ db: ReturnType<typeof Database>; dataDir: string }> {
   const DATA_DIR = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   const DB_PATH = path.join(DATA_DIR, "greenlink.db");
@@ -149,16 +149,19 @@ async function initDatabase(): Promise<ReturnType<typeof Database>> {
   db.pragma("foreign_keys = ON");
 
   console.log(`[boot] SQLite database: ${DB_PATH}`);
-  return db;
+  return { db, dataDir: DATA_DIR };
 }
 
 // ── Start server ──────────────────────────────────────────────────────────────
 
 async function main() {
   const port = parseInt(process.env.PORT ?? "8080");
-  const sqliteDb = await initDatabase();
+  const { db: sqliteDb, dataDir } = await initDatabase();
   const d1 = makeD1(sqliteDb);
   const kv = makeKV();
+
+  const invoicesDir = path.join(dataDir, "invoices");
+  if (!fs.existsSync(invoicesDir)) fs.mkdirSync(invoicesDir, { recursive: true });
 
   const env = {
     DB: d1,
@@ -167,6 +170,7 @@ async function main() {
     VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
     VAPID_PRIVATE_KEY_JWK: process.env.VAPID_PRIVATE_KEY_JWK,
     NODE_ENV: process.env.NODE_ENV ?? "development",
+    DATA_DIR: dataDir,
   };
 
   serve({

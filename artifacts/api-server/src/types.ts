@@ -5,6 +5,7 @@ export type Env = {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY_JWK?: string;
   NODE_ENV?: string;
+  DATA_DIR?: string;
 };
 
 export type SessionData = {
