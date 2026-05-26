@@ -103,31 +103,34 @@ function RestockDialog({ product }: { product: any }) {
     toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`);
     setOpen(false);
     setQty(1);
-    restockMutation.mutate(
-      { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
-      {
-        onSuccess: (updatedProduct: any) => {
-          // Sync cache with server-confirmed values (authoritative values replace optimistic)
-          qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
-            if (!old?.products) return old;
-            return { ...old, products: old.products.map((p: any) =>
-              p.id === updatedProduct.id
-                ? { ...p, stockQty: updatedProduct.stockQty, purchasePrice: updatedProduct.purchasePrice, sellingPrice: updatedProduct.sellingPrice }
-                : p
-            )};
-          });
-        },
-        onError: () => {
-          // Rollback to snapshot, never leave UI in an inconsistent state
-          snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
-          toast.error("Restock failed — please retry");
-        },
-        onSettled: () => {
-          // Sync movements after mutation settles (DB write is committed by this point)
-          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
-        },
+
+    // Async IIFE: runs to completion even after the dialog component unmounts.
+    // Per-call .mutate() callbacks are NOT guaranteed to fire after unmount in TanStack Query v5,
+    // so we use mutateAsync + try/catch/finally to guarantee the cache is always synced.
+    (async () => {
+      try {
+        const updatedProduct = await restockMutation.mutateAsync(
+          { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
+        );
+        // Sync cache with server-confirmed values (authoritative values replace optimistic)
+        qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+          if (!old?.products) return old;
+          return { ...old, products: old.products.map((p: any) =>
+            p.id === (updatedProduct as any).id
+              ? { ...p, stockQty: (updatedProduct as any).stockQty, purchasePrice: (updatedProduct as any).purchasePrice, sellingPrice: (updatedProduct as any).sellingPrice }
+              : p
+          )};
+        });
+      } catch {
+        // Rollback to snapshot, never leave UI in an inconsistent state
+        snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
+        toast.error("Restock failed — please retry");
+      } finally {
+        // Always sync after mutation settles — guaranteed even if dialog unmounted
+        qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+        qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       }
-    );
+    })();
   };
 
   return (
@@ -228,7 +231,16 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     ? (((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100).toFixed(1) : null;
 
   const handleSubmit = async () => {
-    const patch: any = { canonicalName: name.trim() || undefined, sku: sku || undefined, category: category || undefined, unit: unit || undefined, purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: alertQty ? parseFloat(alertQty) : undefined, expiryDate: expiryDate || undefined };
+    // Only include fields that have actual values — never send undefined to the server
+    const patch: any = {};
+    if (name.trim()) patch.canonicalName = name.trim();
+    if (sku) patch.sku = sku;
+    if (category) patch.category = category;
+    if (unit) patch.unit = unit;
+    if (buyPrice) patch.purchasePrice = parseFloat(buyPrice);
+    if (sellPrice) patch.sellingPrice = parseFloat(sellPrice);
+    if (alertQty) patch.alertQty = parseFloat(alertQty);
+    if (expiryDate) patch.expiryDate = expiryDate;
 
     // Cancel in-flight fetches so they don't race and overwrite our optimistic update
     await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
@@ -236,7 +248,7 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     // Snapshot all matching cache entries for rollback on error
     const snapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
 
-    // Optimistic update — user sees change instantly
+    // Optimistic update — user sees change instantly (only override fields that were actually edited)
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : { ...p, ...patch }) };
@@ -245,22 +257,27 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     // Close + confirm immediately — don't wait for the network
     toast.success("Product updated");
     setOpen(false);
-    onSuccess();
-    updateProduct.mutate(
-      { productId: product.id, data: patch },
-      {
-        onError: () => {
-          // Rollback to pre-edit state on failure
-          snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
-          toast.error("Failed to update product — please retry");
-        },
-        onSettled: () => {
-          // Sync with server only after the mutation has fully settled (DB write committed)
-          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
-          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
-        },
+    // ⚠️  Do NOT call onSuccess() here — it calls invalidateQueries() which fires a GET that
+    // hits the still-warm KV cache and returns old data, overwriting the optimistic update.
+    // Instead we invalidate inside the async IIFE below, after the PATCH has committed and
+    // the server has busted its own KV cache.
+
+    // Async IIFE: continues running even after this dialog component unmounts.
+    // TanStack Query v5 per-call .mutate() callbacks are NOT guaranteed to fire after unmount,
+    // so we use mutateAsync + try/catch/finally to guarantee the cache is always reconciled.
+    (async () => {
+      try {
+        await updateProduct.mutateAsync({ productId: product.id, data: patch });
+      } catch {
+        // Rollback to pre-edit state on failure
+        snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
+        toast.error("Failed to update product — please retry");
+      } finally {
+        // Guaranteed to run: KV is now busted server-side, so this GET returns fresh DB values
+        qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+        qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       }
-    );
+    })();
   };
 
   const UNIT_PRESETS = ["bag", "kg", "g", "litre", "ml", "sachet", "unit", "bottle", "pack", "box", "tin"];
