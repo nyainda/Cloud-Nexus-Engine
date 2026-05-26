@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   useOcrScan, useListScanSessions, useListProducts,
   customFetch, getListProductsQueryKey, getListInventoryMovementsQueryKey,
@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { ImageLightbox } from "@/components/image-lightbox";
 
 type Engine = "ai" | "free";
 
@@ -24,7 +25,7 @@ type Engine = "ai" | "free";
 // Reduces a typical 3 MB phone photo to ~150-300 KB before upload/storage.
 // Always outputs JPEG regardless of input format.
 
-async function compressImage(dataUrl: string, maxPx = 1200, quality = 0.82): Promise<string> {
+async function compressImage(dataUrl: string, maxPx = 2048, quality = 0.88): Promise<string> {
   return new Promise((resolve) => {
     const img = new window.Image();
     img.onload = () => {
@@ -48,7 +49,7 @@ async function makeThumbnail(dataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new window.Image();
     img.onload = () => {
-      const MAX = 1200;
+      const MAX = 1600;
       const ratio = Math.min(1, MAX / Math.max(img.width, img.height));
       const W = Math.round(img.width * ratio);
       const H = Math.round(img.height * ratio);
@@ -276,6 +277,8 @@ export default function OCR() {
   const [showAllLines, setShowAllLines] = useState(false);
   const [approving, setApproving] = useState(false);
   const [applied, setApplied] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const openLightbox = useCallback((url: string) => setLightboxUrl(url), []);
 
   const [editedItems, setEditedItems] = useState<EditedItem[]>([]);
   const [invoiceMeta, setInvoiceMeta] = useState({ supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "" });
@@ -718,7 +721,12 @@ export default function OCR() {
           <div className="relative bg-muted/30 border border-border/60 rounded-2xl overflow-hidden aspect-[4/3] flex items-center justify-center">
             {image ? (
               <>
-                <img src={image} alt="Document to scan" className="w-full h-full object-contain" />
+                <img
+                  src={image}
+                  alt="Document to scan"
+                  className="w-full h-full object-contain cursor-zoom-in"
+                  onClick={() => !isProcessing && openLightbox(image)}
+                />
                 {isProcessing && (
                   <div className="absolute inset-0 bg-background/90 flex flex-col items-center justify-center gap-3">
                     <ScanLine className="h-8 w-8 text-primary animate-pulse" />
@@ -1181,7 +1189,13 @@ export default function OCR() {
 
                   return (
                     <div key={session.id} className="flex items-center gap-3 bg-card border border-border/60 rounded-xl p-3">
-                      <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-muted/60 border border-border/40 flex items-center justify-center">
+                      <div
+                        className={cn(
+                          "w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-muted/60 border border-border/40 flex items-center justify-center",
+                          hasImage && "cursor-zoom-in"
+                        )}
+                        onClick={() => hasImage && openLightbox(session.imageUrl!)}
+                      >
                         {hasImage ? (
                           <img
                             src={session.imageUrl}
@@ -1223,6 +1237,7 @@ export default function OCR() {
 
         </div>
       </div>
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
     </div>
   );
 }
