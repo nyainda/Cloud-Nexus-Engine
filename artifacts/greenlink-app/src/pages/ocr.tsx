@@ -20,6 +20,27 @@ import { format } from "date-fns";
 
 type Engine = "ai" | "free";
 
+// ─── client-side image compression ───────────────────────────────────────────
+// Reduces a typical 3 MB phone photo to ~150-300 KB before upload/storage.
+// Always outputs JPEG regardless of input format.
+
+async function compressImage(dataUrl: string, maxPx = 1200, quality = 0.82): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const ratio = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 // ─── types ────────────────────────────────────────────────────────────────────
 
 interface EditedItem {
@@ -238,8 +259,11 @@ export default function OCR() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      setImage(ev.target?.result as string);
+    reader.onload = async (ev) => {
+      const raw = ev.target?.result as string;
+      // Compress to JPEG ≤1200px, ~82% quality — reduces 3 MB → ~200 KB
+      const compressed = await compressImage(raw);
+      setImage(compressed);
       setScanResult(null);
       setShowAllLines(false);
       setApplied(false);

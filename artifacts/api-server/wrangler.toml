@@ -13,9 +13,18 @@ binding = "SESSIONS"
 id = "3b54b79e2afa4320ba1eb8567e48e54b"
 preview_id = "3b54b79e2afa4320ba1eb8567e48e54b"
 
+# R2 bucket for invoice image storage (10 GB free/month, no egress fees)
+[[r2_buckets]]
+binding = "INVOICES"
+bucket_name = "greenlink-invoices"
+
 [vars]
 NODE_ENV = "production"
 VAPID_PUBLIC_KEY = "BLz3z93Sl59ncADzvPxnUVCW2z-2b9dWOZeiBqV-YuyTqg8rq1kZ9TX7JY4i7PZDHzVjb6GKUiSrLy4_U02khUY"
+
+# Monthly CRON: soft-archive scan sessions older than 90 days
+[triggers]
+crons = ["0 3 1 * *"]
 
 [dev]
 port = 8080

@@ -1,6 +1,7 @@
 export type Env = {
   DB: D1Database;
   SESSIONS: KVNamespace;
+  INVOICES?: R2Bucket;
   GEMINI_API_KEY?: string;
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY_JWK?: string;

@@ -29,6 +29,8 @@ async function bootstrapD1(db: D1Database): Promise<void> {
 
   const MIGRATIONS = [
     "ALTER TABLE scan_sessions ADD COLUMN image_url TEXT",
+    "ALTER TABLE scan_sessions ADD COLUMN r2_key TEXT",
+    "ALTER TABLE scan_sessions ADD COLUMN archived_at TEXT",
     "ALTER TABLE price_history ADD COLUMN changed_at TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE price_history ADD COLUMN created_at TEXT",
     "ALTER TABLE shops ADD COLUMN gemini_api_key TEXT",
@@ -128,6 +130,14 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   bootstrapped = true;
 }
 
+async function archiveOldSessions(db: D1Database): Promise<void> {
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const now = new Date().toISOString();
+  await db.prepare(
+    "UPDATE scan_sessions SET archived_at = ? WHERE archived_at IS NULL AND created_at < ?"
+  ).bind(now, cutoff).run();
+}
+
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.use("*", cors({
@@ -160,4 +170,9 @@ app.onError((err, c) => {
 app.route("/api", router);
 app.all("*", (c) => c.json({ error: "Not found" }, 404));
 
-export default app;
+export default {
+  fetch: app.fetch.bind(app),
+  async scheduled(_ctrl: ScheduledController, env: Env, _ctx: ExecutionContext) {
+    try { await archiveOldSessions(env.DB); } catch (err) { console.error("[cron] archive:", err); }
+  },
+};

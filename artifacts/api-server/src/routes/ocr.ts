@@ -29,27 +29,59 @@ interface InvoiceMeta {
   grandTotal?: number | null;
 }
 
-// ── Image storage helpers (filesystem when DATA_DIR is available) ───────────
+// ── Image storage helpers ──────────────────────────────────────────────────
+
+function extFromMime(mimeType: string): string {
+  if (mimeType.includes("png")) return "png";
+  if (mimeType.includes("webp")) return "webp";
+  return "jpg";
+}
 
 async function saveInvoiceImage(
-  dataDir: string | undefined,
+  env: { INVOICES?: R2Bucket; DATA_DIR?: string },
+  shopId: string,
   sessionId: string,
   imageBase64: string,
   mimeType: string,
-): Promise<string | null> {
-  if (!dataDir) return null;
-  try {
-    const { default: fs } = await import("node:fs");
-    const { default: path } = await import("node:path");
-    const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
-    const filename = `${sessionId}.${ext}`;
-    const dir = path.join(dataDir, "invoices");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, filename), Buffer.from(imageBase64, "base64"));
-    return `/api/ocr/invoices/${filename}`;
-  } catch {
-    return null;
+): Promise<{ imageUrl: string | null; r2Key: string | null }> {
+  const ext = extFromMime(mimeType);
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  // ── R2 path (production + local-dev mock) ─────────────────────────────
+  if (env.INVOICES) {
+    try {
+      const r2Key = `invoices/${shopId}/${ym}/${sessionId}.${ext}`;
+      // Decode base64 → Uint8Array (CF Workers compatible, no Buffer)
+      const binary = atob(imageBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+      await env.INVOICES.put(r2Key, bytes, {
+        httpMetadata: { contentType: mimeType },
+        customMetadata: { shopId, sessionId, uploadedAt: now.toISOString() },
+      });
+      return { imageUrl: `/api/ocr/invoices/${r2Key}`, r2Key };
+    } catch (err) {
+      console.error("[ocr] R2 upload failed:", err);
+      return { imageUrl: null, r2Key: null };
+    }
   }
+
+  // ── Filesystem fallback (legacy local dev without R2 mock) ─────────────
+  if (env.DATA_DIR) {
+    try {
+      const { default: fs } = await import("node:fs");
+      const { default: path } = await import("node:path");
+      const filename = `${sessionId}.${ext}`;
+      const dir = path.join(env.DATA_DIR, "invoices");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, filename), Buffer.from(imageBase64, "base64"));
+      return { imageUrl: `/api/ocr/invoices/${filename}`, r2Key: null };
+    } catch { return { imageUrl: null, r2Key: null }; }
+  }
+
+  return { imageUrl: null, r2Key: null };
 }
 
 // ── Gemini Vision call ─────────────────────────────────────────────────────
@@ -208,8 +240,11 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   const sessionId = body.sessionId ?? crypto.randomUUID();
   const mimeType = body.mimeType ?? "image/jpeg";
 
-  // Save invoice image to filesystem (local dev) or skip gracefully (CF production without R2)
-  const imageUrl = await saveInvoiceImage(c.env.DATA_DIR, sessionId, body.imageBase64, mimeType);
+  // Save invoice image to R2 (production) or filesystem mock (local dev)
+  const { imageUrl, r2Key } = await saveInvoiceImage(
+    { INVOICES: c.env.INVOICES, DATA_DIR: c.env.DATA_DIR },
+    body.shopId, sessionId, body.imageBase64, mimeType,
+  );
 
   if (!body.sessionId) {
     await db.insert(scanSessions).values({
@@ -222,12 +257,12 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
       resultJson: null,
       createdAt: new Date().toISOString(),
     });
-    // Store imageUrl via migration column (use raw D1 to avoid Drizzle schema mismatch)
-    if (imageUrl) {
+    // Store image_url + r2_key via migration columns
+    if (imageUrl || r2Key) {
       try {
-        await c.env.DB.prepare("UPDATE scan_sessions SET image_url = ? WHERE id = ?")
-          .bind(imageUrl, sessionId).run();
-      } catch { /* column might not exist yet — non-fatal */ }
+        await c.env.DB.prepare("UPDATE scan_sessions SET image_url = ?, r2_key = ? WHERE id = ?")
+          .bind(imageUrl ?? null, r2Key ?? null, sessionId).run();
+      } catch { /* columns might not exist yet — non-fatal */ }
     }
   }
 
@@ -305,37 +340,46 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   });
 });
 
-// ── Serve stored invoice images ────────────────────────────────────────────
+// ── Serve stored invoice images (R2 or filesystem fallback) ───────────────
+// Wildcard route handles both flat filenames (legacy) and
+// R2 keys like invoices/{shopId}/{YYYY-MM}/{sessionId}.jpg
 
-ocrRouter.get("/ocr/invoices/:filename", requireAuth, async (c) => {
-  const filename = c.req.param("filename");
-  // Sanitize: only allow alphanumeric + dash/dot
-  if (!/^[\w\-]+\.(jpg|jpeg|png|webp)$/i.test(filename)) {
-    return c.json({ error: "Invalid filename" }, 400);
+ocrRouter.get("/ocr/invoices/*", requireAuth, async (c) => {
+  // Extract everything after /ocr/invoices/
+  const rawPath = new URL(c.req.url).pathname;
+  const key = rawPath.replace(/^.*\/ocr\/invoices\//, "");
+
+  if (!key || key.includes("..")) return c.json({ error: "Invalid path" }, 400);
+
+  // ── R2 path ────────────────────────────────────────────────────────────
+  if (c.env.INVOICES) {
+    const obj = await c.env.INVOICES.get(key);
+    if (!obj) return c.json({ error: "Not found" }, 404);
+    const headers = new Headers();
+    obj.writeHttpMetadata(headers);
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+    return new Response(obj.body, { headers });
   }
 
-  const dataDir = c.env.DATA_DIR;
-  if (!dataDir) return c.json({ error: "Image storage not available" }, 404);
-
-  try {
-    const { default: fs } = await import("node:fs");
-    const { default: path } = await import("node:path");
-    const filePath = path.join(dataDir, "invoices", filename);
-    if (!fs.existsSync(filePath)) return c.json({ error: "Not found" }, 404);
-
-    const buf = fs.readFileSync(filePath);
-    const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
-    const contentType = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
-
-    return new Response(buf, {
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "private, max-age=31536000",
-      },
-    });
-  } catch {
-    return c.json({ error: "Failed to read image" }, 500);
+  // ── Filesystem fallback (DATA_DIR, legacy flat filenames) ──────────────
+  if (c.env.DATA_DIR) {
+    try {
+      const { default: fs } = await import("node:fs");
+      const { default: path } = await import("node:path");
+      // Support both flat filename and subpath — just take the last segment
+      const filename = key.split("/").pop() ?? key;
+      const filePath = path.join(c.env.DATA_DIR, "invoices", filename);
+      if (!fs.existsSync(filePath)) return c.json({ error: "Not found" }, 404);
+      const buf = fs.readFileSync(filePath);
+      const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
+      const ct = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+      return new Response(buf, { headers: { "Content-Type": ct, "Cache-Control": "private, max-age=86400" } });
+    } catch {
+      return c.json({ error: "Failed to read image" }, 500);
+    }
   }
+
+  return c.json({ error: "Image storage not configured" }, 503);
 });
 
 // ── Session CRUD ───────────────────────────────────────────────────────────

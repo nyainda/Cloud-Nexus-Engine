@@ -7,7 +7,7 @@ import { serve } from "@hono/node-server";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
-import app from "./worker";
+import worker from "./worker";
 
 // ── D1Database adapter (better-sqlite3) ───────────────────────────────────────
 
@@ -137,6 +137,80 @@ function makeKV(): KVNamespace {
   } as unknown as KVNamespace;
 }
 
+// ── R2Bucket adapter (filesystem-backed for local dev) ────────────────────────
+
+function makeR2(dataDir: string): R2Bucket {
+  const base = path.join(dataDir, "r2");
+  if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
+
+  function resolve(key: string): string {
+    // Prevent path traversal: strip leading slashes
+    const safe = key.replace(/^\/+/, "").replace(/\.\./g, "_");
+    return path.join(base, safe);
+  }
+
+  return {
+    put: async (key: string, value: ArrayBuffer | ArrayBufferView | string | null | ReadableStream, options?: any): Promise<R2Object> => {
+      const filePath = resolve(key);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      if (value instanceof ArrayBuffer) {
+        fs.writeFileSync(filePath, Buffer.from(value));
+      } else if (ArrayBuffer.isView(value)) {
+        fs.writeFileSync(filePath, Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+      } else if (typeof value === "string") {
+        fs.writeFileSync(filePath, value, "utf8");
+      }
+      const metaPath = filePath + ".meta.json";
+      fs.writeFileSync(metaPath, JSON.stringify({
+        contentType: options?.httpMetadata?.contentType ?? "application/octet-stream",
+        customMetadata: options?.customMetadata ?? {},
+        uploaded: new Date().toISOString(),
+        size: fs.existsSync(filePath) ? fs.statSync(filePath).size : 0,
+      }), "utf8");
+      return {} as R2Object;
+    },
+    get: async (key: string): Promise<R2ObjectBody | null> => {
+      const filePath = resolve(key);
+      if (!fs.existsSync(filePath)) return null;
+      const data = fs.readFileSync(filePath);
+      const metaPath = filePath + ".meta.json";
+      let meta = { contentType: "application/octet-stream" };
+      try { if (fs.existsSync(metaPath)) meta = JSON.parse(fs.readFileSync(metaPath, "utf8")); } catch {}
+      return {
+        body: new ReadableStream({ start(c) { c.enqueue(data); c.close(); } }),
+        bodyUsed: false,
+        arrayBuffer: async () => data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+        text: async () => data.toString("utf8"),
+        json: async () => JSON.parse(data.toString("utf8")),
+        blob: async () => new Blob([data]),
+        writeHttpMetadata: (headers: Headers) => { headers.set("Content-Type", meta.contentType); },
+        httpMetadata: { contentType: meta.contentType },
+        customMetadata: {},
+        key,
+        version: "local",
+        size: data.length,
+        etag: "",
+        httpEtag: `"${data.length}"`,
+        uploaded: new Date(),
+        checksums: {} as any,
+        storageClass: "Standard",
+      } as unknown as R2ObjectBody;
+    },
+    delete: async (keys: string | string[]) => {
+      for (const k of Array.isArray(keys) ? keys : [keys]) {
+        const f = resolve(k);
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+        const m = f + ".meta.json";
+        if (fs.existsSync(m)) fs.unlinkSync(m);
+      }
+    },
+    head: async (_key: string) => null,
+    list: async () => ({ objects: [], truncated: false, cursor: undefined, delimitedPrefixes: [] } as any),
+    createMultipartUpload: async () => ({} as any),
+    resumeMultipartUpload: async () => ({} as any),
+  } as unknown as R2Bucket;
+}
+
 // ── Bootstrap SQLite database ─────────────────────────────────────────────────
 
 async function initDatabase(): Promise<{ db: ReturnType<typeof Database>; dataDir: string }> {
@@ -160,12 +234,12 @@ async function main() {
   const d1 = makeD1(sqliteDb);
   const kv = makeKV();
 
-  const invoicesDir = path.join(dataDir, "invoices");
-  if (!fs.existsSync(invoicesDir)) fs.mkdirSync(invoicesDir, { recursive: true });
+  const r2 = makeR2(dataDir);
 
   const env = {
     DB: d1,
     SESSIONS: kv,
+    INVOICES: r2,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
     VAPID_PRIVATE_KEY_JWK: process.env.VAPID_PRIVATE_KEY_JWK,
@@ -174,7 +248,7 @@ async function main() {
   };
 
   serve({
-    fetch: (req) => app.fetch(req, env),
+    fetch: (req) => worker.fetch(req, env as any),
     port,
   });
 
