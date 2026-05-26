@@ -9,7 +9,7 @@ import {
   Truck, ScanLine, Search, ChevronDown, ChevronUp,
   Building2, Hash, Calendar, Banknote, Package,
   TrendingUp, TrendingDown, ArrowRight, FileX, Loader2,
-  ImageIcon, Trash2, Pencil, X, ZoomIn, Save, AlertTriangle, Link2,
+  ImageIcon, Trash2, Pencil, X, ZoomIn, Save, AlertTriangle, Link2, ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, parseISO, isValid } from "date-fns";

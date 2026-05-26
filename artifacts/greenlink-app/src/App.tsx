@@ -23,6 +23,7 @@ const OwnerDashboard = lazy(() => import("@/pages/owner-dashboard"));
 const SalesHistory = lazy(() => import("@/pages/sales-history"));
 const Returns = lazy(() => import("@/pages/returns"));
 const InvoiceHistory = lazy(() => import("@/pages/invoice-history"));
+const SupplierDetail = lazy(() => import("@/pages/supplier-detail"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
 const queryClient = new QueryClient({
@@ -168,6 +169,7 @@ function AppRoutes() {
                 <Route path="/sales-history" component={SalesHistory} />
                 <Route path="/returns" component={Returns} />
                 <Route path="/invoices" component={InvoiceHistory} />
+                <Route path="/suppliers/:supplierId" component={SupplierDetail} />
                 <Route component={NotFound} />
               </Switch>
             </Suspense>
