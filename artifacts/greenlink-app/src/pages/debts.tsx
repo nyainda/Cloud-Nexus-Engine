@@ -24,6 +24,7 @@ function PaymentDialog({ debt }: { debt: any }) {
   const [amount, setAmount] = useState("");
   const recordPayment = useRecordDebtPayment();
   const qc = useQueryClient();
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
   const userName = localStorage.getItem("greenlink_userName") || "";
   const paidPct = debt.totalAmount > 0
     ? Math.round(((debt.totalAmount - debt.balance) / debt.totalAmount) * 100)
@@ -31,9 +32,11 @@ function PaymentDialog({ debt }: { debt: any }) {
 
   const handlePayment = async () => {
     const paid = Number(amount);
-    await qc.cancelQueries({ queryKey: getListDebtsQueryKey() });
-    const snapshot = qc.getQueryData(getListDebtsQueryKey());
-    qc.setQueriesData({ queryKey: getListDebtsQueryKey() }, (old: any) => {
+    // Use the exact key the list is stored under — includes shopId param
+    const exactKey = getListDebtsQueryKey({ shopId });
+    await qc.cancelQueries({ queryKey: exactKey });
+    const snapshot = qc.getQueryData(exactKey);
+    qc.setQueryData(exactKey, (old: any) => {
       if (!Array.isArray(old)) return old;
       return old.map(d => {
         if (d.id !== debt.id) return d;
@@ -47,7 +50,7 @@ function PaymentDialog({ debt }: { debt: any }) {
     recordPayment.mutate(
       { debtId: debt.id, data: { amount: paid, recordedBy: userName } },
       {
-        onError: () => { qc.setQueryData(getListDebtsQueryKey(), snapshot); toast.error("Failed to record payment — please retry"); },
+        onError: () => { qc.setQueryData(exactKey, snapshot); toast.error("Failed to record payment — please retry"); },
         onSettled: () => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() }),
       }
     );

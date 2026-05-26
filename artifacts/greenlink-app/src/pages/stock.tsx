@@ -553,16 +553,19 @@ function DeleteProductButton({ productId, productName, onSuccess }: { productId:
   const qc = useQueryClient();
   const delProduct = useDeleteProduct();
   const handleDelete = async () => {
-    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
-    const snapshot = qc.getQueryData(getListProductsQueryKey());
-    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+    const shopId = localStorage.getItem("greenlink_shopId") || "";
+    // Use the exact key the stock list is stored under — includes shopId + limit params
+    const exactKey = getListProductsQueryKey({ shopId, limit: 3000 });
+    await qc.cancelQueries({ queryKey: exactKey });
+    const snapshot = qc.getQueryData(exactKey);
+    qc.setQueryData(exactKey, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.filter((p: any) => p.id !== productId) };
     });
     // Optimistic update already applied — confirm immediately
     toast.success("Product removed"); onSuccess();
     delProduct.mutate({ productId }, {
-      onError: () => { qc.setQueryData(getListProductsQueryKey(), snapshot); toast.error("Failed to delete product — please retry"); },
+      onError: () => { qc.setQueryData(exactKey, snapshot); toast.error("Failed to delete product — please retry"); },
       onSettled: () => {
         qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
         qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });

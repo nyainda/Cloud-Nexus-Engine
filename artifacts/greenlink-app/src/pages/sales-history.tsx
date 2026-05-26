@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import {
   useListSales, useGetSale, useDeleteSale, getListSalesQueryKey,
-  useListSaleReturns, useCreateSaleReturn,
+  useListSaleReturns, useCreateSaleReturn, getListSaleReturnsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -108,7 +108,7 @@ function ReturnDialog({
           // Invalidate sales list so totals update immediately
           qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
           // Invalidate the returns shown inside this sale's detail panel
-          qc.invalidateQueries({ queryKey: ["listSaleReturns", saleId] });
+          qc.invalidateQueries({ queryKey: getListSaleReturnsQueryKey(saleId) });
           // Invalidate the Returns page ("returns" prefix covers all dates/shops)
           qc.invalidateQueries({ queryKey: ["returns"] });
           setReturnQtys(Object.fromEntries(saleItems.map((_, i) => [i, 0])));
