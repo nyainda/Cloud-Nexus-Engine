@@ -1,9 +1,10 @@
 import { Link, useRoute, useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ShoppingCart, Package, Users, Bell, BarChart3,
   ScanLine, Settings, Leaf, LogOut, LayoutDashboard, Receipt,
-  Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen
+  Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
+  MoreHorizontal, X
 } from "lucide-react";
 import { useListNotifications, useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -112,6 +113,95 @@ function ThemeToggle({ collapsed, className }: { collapsed?: boolean; className?
       {theme === "dark" ? <Sun className="h-4 w-4 shrink-0" /> : <Moon className="h-4 w-4 shrink-0" />}
       {!collapsed && <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>}
     </button>
+  );
+}
+
+function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCount: number }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [location] = useLocation();
+
+  // Close the "More" sheet whenever the user navigates
+  useEffect(() => { setMoreOpen(false); }, [location]);
+
+  return (
+    <>
+      {/* Bottom bar */}
+      <nav
+        className="lg:hidden flex items-stretch bg-sidebar border-t border-border shrink-0 z-40"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <BottomNavItem href="/pos" icon={ShoppingCart} label="POS" />
+        <BottomNavItem href="/stock" icon={Package} label="Stock" />
+        <BottomNavItem href="/debts" icon={Users} label="Debts" />
+        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} />
+        <BottomNavItem href="/sales-history" icon={Receipt} label="History" />
+        {/* "More" button — opens a sheet with the rest of the navigation */}
+        <button
+          onClick={() => setMoreOpen(v => !v)}
+          className={cn(
+            "flex flex-col items-center justify-center flex-1 py-2 gap-0.5 transition-colors relative",
+            moreOpen ? "text-primary" : "text-muted-foreground"
+          )}
+        >
+          <MoreHorizontal className="h-5 w-5" />
+          <span className={cn("text-[9px] font-semibold uppercase tracking-wide", moreOpen ? "text-primary" : "text-muted-foreground/60")}>
+            More
+          </span>
+        </button>
+      </nav>
+
+      {/* "More" bottom sheet overlay */}
+      {moreOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            onClick={() => setMoreOpen(false)}
+          />
+          {/* Sheet */}
+          <div
+            className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-sidebar border-t border-border rounded-t-2xl shadow-2xl"
+            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border/40">
+              <p className="text-sm font-bold text-foreground">Navigation</p>
+              <button onClick={() => setMoreOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-3 grid grid-cols-2 gap-2">
+              <MoreSheetItem href="/returns" icon={RotateCcw} label="Process Return" />
+              {isOwner && (
+                <>
+                  <MoreSheetItem href="/reports" icon={BarChart3} label="Analytics" />
+                  <MoreSheetItem href="/owner-dashboard" icon={LayoutDashboard} label="Overview" />
+                  <MoreSheetItem href="/ocr" icon={ScanLine} label="Smart Scanner" />
+                </>
+              )}
+              <MoreSheetItem href="/settings" icon={Settings} label="Settings" />
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function MoreSheetItem({ href, icon: Icon, label }: { href: string; icon: React.ElementType; label: string }) {
+  const [isActive] = useRoute(href);
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-semibold transition-all",
+        isActive
+          ? "bg-primary/10 text-primary border border-primary/20"
+          : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      {label}
+    </Link>
   );
 }
 
@@ -316,20 +406,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </main>
 
         {/* Mobile Bottom Nav */}
-        <nav
-          className="lg:hidden flex items-stretch bg-sidebar border-t border-border shrink-0"
-          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-        >
-          <BottomNavItem href="/pos" icon={ShoppingCart} label="POS" />
-          <BottomNavItem href="/stock" icon={Package} label="Stock" />
-          <BottomNavItem href="/debts" icon={Users} label="Debts" />
-          <BottomNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} />
-          <BottomNavItem href="/sales-history" icon={Receipt} label="History" />
-          <BottomNavItem href="/returns" icon={RotateCcw} label="Returns" />
-          {isOwner && (
-            <BottomNavItem href="/reports" icon={BarChart3} label="Reports" />
-          )}
-        </nav>
+        <MobileBottomNav isOwner={isOwner} unreadCount={unreadCount} />
       </div>
     </div>
   );

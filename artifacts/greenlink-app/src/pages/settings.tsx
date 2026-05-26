@@ -14,7 +14,7 @@ import { useLocation } from "wouter";
 import {
   LogOut, Store, Shield, Truck, FileText, Plus, Edit2, Trash2,
   KeyRound, Eye, EyeOff, Bot, CheckCircle2, ChevronRight,
-  Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone, X, MessageCircle
+  Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone, X, MessageCircle, ScanLine
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -453,15 +453,15 @@ function SupplierFormDialog({
   const handleSubmit = () => {
     if (!name.trim()) return;
     if (supplier) {
-      // Close + confirm immediately — don't wait for the network
-      toast.success("Supplier updated"); setOpen(false); onSuccess();
+      toast.success("Supplier updated"); setOpen(false);
       update.mutate({ supplierId: supplier.id, data: { name, phone: phone || undefined, notes: notes || undefined } }, {
+        onSuccess: () => onSuccess(),
         onError: () => toast.error("Failed to update supplier — please retry"),
       });
     } else {
-      // Close + confirm immediately — don't wait for the network
-      toast.success("Supplier added"); setOpen(false); reset(); onSuccess();
+      toast.success("Supplier added"); setOpen(false); reset();
       create.mutate({ data: { shopId, name, phone: phone || undefined, notes: notes || undefined } }, {
+        onSuccess: () => onSuccess(),
         onError: () => toast.error("Failed to add supplier — please retry"),
       });
     }
@@ -776,6 +776,20 @@ export default function Settings() {
               <p className="text-sm text-muted-foreground mt-0.5">Connect Gemini Vision to power the Smart Scanner</p>
             </div>
             <GeminiSection shopId={shopId} hasKey={!!(shop as any)?.hasGeminiKey} />
+            {/* Quick access to the scanner */}
+            <button
+              onClick={() => setLocation("/ocr")}
+              className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-all text-left group"
+            >
+              <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
+                <ScanLine className="h-5 w-5 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-foreground">Open Smart Scanner</p>
+                <p className="text-xs text-muted-foreground/70 mt-0.5">Scan invoices and handwritten notebooks with AI</p>
+              </div>
+              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+            </button>
           </div>
         )}
 

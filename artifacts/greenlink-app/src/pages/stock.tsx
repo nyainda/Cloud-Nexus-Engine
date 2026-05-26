@@ -469,8 +469,13 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
         body: JSON.stringify({ targetShopId, qty, notes: notes || undefined }),
       });
     },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+      qc.invalidateQueries({ queryKey: ["transfers", shopId] });
+      onSuccess();
+    },
     onError: (e: any) => {
-      qc.refetchQueries({ queryKey: getListProductsQueryKey() });
+      qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
       toast.error(e.message || "Transfer failed — please retry");
     },
   });
@@ -517,7 +522,9 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
                 return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : { ...p, stockQty: Math.max(0, p.stockQty - qty) }) };
               });
               toast.success(`Transferred ${qty} ${product.unit || "units"} to ${targetLabel}`);
-              setOpen(false); setQty(1); setNotes(""); onSuccess();
+              setOpen(false); setQty(1); setNotes("");
+              // NOTE: Do NOT call onSuccess() here — the mutation's onSuccess handles
+              // the refresh after the API confirms, keeping the optimistic update intact.
               transferMutation.mutate();
             }}
             disabled={qty <= 0 || qty > product.stockQty}
