@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ImageLightbox } from "@/components/image-lightbox";
 import {
   ArrowLeft, Building2, Phone, FileText, Pencil, Package,
   Banknote, Calendar, TrendingUp, TrendingDown, ChevronDown, ChevronUp,
@@ -109,18 +110,6 @@ const AVATAR_COLORS = ["#C8FF00","#4ade80","#60a5fa","#f472b6","#fb923c","#a78bf
 function avatarColor(name: string): string {
   let h = 0; for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
-}
-
-// ─── Lightbox ──────────────────────────────────────────────────────────────────
-function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={onClose}>
-      <button className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center" onClick={onClose}>
-        <X className="h-5 w-5 text-white" />
-      </button>
-      <img src={url} alt="Invoice" className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" onClick={(e) => e.stopPropagation()} />
-    </div>
-  );
 }
 
 // ─── Edit Supplier Modal ───────────────────────────────────────────────────────
@@ -459,7 +448,7 @@ export default function SupplierDetail() {
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Modals */}
-      {lightboxUrl && <Lightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
       {deleteId && <DeleteModal sessionId={deleteId} onClose={() => setDeleteId(null)} onDeleted={refresh} />}
       {showEdit && supplier && <EditSupplierModal supplier={supplier} onClose={() => setShowEdit(false)} onSaved={() => { refetchSuppliers(); }} />}
 

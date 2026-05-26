@@ -41,25 +41,63 @@ async function compressImage(dataUrl: string, maxPx = 1200, quality = 0.82): Pro
   });
 }
 
-// Generates a tiny 200×150px thumbnail (~8–12 KB) stored in D1 — zero storage cost.
+// Generates a scanner-quality image stored in D1.
+// Scales to max 1200px, applies auto-levels (2% clipping) and an S-curve
+// contrast boost so text is crisp and backgrounds are clean white.
 async function makeThumbnail(dataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new window.Image();
     img.onload = () => {
-      const W = 200, H = 150;
-      const ratio = Math.min(W / img.width, H / img.height);
+      const MAX = 1200;
+      const ratio = Math.min(1, MAX / Math.max(img.width, img.height));
+      const W = Math.round(img.width * ratio);
+      const H = Math.round(img.height * ratio);
+
       const canvas = document.createElement("canvas");
       canvas.width = W;
       canvas.height = H;
-      const ctx = canvas.getContext("2d")!;
-      ctx.fillStyle = "#111";
-      ctx.fillRect(0, 0, W, H);
-      const dw = Math.round(img.width * ratio);
-      const dh = Math.round(img.height * ratio);
-      ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      resolve(canvas.toDataURL("image/jpeg", 0.72));
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+      ctx.drawImage(img, 0, 0, W, H);
+
+      const imageData = ctx.getImageData(0, 0, W, H);
+      const d = imageData.data;
+      const n = d.length;
+
+      // Build luminance histogram for auto-levels
+      const hist = new Uint32Array(256);
+      for (let i = 0; i < n; i += 4) {
+        hist[Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2])]++;
+      }
+
+      // Find 2nd / 98th percentile (clip extremes so lighting outliers don't skew)
+      const clip = W * H * 0.02;
+      let lo = 0, hi = 255, acc = 0;
+      for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= clip) { lo = v; break; } }
+      acc = 0;
+      for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= clip) { hi = v; break; } }
+      if (hi <= lo) { lo = 0; hi = 255; }
+      const range = hi - lo || 1;
+
+      // Build LUT: linear stretch → S-curve contrast boost
+      const lut = new Uint8Array(256);
+      for (let v = 0; v < 256; v++) {
+        let t = Math.max(0, Math.min(1, (v - lo) / range));
+        // ease-in-out S-curve
+        t = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        lut[v] = Math.round(t * 255);
+      }
+
+      // Apply LUT to RGB channels
+      for (let i = 0; i < n; i += 4) {
+        d[i] = lut[d[i]];
+        d[i + 1] = lut[d[i + 1]];
+        d[i + 2] = lut[d[i + 2]];
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      resolve(canvas.toDataURL("image/jpeg", 0.88));
     };
-    img.onerror = () => resolve("");
+    img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
 }

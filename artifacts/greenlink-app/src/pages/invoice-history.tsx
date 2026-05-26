@@ -5,6 +5,7 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ImageLightbox } from "@/components/image-lightbox";
 import {
   Truck, ScanLine, Search, ChevronDown, ChevronUp,
   Building2, Hash, Calendar, Banknote, Package,
@@ -136,17 +137,6 @@ function avatarColor(name: string): string {
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
-
-function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={onClose}>
-      <button className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center" onClick={onClose}>
-        <X className="h-5 w-5 text-white" />
-      </button>
-      <img src={url} alt="Scanned invoice" className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" onClick={(e) => e.stopPropagation()} />
-    </div>
-  );
-}
 
 function EditModal({ session, onClose, onSaved }: { session: ParsedSession; onClose: () => void; onSaved: () => void }) {
   const [supplierName, setSupplierName] = useState(session.meta?.supplierName ?? "");
@@ -647,7 +637,7 @@ export default function InvoiceHistory() {
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Modals */}
-      {lightboxUrl && <Lightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
       {editSession && <EditModal session={editSession} onClose={() => setEditSession(null)} onSaved={refresh} />}
       {deleteSession && <DeleteModal session={deleteSession} onClose={() => setDeleteSession(null)} onDeleted={refresh} />}
       {linkSession && <LinkModal session={linkSession} suppliers={suppliers} onClose={() => setLinkSession(null)} onSaved={refresh} />}
