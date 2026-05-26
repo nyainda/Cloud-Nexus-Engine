@@ -1,6 +1,6 @@
-import { useState, useMemo, useCallback, memo, useEffect } from "react";
-import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo, useCallback, memo, useEffect, useRef } from "react";
+import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey, customFetch } from "@workspace/api-client-react";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -9,7 +9,7 @@ import { formatKES } from "@/lib/format";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart,
   AlertTriangle, PackageX, Package, CreditCard, Banknote, X,
-  ChevronRight, TrendingUp, Scale
+  ChevronRight, TrendingUp, Scale, User2, Phone, ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -27,6 +27,76 @@ interface CartItem {
 }
 
 type StockFilter = "all" | "in_stock" | "low_stock" | "out_of_stock";
+
+// ── Customer Autocomplete ─────────────────────────────────────────────────────
+function CustomerAutocomplete({
+  shopId, value, onChange, onSelect,
+}: {
+  shopId: string;
+  value: string;
+  onChange: (v: string) => void;
+  onSelect: (name: string, phone: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const debouncedValue = useDebounce(value, 300);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const { data: suggestions } = useQuery<any[]>({
+    queryKey: ["customers", shopId, debouncedValue],
+    queryFn: () => customFetch<any[]>(`/customers?shopId=${encodeURIComponent(shopId)}&q=${encodeURIComponent(debouncedValue)}`),
+    enabled: !!shopId && debouncedValue.length >= 2,
+    staleTime: 60_000,
+  });
+
+  const hasSuggestions = open && suggestions && suggestions.length > 0;
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="relative">
+        <User2 className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+        <input
+          type="text"
+          placeholder="e.g. John Kamau"
+          value={value}
+          onChange={e => { onChange(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 pl-9 pr-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
+        />
+      </div>
+      {hasSuggestions && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-lg overflow-hidden">
+          {suggestions!.map((s: any, i: number) => (
+            <button
+              key={i}
+              onMouseDown={e => { e.preventDefault(); onSelect(s.customerName, s.customerPhone ?? ""); setOpen(false); }}
+              className="w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors flex items-center gap-2.5 border-b border-border/30 last:border-0"
+            >
+              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                <User2 className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold truncate">{s.customerName}</p>
+                {s.customerPhone && (
+                  <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                    <Phone className="h-2.5 w-2.5" />{s.customerPhone}
+                  </p>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const FILTERS: { value: StockFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -350,21 +420,24 @@ const CartPanel = memo(function CartPanel({
               <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">
                 Customer name (required for debt)
               </Label>
-              <input
-                type="text"
-                placeholder="e.g. John Kamau"
+              <CustomerAutocomplete
+                shopId={localStorage.getItem("greenlink_shopId") || ""}
                 value={debtCustomerName}
-                onChange={e => setDebtCustomerName(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
+                onChange={setDebtCustomerName}
+                onSelect={(name, phone) => {
+                  setDebtCustomerName(name);
+                  if (phone) setDebtCustomerPhone(phone);
+                }}
               />
             </div>
-            <div>
+            <div className="relative">
+              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
               <input
                 type="tel"
                 placeholder="Phone (optional)"
                 value={debtCustomerPhone}
                 onChange={e => setDebtCustomerPhone(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
+                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 pl-9 pr-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
               />
             </div>
           </div>

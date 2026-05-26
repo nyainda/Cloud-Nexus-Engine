@@ -8,6 +8,37 @@ import { kvGet, kvSet, kvDel, CK, CACHE_TTL } from "../lib/cache";
 
 const debtsRouter = new Hono<AppEnv>();
 
+// ─── Customer autocomplete — distinct names/phones from debts ─────────────────
+debtsRouter.get("/customers", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const shopId = c.req.query("shopId");
+  const q = (c.req.query("q") ?? "").toLowerCase().trim();
+
+  const rows = await db
+    .select({ customerName: debts.customerName, customerPhone: debts.customerPhone })
+    .from(debts)
+    .where(shopId ? eq(debts.shopId, shopId) : undefined)
+    .all();
+
+  // Deduplicate by lowercased name
+  const seen = new Set<string>();
+  const unique = rows.filter(r => {
+    const key = r.customerName.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const filtered = q
+    ? unique.filter(r =>
+        r.customerName.toLowerCase().includes(q) ||
+        (r.customerPhone ?? "").includes(q)
+      )
+    : unique;
+
+  return c.json(filtered.slice(0, 12));
+});
+
 debtsRouter.get("/debts", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const shopId = c.req.query("shopId");

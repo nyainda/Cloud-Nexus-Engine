@@ -1,12 +1,12 @@
-import { useState } from "react";
-import { useGetDashboard, useGetReportRange, useGetTopProducts } from "@workspace/api-client-react";
+import { useState, useMemo } from "react";
+import { useGetDashboard, useGetReportRange, useGetTopProducts, useListProducts } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatKES } from "@/lib/format";
 import {
   TrendingUp, ShoppingBag, CreditCard, AlertTriangle,
-  Package, TrendingDown, Percent, BarChart2, Trophy,
+  Package, TrendingDown, Percent, BarChart2, Trophy, Flame,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth } from "date-fns";
 import {
@@ -82,6 +82,27 @@ export default function Reports() {
     { shopId, from: dateRange.from, to: dateRange.to, limit: 10 },
     { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
   );
+
+  const { data: productsData } = useListProducts(
+    { shopId, limit: 3000 },
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+  );
+
+  const lowMarginProducts = useMemo(() => {
+    const all = productsData?.products ?? [];
+    return all
+      .filter(p => {
+        const buy = p.purchasePrice ?? 0;
+        const sell = p.sellingPrice ?? 0;
+        return sell > 0 && buy > 0;
+      })
+      .map(p => {
+        const margin = ((p.sellingPrice! - p.purchasePrice!) / p.sellingPrice!) * 100;
+        return { ...p, margin };
+      })
+      .sort((a, b) => a.margin - b.margin)
+      .slice(0, 10);
+  }, [productsData]);
 
   const stats = reportRange ?? dashboard;
   const statsLoading = !stats && (rangeLoading || dashLoading);
@@ -354,6 +375,60 @@ export default function Reports() {
             )}
           </CardContent>
         </Card>
+        {/* Low Margin Products */}
+        {lowMarginProducts.length > 0 && (
+          <Card className="shadow-none">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+                <Flame className="h-4 w-4 text-orange-500" />
+                Low Margin Alert
+                <span className="text-xs font-normal text-muted-foreground ml-1">
+                  Bottom 10 by profit margin
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border">
+                {lowMarginProducts.map((p, i) => {
+                  const marginColor =
+                    p.margin < 5 ? "text-destructive" :
+                    p.margin < 15 ? "text-orange-500" :
+                    "text-amber-500";
+                  const bgColor =
+                    p.margin < 5 ? "bg-destructive/10" :
+                    p.margin < 15 ? "bg-orange-500/10" :
+                    "bg-amber-500/10";
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 px-4 py-3">
+                      <span className={cn(
+                        "w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0",
+                        p.margin < 5 ? "border-destructive/40 text-destructive" :
+                        p.margin < 15 ? "border-orange-400/40 text-orange-500" :
+                        "border-amber-400/40 text-amber-500"
+                      )}>
+                        {i + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold truncate">{p.canonicalName}</p>
+                        <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground font-mono">
+                          <span>Buy {formatKES(p.purchasePrice ?? 0)}</span>
+                          <span>→</span>
+                          <span>Sell {formatKES(p.sellingPrice ?? 0)}</span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className={cn("text-sm font-bold font-mono px-2 py-0.5 rounded-lg", bgColor, marginColor)}>
+                          {p.margin.toFixed(1)}%
+                        </span>
+                        <p className="text-[10px] text-muted-foreground mt-1">margin</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

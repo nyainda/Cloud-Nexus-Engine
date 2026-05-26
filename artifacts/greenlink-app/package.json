@@ -84,6 +84,7 @@
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.25",
     "jspdf": "^4.2.1",
-    "jspdf-autotable": "^5.0.8"
+    "jspdf-autotable": "^5.0.8",
+    "tesseract.js": "^7.0.0"
   }
 }
