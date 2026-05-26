@@ -118,5 +118,8 @@ externalPort = 3000
 
 [userenv.production]
 
+[userenv.development]
+VITE_API_BASE_URL = "https://greenlink-pos-api.bruce42oyugi.workers.dev"
+
 [nix]
 channel = "stable-25_05"
