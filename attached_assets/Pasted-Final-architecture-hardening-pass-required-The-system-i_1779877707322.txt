@@ -1,0 +1,144 @@
+Final architecture hardening pass required.
+
+The system is now much more stable, but there are still 4 important improvements needed for long-term consistency and scalability.
+
+==================================================
+
+1. REMOVE ALL REMAINING Promise.all FOR STOCK MUTATIONS
+   ==================================================
+
+Inventory operations must be serialized.
+
+Search entire codebase for:
+Promise.all(...)
+
+Especially around:
+
+* stock updates
+* transfers
+* POS checkout
+* cancel transfer
+* restock
+* debt rollback
+* void sale restore
+
+Replace with:
+
+for (const item of items) {
+await mutateAsync(item)
+}
+
+Reason:
+Concurrent inventory writes can still create race conditions and out-of-order state updates.
+
+==================================================
+2. ADD STRUCTURED INVENTORY LOGGING
+===================================
+
+We still need deep mutation visibility.
+
+Add logs for:
+
+* optimistic update applied
+* server mutation started
+* server mutation success
+* rollback triggered
+* stale response rejected
+* invalidateQueries triggered
+* pending mutation added/removed
+* version/timestamp comparison
+* transfer quantity before/after
+
+Include:
+
+* productId
+* previousQty
+* nextQty
+* mutationId
+* timestamp
+* source page
+
+Example:
+[InventoryMutation]
+product=abc123
+prev=5
+next=2
+mutation=transfer
+status=optimistic_applied
+
+This will massively help debugging future inventory inconsistencies.
+
+==================================================
+3. ADD CENTRALIZED INVENTORY MUTATION ENGINE
+============================================
+
+Currently mutation protection logic is duplicated across pages.
+
+Create a single reusable inventory mutation helper/service:
+
+Responsibilities:
+
+* optimistic update
+* pending mutation tracking
+* stale response rejection
+* rollback handling
+* delayed invalidation
+* mutation logging
+* timestamp/version reconciliation
+
+All inventory pages should use the same mutation engine.
+
+Pages:
+
+* POS
+* stock
+* transfers
+* debts
+* sales history
+* returns
+* settings
+
+This prevents future logic drift.
+
+==================================================
+4. IMPLEMENT LOCAL-FIRST CACHE (INDEXEDDB)
+==========================================
+
+Now that consistency is mostly fixed, focus on startup performance.
+
+For 2000+ products:
+
+* use IndexedDB (Dexie preferred)
+* persist React Query cache
+* show cached products instantly
+* background sync silently
+
+Architecture:
+
+IndexedDB cache
+↓
+instant render
+↓
+background Cloudflare sync
+↓
+merge changed products only
+
+Avoid:
+
+* full product refetches
+* rendering thousands immediately
+* blank startup loading
+
+==================================================
+EXPECTED FINAL RESULT
+=====================
+
+* stable optimistic UI
+* no stock flickering
+* no lost transfers
+* no stale KV overwrites
+* safer concurrent inventory operations
+* instant startup for 2000+ products
+* easier debugging through logs
+* reusable mutation architecture
+* scalable POS/inventory system

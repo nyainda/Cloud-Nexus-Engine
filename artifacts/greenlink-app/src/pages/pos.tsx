@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, memo, useEffect, useRef } from "react";
 import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey, customFetch } from "@workspace/api-client-react";
 import { recordMutationResult } from "@/lib/product-version-guard";
+import { logInventory, newMutationId } from "@/lib/inventory-logger";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -562,6 +563,10 @@ export default function POS() {
     const discountSnapshot = discount;
     const debtName = debtCustomerName;
     const debtPhone = debtCustomerPhone;
+    const mutationId = newMutationId();
+    const ts = () => new Date().toISOString();
+
+    logInventory({ stage: "pending_added", mutationId, source: "pos", timestamp: ts(), extra: { saleType, items: cartSnapshot.length } });
 
     // Cancel in-flight fetches BEFORE optimistic update — prevents stale refetch overwriting our state
     await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
@@ -570,7 +575,7 @@ export default function POS() {
     const productsSnapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
 
     // Optimistic: immediately deduct sold quantities from stock
-    const optimisticNow = new Date().toISOString();
+    const optimisticNow = ts();
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => {
@@ -578,6 +583,7 @@ export default function POS() {
         if (!cartItem) return p;
         const updated = { ...p, stockQty: Math.max(0, p.stockQty - cartItem.qty), updatedAt: optimisticNow };
         recordMutationResult(updated);
+        logInventory({ stage: "optimistic_applied", mutationId, source: "pos", timestamp: optimisticNow, productId: p.id, previousQty: p.stockQty, nextQty: updated.stockQty });
         return updated;
       }) };
     });
@@ -585,6 +591,8 @@ export default function POS() {
     setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setShowCartMobile(false);
     // Show confirmation immediately — don't wait for the network
     toast.success(saleType === "cash" ? "✓ Cash sale complete!" : "✓ Debt recorded!");
+
+    logInventory({ stage: "mutation_started", mutationId, source: "pos", timestamp: ts(), extra: { saleType } });
     createSale.mutate(
       {
         data: {
@@ -601,6 +609,7 @@ export default function POS() {
           // Rollback all product cache entries to pre-sale state
           productsSnapshot.forEach(([key, data]) => qc.setQueryData(key, data));
           setCart(cartSnapshot); setDiscount(discountSnapshot);
+          logInventory({ stage: "rollback_triggered", mutationId, source: "pos", timestamp: new Date().toISOString(), extra: { error: err?.message } });
           toast.error(err?.message || "Sale failed — please retry");
         },
         onSettled: () => {
@@ -608,6 +617,7 @@ export default function POS() {
           if (saleType === "debt") qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+          logInventory({ stage: "invalidate_triggered", mutationId, source: "pos", timestamp: new Date().toISOString(), extra: { pending_removed: true } });
         },
       }
     );

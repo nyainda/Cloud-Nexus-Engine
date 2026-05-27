@@ -2,8 +2,9 @@ import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions } from "@workspace/api-client-react";
+import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions, getListProductsQueryKey } from "@workspace/api-client-react";
 import { mergeWithMutationResults } from "@/lib/product-version-guard";
+import { loadCachedProducts, saveProductsToCache } from "@/lib/product-db";
 import { useEffect, useRef, useState, lazy, Suspense, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { useGetSession } from "@workspace/api-client-react";
@@ -40,11 +41,16 @@ const queryClient = new QueryClient({
   },
 });
 
-// ── Version guard ─────────────────────────────────────────────────────────────
-// Subscribe to every successful products-list fetch. If the server returned a
-// product whose updatedAt is older than what we recorded from a recent mutation
-// (i.e. we got a stale KV hit), silently replace it with our mutation-confirmed
-// version so the UI never flickers back to an old value.
+// ── Version guard + IndexedDB write-through ────────────────────────────────────
+// Subscribe to every successful products-list fetch.
+//
+// Two things happen on every successful /api/products response:
+//   1. Version guard: if the server returned a product whose updatedAt is older
+//      than a recent local mutation result (stale KV hit), silently replace it
+//      with the mutation-confirmed version so the UI never flickers.
+//   2. IndexedDB write-through: persist the (possibly merged) product list to
+//      Dexie so the next app startup can render products instantly before the
+//      network response arrives.
 //
 // Guard flag prevents the setQueryData call below from triggering an infinite loop:
 //   fetch success → setQueryData(merged) → 'setData' action → subscribe → guard returns early
@@ -58,11 +64,23 @@ queryClient.getQueryCache().subscribe((event) => {
   const key = event.query.queryKey;
   if (!Array.isArray(key) || key[0] !== "/api/products") return;
 
+  // 1. Version guard merge
   const merged = mergeWithMutationResults(action.data);
   if (merged !== action.data) {
     _applyingVersionGuard = true;
     queryClient.setQueryData(key, merged);
     _applyingVersionGuard = false;
+  }
+
+  // 2. Write-through to IndexedDB — use the merged data (authoritative)
+  const finalData = merged !== action.data ? merged : action.data;
+  const products: any[] | undefined = finalData?.products;
+  if (products && products.length > 0) {
+    const shopId: string | undefined = products[0]?.shopId;
+    if (shopId) {
+      // Fire-and-forget — IndexedDB write is non-blocking
+      saveProductsToCache(shopId, products).catch(() => {});
+    }
   }
 });
 
@@ -159,11 +177,23 @@ function AuthGuard({ children }: { children: ReactNode }) {
       } else {
         setCachedSession(session);
         setReady(true);
-        // Pre-warm the product cache so POS loads instantly on first click
+        // Seed React Query cache from IndexedDB BEFORE the network prefetch.
+        // This makes products render immediately on revisit (~0 ms) rather
+        // than waiting for the Cloudflare Worker response (~200-400 ms).
+        // The subsequent prefetchQuery runs in the background and overwrites
+        // the cache with fresh data; the QueryCache subscriber then persists
+        // the fresh data back to IndexedDB (write-through).
         if (!prefetchedRef.current && session.shopId) {
           prefetchedRef.current = true;
           const opts = getListProductsQueryOptions({ shopId: session.shopId, limit: 3000 });
-          qc.prefetchQuery(opts);
+          loadCachedProducts(session.shopId).then((cached) => {
+            if (cached.length > 0 && !qc.getQueryData(opts.queryKey)) {
+              qc.setQueryData(opts.queryKey, { products: cached });
+            }
+            qc.prefetchQuery(opts);
+          }).catch(() => {
+            qc.prefetchQuery(opts);
+          });
         }
       }
     }

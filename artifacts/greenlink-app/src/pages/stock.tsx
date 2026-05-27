@@ -6,6 +6,7 @@ import {
   getListInventoryMovementsQueryKey, customFetch
 } from "@workspace/api-client-react";
 import { recordMutationResult } from "@/lib/product-version-guard";
+import { logInventory, newMutationId } from "@/lib/inventory-logger";
 import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -532,6 +533,9 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
     // Capture qty/notes from this render's closure BEFORE any state resets below
     const transferQty = qty;
     const transferNotes = notes;
+    const mutationId = newMutationId();
+
+    logInventory({ stage: "pending_added", mutationId, source: "stock/transfer", timestamp: new Date().toISOString(), productId: product.id, previousQty: product.stockQty, nextQty: Math.max(0, product.stockQty - transferQty), extra: { qty: transferQty, target: targetShopId } });
 
     setIsPending(true);
 
@@ -552,6 +556,7 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
         ),
       };
     });
+    logInventory({ stage: "optimistic_applied", mutationId, source: "stock/transfer", timestamp: new Date().toISOString(), productId: product.id, previousQty: product.stockQty, nextQty: Math.max(0, product.stockQty - transferQty) });
 
     // Close the dialog immediately — the optimistic update is already visible.
     // Reset state for the next open.
@@ -590,6 +595,7 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
         // Register source product with version guard so any concurrent background
         // refetch that returns a stale KV response gets silently rejected.
         recordMutationResult({ ...product, stockQty: result.sourceQtyAfter, updatedAt: now });
+        logInventory({ stage: "mutation_success", mutationId, source: "stock/transfer", timestamp: now, productId: product.id, previousQty: product.stockQty, nextQty: result.sourceQtyAfter, extra: { targetProductId: result.targetProductId, targetQtyAfter: result.targetQtyAfter } });
 
         // Also update the target shop's cache if it's already loaded in memory
         // (e.g. if the user recently visited the other shop's stock page).
@@ -938,6 +944,9 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
     setSaving(true);
     let ok = 0; let fail = 0;
     const newSaved = new Set(savedIds);
+    const batchId = newMutationId();
+
+    logInventory({ stage: "mutation_started", mutationId: batchId, source: "stock/restock", timestamp: new Date().toISOString(), extra: { count: changedEntries.length } });
 
     // Cancel any in-flight product fetches so they don't overwrite cache updates mid-batch
     await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
@@ -950,28 +959,31 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
     for (const [productId, qtyStr] of changedEntries) {
       const qty = Number(qtyStr);
       if (!qty || qty <= 0) continue;
+      const mutId = newMutationId();
       try {
+        const prevQty = (qc.getQueryData<any>(getListProductsQueryKey())?.products as any[] | undefined)?.find((p: any) => p.id === productId)?.stockQty ?? 0;
         const result = await customFetch<any>(`/api/products/${productId}/restock`, {
           method: "POST",
           body: JSON.stringify({ qty }),
         });
         // Register with version guard before updating the cache
         recordMutationResult(result);
+        const nextQty = result.stockQty ?? prevQty + qty;
         // Update cache with server-confirmed value (not guessed)
         qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
           if (!old?.products) return old;
           return {
             ...old,
             products: old.products.map((p: any) =>
-              p.id === productId
-                ? { ...p, stockQty: result.stockQty ?? p.stockQty + qty }
-                : p
+              p.id === productId ? { ...p, stockQty: nextQty } : p
             ),
           };
         });
+        logInventory({ stage: "mutation_success", mutationId: mutId, source: "stock/restock", timestamp: new Date().toISOString(), productId, previousQty: prevQty, nextQty });
         newSaved.add(productId);
         ok++;
-      } catch {
+      } catch (e: any) {
+        logInventory({ stage: "mutation_error", mutationId: mutId, source: "stock/restock", timestamp: new Date().toISOString(), productId, extra: { error: e?.message } });
         fail++;
       }
     }
