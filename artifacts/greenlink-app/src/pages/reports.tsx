@@ -1,5 +1,10 @@
 import { useState, useMemo } from "react";
-import { useGetDashboard, useGetReportRange, useGetTopProducts, useListProducts } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  useGetDashboard, useGetReportRange, useGetTopProducts,
+  useGetCategoryBreakdown, useGetHourlySales,
+  useListProducts,
+} from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -7,11 +12,13 @@ import { formatKES } from "@/lib/format";
 import {
   TrendingUp, ShoppingBag, CreditCard, AlertTriangle,
   Package, TrendingDown, Percent, BarChart2, Trophy, Flame,
+  Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
 } from "lucide-react";
-import { format, startOfWeek, startOfMonth } from "date-fns";
+import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer,
+  AreaChart, Area, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Cell,
 } from "recharts";
 import { cn } from "@/lib/utils";
 
@@ -31,17 +38,45 @@ function getDateRange(range: QuickRange): { from: string; to: string } {
   return { from: format(startOfMonth(today), "yyyy-MM-dd"), to };
 }
 
+function getPrevDateRange(from: string, to: string): { from: string; to: string } {
+  const f = new Date(from + "T12:00:00");
+  const t = new Date(to + "T12:00:00");
+  const days = Math.round((t.getTime() - f.getTime()) / 86400000) + 1;
+  const prevTo = subDays(f, 1);
+  const prevFrom = subDays(prevTo, days - 1);
+  return { from: format(prevFrom, "yyyy-MM-dd"), to: format(prevTo, "yyyy-MM-dd") };
+}
+
 const STALE = 60_000;
 const GC = 5 * 60_000;
 
-function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading }: {
-  label: string; value?: string; sub?: string; icon: React.ElementType; accentClass: string; isLoading?: boolean;
+const CATEGORY_COLORS = [
+  "#C8FF00", "#22c55e", "#3b82f6", "#f59e0b", "#ec4899",
+  "#8b5cf6", "#06b6d4", "#f97316", "#6366f1", "#14b8a6",
+];
+
+function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, changePct }: {
+  label: string; value?: string; sub?: string; icon: React.ElementType;
+  accentClass: string; isLoading?: boolean; changePct?: number | null;
 }) {
   return (
     <Card className="shadow-none">
       <CardContent className="p-4">
-        <div className={cn("w-8 h-8 rounded-lg border flex items-center justify-center mb-3", accentClass)}>
-          <Icon className="h-4 w-4" />
+        <div className="flex items-start justify-between mb-3">
+          <div className={cn("w-8 h-8 rounded-lg border flex items-center justify-center", accentClass)}>
+            <Icon className="h-4 w-4" />
+          </div>
+          {changePct != null && (
+            <span className={cn(
+              "flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full",
+              changePct > 0 ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+              : changePct < 0 ? "bg-destructive/10 text-destructive"
+              : "bg-muted text-muted-foreground"
+            )}>
+              {changePct > 0 ? <ArrowUp className="h-2.5 w-2.5" /> : changePct < 0 ? <ArrowDown className="h-2.5 w-2.5" /> : <Minus className="h-2.5 w-2.5" />}
+              {Math.abs(changePct).toFixed(1)}%
+            </span>
+          )}
         </div>
         <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1">{label}</p>
         {isLoading
@@ -68,6 +103,10 @@ export default function Reports() {
     ? { from: customFrom, to: customTo }
     : getDateRange(quickRange);
 
+  const isToday = dateRange.from === today && dateRange.to === today;
+
+  const prevRange = useMemo(() => getPrevDateRange(dateRange.from, dateRange.to), [dateRange.from, dateRange.to]);
+
   const { data: dashboard, isLoading: dashLoading } = useGetDashboard(
     { shopId, date: today },
     { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
@@ -78,9 +117,24 @@ export default function Reports() {
     { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
   );
 
+  const { data: prevReport } = useGetReportRange(
+    { shopId, from: prevRange.from, to: prevRange.to },
+    { query: { enabled: !!shopId, staleTime: STALE * 10, gcTime: GC } }
+  );
+
   const { data: topProducts, isLoading: topLoading } = useGetTopProducts(
     { shopId, from: dateRange.from, to: dateRange.to, limit: 10 },
     { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+  );
+
+  const { data: categoryData, isLoading: catLoading } = useGetCategoryBreakdown(
+    { shopId, from: dateRange.from, to: dateRange.to },
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+  );
+
+  const { data: hourlyData } = useGetHourlySales(
+    { shopId, date: today },
+    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC } }
   );
 
   const { data: productsData } = useListProducts(
@@ -104,6 +158,17 @@ export default function Reports() {
       .slice(0, 10);
   }, [productsData]);
 
+  const inventoryValue = useMemo(() => {
+    return (productsData?.products ?? []).reduce(
+      (s, p) => s + (p.stockQty ?? 0) * (p.purchasePrice ?? 0), 0
+    );
+  }, [productsData]);
+
+  const activeProductCount = useMemo(
+    () => (productsData?.products ?? []).filter(p => p.isActive && (p.stockQty ?? 0) > 0).length,
+    [productsData]
+  );
+
   const stats = reportRange ?? dashboard;
   const statsLoading = !stats && (rangeLoading || dashLoading);
   const revenue = stats?.totalRevenue ?? 0;
@@ -113,6 +178,24 @@ export default function Reports() {
   const avgTxValue = salesCount > 0 ? revenue / salesCount : 0;
   const debtSales = (reportRange as any)?.debtSales ?? dashboard?.debtSales ?? 0;
   const debtRatio = revenue > 0 ? (debtSales / revenue * 100) : 0;
+
+  const revChangePct = prevReport?.totalRevenue && prevReport.totalRevenue > 0
+    ? ((revenue - prevReport.totalRevenue) / prevReport.totalRevenue) * 100 : null;
+  const profitChangePct = prevReport?.totalProfit && prevReport.totalProfit > 0
+    ? ((profit - prevReport.totalProfit) / prevReport.totalProfit) * 100 : null;
+
+  const hourlyChartData = useMemo(() => {
+    if (!hourlyData) return [];
+    return (hourlyData as any[]).filter(h => h.hour >= 6 && h.hour <= 21).map(h => ({
+      ...h,
+      label: h.hour < 12 ? `${h.hour}am` : h.hour === 12 ? "12pm" : `${h.hour - 12}pm`,
+    }));
+  }, [hourlyData]);
+
+  const peakHour = useMemo(() => {
+    if (!hourlyData) return null;
+    return (hourlyData as any[]).reduce((best, h) => h.salesCount > (best?.salesCount ?? 0) ? h : best, null as any);
+  }, [hourlyData]);
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -164,7 +247,8 @@ export default function Reports() {
       </div>
 
       <div className="p-4 space-y-4 pb-8">
-        {/* KPI Grid — shown immediately, individual skeletons while loading */}
+
+        {/* KPI Grid */}
         <div className="grid grid-cols-2 gap-3">
           <KpiCard
             label="Revenue"
@@ -173,6 +257,7 @@ export default function Reports() {
             icon={TrendingUp}
             accentClass="border-primary/30 bg-primary/5 text-primary"
             isLoading={statsLoading}
+            changePct={revChangePct}
           />
           <KpiCard
             label="Gross Profit"
@@ -181,6 +266,7 @@ export default function Reports() {
             icon={BarChart2}
             accentClass="border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400"
             isLoading={statsLoading}
+            changePct={profitChangePct}
           />
           <KpiCard
             label="Avg Sale"
@@ -200,7 +286,31 @@ export default function Reports() {
           />
         </div>
 
-        {/* Outstanding debts — shown as soon as dashboard loads */}
+        {/* Inventory Value — full-width */}
+        <Card className="shadow-none">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950 text-violet-600 dark:text-violet-400 flex items-center justify-center">
+                  <Database className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Stock Value</p>
+                  {!productsData
+                    ? <Skeleton className="h-7 w-28 mt-1" />
+                    : <p className="text-xl font-bold font-mono">{formatKES(inventoryValue)}</p>}
+                  <p className="text-xs text-muted-foreground mt-0.5">{activeProductCount} products with stock</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">Capital Tied Up</p>
+                <p className="text-xs text-muted-foreground mt-0.5">purchase prices</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Outstanding debts */}
         {dashboard?.pendingDebtsTotal != null && dashboard.pendingDebtsTotal > 0 && (
           <Card className="shadow-none border-destructive/40">
             <CardContent className="p-4 flex items-center justify-between">
@@ -216,7 +326,7 @@ export default function Reports() {
           </Card>
         )}
 
-        {/* Inventory health — shown as soon as dashboard loads */}
+        {/* Inventory health */}
         <div className="grid grid-cols-2 gap-3">
           <Card className="shadow-none border-destructive/40">
             <CardContent className="p-4">
@@ -227,7 +337,7 @@ export default function Reports() {
               {dashLoading
                 ? <Skeleton className="h-9 w-12 mt-1" />
                 : <p className="text-3xl font-bold text-destructive font-mono">{dashboard?.outOfStockCount ?? 0}</p>}
-              <p className="text-xs text-muted-foreground mt-1">products need restocking</p>
+              <p className="text-xs text-muted-foreground mt-1">need restocking</p>
             </CardContent>
           </Card>
           <Card className="shadow-none border-orange-300 dark:border-orange-800">
@@ -244,7 +354,7 @@ export default function Reports() {
           </Card>
         </div>
 
-        {/* Revenue + Profit Chart — shown when reportRange loads */}
+        {/* Revenue + Profit Chart */}
         <Card className="shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
             <div className="flex items-center justify-between">
@@ -308,7 +418,60 @@ export default function Reports() {
           </CardContent>
         </Card>
 
-        {/* Top Selling Products — shown when topProducts loads */}
+        {/* Hourly Activity — today only */}
+        {isToday && (
+          <Card className="shadow-none">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+                  <Clock className="h-4 w-4 text-blue-500" />
+                  Hourly Activity
+                </CardTitle>
+                {peakHour && peakHour.salesCount > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    Peak: <span className="font-semibold text-foreground">{peakHour.hour < 12 ? `${peakHour.hour}am` : peakHour.hour === 12 ? "12pm" : `${peakHour.hour - 12}pm`}</span>
+                  </span>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="px-2 pb-4">
+              {!hourlyData ? (
+                <Skeleton className="h-32 w-full rounded-xl mx-2" />
+              ) : hourlyChartData.every(h => h.salesCount === 0) ? (
+                <div className="h-32 flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <Clock className="h-6 w-6 mx-auto opacity-20 mb-2" />
+                    <p className="text-xs">No sales recorded today yet</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-32">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hourlyChartData} margin={{ top: 4, right: 8, left: -28, bottom: 0 }} barSize={12}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                      <XAxis dataKey="label" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip
+                        formatter={(v: number) => [v, "Sales"]}
+                        contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
+                      />
+                      <Bar dataKey="salesCount" radius={[3, 3, 0, 0]}>
+                        {hourlyChartData.map((entry, idx) => (
+                          <Cell
+                            key={idx}
+                            fill={entry.hour === peakHour?.hour ? "#C8FF00" : "hsl(var(--muted))"}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Top Selling Products */}
         <Card className="shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-bold flex items-center gap-1.5">
@@ -375,16 +538,79 @@ export default function Reports() {
             )}
           </CardContent>
         </Card>
-        {/* Low Margin Products */}
+
+        {/* Category Breakdown */}
+        <Card className="shadow-none">
+          <CardHeader className="pb-2 pt-4 px-4">
+            <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+              <Layers className="h-4 w-4 text-violet-500" />
+              Category Breakdown
+              <span className="text-xs font-normal text-muted-foreground ml-1">
+                {dateRange.from === dateRange.to ? "Today" : `${dateRange.from} – ${dateRange.to}`}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {catLoading ? (
+              <div className="px-4 pb-4 pt-1 space-y-3">
+                {[1,2,3,4].map(i => (
+                  <div key={i} className="flex items-center gap-3">
+                    <Skeleton className="w-2.5 h-2.5 rounded-full shrink-0" />
+                    <div className="flex-1 space-y-1">
+                      <Skeleton className="h-3.5 w-1/2" />
+                      <Skeleton className="h-1.5 w-full rounded-full" />
+                    </div>
+                    <Skeleton className="h-4 w-16 shrink-0" />
+                  </div>
+                ))}
+              </div>
+            ) : !categoryData || categoryData.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-muted-foreground gap-2">
+                <Layers className="h-7 w-7 opacity-20" />
+                <p className="text-xs">No category data for this period</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {(categoryData as any[]).map((cat, i) => {
+                  const maxRev = (categoryData as any[])[0]?.totalRevenue || 1;
+                  const pct = Math.max(4, (cat.totalRevenue / maxRev) * 100);
+                  const color = CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+                  const totalRev = (categoryData as any[]).reduce((s, c) => s + c.totalRevenue, 0);
+                  const share = totalRev > 0 ? (cat.totalRevenue / totalRev * 100) : 0;
+                  return (
+                    <div key={cat.category} className="flex items-center gap-3 px-4 py-3">
+                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-sm font-semibold truncate">{cat.category}</p>
+                          <span className="text-xs text-muted-foreground ml-2 shrink-0">{share.toFixed(0)}%</span>
+                        </div>
+                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 ml-2">
+                        <p className="font-bold text-sm font-mono">{formatKES(cat.totalRevenue)}</p>
+                        {cat.totalProfit > 0 && (
+                          <p className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">+{formatKES(cat.totalProfit)}</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Low Margin Alert */}
         {lowMarginProducts.length > 0 && (
           <Card className="shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
                 <Flame className="h-4 w-4 text-orange-500" />
                 Low Margin Alert
-                <span className="text-xs font-normal text-muted-foreground ml-1">
-                  Bottom 10 by profit margin
-                </span>
+                <span className="text-xs font-normal text-muted-foreground ml-1">Bottom 10 by profit margin</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">

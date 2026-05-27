@@ -4,7 +4,7 @@ import {
   ShoppingCart, Package, Users, Bell, BarChart3,
   ScanLine, Settings, Leaf, LogOut, LayoutDashboard, Receipt,
   Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
-  MoreHorizontal, X, Truck
+  MoreHorizontal, X, Truck, ArrowLeftRight,
 } from "lucide-react";
 import { useListNotifications, useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -171,6 +171,7 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
             </div>
             <div className="p-3 grid grid-cols-2 gap-2">
               <MoreSheetItem href="/returns" icon={RotateCcw} label="Process Return" />
+              <MoreSheetItem href="/transfers" icon={ArrowLeftRight} label="Transfers" />
               {isOwner && (
                 <>
                   <MoreSheetItem href="/reports" icon={BarChart3} label="Analytics" />
@@ -315,6 +316,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
           <SidebarNavItem href="/sales-history" icon={Receipt} label="Sales History" collapsed={collapsed} />
           <SidebarNavItem href="/returns" icon={RotateCcw} label="Process Return" collapsed={collapsed} />
+          <SidebarNavItem href="/transfers" icon={ArrowLeftRight} label="Transfers" collapsed={collapsed} />
 
           {isOwner && (
             <>

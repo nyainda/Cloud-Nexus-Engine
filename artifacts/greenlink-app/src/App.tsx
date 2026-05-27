@@ -24,6 +24,7 @@ const Settings = lazy(() => import("@/pages/settings"));
 const OwnerDashboard = lazy(() => import("@/pages/owner-dashboard"));
 const SalesHistory = lazy(() => import("@/pages/sales-history"));
 const Returns = lazy(() => import("@/pages/returns"));
+const Transfers = lazy(() => import("@/pages/transfers"));
 const InvoiceHistory = lazy(() => import("@/pages/invoice-history"));
 const SupplierDetail = lazy(() => import("@/pages/supplier-detail"));
 const NotFound = lazy(() => import("@/pages/not-found"));
@@ -225,6 +226,7 @@ function AppRoutes() {
                 <Route path="/owner-dashboard" component={OwnerDashboard} />
                 <Route path="/sales-history" component={SalesHistory} />
                 <Route path="/returns" component={Returns} />
+                <Route path="/transfers" component={Transfers} />
                 <Route path="/invoices" component={InvoiceHistory} />
                 <Route path="/suppliers/:supplierId" component={SupplierDetail} />
                 <Route component={NotFound} />
