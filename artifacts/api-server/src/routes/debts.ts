@@ -206,4 +206,25 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   return c.json(payment!, 201);
 });
 
+debtsRouter.delete("/debts/:debtId", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("session");
+  const debtId = c.req.param("debtId");
+
+  const debt = await db.select().from(debts).where(eq(debts.id, debtId)).get();
+  if (!debt) return c.json({ error: "Not found" }, 404);
+  if (debt.shopId !== session.shopId) return c.json({ error: "Forbidden" }, 403);
+
+  // Delete associated notifications first
+  await db.delete(notifications).where(eq(notifications.debtId, debtId));
+
+  // Delete debt — cascade rule handles debt_payments rows
+  await db.delete(debts).where(eq(debts.id, debtId));
+
+  const today = new Date().toISOString().slice(0, 10);
+  await kvDel(c.env.SESSIONS, CK.debts(debt.shopId), CK.dashboard(debt.shopId, today));
+
+  return c.json({ ok: true });
+});
+
 export default debtsRouter;

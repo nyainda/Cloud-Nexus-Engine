@@ -3,7 +3,7 @@ import { eq, and, gte, lte, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
-import { sales, saleItems, products, debts, notifications } from "@workspace/db/schema";
+import { sales, saleItems, products, debts, debtPayments, notifications } from "@workspace/db/schema";
 import { kvGet, kvSet, CK, CACHE_TTL } from "../lib/cache";
 
 const reportsRouter = new Hono<AppEnv>();
@@ -22,8 +22,8 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
 
-  // All 5 D1 reads are independent — fire them in parallel to cut CPU time ~4×
-  const [daySales, allProducts, pendingDebts, unreadNotifications, itemsSold] = await Promise.all([
+  // All 6 D1 reads are independent — fire them in parallel to cut CPU time ~5×
+  const [daySales, allProducts, pendingDebts, unreadNotifications, itemsSold, cashCollectedRow] = await Promise.all([
     db.select().from(sales).where(
       and(
         shopId ? eq(sales.shopId, shopId) : undefined,
@@ -42,6 +42,9 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     db.select().from(saleItems).where(
       sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${startOfDay} AND created_at <= ${endOfDay}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
     ).all(),
+    db.select({ total: sql<number>`COALESCE(SUM(amount), 0)` }).from(debtPayments).where(
+      sql`paid_at >= ${startOfDay} AND paid_at <= ${endOfDay}${shopId ? sql` AND debt_id IN (SELECT id FROM debts WHERE shop_id = ${shopId})` : sql``}`,
+    ).get(),
   ]);
 
   const totalRevenue = daySales.reduce((s, sale) => s + sale.totalAmount, 0);
@@ -76,6 +79,8 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     .sort((a, b) => b.totalRevenue - a.totalRevenue)
     .slice(0, 5);
 
+  const cashCollectedToday = cashCollectedRow?.total ?? 0;
+
   const dashPayload = {
     date,
     shopId,
@@ -86,6 +91,7 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     marginPct: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
     cashSales,
     debtSales,
+    cashCollectedToday,
     topProducts,
     lowStockCount,
     outOfStockCount,
@@ -107,22 +113,26 @@ reportsRouter.get("/reports/range", requireAuth, async (c) => {
   const fromTs = `${from}T00:00:00.000Z`;
   const toTs = `${to}T23:59:59.999Z`;
 
-  const rangeSales = await db
-    .select()
-    .from(sales)
-    .where(
+  const [rangeSales, cashCollectedRow] = await Promise.all([
+    db.select().from(sales).where(
       and(
         shopId ? eq(sales.shopId, shopId) : undefined,
         eq(sales.isDeleted, false),
         gte(sales.createdAt, fromTs),
         lte(sales.createdAt, toTs),
       ),
-    )
-    .all();
+    ).all(),
+    db.select({ total: sql<number>`COALESCE(SUM(amount), 0)` }).from(debtPayments).where(
+      sql`paid_at >= ${fromTs} AND paid_at <= ${toTs}${shopId ? sql` AND debt_id IN (SELECT id FROM debts WHERE shop_id = ${shopId})` : sql``}`,
+    ).get(),
+  ]);
 
   const totalRevenue = rangeSales.reduce((s, sale) => s + sale.totalAmount, 0);
   const totalCost = rangeSales.reduce((s, sale) => s + (sale.totalCost ?? 0), 0);
   const totalProfit = rangeSales.reduce((s, sale) => s + (sale.totalProfit ?? 0), 0);
+  const cashSales = rangeSales.filter((s) => s.saleType === "cash").reduce((sum, s) => sum + s.totalAmount, 0);
+  const debtSales = rangeSales.filter((s) => s.saleType === "debt").reduce((sum, s) => sum + s.totalAmount, 0);
+  const cashCollected = cashCollectedRow?.total ?? 0;
 
   const dailyMap = new Map<string, { date: string; revenue: number; profit: number; salesCount: number }>();
   for (const sale of rangeSales) {
@@ -146,6 +156,9 @@ reportsRouter.get("/reports/range", requireAuth, async (c) => {
     totalCost,
     salesCount: rangeSales.length,
     marginPct: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
+    cashSales,
+    debtSales,
+    cashCollected,
     dailyBreakdown: Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date)),
   });
 });

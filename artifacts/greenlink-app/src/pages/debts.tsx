@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey } from "@workspace/api-client-react";
+import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey, customFetch } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { formatKES } from "@/lib/format";
 import {
   Search, Users, Phone, CalendarClock, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
-  ChevronDown, ChevronUp, Banknote, User2
+  ChevronDown, ChevronUp, Banknote, User2, Trash2
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -32,7 +32,6 @@ function PaymentDialog({ debt }: { debt: any }) {
 
   const handlePayment = async () => {
     const paid = Number(amount);
-    // Use the exact key the list is stored under — includes shopId param
     const exactKey = getListDebtsQueryKey({ shopId });
     await qc.cancelQueries({ queryKey: exactKey });
     const snapshot = qc.getQueryData(exactKey);
@@ -75,7 +74,6 @@ function PaymentDialog({ debt }: { debt: any }) {
           <DialogTitle>Record Payment</DialogTitle>
         </DialogHeader>
 
-        {/* Customer card */}
         <div className="bg-muted/40 rounded-xl p-4 border border-border space-y-3">
           <div className="flex items-center gap-3">
             <div className={cn(
@@ -94,7 +92,6 @@ function PaymentDialog({ debt }: { debt: any }) {
             </div>
           </div>
 
-          {/* Progress */}
           <div>
             <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
               <span>Paid {paidPct}%</span>
@@ -112,7 +109,6 @@ function PaymentDialog({ debt }: { debt: any }) {
           </div>
         </div>
 
-        {/* Amount input */}
         <div className="space-y-3">
           <Label className="text-xs uppercase tracking-wider font-bold">Payment Amount (KES)</Label>
           <Input
@@ -124,7 +120,6 @@ function PaymentDialog({ debt }: { debt: any }) {
             max={debt.balance}
             autoFocus
           />
-          {/* Quick amount buttons */}
           <div className="grid grid-cols-3 gap-2">
             {quickAmounts.map(q => (
               <Button
@@ -151,6 +146,74 @@ function PaymentDialog({ debt }: { debt: any }) {
             className="px-8"
           >
             {recordPayment.isPending ? "Processing…" : "Confirm Payment"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Delete debt dialog ────────────────────────────────────────────────────────
+function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const handleDelete = async () => {
+    setLoading(true);
+    try {
+      await customFetch(`/api/debts/${debt.id}`, { method: "DELETE" });
+      toast.success(`Debt for ${debt.customerName} deleted`);
+      setOpen(false);
+      onDeleted();
+    } catch {
+      toast.error("Failed to delete — please retry");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors"
+          title="Delete debt"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Trash2 className="h-4 w-4 text-destructive" />
+            Delete Debt Record
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-4 space-y-1">
+          <p className="text-sm font-bold text-foreground">{debt.customerName}</p>
+          {debt.customerPhone && (
+            <p className="text-xs text-muted-foreground">{debt.customerPhone}</p>
+          )}
+          <p className="text-sm font-bold font-mono text-destructive">{formatKES(debt.totalAmount)}</p>
+          <p className="text-[10px] text-muted-foreground">
+            Created {format(new Date(debt.createdAt), "d MMM yyyy")}
+          </p>
+        </div>
+
+        <p className="text-sm text-muted-foreground">
+          Use this for <span className="font-semibold text-foreground">returned goods</span> or <span className="font-semibold text-foreground">data entry mistakes</span>. This permanently removes the debt and all its payment records.
+        </p>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)} disabled={loading}>Cancel</Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={loading}
+            className="px-8"
+          >
+            {loading ? "Deleting…" : "Delete"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -252,16 +315,24 @@ type DebtTab = "unpaid" | "partial" | "overdue" | "paid" | "all";
 
 export default function Debts() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const role = localStorage.getItem("greenlink_role") || "";
+  const isOwner = role === "owner";
+
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 100);
   const [tab, setTab] = useState<DebtTab>("unpaid");
-
   const [expandedDebtId, setExpandedDebtId] = useState<string | null>(null);
+
+  const qc = useQueryClient();
 
   const { data: allDebts, isLoading } = useListDebts(
     { shopId },
     { query: { enabled: !!shopId } }
   );
+
+  const handleDeleted = () => {
+    qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
+  };
 
   const stats = useMemo(() => {
     const debts = allDebts || [];
@@ -527,6 +598,9 @@ export default function Debts() {
                               : <ChevronDown className="h-3 w-3" />
                             }
                           </button>
+                          {isOwner && (
+                            <DeleteDebtDialog debt={debt} onDeleted={handleDeleted} />
+                          )}
                           {isOverdue && (
                             <div className="flex items-center gap-1 text-xs text-red-400 font-semibold">
                               <AlertTriangle className="h-3.5 w-3.5" />

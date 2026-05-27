@@ -12,7 +12,7 @@ import {
   Zap, Cpu, AlertCircle, ChevronDown, ChevronUp,
   Package, Minus, Plus, Check, ClipboardList,
   Building2, Hash, Calendar, Banknote, ArrowRight, ImageIcon,
-  TrendingUp, TrendingDown, Equal, ShieldCheck, ArrowLeft, PlusCircle, X,
+  TrendingUp, TrendingDown, Equal, ShieldCheck, ArrowLeft, PlusCircle, X, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -101,6 +101,26 @@ async function makeThumbnail(dataUrl: string): Promise<string> {
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
+}
+
+// ─── Save image to device ─────────────────────────────────────────────────────
+async function saveImageToDevice(url: string, filename = "invoice.jpg") {
+  try {
+    // Fetch the image (works for both data-URLs and remote URLs)
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  } catch {
+    // Fallback: open in new tab so the user can long-press save on mobile
+    window.open(url, "_blank");
+  }
 }
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -739,6 +759,16 @@ export default function OCR() {
                 <div className="absolute top-3 right-3 w-5 h-5 border-t-2 border-r-2 border-primary rounded-tr" />
                 <div className="absolute bottom-3 left-3 w-5 h-5 border-b-2 border-l-2 border-primary rounded-bl" />
                 <div className="absolute bottom-3 right-3 w-5 h-5 border-b-2 border-r-2 border-primary rounded-br" />
+                {/* Save to device button */}
+                {!isProcessing && (
+                  <button
+                    className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/60 hover:bg-black/80 text-white text-[11px] font-semibold backdrop-blur-sm transition-colors"
+                    onClick={() => saveImageToDevice(image!, `invoice-${Date.now()}.jpg`)}
+                    title="Save image to device"
+                  >
+                    <Download className="h-3 w-3" />Save
+                  </button>
+                )}
               </>
             ) : (
               <div className="flex flex-col items-center gap-3 text-muted-foreground p-8">
@@ -1220,14 +1250,25 @@ export default function OCR() {
                           {meta?.invoiceNumber && ` · #${meta.invoiceNumber}`}
                         </p>
                       </div>
-                      <span className={cn(
-                        "text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0",
-                        session.status === "complete" || session.status === "applied"
-                          ? "bg-emerald-500/15 text-emerald-400"
-                          : "bg-muted text-muted-foreground",
-                      )}>
-                        {session.status === "applied" ? "Applied" : session.status}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {hasImage && (
+                          <button
+                            className="w-7 h-7 rounded-lg bg-muted/60 hover:bg-muted flex items-center justify-center transition-colors"
+                            title="Save image to device"
+                            onClick={(e) => { e.stopPropagation(); saveImageToDevice(session.imageUrl!, `invoice-${session.id.slice(0, 8)}.jpg`); }}
+                          >
+                            <Download className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
+                        )}
+                        <span className={cn(
+                          "text-[9px] font-bold px-2 py-0.5 rounded-full",
+                          session.status === "complete" || session.status === "applied"
+                            ? "bg-emerald-500/15 text-emerald-400"
+                            : "bg-muted text-muted-foreground",
+                        )}>
+                          {session.status === "applied" ? "Applied" : session.status}
+                        </span>
+                      </div>
                     </div>
                   );
                 })}

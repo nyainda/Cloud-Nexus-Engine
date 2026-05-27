@@ -178,6 +178,7 @@ export default function Reports() {
   const avgTxValue = salesCount > 0 ? revenue / salesCount : 0;
   const debtSales = (reportRange as any)?.debtSales ?? dashboard?.debtSales ?? 0;
   const debtRatio = revenue > 0 ? (debtSales / revenue * 100) : 0;
+  const cashCollected = (reportRange as any)?.cashCollected ?? (dashboard as any)?.cashCollectedToday ?? 0;
 
   const revChangePct = prevReport?.totalRevenue && prevReport.totalRevenue > 0
     ? ((revenue - prevReport.totalRevenue) / prevReport.totalRevenue) * 100 : null;
@@ -277,9 +278,9 @@ export default function Reports() {
             isLoading={statsLoading}
           />
           <KpiCard
-            label="Debt Issued"
-            value={formatKES(debtSales)}
-            sub={`${debtRatio.toFixed(1)}% of revenue`}
+            label="Cash Collected"
+            value={formatKES(cashCollected)}
+            sub={debtSales > 0 ? `${formatKES(debtSales)} issued on credit` : "debt payments received"}
             icon={CreditCard}
             accentClass="border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950 text-orange-600 dark:text-orange-400"
             isLoading={statsLoading}
