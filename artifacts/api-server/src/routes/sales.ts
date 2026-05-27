@@ -133,10 +133,12 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     if (product) {
       const beforeQty = product.stockQty;
       const afterQty = Math.max(0, beforeQty - item.qty);
+      // Atomic decrement — MAX(0, ...) prevents going below zero even under concurrency.
+      // Never write a pre-calculated absolute value; always apply the delta atomically.
       await db
         .update(products)
         .set({
-          stockQty: afterQty,
+          stockQty: sql`MAX(0, ${products.stockQty} - ${item.qty})`,
           lastSoldAt: now,
           updatedAt: now,
         })

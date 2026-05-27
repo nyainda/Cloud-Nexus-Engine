@@ -1,0 +1,161 @@
+Remaining required fixes for inventory consistency and race condition prevention:
+
+==================================================
+
+1. REMOVE Promise.all FOR INVENTORY MUTATIONS
+   ==================================================
+
+Inventory operations must be serialized.
+
+Current issue:
+Concurrent stock updates can overwrite each other and cause lost inventory.
+
+BAD:
+await Promise.all(items.map(...))
+
+GOOD:
+for (const item of items) {
+await mutateAsync(item);
+}
+
+Consistency is more important than speed for inventory systems.
+
+==================================================
+2. BACKEND MUST USE ATOMIC STOCK OPERATIONS
+===========================================
+
+CRITICAL REQUIREMENT.
+
+Do NOT send final stock quantities from frontend.
+
+BAD:
+stockQty = 22
+
+GOOD:
+UPDATE products
+SET stockQty = stockQty - ?
+WHERE id = ?
+
+or:
+
+SET stockQty = stockQty + ?
+
+Reason:
+Prevents race conditions and lost updates when multiple requests happen simultaneously.
+
+Frontend optimistic UI alone cannot solve this.
+
+==================================================
+3. REDUCE INVALIDATIONS EVEN MORE
+=================================
+
+Current delayed invalidation is better, but still risky with eventual consistency.
+
+Preferred behavior:
+
+* use mutation response as source of truth
+* update React Query cache directly
+* avoid unnecessary invalidateQueries calls
+
+Only invalidate:
+
+* manual refresh
+* page refocus
+* periodic background sync
+* after long idle periods
+
+==================================================
+4. REMOVE HARDCODED PROPAGATION ASSUMPTIONS
+===========================================
+
+Current:
+setTimeout(..., 2000)
+
+Problem:
+Cloudflare KV propagation time is not guaranteed.
+
+Could be:
+
+* 500ms
+* 2s
+* 5s
+
+Long-term solution:
+
+* rely more on optimistic cache
+* rely less on immediate refetching
+* use timestamps/version reconciliation
+
+==================================================
+5. KEEP REACT QUERY CACHE AS PRIMARY UI STATE
+=============================================
+
+Architecture goal:
+
+React Query cache
+↓
+optimistic updates
+↓
+server persistence
+↓
+eventual KV sync
+
+Never allow stale KV responses to become the primary UI source while mutations are pending.
+
+==================================================
+6. ADD SERVER VERSIONING
+========================
+
+Each product response should contain:
+
+* updatedAt timestamp
+  OR
+* version number
+
+Frontend should reject older responses.
+
+Example:
+if (server.updatedAt < local.updatedAt) {
+ignore stale response
+}
+
+This protects against out-of-order network responses.
+
+==================================================
+7. DISABLE USER ACTIONS DURING PENDING MUTATIONS
+================================================
+
+Prevent:
+
+* double clicks
+* repeated transfers
+* concurrent deductions
+
+Example:
+disabled={mutation.isPending}
+
+Applies to:
+
+* transfers
+* checkout
+* restock
+* edits
+* deletes
+
+==================================================
+8. EXPECTED FINAL BEHAVIOR
+==========================
+
+Stock transitions should always behave like:
+
+29 -> 27
+
+NOT:
+
+29 -> 27 -> 29 -> 27
+
+Transfers must never partially apply.
+
+Concurrent updates must remain consistent.
+
+UI should feel instant while backend remains eventually consistent.

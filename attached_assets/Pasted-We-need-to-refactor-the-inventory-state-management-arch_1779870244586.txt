@@ -1,0 +1,204 @@
+We need to refactor the inventory state management architecture.
+
+Current problems:
+
+* optimistic UI flickers
+* stale cache overwrites local optimistic state
+* transfers sometimes lose quantity
+* race conditions between mutations and invalidations
+* Cloudflare KV eventual consistency causing stale reads
+* multiple concurrent updates overwriting each other
+
+Required architecture changes:
+
+==================================================
+
+1. CENTRALIZE ALL INVENTORY MUTATIONS
+   ==================================================
+
+Create a single reusable optimistic mutation helper for:
+
+* restock
+* transfer
+* edit
+* delete
+* sales deduction
+
+Do NOT duplicate mutation logic in each component.
+
+==================================================
+2. REMOVE AGGRESSIVE INVALIDATIONS
+==================================
+
+Current issue:
+invalidateQueries() runs immediately after mutation.
+
+With Cloudflare KV eventual consistency, this fetches stale data and overwrites optimistic state.
+
+Fix:
+
+* DO NOT immediately invalidate after successful mutation
+* use server mutation response as source of truth
+* delay invalidation by 2-5 seconds if needed
+
+Bad:
+qc.invalidateQueries()
+
+Better:
+setTimeout(() => {
+qc.invalidateQueries(...)
+}, 3000)
+
+==================================================
+3. USE SERVER RESPONSE AS AUTHORITATIVE STATE
+=============================================
+
+After mutation succeeds:
+
+qc.setQueriesData(...updatedServerData)
+
+instead of immediate refetch.
+
+The mutation response should contain:
+
+* stockQty
+* updatedAt
+* version
+* prices
+
+==================================================
+4. PREVENT STALE OVERWRITES
+===========================
+
+Track pending optimistic updates.
+
+While a product is pending:
+
+* ignore stale query responses
+* do not overwrite optimistic state
+
+Example:
+pendingMutations[productId] = true
+
+When mutation completes:
+pendingMutations[productId] = false
+
+==================================================
+5. BACKEND MUST USE ATOMIC OPERATIONS
+=====================================
+
+CRITICAL:
+Never calculate stock on frontend then send final quantity.
+
+BAD:
+stockQty = 22
+
+GOOD:
+UPDATE products
+SET stockQty = stockQty - qty
+WHERE id = ?
+
+or:
+
+SET stockQty = stockQty + qty
+
+This prevents lost updates during concurrent requests.
+
+==================================================
+6. ADD VERSIONING OR UPDATED TIMESTAMPS
+=======================================
+
+Each product should include:
+
+* updatedAt
+  OR
+* version number
+
+Frontend should ignore older server responses.
+
+Example:
+if (server.updatedAt < local.updatedAt) {
+ignore stale response
+}
+
+==================================================
+7. DISABLE REPEATED ACTIONS WHILE PENDING
+=========================================
+
+Prevent double clicks and concurrent actions.
+
+Example:
+disabled={mutation.isPending}
+
+Applies to:
+
+* transfer
+* restock
+* delete
+* checkout
+
+==================================================
+8. BATCH OPERATIONS MUST BE SERIALIZED
+======================================
+
+Avoid Promise.all for stock mutations.
+
+BAD:
+Promise.all(restocks)
+
+GOOD:
+for (const item of restocks) {
+await mutate(item)
+}
+
+Inventory systems require consistency over speed.
+
+==================================================
+9. REDUCE REFETCHING
+====================
+
+Increase staleTime in React Query.
+
+Example:
+staleTime: 30000
+
+Avoid unnecessary automatic refetches.
+
+==================================================
+10. CREATE SINGLE SOURCE OF TRUTH
+=================================
+
+Current issue:
+
+* local optimistic state
+* React Query cache
+* Cloudflare KV
+* database
+
+all compete simultaneously.
+
+Fix:
+
+* React Query cache becomes primary UI state
+* DB becomes persistence layer
+* KV becomes eventual read optimization only
+
+Never let stale KV overwrite optimistic cache.
+
+==================================================
+EXPECTED RESULT
+===============
+
+Inventory should behave like:
+
+29 -> 27
+
+NOT:
+
+29 -> 27 -> 29 -> 27
+
+Transfers should never lose quantities.
+
+Concurrent updates should remain consistent.
+
+UI must feel instant while remaining eventually consistent with backend.

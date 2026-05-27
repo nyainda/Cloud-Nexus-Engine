@@ -444,10 +444,13 @@ productsRouter.post("/products/:productId/restock", requireAuth, async (c) => {
     }
   }
 
+  // Atomic increment — never calculate final qty on the app server and write it.
+  // Using stockQty = stockQty + qty prevents lost updates if two restocks arrive
+  // concurrently (each adds its own delta rather than overwriting with a stale total).
   await db
     .update(products)
     .set({
-      stockQty: afterQty,
+      stockQty: sql`${products.stockQty} + ${body.qty}`,
       updatedAt: now,
       ...(body.newPurchasePrice !== undefined && { purchasePrice: body.newPurchasePrice }),
       ...(body.newSellingPrice !== undefined && { sellingPrice: body.newSellingPrice }),
@@ -627,18 +630,27 @@ productsRouter.post("/products/:productId/transfer", requireAuth, async (c) => {
       .get();
   }
 
-  const newSourceQty = sourceProduct.stockQty - body.qty;
-  const newTargetQty = (targetProduct!.stockQty ?? 0) + body.qty;
-
+  // Atomic delta operations for both legs of the transfer.
+  // Avoids the read-modify-write race: each UPDATE applies its own ±delta
+  // to whatever the DB currently holds, rather than overwriting with a
+  // pre-read value that may be stale if another request ran concurrently.
   await db
     .update(products)
-    .set({ stockQty: newSourceQty, updatedAt: now })
+    .set({ stockQty: sql`${products.stockQty} - ${body.qty}`, updatedAt: now })
     .where(eq(products.id, productId));
 
   await db
     .update(products)
-    .set({ stockQty: newTargetQty, updatedAt: now })
+    .set({ stockQty: sql`${products.stockQty} + ${body.qty}`, updatedAt: now })
     .where(eq(products.id, targetProduct!.id));
+
+  // Re-read committed quantities (used for inventory movement log and API response)
+  const [updatedSource, updatedTarget] = await Promise.all([
+    db.select({ stockQty: products.stockQty }).from(products).where(eq(products.id, productId)).get(),
+    db.select({ stockQty: products.stockQty }).from(products).where(eq(products.id, targetProduct!.id)).get(),
+  ]);
+  const newSourceQty = updatedSource?.stockQty ?? sourceProduct.stockQty - body.qty;
+  const newTargetQty = updatedTarget?.stockQty ?? (targetProduct!.stockQty ?? 0) + body.qty;
 
   // Bust KV product cache for both shops so next fetch reflects updated quantities
   await Promise.all([

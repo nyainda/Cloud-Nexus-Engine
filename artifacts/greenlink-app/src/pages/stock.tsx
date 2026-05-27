@@ -267,14 +267,27 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     // so we use mutateAsync + try/catch/finally to guarantee the cache is always reconciled.
     (async () => {
       try {
-        await updateProduct.mutateAsync({ productId: product.id, data: patch });
+        const updatedProduct = await updateProduct.mutateAsync({ productId: product.id, data: patch });
+        // Use the PATCH response as authoritative truth — merge all server-confirmed fields
+        // directly into the cache. This means zero GET requests after a write, completely
+        // eliminating the KV eventual-consistency race where a GET returns stale data.
+        qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+          if (!old?.products) return old;
+          return {
+            ...old,
+            products: old.products.map((p: any) =>
+              p.id === product.id ? { ...p, ...(updatedProduct as any) } : p
+            ),
+          };
+        });
       } catch {
         // Rollback to pre-edit state on failure
         snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
         toast.error("Failed to update product — please retry");
       } finally {
-        // Guaranteed to run: KV is now busted server-side, so this GET returns fresh DB values
-        qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+        // Only invalidate inventory movements — products are already authoritative from
+        // the server response above. Invalidating products here would fire a GET that
+        // could race against KV propagation and overwrite correct cache values.
         qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       }
     })();
@@ -859,34 +872,37 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
     // Cancel any in-flight product fetches so they don't overwrite cache updates mid-batch
     await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
 
-    await Promise.all(
-      changedEntries.map(async ([productId, qtyStr]) => {
-        const qty = Number(qtyStr);
-        if (!qty || qty <= 0) return;
-        try {
-          const result = await customFetch<any>(`/api/products/${productId}/restock`, {
-            method: "POST",
-            body: JSON.stringify({ qty }),
-          });
-          // Update cache with server-confirmed value (not guessed)
-          qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
-            if (!old?.products) return old;
-            return {
-              ...old,
-              products: old.products.map((p: any) =>
-                p.id === productId
-                  ? { ...p, stockQty: result.stockQty ?? p.stockQty + qty }
-                  : p
-              ),
-            };
-          });
-          newSaved.add(productId);
-          ok++;
-        } catch {
-          fail++;
-        }
-      })
-    );
+    // Serialized loop — inventory mutations must never run concurrently.
+    // Promise.all would fire all restocks simultaneously; if two requests arrive
+    // close together they each read a stale stockQty and the last write wins,
+    // losing the earlier delta. A sequential for-of guarantees each mutation
+    // fully commits before the next one reads the updated stock level.
+    for (const [productId, qtyStr] of changedEntries) {
+      const qty = Number(qtyStr);
+      if (!qty || qty <= 0) continue;
+      try {
+        const result = await customFetch<any>(`/api/products/${productId}/restock`, {
+          method: "POST",
+          body: JSON.stringify({ qty }),
+        });
+        // Update cache with server-confirmed value (not guessed)
+        qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+          if (!old?.products) return old;
+          return {
+            ...old,
+            products: old.products.map((p: any) =>
+              p.id === productId
+                ? { ...p, stockQty: result.stockQty ?? p.stockQty + qty }
+                : p
+            ),
+          };
+        });
+        newSaved.add(productId);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
 
     setSaving(false);
     setSavedIds(newSaved);
