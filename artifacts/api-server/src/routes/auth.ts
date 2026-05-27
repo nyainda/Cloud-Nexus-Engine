@@ -82,4 +82,36 @@ auth.post("/auth/verify-pin", async (c) => {
   return c.json({ success: true });
 });
 
+// PIN reset — verified by shop name (no auth token required)
+auth.post("/auth/reset-pin", async (c) => {
+  const body = await c.req.json<{
+    shopId: string;
+    role: "owner" | "cashier";
+    shopName: string;
+    newPin: string;
+  }>();
+
+  if (!body.shopId || !body.shopName || !body.newPin || body.newPin.length < 4) {
+    return c.json({ error: "Invalid request" }, 400);
+  }
+
+  const db = createDb(c.env.DB);
+  const shop = await db.select().from(shops).where(eq(shops.id, body.shopId)).get();
+  if (!shop) return c.json({ error: "Shop not found" }, 404);
+
+  // Verify by shop name (case-insensitive)
+  const normalise = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  if (normalise(body.shopName) !== normalise(shop.name)) {
+    return c.json({ error: "Shop name does not match. Check your spelling and try again." }, 403);
+  }
+
+  const newHash = await hashPin(body.newPin);
+  const patch = body.role === "owner"
+    ? { ownerPinHash: newHash }
+    : { cashierPinHash: newHash };
+
+  await db.update(shops).set(patch).where(eq(shops.id, body.shopId));
+  return c.json({ success: true });
+});
+
 export default auth;

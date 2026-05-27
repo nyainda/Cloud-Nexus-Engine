@@ -12,7 +12,7 @@ import {
   Zap, Cpu, AlertCircle, ChevronDown, ChevronUp,
   Package, Minus, Plus, Check, ClipboardList,
   Building2, Hash, Calendar, Banknote, ArrowRight, ImageIcon,
-  TrendingUp, TrendingDown, Equal, ShieldCheck, ArrowLeft, PlusCircle, X, Download,
+  TrendingUp, TrendingDown, Equal, ShieldCheck, ArrowLeft, PlusCircle, X, ArrowDownToLine,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -766,7 +766,7 @@ export default function OCR() {
                     onClick={() => saveImageToDevice(image!, `invoice-${Date.now()}.jpg`)}
                     title="Save image to device"
                   >
-                    <Download className="h-3 w-3" />Save
+                    <ArrowDownToLine className="h-3 w-3" />Save
                   </button>
                 )}
               </>
@@ -1257,7 +1257,7 @@ export default function OCR() {
                             title="Save image to device"
                             onClick={(e) => { e.stopPropagation(); saveImageToDevice(session.imageUrl!, `invoice-${session.id.slice(0, 8)}.jpg`); }}
                           >
-                            <Download className="h-3.5 w-3.5 text-muted-foreground" />
+                            <ArrowDownToLine className="h-3.5 w-3.5 text-muted-foreground" />
                           </button>
                         )}
                         <span className={cn(
