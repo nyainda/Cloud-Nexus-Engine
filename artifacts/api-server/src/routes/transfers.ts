@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, or, desc, and } from "drizzle-orm";
+import { eq, or, desc, and, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -75,14 +75,14 @@ transfersRouter.delete("/transfers/:id", requireAuth, async (c) => {
   if (fromProduct) {
     await db
       .update(products)
-      .set({ stockQty: (fromProduct.stockQty ?? 0) + transfer.qty, updatedAt: now })
+      .set({ stockQty: sql`${products.stockQty} + ${transfer.qty}`, updatedAt: now })
       .where(eq(products.id, fromProduct.id))
       .run();
   }
 
   await db
     .update(products)
-    .set({ stockQty: (toProduct.stockQty ?? 0) - transfer.qty, updatedAt: now })
+    .set({ stockQty: sql`MAX(0, ${products.stockQty} - ${transfer.qty})`, updatedAt: now })
     .where(eq(products.id, toProduct.id))
     .run();
 

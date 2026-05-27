@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, memo, useEffect, useRef } from "react";
 import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey, customFetch } from "@workspace/api-client-react";
+import { recordMutationResult } from "@/lib/product-version-guard";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -569,11 +570,15 @@ export default function POS() {
     const productsSnapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
 
     // Optimistic: immediately deduct sold quantities from stock
+    const optimisticNow = new Date().toISOString();
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => {
         const cartItem = cartSnapshot.find(i => i.product.id === p.id);
-        return cartItem ? { ...p, stockQty: Math.max(0, p.stockQty - cartItem.qty) } : p;
+        if (!cartItem) return p;
+        const updated = { ...p, stockQty: Math.max(0, p.stockQty - cartItem.qty), updatedAt: optimisticNow };
+        recordMutationResult(updated);
+        return updated;
       }) };
     });
 

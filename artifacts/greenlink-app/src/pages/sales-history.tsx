@@ -448,21 +448,19 @@ function VoidDialog({ saleId, open, onClose }: { saleId: string | null; open: bo
 
   const handleVoid = () => {
     if (!saleId) return;
-    // Close + confirm immediately — don't wait for the network
-    toast.success("Sale voided");
+    const voidReason = reason.trim() || "Voided by owner";
     setReason(""); onClose();
-    del.mutate(
-      { saleId, data: { reason: reason.trim() || "Voided by owner", performedBy: role } },
-      {
-        onSuccess: () => {
-          // Sale voided — restore stock and update inventory immediately
-          qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
-          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
-          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
-        },
-        onError: () => toast.error("Failed to void sale — please retry"),
+    (async () => {
+      try {
+        await del.mutateAsync({ saleId, data: { reason: voidReason, performedBy: role } });
+        toast.success("Sale voided");
+        qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
+        qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+        qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+      } catch {
+        toast.error("Failed to void sale — please retry");
       }
-    );
+    })();
   };
 
   return (

@@ -208,12 +208,15 @@ function PinRow({ shopId, roleLabel }: { shopId: string; roleLabel: "owner" | "c
     if (newPin.length < 4) { toast.error("PIN must be at least 4 digits"); return; }
     if (!match) { toast.error("PINs do not match"); return; }
     const data = roleLabel === "owner" ? { ownerPin: newPin } : { cashierPin: newPin };
-    // Close + confirm immediately
-    toast.success(`${label} PIN updated`);
     reset(); setOpen(false);
-    updateShop.mutate({ shopId, data }, {
-      onError: () => toast.error("Failed to update PIN — please retry"),
-    });
+    (async () => {
+      try {
+        await updateShop.mutateAsync({ shopId, data });
+        toast.success(`${label} PIN updated`);
+      } catch {
+        toast.error("Failed to update PIN — please retry");
+      }
+    })();
   };
 
   return (
@@ -316,16 +319,16 @@ function GeminiSection({ shopId, hasKey }: { shopId: string; hasKey: boolean }) 
 
   const handleSave = () => {
     const trimmedKey = key.trim();
-    // Close + confirm immediately
-    toast.success(trimmedKey ? "Gemini key saved — Smart Scanner active" : "Key removed");
     setOpen(false); setKey(""); setShow(false);
-    updateShop.mutate(
-      { shopId, data: { geminiApiKey: trimmedKey || null } as any },
-      {
-        onSuccess: () => { qc.invalidateQueries(); },
-        onError: () => toast.error("Failed to save API key — please retry"),
+    (async () => {
+      try {
+        await updateShop.mutateAsync({ shopId, data: { geminiApiKey: trimmedKey || null } as any });
+        toast.success(trimmedKey ? "Gemini key saved — Smart Scanner active" : "Key removed");
+        qc.invalidateQueries();
+      } catch {
+        toast.error("Failed to save API key — please retry");
       }
-    );
+    })();
   };
 
   return (
@@ -404,12 +407,16 @@ function GeminiSection({ shopId, hasKey }: { shopId: string; hasKey: boolean }) 
             {hasKey && (
               <button
                 onClick={() => {
-                  toast.success("Key removed");
                   setOpen(false);
-                  updateShop.mutate({ shopId, data: { geminiApiKey: null } as any }, {
-                    onSuccess: () => { qc.invalidateQueries(); },
-                    onError: () => toast.error("Failed to remove key — please retry"),
-                  });
+                  (async () => {
+                    try {
+                      await updateShop.mutateAsync({ shopId, data: { geminiApiKey: null } as any });
+                      toast.success("Key removed");
+                      qc.invalidateQueries();
+                    } catch {
+                      toast.error("Failed to remove key — please retry");
+                    }
+                  })();
                 }}
                 className="h-11 px-4 rounded-xl bg-destructive/10 text-destructive text-sm font-semibold hover:bg-destructive/20 transition-colors border border-destructive/20"
               >
@@ -453,17 +460,27 @@ function SupplierFormDialog({
   const handleSubmit = () => {
     if (!name.trim()) return;
     if (supplier) {
-      toast.success("Supplier updated"); setOpen(false);
-      update.mutate({ supplierId: supplier.id, data: { name, phone: phone || undefined, notes: notes || undefined } }, {
-        onSuccess: () => onSuccess(),
-        onError: () => toast.error("Failed to update supplier — please retry"),
-      });
+      setOpen(false);
+      (async () => {
+        try {
+          await update.mutateAsync({ supplierId: supplier.id, data: { name, phone: phone || undefined, notes: notes || undefined } });
+          toast.success("Supplier updated");
+          onSuccess();
+        } catch {
+          toast.error("Failed to update supplier — please retry");
+        }
+      })();
     } else {
-      toast.success("Supplier added"); setOpen(false); reset();
-      create.mutate({ data: { shopId, name, phone: phone || undefined, notes: notes || undefined } }, {
-        onSuccess: () => onSuccess(),
-        onError: () => toast.error("Failed to add supplier — please retry"),
-      });
+      setOpen(false); reset();
+      (async () => {
+        try {
+          await create.mutateAsync({ data: { shopId, name, phone: phone || undefined, notes: notes || undefined } });
+          toast.success("Supplier added");
+          onSuccess();
+        } catch {
+          toast.error("Failed to add supplier — please retry");
+        }
+      })();
     }
   };
 
@@ -643,11 +660,9 @@ export default function Settings() {
                     <EditableField
                       label="Shop Name"
                       value={shop?.name || ""}
-                      onSave={(v) => {
+                      onSave={async (v) => {
+                        await updateShop.mutateAsync({ shopId, data: { name: v } });
                         toast.success("Name updated");
-                        return new Promise<void>((_, rej) => {
-                          updateShop.mutate({ shopId, data: { name: v } }, { onError: rej });
-                        });
                       }}
                     />
                     <div className="border-t border-border/30" />
@@ -841,7 +856,7 @@ export default function Settings() {
                           }
                         />
                         <button
-                          onClick={() => { if (confirm(`Remove ${s.name}?`)) { toast.success("Supplier removed"); deleteSupplier.mutate({ supplierId: s.id }); } }}
+                          onClick={() => { if (confirm(`Remove ${s.name}?`)) { deleteSupplier.mutate({ supplierId: s.id }, { onSuccess: () => toast.success("Supplier removed"), onError: () => toast.error("Failed to remove supplier — please retry") }); } }}
                           className="w-8 h-8 rounded-lg bg-muted hover:bg-destructive/15 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

@@ -844,9 +844,13 @@ function TransferHistory({ shopId, isOwner }: { shopId: string; isOwner: boolean
                   <AlertDialogFooter>
                     <AlertDialogCancel>Keep</AlertDialogCancel>
                     <AlertDialogAction onClick={() => {
-                      toast.success("Transfer cancelled & stock restored");
                       cancelTransfer.mutate(t.id, {
-                        onSuccess: () => { refetch(); qc.invalidateQueries({ queryKey: getListProductsQueryKey() }); qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() }); },
+                        onSuccess: () => {
+                          toast.success("Transfer cancelled & stock restored");
+                          refetch();
+                          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+                          qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+                        },
                       });
                     }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                       Cancel Transfer

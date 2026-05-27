@@ -45,15 +45,16 @@ function PaymentDialog({ debt }: { debt: any }) {
       });
     });
     setOpen(false); setAmount("");
-    // Confirm immediately — don't wait for the network
-    toast.success("Payment recorded!");
-    recordPayment.mutate(
-      { debtId: debt.id, data: { amount: paid, recordedBy: userName } },
-      {
-        onError: () => { qc.setQueryData(exactKey, snapshot); toast.error("Failed to record payment — please retry"); },
-        onSettled: () => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() }),
+    (async () => {
+      try {
+        await recordPayment.mutateAsync({ debtId: debt.id, data: { amount: paid, recordedBy: userName } });
+        toast.success("Payment recorded!");
+        qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
+      } catch {
+        qc.setQueryData(exactKey, snapshot);
+        toast.error("Failed to record payment — please retry");
       }
-    );
+    })();
   };
 
   const quickAmounts = [
