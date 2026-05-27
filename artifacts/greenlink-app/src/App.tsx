@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions } from "@workspace/api-client-react";
+import { mergeWithMutationResults } from "@/lib/product-version-guard";
 import { useEffect, useRef, useState, lazy, Suspense, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { useGetSession } from "@workspace/api-client-react";
@@ -37,6 +38,32 @@ const queryClient = new QueryClient({
       gcTime: 30 * 60_000,          // 30 min in memory
     },
   },
+});
+
+// ── Version guard ─────────────────────────────────────────────────────────────
+// Subscribe to every successful products-list fetch. If the server returned a
+// product whose updatedAt is older than what we recorded from a recent mutation
+// (i.e. we got a stale KV hit), silently replace it with our mutation-confirmed
+// version so the UI never flickers back to an old value.
+//
+// Guard flag prevents the setQueryData call below from triggering an infinite loop:
+//   fetch success → setQueryData(merged) → 'setData' action → subscribe → guard returns early
+let _applyingVersionGuard = false;
+queryClient.getQueryCache().subscribe((event) => {
+  if (_applyingVersionGuard) return;
+  if (event.type !== "updated") return;
+  const action = (event as any).action;
+  if (action?.type !== "success") return;
+
+  const key = event.query.queryKey;
+  if (!Array.isArray(key) || key[0] !== "/api/products") return;
+
+  const merged = mergeWithMutationResults(action.data);
+  if (merged !== action.data) {
+    _applyingVersionGuard = true;
+    queryClient.setQueryData(key, merged);
+    _applyingVersionGuard = false;
+  }
 });
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? null;

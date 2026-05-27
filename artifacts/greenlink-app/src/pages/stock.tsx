@@ -5,6 +5,7 @@ import {
   useDeleteProduct, useBulkImportProducts, getListProductsQueryKey,
   getListInventoryMovementsQueryKey, customFetch
 } from "@workspace/api-client-react";
+import { recordMutationResult } from "@/lib/product-version-guard";
 import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -112,6 +113,9 @@ function RestockDialog({ product }: { product: any }) {
         const updatedProduct = await restockMutation.mutateAsync(
           { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
         );
+        // Register with version guard so any concurrent background refetch that returns
+        // a stale KV response for this product gets silently replaced with this version.
+        recordMutationResult(updatedProduct as any);
         // Sync cache with server-confirmed values (authoritative values replace optimistic)
         qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
           if (!old?.products) return old;
@@ -268,6 +272,10 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     (async () => {
       try {
         const updatedProduct = await updateProduct.mutateAsync({ productId: product.id, data: patch });
+        // Register with version guard — even though we don't call invalidateQueries for
+        // products here, the 5-min staleTime will eventually trigger a background refetch.
+        // If that refetch hits a stale KV node, the guard will substitute this version.
+        recordMutationResult(updatedProduct as any);
         // Use the PATCH response as authoritative truth — merge all server-confirmed fields
         // directly into the cache. This means zero GET requests after a write, completely
         // eliminating the KV eventual-consistency race where a GET returns stale data.
@@ -885,6 +893,8 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
           method: "POST",
           body: JSON.stringify({ qty }),
         });
+        // Register with version guard before updating the cache
+        recordMutationResult(result);
         // Update cache with server-confirmed value (not guessed)
         qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
           if (!old?.products) return old;
