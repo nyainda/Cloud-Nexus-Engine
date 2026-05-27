@@ -109,10 +109,11 @@ const FILTERS: { value: StockFilter; label: string }[] = [
 
 // ── QuickAdd bottom sheet — no Radix Dialog, no CSS transforms ────────────────
 function QuickAddSheet({
-  product, open, onClose, onAdd, isOwner,
+  product, open, onClose, onAdd, isOwner, cartQty,
 }: {
   product: any | null; open: boolean; onClose: () => void;
   onAdd: (product: any, qty: number, price: number) => void; isOwner: boolean;
+  cartQty: number;
 }) {
   const [qty, setQty] = useState<number>(1);
   const [price, setPrice] = useState(0);
@@ -171,12 +172,20 @@ function QuickAddSheet({
                 )}
               </div>
             </div>
-            <div className={cn(
-              "text-[10px] font-bold px-2 py-1 rounded-full shrink-0",
-              isOut ? "bg-destructive/15 text-destructive" :
-              isLow ? "bg-orange-500/15 text-orange-400" : "bg-emerald-500/15 text-emerald-400"
-            )}>
-              {isOut ? "Out of Stock" : isLow ? `Low: ${product.stockQty}` : `${product.stockQty} ${product.unit || "units"}`}
+            <div className="flex flex-col items-end gap-1.5 shrink-0">
+              <div className={cn(
+                "text-[10px] font-bold px-2 py-1 rounded-full",
+                isOut ? "bg-destructive/15 text-destructive" :
+                isLow ? "bg-orange-500/15 text-orange-400" : "bg-emerald-500/15 text-emerald-400"
+              )}>
+                {isOut ? "Out of Stock" : isLow ? `Low: ${product.stockQty}` : `${product.stockQty} ${product.unit || "units"}`}
+              </div>
+              {cartQty > 0 && (
+                <div className="flex items-center gap-1 bg-primary/15 border border-primary/30 text-primary rounded-full px-2 py-0.5">
+                  <ShoppingCart className="h-2.5 w-2.5" />
+                  <span className="text-[10px] font-bold">{cartQty} in cart</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -846,6 +855,7 @@ export default function POS() {
       <QuickAddSheet
         product={quickAddProduct} open={quickAddOpen}
         onClose={() => setQuickAddOpen(false)} onAdd={handleQuickAdd} isOwner={isOwner}
+        cartQty={cart.find(i => i.product.id === quickAddProduct?.id)?.qty ?? 0}
       />
     </div>
   );
