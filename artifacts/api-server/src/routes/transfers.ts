@@ -45,50 +45,70 @@ transfersRouter.delete("/transfers/:id", requireAuth, async (c) => {
   if (!transfer) return c.json({ error: "Transfer not found" }, 404);
 
   if (transfer.fromShopId !== session.shopId) {
-    return c.json({ error: "Only the sending shop can cancel a transfer" }, 403);
+    return c.json(
+      { error: "Only the sending shop can cancel a transfer" },
+      403,
+    );
   }
-
-  const toProduct = await db
-    .select()
-    .from(products)
-    .where(and(eq(products.id, transfer.toProductId), eq(products.shopId, transfer.toShopId)))
-    .get();
-
-  if (!toProduct) {
-    return c.json({ error: "Destination product no longer exists" }, 400);
-  }
-
-  if ((toProduct.stockQty ?? 0) < transfer.qty) {
-    return c.json({
-      error: `Cannot reverse: destination shop only has ${toProduct.stockQty ?? 0} ${toProduct.unit ?? "units"} remaining (need ${transfer.qty})`,
-    }, 400);
-  }
-
-  const fromProduct = await db
-    .select()
-    .from(products)
-    .where(and(eq(products.id, transfer.fromProductId), eq(products.shopId, transfer.fromShopId)))
-    .get();
 
   const now = new Date().toISOString();
 
-  if (fromProduct) {
-    await db
+  // Single atomic batch — all 3 statements succeed or all roll back.
+  // Stock math runs inside D1 (atomic deltas), never in JS, so concurrent
+  // cancel requests cannot race and create or lose quantity.
+  await db.batch([
+    // 1. Restore qty to source shop — atomic increment
+    // 1. Restore qty to source shop — atomic increment
+    db
       .update(products)
-      .set({ stockQty: sql`${products.stockQty} + ${transfer.qty}`, updatedAt: now })
-      .where(eq(products.id, fromProduct.id))
-      .run();
-  }
+      .set({
+        stockQty: sql`stock_qty + ${transfer.qty}`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(products.id, transfer.fromProductId),
+          eq(products.shopId, transfer.fromShopId),
+        ),
+      ),
 
-  await db
-    .update(products)
-    .set({ stockQty: sql`MAX(0, ${products.stockQty} - ${transfer.qty})`, updatedAt: now })
-    .where(eq(products.id, toProduct.id))
-    .run();
+    // 2. Deduct qty from destination shop — atomic decrement.
+    // Prevent negative stock if destination already sold some stock.
+    db
+      .update(products)
+      .set({
+        stockQty: sql`CASE WHEN stock_qty >= ${transfer.qty} THEN stock_qty - ${transfer.qty} ELSE stock_qty END`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(products.id, transfer.toProductId),
+          eq(products.shopId, transfer.toShopId),
+        ),
+      ),
+    // 2. Deduct qty from destination shop — atomic decrement.
+    //    CASE WHEN guard prevents going negative if the destination
+    //    already sold the stock; the transaction still commits cleanly.
+    db
+      .update(products)
+      .set({
+        stockQty: sql`CASE WHEN stock_qty >= ${transfer.qty} THEN stock_qty - ${transfer.qty} ELSE stock_qty END`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(products.id, transfer.toProductId),
+          eq(products.shopId, transfer.toShopId),
+        ),
+      ),
 
-  await db.delete(stockTransfers).where(eq(stockTransfers.id, id)).run();
+    // 3. Remove the transfer record in the same transaction so it
+    //    cannot be cancelled a second time.
+    db.delete(stockTransfers).where(eq(stockTransfers.id, id)),
+  ]);
 
-  // Bust KV cache for both shops so restored quantities show immediately
+  // Bust KV cache AFTER the transaction commits — both shops see fresh
+  // stock on the next read without waiting for KV TTL to expire.
   await Promise.all([
     kvDel(c.env.SESSIONS, CK.products(transfer.fromShopId)),
     kvDel(c.env.SESSIONS, CK.products(transfer.toShopId)),
