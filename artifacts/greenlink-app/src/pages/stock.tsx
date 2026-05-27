@@ -193,18 +193,49 @@ function RestockDialog({ product }: { product: any }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Buy Price (KES)</Label>
-              <Input type="number" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="h-9" />
+              <Label className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                <span className="text-orange-400 font-mono">↓</span> Buy Price (KES)
+              </Label>
+              <div className="relative">
+                <Input
+                  type="number"
+                  value={purchasePrice}
+                  onChange={e => setPurchasePrice(e.target.value)}
+                  onFocus={e => e.target.select()}
+                  placeholder={product.purchasePrice?.toString() || "0"}
+                  className="h-12 text-lg font-bold font-mono text-center"
+                />
+              </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Sell Price (KES)</Label>
-              <Input type="number" value={sellingPrice} onChange={e => setSellingPrice(e.target.value)} className="h-9" />
+              <Label className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                <span className="text-emerald-400 font-mono">↑</span> Sell Price (KES)
+              </Label>
+              <div className="relative">
+                <Input
+                  type="number"
+                  value={sellingPrice}
+                  onChange={e => setSellingPrice(e.target.value)}
+                  onFocus={e => e.target.select()}
+                  placeholder={product.sellingPrice?.toString() || "0"}
+                  className="h-12 text-lg font-bold font-mono text-center"
+                />
+              </div>
             </div>
           </div>
           {purchasePrice && sellingPrice && Number(sellingPrice) > 0 && (
-            <div className="border border-border rounded-lg px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
-              <span className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" />Margin</span>
-              <span className="font-bold font-mono">{(((Number(sellingPrice) - Number(purchasePrice)) / Number(sellingPrice)) * 100).toFixed(1)}%</span>
+            <div className={cn(
+              "border rounded-lg px-3 py-2.5 flex items-center justify-between",
+              Number(sellingPrice) > Number(purchasePrice)
+                ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+                : "border-destructive/30 bg-destructive/5 text-destructive"
+            )}>
+              <span className="flex items-center gap-1.5 text-xs font-bold">
+                <TrendingUp className="h-3.5 w-3.5" />Profit Margin
+              </span>
+              <span className="font-bold font-mono text-base">
+                {(((Number(sellingPrice) - Number(purchasePrice)) / Number(sellingPrice)) * 100).toFixed(1)}%
+              </span>
             </div>
           )}
         </div>
@@ -1321,12 +1352,12 @@ export default function Stock() {
     <div className="flex flex-col h-full bg-background">
       {/* Header — shrinks, never scrolls */}
       <div className="shrink-0 bg-background border-b border-border px-4 py-3 space-y-3">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-start justify-between gap-2 flex-wrap">
           <div>
             <h1 className="text-lg font-bold text-foreground">Inventory</h1>
             <p className="text-xs text-muted-foreground">{counts.all.toLocaleString()} products · {counts.totalItems.toLocaleString()} units</p>
           </div>
-          <div className="flex gap-1.5 shrink-0">
+          <div className="flex gap-1.5 flex-wrap">
             <BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} />
             {isOwner && <BulkImportDialog shopId={shopId} onSuccess={refresh} />}
             <AddProductDialog shopId={shopId} onSuccess={refresh} existingProducts={allProducts} isOwner={isOwner} />

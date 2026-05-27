@@ -290,13 +290,14 @@ interface CartPanelProps {
   removeFromCart: (id: string) => void;
   updatePrice: (id: string, price: number) => void;
   handleCheckout: (type: "cash" | "debt") => void;
+  setQtyDirect: (id: string, qty: number) => void;
 }
 
 const CartPanel = memo(function CartPanel({
   cart, discount, debtCustomerName, debtCustomerPhone, isOwner,
   createSalePending, subtotal, total, totalProfit, cartCount,
   setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
-  setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout,
+  setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout, setQtyDirect,
 }: CartPanelProps) {
   return (
     <div className="flex flex-col h-full bg-card">
@@ -344,11 +345,22 @@ const CartPanel = memo(function CartPanel({
                     </button>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center bg-muted/50 rounded-lg border border-border/60 overflow-hidden">
+                    <div className="flex items-center bg-muted rounded-lg border border-border overflow-hidden">
                       <button className="h-8 w-8 flex items-center justify-center text-muted-foreground" onClick={() => updateQty(item.product.id, -1)}>
                         <Minus className="h-3.5 w-3.5" />
                       </button>
-                      <span className="w-8 text-center text-sm font-bold">{item.qty}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={item.product.stockQty}
+                        value={item.qty}
+                        onChange={e => {
+                          const v = parseInt(e.target.value);
+                          if (!isNaN(v) && v >= 1) setQtyDirect(item.product.id, Math.min(v, item.product.stockQty));
+                        }}
+                        onFocus={e => e.target.select()}
+                        className="w-10 h-8 text-center text-sm font-bold bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
                       <button className="h-8 w-8 flex items-center justify-center text-primary" onClick={() => updateQty(item.product.id, 1)} disabled={item.qty >= item.product.stockQty}>
                         <Plus className="h-3.5 w-3.5" />
                       </button>
@@ -545,6 +557,13 @@ export default function POS() {
     );
   }, []);
 
+  const setQtyDirect = useCallback((productId: string, qty: number) => {
+    setCart(prev =>
+      prev.map(i => i.product.id === productId ? { ...i, qty: Math.max(1, qty) } : i)
+        .filter(i => i.qty > 0)
+    );
+  }, []);
+
   const removeFromCart = useCallback((productId: string) => setCart(prev => prev.filter(i => i.product.id !== productId)), []);
   const updatePrice = useCallback((productId: string, price: number) => setCart(prev => prev.map(i => i.product.id === productId ? { ...i, unitPrice: price } : i)), []);
 
@@ -629,7 +648,7 @@ export default function POS() {
     createSalePending: createSale.isPending,
     subtotal, total, totalProfit, cartCount,
     setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
-    setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout,
+    setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout, setQtyDirect,
   };
 
   return (
@@ -668,20 +687,18 @@ export default function POS() {
         </div>
 
         {/* Product Grid — plain overflow-y-auto */}
-        {/* contain:paint tells Chrome to rasterize this as an independent layer,
-            preventing tile-boundary scan-line artifacts when alpha cards repaint */}
-        <div className="flex-1 overflow-y-auto p-3" style={{ contain: "paint" }}>
+        <div className="flex-1 overflow-y-auto p-3" style={{ transform: "translateZ(0)", backfaceVisibility: "hidden" }}>
           {isLoading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
               {Array.from({ length: 18 }).map((_, i) => (
-                <div key={i} className="rounded-xl border border-border/40 bg-card/60 p-3 space-y-2">
+                <div key={i} className="rounded-lg border border-border bg-card p-3 space-y-2">
                   <div className="flex items-center justify-between mb-2">
-                    <div className="w-7 h-7 rounded-lg bg-muted/40" />
-                    <div className="w-2 h-2 rounded-full bg-muted/40" />
+                    <div className="w-7 h-7 rounded-lg bg-muted" />
+                    <div className="w-2 h-2 rounded-full bg-muted" />
                   </div>
-                  <div className="h-3 bg-muted/40 rounded w-4/5" />
-                  <div className="h-2.5 bg-muted/30 rounded w-3/5" />
-                  <div className="h-3.5 bg-muted/40 rounded w-2/5 mt-1" />
+                  <div className="h-3 bg-muted rounded w-4/5" />
+                  <div className="h-2.5 bg-muted rounded w-3/5" />
+                  <div className="h-3.5 bg-muted rounded w-2/5 mt-1" />
                 </div>
               ))}
             </div>
@@ -778,7 +795,7 @@ export default function POS() {
 
       {/* Desktop Cart — hidden until first item added, then slides in */}
       <div className={cn(
-        "hidden lg:flex flex-col shrink-0 border-border overflow-hidden transition-all duration-300 ease-out",
+        "hidden lg:flex flex-col shrink-0 border-border overflow-hidden transition-[width,opacity] duration-300 ease-out",
         cart.length > 0
           ? "w-[340px] xl:w-[380px] border-l opacity-100"
           : "w-0 opacity-0"
