@@ -513,54 +513,113 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   );
 }
 
-function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: string; onSuccess: () => void }) {
+function TransferDialog({ product, shopId }: { product: any; shopId: string; onSuccess?: () => void }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState<number>(1);
   const [notes, setNotes] = useState("");
+  const [isPending, setIsPending] = useState(false);
   const weighed = isWeighedUnit(product.unit || "");
   const targetShopId = shopId === "shop-greenlink" ? "shop-sunrise" : "shop-greenlink";
   const targetLabel = targetShopId === "shop-greenlink" ? "GreenLink" : "Sunrise Agrovet";
 
-  // The exact key the stock page uses — must match useListProducts({ shopId, limit: 3000 })
   const productsKey = getListProductsQueryKey({ shopId, limit: 3000 });
+  const targetProductsKey = getListProductsQueryKey({ shopId: targetShopId, limit: 3000 });
 
-  const transferMutation = useMutation({
-    mutationFn: async () => {
-      return await customFetch<any>(`/api/products/${product.id}/transfer`, {
-        method: "POST",
-        body: JSON.stringify({ targetShopId, qty, notes: notes || undefined }),
-      });
-    },
-    onMutate: async () => {
-      // Cancel in-flight fetches — stops stale data overwriting optimistic state
-      await qc.cancelQueries({ queryKey: productsKey });
-      const snapshot = qc.getQueryData(productsKey);
-      // Optimistic: deduct qty immediately
-      qc.setQueryData(productsKey, (old: any) => {
-        if (!old?.products) return old;
-        return {
-          ...old,
-          products: old.products.map((p: any) =>
-            p.id !== product.id ? p : { ...p, stockQty: Math.max(0, p.stockQty - qty) }
-          ),
-        };
-      });
-      return { snapshot };
-    },
-    onError: (e: any, _, context: any) => {
-      // Rollback to pre-transfer state
-      if (context?.snapshot !== undefined) qc.setQueryData(productsKey, context.snapshot);
-      toast.error(e.message || "Transfer failed — please retry");
-    },
-    onSettled: () => {
-      // Invalidate after mutation is fully committed — DB write is done by now
-      qc.invalidateQueries({ queryKey: productsKey });
-      qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
-      qc.invalidateQueries({ queryKey: ["transfers", shopId] });
-      onSuccess();
-    },
-  });
+  const handleTransfer = async () => {
+    if (isPending || qty <= 0 || qty > product.stockQty) return;
+
+    // Capture qty/notes from this render's closure BEFORE any state resets below
+    const transferQty = qty;
+    const transferNotes = notes;
+
+    setIsPending(true);
+
+    // Cancel any in-flight product fetches so they don't race with our optimistic update
+    await qc.cancelQueries({ queryKey: productsKey });
+
+    // Snapshot the current source-shop product list for rollback if the POST fails
+    const snapshot = qc.getQueryData(productsKey);
+
+    // Optimistic update: immediately show the deducted qty in the source shop's list.
+    // User sees the change instantly without waiting for the network.
+    qc.setQueryData(productsKey, (old: any) => {
+      if (!old?.products) return old;
+      return {
+        ...old,
+        products: old.products.map((p: any) =>
+          p.id !== product.id ? p : { ...p, stockQty: Math.max(0, p.stockQty - transferQty) }
+        ),
+      };
+    });
+
+    // Close the dialog immediately — the optimistic update is already visible.
+    // Reset state for the next open.
+    setOpen(false);
+    setQty(1);
+    setNotes("");
+
+    // Async IIFE: runs to completion even after this dialog component unmounts
+    // (TanStack Query v5 per-call .mutate() callbacks are dropped on unmount).
+    // We use direct customFetch + try/catch/finally to guarantee the cache is
+    // always reconciled regardless of component lifecycle.
+    (async () => {
+      try {
+        const result = await customFetch<any>(`/api/products/${product.id}/transfer`, {
+          method: "POST",
+          body: JSON.stringify({ targetShopId, qty: transferQty, notes: transferNotes || undefined }),
+        });
+
+        // result = { ok, transferId, sourceQtyAfter, targetQtyAfter, targetProductId }
+        const now = new Date().toISOString();
+
+        // Use server-confirmed source qty (replaces our optimistic guess with the
+        // atomic DB value — critical if another mutation ran concurrently).
+        qc.setQueryData(productsKey, (old: any) => {
+          if (!old?.products) return old;
+          return {
+            ...old,
+            products: old.products.map((p: any) =>
+              p.id !== product.id
+                ? p
+                : { ...p, stockQty: result.sourceQtyAfter, updatedAt: now }
+            ),
+          };
+        });
+
+        // Register source product with version guard so any concurrent background
+        // refetch that returns a stale KV response gets silently rejected.
+        recordMutationResult({ ...product, stockQty: result.sourceQtyAfter, updatedAt: now });
+
+        // Also update the target shop's cache if it's already loaded in memory
+        // (e.g. if the user recently visited the other shop's stock page).
+        qc.setQueriesData({ queryKey: targetProductsKey }, (old: any) => {
+          if (!old?.products) return old;
+          const updated = old.products.map((p: any) => {
+            if (p.id !== result.targetProductId) return p;
+            const updatedProd = { ...p, stockQty: result.targetQtyAfter, updatedAt: now };
+            recordMutationResult(updatedProd);
+            return updatedProd;
+          });
+          return { ...old, products: updated };
+        });
+
+        toast.success(`Transferred ${transferQty} ${product.unit || "units"} to ${targetLabel}`);
+      } catch (e: any) {
+        // Rollback source shop's list to pre-transfer state
+        qc.setQueryData(productsKey, snapshot);
+        toast.error(e.message || "Transfer failed — please retry");
+      } finally {
+        setIsPending(false);
+        // Inventory movements and the transfers history list need a fresh fetch.
+        // We do NOT invalidate products here — the cache is already authoritative
+        // from the server response above, and invalidating would fire a GET that
+        // could hit a stale KV edge node and flicker the qty back to its old value.
+        qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+        qc.invalidateQueries({ queryKey: ["transfers", shopId] });
+      }
+    })();
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -580,31 +639,30 @@ function TransferDialog({ product, shopId, onSuccess }: { product: any; shopId: 
           <div className="space-y-2">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Qty to Transfer</Label>
             <div className="flex items-center gap-2">
-              <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => setQty(q => Math.max(weighed ? 0.25 : 1, q - (weighed && q <= 1 ? 0.25 : 1)))}>
+              <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0"
+                disabled={isPending}
+                onClick={() => setQty(q => Math.max(weighed ? 0.25 : 1, q - (weighed && q <= 1 ? 0.25 : 1)))}>
                 <Minus className="h-4 w-4" />
               </Button>
-              <Input type="number" step={weighed ? "0.25" : "1"} min={weighed ? "0.25" : "1"} max={product.stockQty} value={qty} onChange={e => setQty(weighed ? parseFloat(e.target.value) || 0.25 : Math.max(1, parseInt(e.target.value) || 1))} className="flex-1 text-center font-bold font-mono" />
-              <Button type="button" size="icon" className="h-9 w-9 shrink-0" onClick={() => setQty(q => Math.min(product.stockQty, q + (weighed && q < 1 ? 0.25 : 1)))}>
+              <Input type="number" step={weighed ? "0.25" : "1"} min={weighed ? "0.25" : "1"} max={product.stockQty} value={qty}
+                disabled={isPending}
+                onChange={e => setQty(weighed ? parseFloat(e.target.value) || 0.25 : Math.max(1, parseInt(e.target.value) || 1))} className="flex-1 text-center font-bold font-mono" />
+              <Button type="button" size="icon" className="h-9 w-9 shrink-0"
+                disabled={isPending}
+                onClick={() => setQty(q => Math.min(product.stockQty, q + (weighed && q < 1 ? 0.25 : 1)))}>
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
           </div>
           <div className="space-y-2">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Notes (optional)</Label>
-            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Weekly restock" />
+            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Weekly restock" disabled={isPending} />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button
-            onClick={() => {
-              toast.success(`Transferred ${qty} ${product.unit || "units"} to ${targetLabel}`);
-              setOpen(false); setQty(1); setNotes("");
-              transferMutation.mutate();   // onMutate handles the optimistic update + cancelQueries
-            }}
-            disabled={qty <= 0 || qty > product.stockQty}
-          >
-            Transfer {qty} {product.unit || "units"}
+          <Button variant="ghost" onClick={() => setOpen(false)} disabled={isPending}>Cancel</Button>
+          <Button onClick={handleTransfer} disabled={isPending || qty <= 0 || qty > product.stockQty}>
+            {isPending ? "Transferring…" : `Transfer ${qty} ${product.unit || "units"}`}
           </Button>
         </DialogFooter>
       </DialogContent>
