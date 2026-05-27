@@ -116,11 +116,14 @@ function QuickAddSheet({
 }) {
   const [qty, setQty] = useState<number>(1);
   const [price, setPrice] = useState(0);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open && product) {
       setQty(isWeighedUnit(product.unit || "") ? 0.5 : 1);
       setPrice(product.sellingPrice || 0);
+      // Auto-focus qty input after sheet animation
+      setTimeout(() => qtyInputRef.current?.select(), 80);
     }
   }, [open, product]);
 
@@ -181,7 +184,7 @@ function QuickAddSheet({
         <div className="px-5 py-4 space-y-4">
           <div>
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
-              Quantity {weighed ? `(${product.unit || "kg"} — enter any amount)` : `(${product.unit || "units"})`}
+              How many? {weighed ? `(${product.unit || "kg"})` : `(${product.unit || "units"})`}
             </Label>
             <div className="flex items-center gap-3">
               <button
@@ -191,10 +194,12 @@ function QuickAddSheet({
                 <Minus className="h-4 w-4" />
               </button>
               <input
+                ref={qtyInputRef}
                 type="number" min={qtyMin} step={qtyStep} max={product.stockQty}
                 value={qty}
                 onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= qtyMin) setQty(v); }}
-                className="flex-1 h-11 text-center text-2xl font-bold font-mono bg-muted/40 border border-border rounded-xl focus:outline-none focus:border-primary/60"
+                onFocus={e => e.target.select()}
+                className="flex-1 h-14 text-center text-3xl font-bold font-mono bg-muted border border-border rounded-xl focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
               />
               <button
                 className="w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-40"
@@ -204,18 +209,22 @@ function QuickAddSheet({
                 <Plus className="h-4 w-4" />
               </button>
             </div>
-            {weighed && (
-              <div className="flex gap-1.5 flex-wrap mt-2">
-                {(product.unit?.toLowerCase() === "g" ? [100, 250, 500, 1000] : [0.5, 1, 2, 5, 10]).map(v => (
-                  <button key={v} type="button" onClick={() => setQty(v)} className={cn(
-                    "text-[11px] font-bold px-2.5 py-1 rounded-full border",
-                    qty === v ? "bg-primary/20 border-primary/50 text-primary" : "bg-muted/50 border-border/50 text-muted-foreground"
-                  )}>
-                    {v}{product.unit}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* Quick-pick presets */}
+            <div className="flex gap-1.5 flex-wrap mt-2.5">
+              {(weighed
+                ? (product.unit?.toLowerCase() === "g" ? [100, 250, 500, 1000] : [0.5, 1, 2, 5, 10])
+                : [1, 2, 3, 5, 10, 20, 50]
+              ).filter(v => v <= product.stockQty).map(v => (
+                <button key={v} type="button" onClick={() => setQty(v)} className={cn(
+                  "text-[11px] font-bold px-2.5 py-1 rounded-full border transition-colors",
+                  qty === v
+                    ? "bg-primary/20 border-primary/50 text-primary"
+                    : "bg-muted border-border text-muted-foreground hover:text-foreground"
+                )}>
+                  {weighed ? `${v}${product.unit}` : `×${v}`}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div>
