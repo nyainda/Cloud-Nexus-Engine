@@ -38,6 +38,13 @@ function isWeighedUnit(unit: string): boolean {
   return WEIGHT_UNITS.has(unit.trim().toLowerCase());
 }
 
+function generateSku(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const initials = words.slice(0, 4).map(w => w[0].toUpperCase()).join("");
+  const suffix = String(Math.floor(1000 + Math.random() * 9000));
+  return `${initials}-${suffix}`;
+}
+
 function getCategoryStyle(category: string | null | undefined) {
   const c = (category || "").toLowerCase();
   if (c.includes("herbicide")) return { bg: "bg-green-500/15", text: "text-green-400", border: "border-green-500/25", abbr: "HB" };
@@ -535,7 +542,15 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   const [qty, setQty] = useState("0");
   const [alertQty, setAlertQty] = useState("5");
   const [expiryDate, setExpiryDate] = useState("");
+  const skuManuallyEdited = useRef(false);
   const createProduct = useCreateProduct();
+
+  useEffect(() => {
+    if (!skuManuallyEdited.current && name.trim().length >= 2) {
+      setSku(generateSku(name));
+    }
+    if (!name.trim()) { setSku(""); skuManuallyEdited.current = false; }
+  }, [name]);
 
   const UNIT_PRESETS = ["bag", "kg", "g", "litre", "ml", "sachet", "unit", "bottle", "pack", "box", "tin"];
 
@@ -559,7 +574,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   const margin = buyPrice && sellPrice && Number(sellPrice) > 0
     ? (((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100).toFixed(1) : null;
 
-  const reset = () => { setName(""); setSku(""); setCategory(""); setUnit("bag"); setProductType("normal"); setBuyPrice(""); setSellPrice(""); setQty("0"); setAlertQty("5"); setExpiryDate(""); };
+  const reset = () => { setName(""); setSku(""); setCategory(""); setUnit("bag"); setProductType("normal"); setBuyPrice(""); setSellPrice(""); setQty("0"); setAlertQty("5"); setExpiryDate(""); skuManuallyEdited.current = false; };
 
   const handleSubmit = () => {
     if (!name.trim()) return;
@@ -609,8 +624,22 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
             <Input value={category} onChange={e => setCategory(e.target.value)} placeholder="Fertilizer, Feed…" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">SKU</Label>
-            <Input value={sku} onChange={e => setSku(e.target.value)} placeholder="SKU-001" />
+            <div className="flex items-center justify-between">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">SKU</Label>
+              {sku && (
+                <button type="button" onClick={() => { setSku(generateSku(name)); skuManuallyEdited.current = false; }}
+                  className="text-[10px] text-primary font-semibold hover:underline flex items-center gap-1">
+                  <X className="h-2.5 w-2.5" />Regenerate
+                </button>
+              )}
+            </div>
+            <Input value={sku}
+              onChange={e => { setSku(e.target.value); skuManuallyEdited.current = true; }}
+              placeholder="Type product name above to auto-generate"
+              className={cn("h-9 font-mono text-sm", sku && !skuManuallyEdited.current && "text-primary")} />
+            {sku && !skuManuallyEdited.current && (
+              <p className="text-[10px] text-muted-foreground">Auto-generated — edit manually or click Regenerate for a different code</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">
