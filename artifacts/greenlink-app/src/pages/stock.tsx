@@ -53,6 +53,75 @@ function getCategoryStyle(category: string | null | undefined) {
   return { bg: "bg-muted/60", text: "text-muted-foreground", border: "border-border", abbr };
 }
 
+function BagCalculator({ unit, setBuyPrice, setSellPrice }: {
+  unit: string;
+  setBuyPrice: (v: string) => void;
+  setSellPrice: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [bagSize, setBagSize] = useState("");
+  const [bagBuy, setBagBuy] = useState("");
+  const [bagSell, setBagSell] = useState("");
+
+  const perUnitBuy = bagSize && bagBuy && parseFloat(bagSize) > 0
+    ? (parseFloat(bagBuy) / parseFloat(bagSize)).toFixed(2) : null;
+  const perUnitSell = bagSize && bagSell && parseFloat(bagSize) > 0
+    ? (parseFloat(bagSell) / parseFloat(bagSize)).toFixed(2) : null;
+
+  return (
+    <div className="col-span-full">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 text-xs text-primary font-semibold hover:underline">
+        <Zap className="h-3.5 w-3.5" />
+        {open ? "Hide" : "Use"} Bag Price Calculator
+        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="mt-2 border border-primary/20 bg-primary/5 rounded-xl p-3 space-y-3">
+          <p className="text-[11px] text-muted-foreground">
+            Enter your bag size and bag price — we'll calculate the price per <strong>{unit}</strong> for you.
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Bag size ({unit})</Label>
+              <Input type="number" value={bagSize} onChange={e => setBagSize(e.target.value)} placeholder="e.g. 50" className="h-8 text-sm" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Bag buy (KES)</Label>
+              <Input type="number" value={bagBuy} onChange={e => setBagBuy(e.target.value)} placeholder="6800" className="h-8 text-sm" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Bag sell (KES)</Label>
+              <Input type="number" value={bagSell} onChange={e => setBagSell(e.target.value)} placeholder="7200" className="h-8 text-sm" />
+            </div>
+          </div>
+          {(perUnitBuy || perUnitSell) && (
+            <div className="bg-background border border-border rounded-lg px-3 py-2 space-y-1">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-bold">Per {unit} price:</p>
+              <div className="flex items-center gap-4 flex-wrap">
+                {perUnitBuy && <span className="text-xs font-mono font-bold text-foreground">Buy: KES {perUnitBuy}/{unit}</span>}
+                {perUnitSell && <span className="text-xs font-mono font-bold text-emerald-500">Sell: KES {perUnitSell}/{unit}</span>}
+                {perUnitBuy && perUnitSell && (
+                  <span className="text-xs font-mono text-muted-foreground">
+                    Margin: {(((parseFloat(perUnitSell) - parseFloat(perUnitBuy)) / parseFloat(perUnitSell)) * 100).toFixed(1)}%
+                  </span>
+                )}
+              </div>
+              <Button size="sm" className="mt-1.5 h-7 text-xs w-full" onClick={() => {
+                if (perUnitBuy) setBuyPrice(perUnitBuy);
+                if (perUnitSell) setSellPrice(perUnitSell);
+                setOpen(false);
+              }}>
+                Apply — set prices to KES {perUnitBuy}/{unit} buy, KES {perUnitSell}/{unit} sell
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WeightPresets({ unit, onSelect }: { unit: string; onSelect: (v: number) => void }) {
   const u = unit.toLowerCase().trim();
   const presets = u === "g" || u === "gram" || u === "grams"
@@ -374,18 +443,25 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
             <Input value={sku} onChange={e => setSku(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Buy Price (KES)</Label>
-            <Input type="number" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} className="h-9" />
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Buy Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
+            </Label>
+            <Input type="number" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} className="h-9" placeholder={productType === "measured" ? `e.g. 136 per ${unit}` : "0"} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Sell Price (KES)</Label>
-            <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} className="h-9" />
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Sell Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
+            </Label>
+            <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} className="h-9" placeholder={productType === "measured" ? `e.g. 144 per ${unit}` : "0"} />
           </div>
           {margin && (
             <div className="col-span-full border border-border rounded-lg px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
               <span className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" />Profit Margin</span>
               <span className="font-bold font-mono">{margin}%</span>
             </div>
+          )}
+          {productType === "measured" && (
+            <BagCalculator unit={unit} setBuyPrice={setBuyPrice} setSellPrice={setSellPrice} />
           )}
           <div className="col-span-full">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">Product Type</Label>
@@ -424,7 +500,9 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Low Stock Alert</Label>
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Low Stock Alert {productType === "measured" ? `(${unit})` : ""}
+            </Label>
             <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} step={productType === "measured" ? "0.5" : "1"} />
           </div>
           <div className="space-y-1.5">
@@ -535,18 +613,25 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
             <Input value={sku} onChange={e => setSku(e.target.value)} placeholder="SKU-001" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Buy Price (KES)</Label>
-            <Input type="number" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} placeholder="0" className="h-9" />
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Buy Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
+            </Label>
+            <Input type="number" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} placeholder={productType === "measured" ? `e.g. 136 per ${unit}` : "0"} className="h-9" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Sell Price (KES)</Label>
-            <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} placeholder="0" className="h-9" />
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Sell Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
+            </Label>
+            <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} placeholder={productType === "measured" ? `e.g. 144 per ${unit}` : "0"} className="h-9" />
           </div>
           {margin && (
             <div className="col-span-full border border-border rounded-lg px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
               <span className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" />Profit Margin</span>
               <span className="font-bold font-mono">{margin}%</span>
             </div>
+          )}
+          {productType === "measured" && (
+            <BagCalculator unit={unit} setBuyPrice={setBuyPrice} setSellPrice={setSellPrice} />
           )}
           <div className="col-span-full">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">Product Type</Label>
@@ -585,11 +670,18 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Opening Qty</Label>
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              {productType === "measured" ? `Total ${unit} in stock` : "Opening Qty"}
+            </Label>
+            {productType === "measured" && (
+              <p className="text-[11px] text-muted-foreground">Enter total {unit} — e.g. 1 bag of 50kg → enter <strong>50</strong></p>
+            )}
             <Input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="0" step={productType === "measured" ? "0.5" : "1"} className="h-9" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Alert Threshold</Label>
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Alert Threshold {productType === "measured" ? `(${unit})` : ""}
+            </Label>
             <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} placeholder="5" step={productType === "measured" ? "0.5" : "1"} className="h-9" />
           </div>
           <div className="col-span-full space-y-1.5">
