@@ -2,8 +2,12 @@
  * useOfflineSync — detects connectivity, processes the offline mutation queue
  * when the device reconnects, and exposes status for UI feedback.
  *
- * Usage: mount once in Layout.tsx. The hook auto-fires syncNow() on the
- * "online" window event, so no polling needed.
+ * Usage: mounted once in Layout.tsx (via OfflineBanner). The hook auto-fires
+ * syncNow() on the "online" window event — no polling needed.
+ *
+ * Conflict detection: after a successful sync, re-fetches the product list and
+ * warns the owner if any product stock went negative (e.g. two devices sold the
+ * same units while one was offline).
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -13,6 +17,7 @@ import {
   getListProductsQueryKey,
   getListDebtsQueryKey,
   getListInventoryMovementsQueryKey,
+  getListProductsQueryOptions,
 } from "@workspace/api-client-react";
 import {
   getPendingMutations,
@@ -24,7 +29,23 @@ import {
 } from "@/lib/offline-queue";
 import { toast } from "sonner";
 
-async function processMutation(m: QueuedMutation): Promise<boolean> {
+/** Returns a human-readable error string from any thrown value. */
+function extractErrorMsg(err: unknown): string {
+  if (err && typeof err === "object") {
+    // ApiError from customFetch — has .message from the server response body
+    if ("message" in err && typeof (err as any).message === "string") {
+      const msg = (err as any).message as string;
+      if (msg && msg !== "[object Object]") return msg;
+    }
+    // Network-level failure (no response at all)
+    if ("name" in err && (err as any).name === "TypeError") {
+      return "No connection — will retry on reconnect";
+    }
+  }
+  return "Sync failed — will retry";
+}
+
+async function processMutation(m: QueuedMutation): Promise<{ ok: boolean; errorMsg?: string }> {
   await incrementAttempts(m.id);
   const payload = JSON.parse(m.payload);
   try {
@@ -44,10 +65,11 @@ async function processMutation(m: QueuedMutation): Promise<boolean> {
       });
     }
     await deleteMutation(m.id);
-    return true;
-  } catch {
-    await markMutationFailed(m.id, "Network error");
-    return false;
+    return { ok: true };
+  } catch (err) {
+    const errorMsg = extractErrorMsg(err);
+    await markMutationFailed(m.id, errorMsg);
+    return { ok: false, errorMsg };
   }
 }
 
@@ -76,10 +98,18 @@ export function useOfflineSync(shopId: string) {
 
     let ok = 0;
     let fail = 0;
+    const failReasons: string[] = [];
+
     for (const m of pending) {
-      const success = await processMutation(m);
-      if (success) ok++;
-      else fail++;
+      const result = await processMutation(m);
+      if (result.ok) {
+        ok++;
+      } else {
+        fail++;
+        if (result.errorMsg && !failReasons.includes(result.errorMsg)) {
+          failReasons.push(result.errorMsg);
+        }
+      }
     }
 
     syncingRef.current = false;
@@ -90,14 +120,44 @@ export function useOfflineSync(shopId: string) {
         `Synced ${ok} offline ${ok === 1 ? "transaction" : "transactions"} ✓`,
         { duration: 4000 },
       );
-      qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+
+      // Invalidate all affected query caches
       qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
       qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+
+      // ── Conflict detection ──────────────────────────────────────────────────
+      // Re-fetch the product list from the server (not just invalidate) so we
+      // can inspect the authoritative stock levels immediately after sync.
+      // If any product has negative stock, two devices sold the same units
+      // while one was offline — warn the owner to reconcile manually.
+      try {
+        const opts = getListProductsQueryOptions({ shopId, limit: 3000 });
+        const freshData = await qc.fetchQuery(opts) as { products?: any[] } | undefined;
+        const negativeStock = (freshData?.products ?? []).filter(
+          (p: any) => typeof p.currentStock === "number" && p.currentStock < 0
+        );
+        if (negativeStock.length > 0) {
+          const names = negativeStock
+            .slice(0, 3)
+            .map((p: any) => p.canonicalName ?? p.name ?? "Unknown")
+            .join(", ");
+          const extra = negativeStock.length > 3 ? ` and ${negativeStock.length - 3} more` : "";
+          toast.warning(
+            `Stock conflict: ${names}${extra} went below zero — check inventory and restock`,
+            { duration: 10_000 },
+          );
+        }
+      } catch {
+        // Non-fatal — just invalidate if the fetch fails
+        qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+      }
     }
+
     if (fail > 0) {
+      const reason = failReasons.length > 0 ? ` (${failReasons[0]})` : "";
       toast.error(
-        `${fail} ${fail === 1 ? "transaction" : "transactions"} failed to sync — tap Retry in the banner`,
-        { duration: 6000 },
+        `${fail} ${fail === 1 ? "transaction" : "transactions"} failed to sync${reason} — check Settings › Offline Sync`,
+        { duration: 8000 },
       );
     }
 

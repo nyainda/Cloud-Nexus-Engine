@@ -94,8 +94,8 @@ function OfflineSyncSection({ shopId }: { shopId: string }) {
   const MutationRow = ({ m, badge }: { m: QueuedMutation; badge?: "pending" | "failed" }) => {
     const Icon = mutationTypeIcon(m.type);
     return (
-      <div className="flex items-center gap-3 px-4 py-3 hover:bg-muted/10 transition-colors">
-        <div className="w-8 h-8 rounded-xl bg-muted/40 border border-border/30 flex items-center justify-center shrink-0">
+      <div className="flex items-start gap-3 px-4 py-3 hover:bg-muted/10 transition-colors">
+        <div className="w-8 h-8 rounded-xl bg-muted/40 border border-border/30 flex items-center justify-center shrink-0 mt-0.5">
           <Icon className="h-3.5 w-3.5 text-muted-foreground/60" />
         </div>
         <div className="flex-1 min-w-0">
@@ -104,12 +104,17 @@ function OfflineSyncSection({ shopId }: { shopId: string }) {
             {format(new Date(m.createdAt), "MMM d, HH:mm:ss")}
             {m.attempts > 0 && ` · ${m.attempts} attempt${m.attempts !== 1 ? "s" : ""}`}
           </p>
+          {badge === "failed" && m.errorMsg && (
+            <p className="text-[10px] text-destructive/70 mt-1 font-medium leading-tight">
+              ↳ {m.errorMsg}
+            </p>
+          )}
         </div>
         {badge === "pending" && (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">queued</span>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">queued</span>
         )}
         {badge === "failed" && (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20">failed</span>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20 shrink-0">failed</span>
         )}
       </div>
     );
