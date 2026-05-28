@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   useLogout, useGetShop, useUpdateShop,
   useListSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier,
@@ -14,22 +14,240 @@ import { useLocation } from "wouter";
 import {
   LogOut, Store, Shield, Truck, FileText, Plus, Edit2, Trash2,
   KeyRound, Eye, EyeOff, Bot, CheckCircle2, ChevronRight,
-  Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone, X, MessageCircle, ScanLine
+  Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone, X, MessageCircle, ScanLine,
+  WifiOff, Wifi, RefreshCw, CloudUpload, ShoppingCart, Package, Banknote,
 } from "lucide-react";
+import {
+  getPendingMutations, getFailedMutations, retryFailedMutations, clearAllMutations,
+  type QueuedMutation,
+} from "@/lib/offline-queue";
+import { useOfflineSync } from "@/lib/use-offline-sync";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
 
-type Section = "shop" | "security" | "ai" | "suppliers" | "audit";
+type Section = "shop" | "security" | "ai" | "suppliers" | "audit" | "offline";
 
 const NAV: { id: Section; label: string; icon: React.ElementType; ownerOnly?: boolean }[] = [
   { id: "shop",      label: "Shop Details",   icon: Store },
+  { id: "offline",   label: "Offline Sync",   icon: CloudUpload },
   { id: "security",  label: "Security",       icon: Shield,    ownerOnly: true },
   { id: "ai",        label: "AI Integration", icon: Bot,       ownerOnly: true },
   { id: "suppliers", label: "Suppliers",      icon: Truck,     ownerOnly: true },
   { id: "audit",     label: "Audit Log",      icon: FileText,  ownerOnly: true },
 ];
+
+// ─── Offline sync section ─────────────────────────────────────────────────────
+function mutationTypeLabel(type: QueuedMutation["type"]) {
+  if (type === "sale") return "Sale";
+  if (type === "restock") return "Restock";
+  if (type === "debt_payment") return "Debt Payment";
+  return type;
+}
+function mutationTypeIcon(type: QueuedMutation["type"]) {
+  if (type === "sale") return ShoppingCart;
+  if (type === "restock") return Package;
+  if (type === "debt_payment") return Banknote;
+  return CloudUpload;
+}
+
+function OfflineSyncSection({ shopId }: { shopId: string }) {
+  const { isOnline, pendingCount, syncing, syncNow, refreshCount } = useOfflineSync(shopId);
+  const [pending, setPending] = useState<QueuedMutation[]>([]);
+  const [failed, setFailed] = useState<QueuedMutation[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    if (!shopId) return;
+    setLoading(true);
+    try {
+      const [p, f] = await Promise.all([
+        getPendingMutations(shopId),
+        getFailedMutations(shopId),
+      ]);
+      setPending(p);
+      setFailed(f);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [shopId]);
+
+  const handleRetryAll = async () => {
+    await retryFailedMutations(shopId);
+    await load();
+    await refreshCount();
+    syncNow();
+  };
+
+  const handleClearFailed = async () => {
+    if (!confirm("Remove all failed transactions from the queue?")) return;
+    const db = await import("@/lib/offline-queue");
+    for (const m of failed) await db.deleteMutation(m.id);
+    await load();
+    await refreshCount();
+    toast.success("Failed transactions cleared");
+  };
+
+  const MutationRow = ({ m, badge }: { m: QueuedMutation; badge?: "pending" | "failed" }) => {
+    const Icon = mutationTypeIcon(m.type);
+    return (
+      <div className="flex items-center gap-3 px-4 py-3 hover:bg-muted/10 transition-colors">
+        <div className="w-8 h-8 rounded-xl bg-muted/40 border border-border/30 flex items-center justify-center shrink-0">
+          <Icon className="h-3.5 w-3.5 text-muted-foreground/60" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground">{mutationTypeLabel(m.type)}</p>
+          <p className="text-[10px] text-muted-foreground/60 font-mono mt-0.5">
+            {format(new Date(m.createdAt), "MMM d, HH:mm:ss")}
+            {m.attempts > 0 && ` · ${m.attempts} attempt${m.attempts !== 1 ? "s" : ""}`}
+          </p>
+        </div>
+        {badge === "pending" && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">queued</span>
+        )}
+        {badge === "failed" && (
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20">failed</span>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-w-xl space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold font-display text-foreground">Offline Sync</h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Sales, restocks, and payments made while offline are queued here and synced automatically on reconnect
+        </p>
+      </div>
+
+      {/* Connection status card */}
+      <div className={cn(
+        "rounded-2xl border p-5 flex items-center gap-4 transition-all",
+        isOnline
+          ? "bg-emerald-500/5 border-emerald-500/20"
+          : "bg-destructive/5 border-destructive/20"
+      )}>
+        <div className={cn(
+          "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
+          isOnline ? "bg-emerald-500/15" : "bg-destructive/15"
+        )}>
+          {isOnline
+            ? <Wifi className="h-6 w-6 text-emerald-400" />
+            : <WifiOff className="h-6 w-6 text-destructive" />}
+        </div>
+        <div className="flex-1">
+          <p className="font-bold text-sm text-foreground">{isOnline ? "Online" : "Offline"}</p>
+          <p className="text-xs text-muted-foreground/70 mt-0.5">
+            {isOnline
+              ? syncing
+                ? `Syncing ${pendingCount} transaction${pendingCount !== 1 ? "s" : ""}…`
+                : "Connected to the server — transactions sync instantly"
+              : `No connection · ${pendingCount > 0 ? `${pendingCount} transaction${pendingCount !== 1 ? "s" : ""} queued` : "transactions will queue until reconnected"}`}
+          </p>
+        </div>
+        {isOnline && pendingCount > 0 && !syncing && (
+          <button
+            onClick={() => { syncNow(); setTimeout(load, 1500); }}
+            className="shrink-0 flex items-center gap-2 px-4 h-9 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-colors"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Sync Now
+          </button>
+        )}
+        {syncing && (
+          <RefreshCw className="h-5 w-5 text-blue-400 animate-spin shrink-0" />
+        )}
+      </div>
+
+      {/* Pending queue */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-border/50 flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Queued Transactions</p>
+            {!loading && <p className="text-xs text-muted-foreground/60 mt-0.5">{pending.length} waiting to sync</p>}
+          </div>
+          {pending.length > 0 && (
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">{pending.length}</span>
+          )}
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <RefreshCw className="h-5 w-5 text-muted-foreground/40 animate-spin" />
+          </div>
+        ) : pending.length > 0 ? (
+          <div className="divide-y divide-border/30">
+            {pending.map(m => <MutationRow key={m.id} m={m} badge="pending" />)}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center py-10 gap-2 text-muted-foreground">
+            <CheckCircle2 className="h-8 w-8 opacity-20" />
+            <p className="text-sm font-semibold opacity-40">All synced</p>
+          </div>
+        )}
+      </div>
+
+      {/* Failed transactions */}
+      {(failed.length > 0 || !loading) && (
+        <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-border/50 flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Failed Transactions</p>
+              {!loading && <p className="text-xs text-muted-foreground/60 mt-0.5">{failed.length} need attention</p>}
+            </div>
+            {failed.length > 0 && (
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRetryAll}
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors flex items-center gap-1.5"
+                >
+                  <RefreshCw className="h-3 w-3" />Retry All
+                </button>
+                <button
+                  onClick={handleClearFailed}
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+          {failed.length > 0 ? (
+            <div className="divide-y divide-border/30">
+              {failed.map(m => <MutationRow key={m.id} m={m} badge="failed" />)}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center py-10 gap-2 text-muted-foreground">
+              <CheckCircle2 className="h-8 w-8 opacity-20" />
+              <p className="text-sm font-semibold opacity-40">No failed transactions</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* How it works */}
+      <div className="rounded-2xl bg-muted/30 border border-border/50 p-5">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-3">How Offline Mode Works</p>
+        <ul className="space-y-2">
+          {[
+            "Sales, restocks, and debt payments recorded offline are saved to this device",
+            "When connection is restored, all queued transactions sync to the server automatically",
+            "Products are always available from local cache — the POS works with no internet",
+            "Failed transactions can be retried manually using the button above",
+          ].map((note, i) => (
+            <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground/80">
+              <div className="w-1 h-1 rounded-full bg-muted-foreground/50 shrink-0 mt-1.5" />
+              {note}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
 
 // ─── Inline edit field ───────────────────────────────────────────────────────
 function EditableField({
@@ -745,6 +963,11 @@ export default function Settings() {
               </button>
             </div>
           </div>
+        )}
+
+        {/* ── OFFLINE SYNC ─────────────────────────────────────── */}
+        {activeSection === "offline" && (
+          <OfflineSyncSection shopId={shopId} />
         )}
 
         {/* ── SECURITY ─────────────────────────────────────────── */}

@@ -157,8 +157,33 @@ function AuthGuard({ children }: { children: ReactNode }) {
   const prefetchedRef = useRef(false);
   const qc = useQueryClient();
 
+  // ── INSTANT product seed ───────────────────────────────────────────────────
+  // Seed the React Query cache from IndexedDB on the very first render when
+  // we already have a cached session. This runs BEFORE the network session
+  // check completes — products are visible at 0ms instead of 500ms–2s.
+  // The background session check + prefetchQuery then overwrites with fresh data.
+  useEffect(() => {
+    if (prefetchedRef.current) return;
+    const shopId = cachedSession?.shopId as string | undefined;
+    if (!shopId || !token) return;
+    prefetchedRef.current = true;
+    const opts = getListProductsQueryOptions({ shopId, limit: 3000 });
+    loadCachedProducts(shopId).then((cached) => {
+      if (cached.length > 0 && !qc.getQueryData(opts.queryKey)) {
+        qc.setQueryData(opts.queryKey, { products: cached });
+      }
+      qc.prefetchQuery(opts);
+    }).catch(() => {
+      qc.prefetchQuery(opts);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally runs once on mount only
+
+  // retry: false → detect network failure immediately without waiting for retries.
+  // The offline banner handles the "no network" state; we must NOT kick the user
+  // out just because the CF Worker is cold-starting or the device is offline.
   const { data: session, isLoading, error } = useGetSession({
-    query: { enabled: !!token },
+    query: { enabled: !!token, retry: false },
   });
 
   useEffect(() => {
@@ -170,20 +195,26 @@ function AuthGuard({ children }: { children: ReactNode }) {
       return;
     }
     if (!isLoading) {
-      if (error || !session) {
-        redirectedRef.current = true;
-        localStorage.removeItem("greenlink_token");
-        setCachedSession(null);
-        setLocation("/login");
-      } else {
+      if (error) {
+        // ── Only log out on real auth failures (401/403). ─────────────────────
+        // Network errors (TypeError, no response, 5xx) must NOT kick the user
+        // out — the device may be offline or the Worker cold-starting.
+        // The OfflineBanner will show status; the cached session stays valid.
+        const status = (error as any)?.status as number | undefined;
+        const isAuthFailure = status === 401 || status === 403;
+        if (isAuthFailure) {
+          redirectedRef.current = true;
+          localStorage.removeItem("greenlink_token");
+          setCachedSession(null);
+          setLocation("/login");
+        }
+        // Network / 5xx error: silently stay on page — app remains functional
+        // using the cached product list (IndexedDB) and offline mutation queue.
+      } else if (session) {
         setCachedSession(session);
-        setReady(true);
-        // Seed React Query cache from IndexedDB BEFORE the network prefetch.
-        // This makes products render immediately on revisit (~0 ms) rather
-        // than waiting for the Cloudflare Worker response (~200-400 ms).
-        // The subsequent prefetchQuery runs in the background and overwrites
-        // the cache with fresh data; the QueryCache subscriber then persists
-        // the fresh data back to IndexedDB (write-through).
+        if (!ready) setReady(true);
+        // Fallback seed: if prefetchedRef wasn't set on mount (no cached session),
+        // seed + prefetch now that we have the real shopId from the server.
         if (!prefetchedRef.current && session.shopId) {
           prefetchedRef.current = true;
           const opts = getListProductsQueryOptions({ shopId: session.shopId, limit: 3000 });
@@ -196,8 +227,13 @@ function AuthGuard({ children }: { children: ReactNode }) {
             qc.prefetchQuery(opts);
           });
         }
+      } else if (!cachedSession) {
+        // No error, no session, no cache → not logged in
+        redirectedRef.current = true;
+        setLocation("/login");
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, session, isLoading, error, setLocation, qc]);
 
   if (!token) return <Login />;
