@@ -1,5 +1,6 @@
 import { Link, useRoute, useLocation } from "wouter";
 import { useState, useEffect } from "react";
+import { OfflineBanner } from "@/components/offline-banner";
 import {
   ShoppingCart, Package, Users, Bell, BarChart3,
   ScanLine, Settings, Leaf, LogOut, LayoutDashboard, Receipt,
@@ -403,6 +404,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </div>
+
+        {/* Offline banner — shows when device loses connectivity */}
+        <OfflineBanner shopId={shopId} />
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto min-h-0" style={{ WebkitTransform: 'translateZ(0)', transform: 'translateZ(0)' }}>

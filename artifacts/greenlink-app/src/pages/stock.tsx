@@ -7,6 +7,7 @@ import {
 } from "@workspace/api-client-react";
 import { recordMutationResult } from "@/lib/product-version-guard";
 import { logInventory, newMutationId } from "@/lib/inventory-logger";
+import { enqueueMutation } from "@/lib/offline-queue";
 import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -197,6 +198,18 @@ function RestockDialog({ product }: { product: any }) {
     setOpen(false);
     setQty(1);
     setSubmitting(false);
+
+    // If offline, queue the restock and return — sync will fire on reconnect
+    if (!navigator.onLine) {
+      await enqueueMutation("restock", (product.shopId as string) || "", {
+        productId: product.id,
+        qty: qtyNum,
+        ...(purchasePrice ? { newPurchasePrice: Number(purchasePrice) } : {}),
+        ...(sellingPrice ? { newSellingPrice: Number(sellingPrice) } : {}),
+      });
+      toast.success(`Restock saved offline — will sync on reconnect`);
+      return;
+    }
 
     // Async IIFE: runs to completion even after the dialog component unmounts.
     // Per-call .mutate() callbacks are NOT guaranteed to fire after unmount in TanStack Query v5,
@@ -1502,7 +1515,7 @@ export default function Stock() {
 
   const { data: productsData, isLoading } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } }
+    { query: { enabled: !!shopId, refetchInterval: 30_000, refetchIntervalInBackground: true } }
   );
 
   const allProducts = productsData?.products || [];

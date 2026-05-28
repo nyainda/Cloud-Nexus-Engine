@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey, customFetch } from "@workspace/api-client-react";
+import { enqueueMutation } from "@/lib/offline-queue";
 import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,14 @@ function PaymentDialog({ debt }: { debt: any }) {
     setOpen(false);
     setAmount("");
     setSubmitting(false);
+
+    // If offline, queue the payment and return — sync will fire on reconnect
+    if (!navigator.onLine) {
+      enqueueMutation("debt_payment", shopId, { debtId: debt.id, amount: paid, recordedBy: userName });
+      toast.success("Payment saved offline — will sync on reconnect");
+      return;
+    }
+
     toast.success("Payment recorded!");
 
     // Fire network request in the background

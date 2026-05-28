@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, memo, useEffect, useRef } from "react";
 import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQueryKey, getListInventoryMovementsQueryKey, customFetch } from "@workspace/api-client-react";
 import { recordMutationResult } from "@/lib/product-version-guard";
 import { logInventory, newMutationId } from "@/lib/inventory-logger";
+import { enqueueMutation } from "@/lib/offline-queue";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -510,7 +511,7 @@ export default function POS() {
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, refetchInterval: 5_000, refetchIntervalInBackground: true } }
+    { query: { enabled: !!shopId, refetchInterval: 30_000, refetchIntervalInBackground: true } }
   );
 
   // Sync freshness: stale if last update > 12s ago and not currently refetching
@@ -663,17 +664,25 @@ export default function POS() {
     toast.success(saleType === "cash" ? "✓ Cash sale complete!" : "✓ Debt recorded!");
 
     logInventory({ stage: "mutation_started", mutationId, source: "pos", timestamp: ts(), extra: { saleType } });
+
+    const salePayload = {
+      shopId, saleType,
+      discount: discountSnapshot,
+      items: cartSnapshot.map(i => ({ productId: i.product.id, qty: i.qty, unitPrice: i.unitPrice })),
+      servedBy: userName,
+      debtCustomerName: saleType === "debt" ? debtName : undefined,
+      debtCustomerPhone: saleType === "debt" ? debtPhone : undefined,
+    };
+
+    // If offline, queue the sale and return — sync will fire on reconnect
+    if (!navigator.onLine) {
+      await enqueueMutation("sale", shopId, salePayload);
+      logInventory({ stage: "queued_offline", mutationId, source: "pos", timestamp: ts(), extra: { saleType } });
+      return;
+    }
+
     createSale.mutate(
-      {
-        data: {
-          shopId, saleType,
-          discount: discountSnapshot,
-          items: cartSnapshot.map(i => ({ productId: i.product.id, qty: i.qty, unitPrice: i.unitPrice })),
-          servedBy: userName,
-          debtCustomerName: saleType === "debt" ? debtName : undefined,
-          debtCustomerPhone: saleType === "debt" ? debtPhone : undefined,
-        },
-      },
+      { data: salePayload },
       {
         onError: (err: any) => {
           // Rollback all product cache entries to pre-sale state
