@@ -11,7 +11,7 @@ import { formatKES } from "@/lib/format";
 import {
   Search, Plus, Minus, Trash2, ShoppingCart,
   AlertTriangle, PackageX, Package, CreditCard, Banknote, X,
-  ChevronRight, TrendingUp, Scale, User2, Phone, ChevronDown,
+  ChevronRight, TrendingUp, Scale, User2, Phone, ChevronDown, ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -506,6 +506,7 @@ export default function POS() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 100);
   const [stockFilter, setStockFilter] = useState<StockFilter>("all");
+  const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("az");
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
     { shopId, limit: 3000 },
@@ -525,11 +526,23 @@ export default function POS() {
         (p.category && p.category.toLowerCase().includes(q))
       );
     }
-    if (stockFilter === "in_stock") return all.filter(p => p.stockQty > p.alertQty);
-    if (stockFilter === "low_stock") return all.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty);
-    if (stockFilter === "out_of_stock") return all.filter(p => p.stockQty === 0);
-    return all;
-  }, [productsData, debouncedSearch, stockFilter]);
+    if (stockFilter === "in_stock") all = all.filter(p => p.stockQty > p.alertQty);
+    else if (stockFilter === "low_stock") all = all.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty);
+    else if (stockFilter === "out_of_stock") all = all.filter(p => p.stockQty === 0);
+
+    return [...all].sort((a, b) => {
+      switch (sortBy) {
+        case "az": return a.canonicalName.localeCompare(b.canonicalName);
+        case "za": return b.canonicalName.localeCompare(a.canonicalName);
+        case "stock_asc": return a.stockQty - b.stockQty;
+        case "stock_desc": return b.stockQty - a.stockQty;
+        case "price_asc": return (a.sellingPrice || 0) - (b.sellingPrice || 0);
+        case "price_desc": return (b.sellingPrice || 0) - (a.sellingPrice || 0);
+        case "newest": return new Date((b as any).updatedAt || (b as any).createdAt || 0).getTime() - new Date((a as any).updatedAt || (a as any).createdAt || 0).getTime();
+        default: return a.canonicalName.localeCompare(b.canonicalName);
+      }
+    });
+  }, [productsData, debouncedSearch, stockFilter, sortBy]);
 
   const filterCounts = useMemo(() => {
     const all = productsData?.products || [];
@@ -722,6 +735,23 @@ export default function POS() {
                   </span>
                 </button>
               ))}
+            </div>
+            {/* Sort selector */}
+            <div className="shrink-0 relative">
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value as typeof sortBy)}
+                className="appearance-none h-8 pl-7 pr-2 rounded-full text-[11px] font-semibold bg-muted border border-border text-muted-foreground focus:outline-none focus:border-primary/60 cursor-pointer"
+              >
+                <option value="az">A → Z</option>
+                <option value="za">Z → A</option>
+                <option value="newest">Newest</option>
+                <option value="stock_asc">Stock ↑</option>
+                <option value="stock_desc">Stock ↓</option>
+                <option value="price_asc">Price ↑</option>
+                <option value="price_desc">Price ↓</option>
+              </select>
+              <ArrowUpDown className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
             </div>
             {/* Live sync indicator */}
             <div className="shrink-0 flex items-center gap-1.5 pr-0.5" title={isStale ? "Reconnecting…" : isRefetching ? "Syncing…" : "Live"}>

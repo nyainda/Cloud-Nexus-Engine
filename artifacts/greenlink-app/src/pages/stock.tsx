@@ -27,7 +27,7 @@ import { formatKES } from "@/lib/format";
 import {
   Search, Plus, Minus, Package, Upload, Edit2, AlertTriangle, ArrowUpRight,
   PackageX, Copy, TrendingUp, Scale, Wheat,
-  Calendar, Trash2, ArrowLeftRight, Truck, Zap, CheckCircle2, X, ChevronDown
+  Calendar, Trash2, ArrowLeftRight, Truck, Zap, CheckCircle2, X, ChevronDown, ArrowUpDown
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -1497,6 +1497,7 @@ export default function Stock() {
   const debouncedSearch = useDebounce(search, 100);
   const [view, setView] = useState<StockView>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("az");
   const qc = useQueryClient();
 
   const { data: productsData, isLoading } = useListProducts(
@@ -1525,8 +1526,20 @@ export default function Stock() {
       list = list.filter(p => p.expiryDate && p.expiryDate <= day90Str);
     }
     if (categoryFilter !== "all") list = list.filter(p => p.category === categoryFilter);
-    return list;
-  }, [allProducts, debouncedSearch, view, categoryFilter]);
+
+    return [...list].sort((a, b) => {
+      switch (sortBy) {
+        case "az": return a.canonicalName.localeCompare(b.canonicalName);
+        case "za": return b.canonicalName.localeCompare(a.canonicalName);
+        case "stock_asc": return a.stockQty - b.stockQty;
+        case "stock_desc": return b.stockQty - a.stockQty;
+        case "price_asc": return (a.sellingPrice || 0) - (b.sellingPrice || 0);
+        case "price_desc": return (b.sellingPrice || 0) - (a.sellingPrice || 0);
+        case "newest": return new Date((b as any).updatedAt || (b as any).createdAt || 0).getTime() - new Date((a as any).updatedAt || (a as any).createdAt || 0).getTime();
+        default: return a.canonicalName.localeCompare(b.canonicalName);
+      }
+    });
+  }, [allProducts, debouncedSearch, view, categoryFilter, sortBy]);
 
   const counts = useMemo(() => {
     const day90Str = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
@@ -1560,10 +1573,10 @@ export default function Stock() {
     overscan: 12,
   });
 
-  // Scroll to top when filter / search changes
+  // Scroll to top when filter / search / sort changes
   useEffect(() => {
     listRef.current?.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-  }, [debouncedSearch, view, categoryFilter]);
+  }, [debouncedSearch, view, categoryFilter, sortBy]);
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -1637,16 +1650,37 @@ export default function Stock() {
           ))}
         </div>
 
-        {/* Category filter */}
-        {categories.length > 0 && view !== "transfers" && (
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-            {(["all", ...categories] as string[]).map(cat => (
-              <button key={cat} onClick={() => setCategoryFilter(cat)}
-                className={cn("shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors border",
-                  categoryFilter === cat ? "bg-muted border-foreground/30 text-foreground" : "bg-background border-border text-muted-foreground hover:text-foreground")}>
-                {cat === "all" ? "All categories" : cat}
-              </button>
-            ))}
+        {/* Category filter + Sort */}
+        {view !== "transfers" && (
+          <div className="flex items-center gap-2">
+            {categories.length > 0 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-0.5 flex-1 min-w-0">
+                {(["all", ...categories] as string[]).map(cat => (
+                  <button key={cat} onClick={() => setCategoryFilter(cat)}
+                    className={cn("shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors border",
+                      categoryFilter === cat ? "bg-muted border-foreground/30 text-foreground" : "bg-background border-border text-muted-foreground hover:text-foreground")}>
+                    {cat === "all" ? "All categories" : cat}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Sort selector */}
+            <div className="shrink-0 relative">
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value as typeof sortBy)}
+                className="appearance-none h-8 pl-7 pr-2 rounded-full text-[11px] font-semibold bg-muted border border-border text-muted-foreground focus:outline-none focus:border-primary/60 cursor-pointer"
+              >
+                <option value="az">A → Z</option>
+                <option value="za">Z → A</option>
+                <option value="newest">Newest</option>
+                <option value="stock_asc">Stock ↑</option>
+                <option value="stock_desc">Stock ↓</option>
+                <option value="price_asc">Price ↑</option>
+                <option value="price_desc">Price ↓</option>
+              </select>
+              <ArrowUpDown className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+            </div>
           </div>
         )}
       </div>
