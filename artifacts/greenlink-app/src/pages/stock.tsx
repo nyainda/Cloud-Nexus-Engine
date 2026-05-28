@@ -78,15 +78,16 @@ function RestockDialog({ product }: { product: any }) {
   const [qty, setQty] = useState<number | "">(1);
   const [purchasePrice, setPurchasePrice] = useState(product.purchasePrice?.toString() || "");
   const [sellingPrice, setSellingPrice] = useState(product.sellingPrice?.toString() || "");
+  const [submitting, setSubmitting] = useState(false);
   const restockMutation = useRestockProduct();
   const qc = useQueryClient();
 
   const handleRestock = async () => {
     const qtyNum = Number(qty);
-    if (!qtyNum || qtyNum <= 0) return;
+    if (!qtyNum || qtyNum <= 0 || submitting) return;
 
-    // Cancel any in-flight fetches so they don't overwrite our optimistic update
-    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+    // Guard against double-tap immediately — before any async work
+    setSubmitting(true);
 
     // Snapshot for rollback on error
     const snapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
@@ -105,6 +106,7 @@ function RestockDialog({ product }: { product: any }) {
     toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`);
     setOpen(false);
     setQty(1);
+    setSubmitting(false);
 
     // Async IIFE: runs to completion even after the dialog component unmounts.
     // Per-call .mutate() callbacks are NOT guaranteed to fire after unmount in TanStack Query v5,
@@ -141,8 +143,8 @@ function RestockDialog({ product }: { product: any }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 text-xs px-2">
-          <ArrowUpRight className="h-3 w-3 mr-1" />Restock
+        <Button size="sm" variant="outline" className="h-8 text-xs px-3 gap-1">
+          <ArrowUpRight className="h-3.5 w-3.5" />Restock
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
@@ -241,8 +243,19 @@ function RestockDialog({ product }: { product: any }) {
         </div>
         <DialogFooter className="mt-4">
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={handleRestock} disabled={!qty || Number(qty) <= 0 || restockMutation.isPending}>
-            {restockMutation.isPending ? "Saving…" : `Add ${qty} ${product.unit || "units"}`}
+          <Button
+            onClick={handleRestock}
+            disabled={!qty || Number(qty) <= 0 || submitting}
+            className="min-w-[140px]"
+          >
+            {submitting ? (
+              <span className="flex items-center gap-2">
+                <span className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
+                Saving…
+              </span>
+            ) : (
+              `Add ${qty} ${product.unit || "units"}`
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

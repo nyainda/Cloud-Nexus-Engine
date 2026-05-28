@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 function PaymentDialog({ debt }: { debt: any }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const recordPayment = useRecordDebtPayment();
   const qc = useQueryClient();
   const shopId = localStorage.getItem("greenlink_shopId") || "";
@@ -30,11 +31,18 @@ function PaymentDialog({ debt }: { debt: any }) {
     ? Math.round(((debt.totalAmount - debt.balance) / debt.totalAmount) * 100)
     : 0;
 
-  const handlePayment = async () => {
+  const handlePayment = () => {
     const paid = Number(amount);
+    if (!paid || paid <= 0 || submitting) return;
+
+    // Guard against double-tap immediately
+    setSubmitting(true);
+
     const exactKey = getListDebtsQueryKey({ shopId });
-    await qc.cancelQueries({ queryKey: exactKey });
     const snapshot = qc.getQueryData(exactKey);
+
+    // Optimistic update — instant, no await
+    qc.cancelQueries({ queryKey: exactKey });
     qc.setQueryData(exactKey, (old: any) => {
       if (!Array.isArray(old)) return old;
       return old.map(d => {
@@ -43,17 +51,22 @@ function PaymentDialog({ debt }: { debt: any }) {
         return { ...d, balance: newBalance, status: newBalance === 0 ? "paid" : newBalance < d.totalAmount ? "partial" : d.status };
       });
     });
-    setOpen(false); setAmount("");
-    (async () => {
-      try {
-        await recordPayment.mutateAsync({ debtId: debt.id, data: { amount: paid, recordedBy: userName } });
-        toast.success("Payment recorded!");
+
+    // Close instantly — don't wait for network
+    setOpen(false);
+    setAmount("");
+    setSubmitting(false);
+    toast.success("Payment recorded!");
+
+    // Fire network request in the background
+    recordPayment.mutateAsync({ debtId: debt.id, data: { amount: paid, recordedBy: userName } })
+      .then(() => {
         qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
-      } catch {
+      })
+      .catch(() => {
         qc.setQueryData(exactKey, snapshot);
-        toast.error("Failed to record payment — please retry");
-      }
-    })();
+        toast.error("Payment failed — please retry");
+      });
   };
 
   const quickAmounts = [
@@ -142,10 +155,15 @@ function PaymentDialog({ debt }: { debt: any }) {
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           <Button
             onClick={handlePayment}
-            disabled={!amount || Number(amount) <= 0 || Number(amount) > debt.balance || recordPayment.isPending}
-            className="px-8"
+            disabled={!amount || Number(amount) <= 0 || Number(amount) > debt.balance || submitting}
+            className="px-8 min-w-[140px]"
           >
-            {recordPayment.isPending ? "Processing…" : "Confirm Payment"}
+            {submitting ? (
+              <span className="flex items-center gap-2">
+                <span className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
+                Recording…
+              </span>
+            ) : "Confirm Payment"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -327,7 +345,7 @@ export default function Debts() {
 
   const { data: allDebts, isLoading } = useListDebts(
     { shopId },
-    { query: { enabled: !!shopId } }
+    { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } }
   );
 
   const handleDeleted = () => {
