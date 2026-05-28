@@ -269,11 +269,11 @@ function DebtHistoryPanel({ debtId }: { debtId: string }) {
       </p>
 
       {/* Original debt row */}
-      <div className="relative pl-7 pb-3">
+      <div className="relative pl-7 pb-3 overflow-hidden">
         <div className="absolute left-0 top-1 w-5 h-5 rounded-full bg-destructive/15 border border-destructive/30 flex items-center justify-center">
           <Banknote className="h-2.5 w-2.5 text-destructive" />
         </div>
-        {payments.length > 0 && <div className="absolute left-2.5 top-5 w-px h-full bg-border/40" />}
+        {payments.length > 0 && <div className="absolute left-2.5 top-5 w-px bottom-0 bg-border/40" />}
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold text-foreground">Debt opened</p>
@@ -287,11 +287,11 @@ function DebtHistoryPanel({ debtId }: { debtId: string }) {
 
       {/* Payment rows */}
       {payments.map((payment: any, i: number) => (
-        <div key={payment.id} className="relative pl-7 pb-3">
+        <div key={payment.id} className="relative pl-7 pb-3 overflow-hidden">
           <div className="absolute left-0 top-1 w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
             <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />
           </div>
-          {i < payments.length - 1 && <div className="absolute left-2.5 top-5 w-px h-full bg-border/40" />}
+          {i < payments.length - 1 && <div className="absolute left-2.5 top-5 w-px bottom-0 bg-border/40" />}
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-semibold text-foreground">Payment received</p>
@@ -349,6 +349,7 @@ export default function Debts() {
   );
 
   const handleDeleted = () => {
+    setExpandedDebtId(null);
     qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
   };
 
@@ -505,8 +506,8 @@ export default function Debts() {
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-border/40">
-            {filtered.map(debt => {
+          <div style={{ contain: "layout", transform: "translateZ(0)" }}>
+            {filtered.map((debt, debtIdx) => {
               const isPaid = debt.status === "paid";
               const isPartial = debt.status === "partial";
               const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
@@ -518,7 +519,8 @@ export default function Debts() {
               return (
                 <React.Fragment key={debt.id}>
                   <div className={cn(
-                    "px-4 py-4 hover:bg-muted/10 transition-colors",
+                    "px-4 py-4",
+                    debtIdx > 0 && "border-t border-border/40",
                     isOverdue && "border-l-2 border-l-red-500"
                   )}>
                     <div className="flex items-start gap-3">
