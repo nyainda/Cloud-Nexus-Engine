@@ -75,14 +75,18 @@ function getCategoryStyle(category: string | null | undefined) {
   return { bg: "bg-muted/60", text: "text-muted-foreground", border: "border-border", abbr };
 }
 
-function BagCalculator({ unit, setSellPrice }: {
+function BagCalculator({ unit, setBuyPrice, setSellPrice }: {
   unit: string;
+  setBuyPrice: (v: string) => void;
   setSellPrice: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [bagSize, setBagSize] = useState("");
+  const [bagBuy, setBagBuy] = useState("");
   const [bagSell, setBagSell] = useState("");
 
+  const perUnitBuy = bagSize && bagBuy && parseFloat(bagSize) > 0
+    ? (parseFloat(bagBuy) / parseFloat(bagSize)).toFixed(2) : null;
   const perUnitSell = bagSize && bagSell && parseFloat(bagSize) > 0
     ? (parseFloat(bagSell) / parseFloat(bagSize)).toFixed(2) : null;
 
@@ -97,29 +101,35 @@ function BagCalculator({ unit, setSellPrice }: {
       {open && (
         <div className="mt-2 border border-primary/20 bg-primary/5 rounded-xl p-3 space-y-3">
           <p className="text-[11px] text-muted-foreground">
-            Enter your bag size and selling price — we'll calculate the price per <strong>{unit}</strong> for you.
+            Enter your bag size and buy/sell price — we'll calculate the price per <strong>{unit}</strong> for you.
           </p>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <div className="space-y-1">
               <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Bag size ({unit})</Label>
               <Input type="number" value={bagSize} onChange={e => setBagSize(e.target.value)} placeholder="e.g. 50" className="h-8 text-sm" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Bag buy (KES)</Label>
+              <Input type="number" value={bagBuy} onChange={e => setBagBuy(e.target.value)} placeholder="6000" className="h-8 text-sm" />
             </div>
             <div className="space-y-1">
               <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Bag sell (KES)</Label>
               <Input type="number" value={bagSell} onChange={e => setBagSell(e.target.value)} placeholder="7200" className="h-8 text-sm" />
             </div>
           </div>
-          {perUnitSell && (
+          {(perUnitBuy || perUnitSell) && (
             <div className="bg-background border border-border rounded-lg px-3 py-2 space-y-1">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-bold">Per {unit} price:</p>
               <div className="flex items-center gap-4 flex-wrap">
-                <span className="text-xs font-mono font-bold text-emerald-500">Sell: KES {perUnitSell}/{unit}</span>
+                {perUnitBuy && <span className="text-xs font-mono font-bold text-blue-400">Buy: KES {perUnitBuy}/{unit}</span>}
+                {perUnitSell && <span className="text-xs font-mono font-bold text-emerald-500">Sell: KES {perUnitSell}/{unit}</span>}
               </div>
               <Button size="sm" className="mt-1.5 h-7 text-xs w-full" onClick={() => {
+                if (perUnitBuy) setBuyPrice(perUnitBuy);
                 if (perUnitSell) setSellPrice(perUnitSell);
                 setOpen(false);
               }}>
-                Apply — set sell price to KES {perUnitSell}/{unit}
+                Apply prices
               </Button>
             </div>
           )}
@@ -152,6 +162,7 @@ function RestockDialog({ product }: { product: any }) {
   const [open, setOpen] = useState(false);
   const weighed = isWeighedUnit(product.unit || "");
   const [qty, setQty] = useState<number | "">(1);
+  const [purchasePrice, setPurchasePrice] = useState(product.purchasePrice?.toString() || "");
   const [sellingPrice, setSellingPrice] = useState(product.sellingPrice?.toString() || "");
   const [submitting, setSubmitting] = useState(false);
   const restockMutation = useRestockProduct();
@@ -172,6 +183,7 @@ function RestockDialog({ product }: { product: any }) {
       if (!old?.products) return old;
       return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : {
         ...p, stockQty: p.stockQty + qtyNum,
+        ...(purchasePrice && { purchasePrice: Number(purchasePrice) }),
         ...(sellingPrice && { sellingPrice: Number(sellingPrice) }),
       }) };
     });
@@ -187,6 +199,7 @@ function RestockDialog({ product }: { product: any }) {
       await enqueueMutation("restock", (product.shopId as string) || "", {
         productId: product.id,
         qty: qtyNum,
+        ...(purchasePrice ? { newPurchasePrice: Number(purchasePrice) } : {}),
         ...(sellingPrice ? { newSellingPrice: Number(sellingPrice) } : {}),
       });
       toast.success(`Restock saved offline — will sync on reconnect`);
@@ -199,7 +212,7 @@ function RestockDialog({ product }: { product: any }) {
     (async () => {
       try {
         const updatedProduct = await restockMutation.mutateAsync(
-          { productId: product.id, data: { qty: qtyNum, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } },
+          { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } as any },
         );
         // Register with version guard so any concurrent background refetch that returns
         // a stale KV response for this product gets silently replaced with this version.
@@ -251,6 +264,34 @@ function RestockDialog({ product }: { product: any }) {
           </div>
         </div>
         <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                <span className="text-blue-400 font-mono">↓</span> Buy Price (KES)
+              </Label>
+              <Input
+                type="number"
+                value={purchasePrice}
+                onChange={e => setPurchasePrice(e.target.value)}
+                onFocus={e => e.target.select()}
+                placeholder={product.purchasePrice?.toString() || "0"}
+                className="h-10 font-mono text-center"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                <span className="text-emerald-400 font-mono">↑</span> Sell Price (KES)
+              </Label>
+              <Input
+                type="number"
+                value={sellingPrice}
+                onChange={e => setSellingPrice(e.target.value)}
+                onFocus={e => e.target.select()}
+                placeholder={product.sellingPrice?.toString() || "0"}
+                className="h-10 font-mono text-center"
+              />
+            </div>
+          </div>
           <div className="space-y-2">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Quantity to Add ({product.unit || "units"}) *</Label>
             {weighed ? (
@@ -277,21 +318,6 @@ function RestockDialog({ product }: { product: any }) {
                 </Button>
               </div>
             )}
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
-              <span className="text-emerald-400 font-mono">↑</span> Sell Price (KES)
-            </Label>
-            <div className="relative">
-              <Input
-                type="number"
-                value={sellingPrice}
-                onChange={e => setSellingPrice(e.target.value)}
-                onFocus={e => e.target.select()}
-                placeholder={product.sellingPrice?.toString() || "0"}
-                className="h-12 text-lg font-bold font-mono text-center"
-              />
-            </div>
           </div>
         </div>
         <DialogFooter className="mt-4">
@@ -323,6 +349,7 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
   const [category, setCategory] = useState(product.category || "");
   const [unit, setUnit] = useState(product.unit || "unit");
   const [productType, setProductType] = useState<"normal" | "measured">(product.productType === "measured" ? "measured" : "normal");
+  const [buyPrice, setBuyPrice] = useState(product.purchasePrice?.toString() || "");
   const [sellPrice, setSellPrice] = useState(product.sellingPrice?.toString() || "");
   const [alertQty, setAlertQty] = useState(product.alertQty?.toString() || "5");
   const [expiryDate, setExpiryDate] = useState(product.expiryDate || "");
@@ -338,6 +365,7 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     if (unit) patch.unit = unit;
     patch.productType = productType;
     patch.allowDecimals = productType === "measured";
+    if (buyPrice) patch.purchasePrice = parseFloat(buyPrice);
     if (sellPrice) patch.sellingPrice = parseFloat(sellPrice);
     if (alertQty) patch.alertQty = parseFloat(alertQty);
     if (expiryDate) patch.expiryDate = expiryDate;
@@ -423,12 +451,24 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Buy Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
+            </Label>
+            <Input type="number" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} className="h-9" placeholder={productType === "measured" ? `e.g. 136 per ${unit}` : "0"} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
               Sell Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
             </Label>
             <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} className="h-9" placeholder={productType === "measured" ? `e.g. 144 per ${unit}` : "0"} />
           </div>
+          {buyPrice && sellPrice && Number(sellPrice) > 0 && (
+            <div className="col-span-full border border-border rounded-lg px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
+              <span className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" />Profit Margin</span>
+              <span className="font-bold font-mono">{(((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100).toFixed(1)}%</span>
+            </div>
+          )}
           {productType === "measured" && (
-            <BagCalculator unit={unit} setSellPrice={setSellPrice} />
+            <BagCalculator unit={unit} setBuyPrice={setBuyPrice} setSellPrice={setSellPrice} />
           )}
           <div className="col-span-full">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">Product Type</Label>
@@ -497,6 +537,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   const [category, setCategory] = useState("");
   const [unit, setUnit] = useState("bag");
   const [productType, setProductType] = useState<"normal" | "measured">("normal");
+  const [buyPrice, setBuyPrice] = useState("");
   const [sellPrice, setSellPrice] = useState("");
   const [qty, setQty] = useState("0");
   const [alertQty, setAlertQty] = useState("5");
@@ -539,7 +580,10 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
     return existingProducts.filter(p => similarity(p.canonicalName, name) >= 0.7).slice(0, 3);
   }, [name, existingProducts]);
 
-  const reset = () => { setName(""); setSku(""); setCategory(""); setUnit("bag"); setProductType("normal"); setSellPrice(""); setQty("0"); setAlertQty("5"); setExpiryDate(""); skuManuallyEdited.current = false; categoryManuallyEdited.current = false; };
+  const margin = buyPrice && sellPrice && Number(sellPrice) > 0
+    ? (((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100).toFixed(1) : null;
+
+  const reset = () => { setName(""); setSku(""); setCategory(""); setUnit("bag"); setProductType("normal"); setBuyPrice(""); setSellPrice(""); setQty("0"); setAlertQty("5"); setExpiryDate(""); skuManuallyEdited.current = false; categoryManuallyEdited.current = false; };
 
   const handleSubmit = () => {
     if (!name.trim()) return;
@@ -547,7 +591,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
     toast.success("Product added!");
     reset(); setOpen(false); onSuccess();
     createProduct.mutate(
-      { data: { shopId, canonicalName: name.trim(), sku: sku || undefined, category: category || undefined, unit, productType, allowDecimals: productType === "measured", sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: parseFloat(alertQty) || 5, stockQty: parseFloat(qty) || 0, expiryDate: expiryDate || undefined } as any },
+      { data: { shopId, canonicalName: name.trim(), sku: sku || undefined, category: category || undefined, unit, productType, allowDecimals: productType === "measured", purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: parseFloat(alertQty) || 5, stockQty: parseFloat(qty) || 0, expiryDate: expiryDate || undefined } as any },
       {
         onSuccess: () => { onSuccess(); }, // refresh list with real server ID
         onError: () => { toast.error("Failed to add product — please retry"); onSuccess(); },
@@ -618,12 +662,24 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Buy Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
+            </Label>
+            <Input type="number" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} placeholder={productType === "measured" ? `e.g. 136 per ${unit}` : "0"} className="h-9" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
               Sell Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
             </Label>
             <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} placeholder={productType === "measured" ? `e.g. 144 per ${unit}` : "0"} className="h-9" />
           </div>
+          {margin && (
+            <div className="col-span-full border border-border rounded-lg px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
+              <span className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" />Profit Margin</span>
+              <span className="font-bold font-mono">{margin}%</span>
+            </div>
+          )}
           {productType === "measured" && (
-            <BagCalculator unit={unit} setSellPrice={setSellPrice} />
+            <BagCalculator unit={unit} setBuyPrice={setBuyPrice} setSellPrice={setSellPrice} />
           )}
           <div className="col-span-full">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">Product Type</Label>

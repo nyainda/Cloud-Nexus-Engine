@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
-import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "../middleware/auth";
 import {
   scanSessions,
@@ -131,26 +130,27 @@ Return ONLY a valid JSON array (no markdown, no code blocks, no extra text):
 Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entries.${ocrHint}`;
   }
 
-  const ai = new GoogleGenAI({
-    apiKey,
-    ...(aiBaseUrl ? { httpOptions: { apiVersion: "", baseUrl: aiBaseUrl } } : {}),
+  const base = aiBaseUrl
+    ? aiBaseUrl.replace(/\/$/, "")
+    : "https://generativelanguage.googleapis.com";
+  const url = `${base}/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType, data: imageBase64 } }] }],
+      generationConfig: { responseMimeType: "application/json" },
+    }),
   });
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: prompt },
-          { inlineData: { mimeType, data: imageBase64 } },
-        ],
-      },
-    ],
-    config: { responseMimeType: "application/json" },
-  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText);
+    throw new Error(`Gemini API error ${res.status}: ${err}`);
+  }
 
-  const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
+  const json: any = await res.json();
+  const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
 
   try {
     const parsed = JSON.parse(text);
