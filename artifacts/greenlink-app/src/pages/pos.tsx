@@ -777,6 +777,7 @@ export default function POS() {
                           ? "bg-primary/10 border-primary/50"
                           : "bg-card border-border cursor-pointer"
                       )}
+                      style={{ contain: "layout style paint", isolation: "isolate" }}
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className={cn(
@@ -840,12 +841,16 @@ export default function POS() {
         {cart.length > 0 && <CartPanel {...cartPanelProps} />}
       </div>
 
-      {/* Mobile: Cart FAB — plain fixed button, no transforms */}
-      {cartCount > 0 && !showCartMobile && (
-        <button
-          className="lg:hidden fixed bottom-[4.5rem] right-4 z-40 bg-primary text-primary-foreground rounded-2xl h-14 px-4 flex items-center gap-2 border border-primary/40"
-          onClick={() => setShowCartMobile(true)}
-        >
+      {/* Mobile: Cart FAB — always in DOM, opacity-toggled to avoid mount repaints on Android */}
+      <button
+        className={cn(
+          "lg:hidden fixed bottom-[4.5rem] right-4 z-40 bg-primary text-primary-foreground rounded-2xl h-14 px-4 flex items-center gap-2 border border-primary/40",
+          "transition-opacity duration-150",
+          cartCount > 0 && !showCartMobile ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        )}
+        onClick={() => setShowCartMobile(true)}
+        aria-hidden={cartCount === 0 || showCartMobile}
+      >
           <ShoppingCart className="h-5 w-5" />
           <div className="text-left">
             <p className="text-[10px] font-bold leading-none text-primary-foreground/80">{cartCount} items</p>
@@ -853,7 +858,6 @@ export default function POS() {
           </div>
           <ChevronRight className="h-4 w-4 text-primary-foreground/60" />
         </button>
-      )}
 
       {/* Mobile: Cart overlay — plain div, no Radix Dialog, no CSS transforms */}
       {showCartMobile && (

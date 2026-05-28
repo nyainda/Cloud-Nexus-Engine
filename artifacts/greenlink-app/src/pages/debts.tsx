@@ -12,7 +12,7 @@ import { formatKES } from "@/lib/format";
 import {
   Search, Users, Phone, CalendarClock, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
-  ChevronDown, ChevronUp, Banknote, User2, Trash2
+  ChevronDown, ChevronUp, Banknote, User2, Trash2, Send
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -340,6 +340,7 @@ export default function Debts() {
   const debouncedSearch = useDebounce(search, 100);
   const [tab, setTab] = useState<DebtTab>("unpaid");
   const [expandedDebtId, setExpandedDebtId] = useState<string | null>(null);
+  const [bulkRemindOpen, setBulkRemindOpen] = useState(false);
 
   const qc = useQueryClient();
 
@@ -357,10 +358,12 @@ export default function Debts() {
     const debts = allDebts || [];
     const active = debts.filter(d => d.status !== "paid");
     const overdue = active.filter(d => differenceInDays(new Date(), new Date(d.createdAt)) > 30);
+    const overdueWithPhone = overdue.filter(d => d.customerPhone);
     return {
       outstanding: active.reduce((s, d) => s + (d.balance || 0), 0),
       activeCount: active.length,
       overdueCount: overdue.length,
+      overdueWithPhone,
       totalDebts: debts.length,
     };
   }, [allDebts]);
@@ -400,7 +403,82 @@ export default function Debts() {
             <h1 className="text-lg font-bold font-display">Customer Debts</h1>
             <p className="text-xs text-muted-foreground">{stats.activeCount} active debtors</p>
           </div>
+          {stats.overdueWithPhone.length > 0 && (
+            <button
+              onClick={() => setBulkRemindOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#25D366]/10 border border-[#25D366]/30 text-[#25D366] text-xs font-semibold hover:bg-[#25D366]/20 transition-colors"
+            >
+              <Send className="h-3.5 w-3.5" />
+              Remind All
+              <span className="bg-[#25D366]/20 text-[#25D366] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                {stats.overdueWithPhone.length}
+              </span>
+            </button>
+          )}
         </div>
+
+        {/* Bulk WhatsApp remind dialog */}
+        {bulkRemindOpen && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setBulkRemindOpen(false)}>
+            <div className="absolute inset-0 bg-black/60" />
+            <div
+              className="relative bg-card border border-border rounded-2xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-xl"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Dialog header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                <div>
+                  <p className="font-bold text-sm text-foreground flex items-center gap-2">
+                    <MessageCircle className="h-4 w-4 text-[#25D366]" />
+                    WhatsApp Reminders
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {stats.overdueWithPhone.length} overdue customer{stats.overdueWithPhone.length !== 1 ? "s" : ""} with phone numbers
+                  </p>
+                </div>
+                <button onClick={() => setBulkRemindOpen(false)} className="text-muted-foreground/50 hover:text-foreground p-1">
+                  <ChevronDown className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Customer list */}
+              <div className="overflow-y-auto flex-1 p-3 space-y-2">
+                {stats.overdueWithPhone.map((debt: any) => {
+                  const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
+                  const msg = `Hi ${debt.customerName}, you have an outstanding balance of ${formatKES(debt.balance)} at our shop (${daysAgo} days overdue). Please settle at your earliest convenience. Thank you!`;
+                  const waUrl = `https://wa.me/${debt.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(msg)}`;
+                  return (
+                    <a
+                      key={debt.id}
+                      href={waUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-muted/40 hover:bg-[#25D366]/10 border border-border/50 hover:border-[#25D366]/30 transition-colors"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-destructive/15 flex items-center justify-center shrink-0 text-sm font-bold text-destructive">
+                        {debt.customerName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-foreground truncate">{debt.customerName}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          <span className="font-mono font-bold text-destructive">{formatKES(debt.balance)}</span>
+                          {" · "}{daysAgo}d overdue
+                        </p>
+                      </div>
+                      <MessageCircle className="h-4 w-4 text-[#25D366] shrink-0" />
+                    </a>
+                  );
+                })}
+              </div>
+
+              <div className="px-4 py-3 border-t border-border">
+                <p className="text-[10px] text-muted-foreground/50 text-center">
+                  Tap a customer to open WhatsApp with a pre-filled message
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Summary cards */}
         <div className="grid grid-cols-3 gap-2">
