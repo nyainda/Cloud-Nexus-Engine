@@ -164,6 +164,8 @@ async function main() {
     DB: d1,
     SESSIONS: kv,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    AI_INTEGRATIONS_GEMINI_API_KEY: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+    AI_INTEGRATIONS_GEMINI_BASE_URL: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
     VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
     VAPID_PRIVATE_KEY_JWK: process.env.VAPID_PRIVATE_KEY_JWK,
     NODE_ENV: process.env.NODE_ENV ?? "development",

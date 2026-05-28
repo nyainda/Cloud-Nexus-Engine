@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@google/genai": "^2.6.0",
     "@hono/node-server": "^1.14.3",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",

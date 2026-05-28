@@ -67,11 +67,11 @@ function PaymentDialog({ debt }: { debt: any }) {
 
     toast.success("Payment recorded!");
 
-    // Fire network request in the background
+    // Fire network request in the background.
+    // ⚠️ Do NOT call invalidateQueries on success — it triggers a refetch that can
+    // return stale cached data and revert the optimistic update. The optimistic patch
+    // above is already authoritative; the 20-second refetchInterval will sync eventually.
     recordPayment.mutateAsync({ debtId: debt.id, data: { amount: paid, recordedBy: userName } })
-      .then(() => {
-        qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
-      })
       .catch(() => {
         qc.setQueryData(exactKey, snapshot);
         toast.error("Payment failed — please retry");

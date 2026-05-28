@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
+import { GoogleGenAI } from "@google/genai";
 import { requireAuth } from "../middleware/auth";
 import {
   scanSessions,
@@ -80,6 +81,7 @@ async function callGeminiOCR(
   mimeType: string,
   scanType: string,
   tesseractText?: string,
+  aiBaseUrl?: string,
 ): Promise<{ items: GeminiItem[]; meta: InvoiceMeta | null }> {
   const ocrHint = tesseractText?.trim()
     ? `\n\nA basic OCR engine pre-scanned this image and extracted the following raw text. Use it as an additional hint to improve accuracy — cross-reference it with what you see in the image:\n\n"""\n${tesseractText.slice(0, 3000)}\n"""`
@@ -129,38 +131,26 @@ Return ONLY a valid JSON array (no markdown, no code blocks, no extra text):
 Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entries.${ocrHint}`;
   }
 
-  const resp = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mimeType, data: imageBase64 } },
-            ],
-          },
+  const ai = new GoogleGenAI({
+    apiKey,
+    ...(aiBaseUrl ? { httpOptions: { apiVersion: "", baseUrl: aiBaseUrl } } : {}),
+  });
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType, data: imageBase64 } },
         ],
-        generationConfig: { responseMimeType: "application/json" },
-      }),
-    },
-  );
+      },
+    ],
+    config: { responseMimeType: "application/json" },
+  });
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Gemini API error ${resp.status}: ${errText.slice(0, 200)}`);
-  }
-
-  const data = await resp.json<{
-    candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
-    error?: { message: string };
-  }>();
-
-  if (data.error) throw new Error(`Gemini: ${data.error.message}`);
-
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
+  const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
 
   try {
     const parsed = JSON.parse(text);
@@ -274,7 +264,8 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
     db.select().from(shops).where(eq(shops.id, body.shopId)).get(),
   ]);
 
-  const geminiKey = shopRow?.geminiApiKey || c.env.GEMINI_API_KEY || null;
+  const geminiKey = shopRow?.geminiApiKey || c.env.AI_INTEGRATIONS_GEMINI_API_KEY || c.env.GEMINI_API_KEY || null;
+  const aiBaseUrl = c.env.AI_INTEGRATIONS_GEMINI_BASE_URL || undefined;
 
   let lines: GeminiItem[] = [];
   let invoiceMeta: InvoiceMeta | null = null;
@@ -282,7 +273,7 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
 
   if (geminiKey) {
     try {
-      const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText);
+      const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText, aiBaseUrl);
       lines = result.items;
       invoiceMeta = result.meta;
     } catch (err: any) {
