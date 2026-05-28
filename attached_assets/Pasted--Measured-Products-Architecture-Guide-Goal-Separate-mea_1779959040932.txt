@@ -1,0 +1,461 @@
+# Measured Products Architecture Guide
+
+## Goal
+
+Separate measured/bulk products from normal products in the POS and Inventory system without creating separate product tables.
+
+The system should support:
+
+* normal products
+* measured products
+
+while keeping:
+
+* analytics clean
+* database small
+* inventory scalable
+* POS simple
+
+---
+
+# Core Principle
+
+DO NOT create separate products for:
+
+* 0.5kg fertilizer
+* 1kg fertilizer
+* 2kg fertilizer
+
+These are NOT products.
+
+They are:
+
+* sales quantities
+
+The product remains ONE inventory item.
+
+---
+
+# Correct Inventory Model
+
+## Example
+
+| Product        | Stock |
+| -------------- | ----- |
+| DAP Fertilizer | 50kg  |
+
+Customers buy:
+
+| Qty   |
+| ----- |
+| 0.5kg |
+| 1kg   |
+| 2kg   |
+
+The system deducts from total stock.
+
+Example:
+
+```txt
+50kg - 0.5kg = 49.5kg
+49.5kg - 2kg = 47.5kg
+```
+
+When new stock arrives:
+
+```txt
+47.5kg + 50kg = 97.5kg
+```
+
+---
+
+# Database Structure
+
+## KEEP ONE PRODUCTS TABLE
+
+DO NOT create:
+
+```txt
+measured_products
+normal_products
+```
+
+Use ONE products table.
+
+---
+
+# Add Product Type
+
+## New Field
+
+```sql
+productType ENUM('normal', 'measured')
+```
+
+---
+
+# Recommended Product Fields
+
+```sql
+id
+name
+sku
+productType
+stockQty
+baseUnit
+sellingPrice
+purchasePrice
+allowDecimals
+alertQty
+```
+
+---
+
+# Example Products
+
+## Normal Product
+
+```json
+{
+  "name": "Coca Cola",
+  "productType": "normal",
+  "stockQty": 24,
+  "baseUnit": "pcs",
+  "allowDecimals": false
+}
+```
+
+## Measured Product
+
+```json
+{
+  "name": "DAP Fertilizer",
+  "productType": "measured",
+  "stockQty": 50,
+  "baseUnit": "kg",
+  "allowDecimals": true
+}
+```
+
+---
+
+# Important Database Change
+
+## Stock Quantity MUST Support Decimals
+
+BAD:
+
+```sql
+INT
+```
+
+GOOD:
+
+```sql
+DECIMAL(10,2)
+```
+
+Recommended:
+
+```sql
+stockQty DECIMAL(10,2)
+```
+
+---
+
+# POS Logic
+
+## Normal Products
+
+Show:
+
+```txt
+[-] 1 [+]
+```
+
+Only whole numbers allowed.
+
+Example:
+
+* 1 soda
+* 2 bread
+* 5 batteries
+
+---
+
+# Measured Products
+
+Show quantity input instead:
+
+```txt
+Enter quantity:
+[0.5]
+```
+
+Allow decimal values.
+
+Example:
+
+* 0.25kg
+* 0.5kg
+* 1.75kg
+
+---
+
+# Quick Quantity Buttons
+
+Measured products should have quick buttons:
+
+```txt
+0.25kg
+0.5kg
+1kg
+2kg
+5kg
+```
+
+This makes POS much faster.
+
+---
+
+# Inventory Logic
+
+## Normal Products
+
+Stock reduces by integers.
+
+Example:
+
+```txt
+24 -> 23
+```
+
+---
+
+# Measured Products
+
+Stock reduces by decimals.
+
+Example:
+
+```txt
+50kg -> 49.5kg
+```
+
+---
+
+# Restocking Logic
+
+When new stock arrives:
+
+## Example
+
+Current stock:
+
+```txt
+47.5kg
+```
+
+New stock added:
+
+```txt
+50kg
+```
+
+New total:
+
+```txt
+97.5kg
+```
+
+---
+
+# Analytics
+
+Measured products should aggregate quantities.
+
+Example:
+
+```txt
+Fertilizer sold this month: 120.5kg
+```
+
+NOT:
+
+```txt
+120 separate fertilizer products
+```
+
+---
+
+# Sales Table
+
+Sales should store quantities only.
+
+Example:
+
+| productId | qty | unitPrice |
+| --------- | --- | --------- |
+| 1         | 0.5 | 120       |
+
+The sale quantity is what changes.
+
+NOT the product itself.
+
+---
+
+# Recommended Frontend Logic
+
+Instead of:
+
+```ts
+isWeighedUnit()
+```
+
+Use:
+
+```ts
+product.productType === "measured"
+```
+
+This is cleaner and easier to maintain.
+
+---
+
+# UI Separation
+
+## Normal Products
+
+* quantity stepper
+* integer quantities
+* piece counting
+
+---
+
+# Measured Products
+
+* decimal input
+* quantity field
+* quick quantity buttons
+* decimal stock tracking
+
+---
+
+# Important Rules
+
+## DO NOT
+
+* create separate products for every weight
+* create multiple SKUs for same bulk stock
+* create separate tables for measured products
+* store physical bags individually
+
+---
+
+# DO
+
+* track total measurable quantity
+* deduct decimal quantities
+* aggregate analytics
+* keep one product row
+* keep one products table
+
+---
+
+# Final Architecture Summary
+
+## Products Table
+
+| name | type     | stock | unit |
+| ---- | -------- | ----- | ---- |
+| Rice | measured | 100   | kg   |
+| Soda | normal   | 24    | pcs  |
+
+---
+
+# POS Behavior
+
+## normal
+
+```txt
++1
++1
++1
+```
+
+## measured
+
+```txt
+0.25
+0.5
+1.75
+```
+
+---
+
+# Recommended Implementation Order
+
+## Step 1
+
+Add:
+
+```sql
+productType
+```
+
+---
+
+## Step 2
+
+Convert:
+
+```sql
+stockQty
+```
+
+to:
+
+```sql
+DECIMAL(10,2)
+```
+
+---
+
+## Step 3
+
+Update POS UI:
+
+* normal product UI
+* measured product UI
+
+---
+
+## Step 4
+
+Update inventory calculations for decimals.
+
+---
+
+## Step 5
+
+Update analytics aggregation for measured quantities.
+
+---
+
+# Final Goal
+
+The system should support:
+
+* supermarkets
+* agrovets
+* wholesalers
+* hardware shops
+* feed stores
+
+while remaining:
+
+* simple
+* scalable
+* fast
+* analytics friendly
+* easy to maintain

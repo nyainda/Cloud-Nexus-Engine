@@ -121,7 +121,8 @@ function QuickAddSheet({
 
   useEffect(() => {
     if (open && product) {
-      setQty(isWeighedUnit(product.unit || "") ? 0.5 : 1);
+      const isMeasured = product.productType === "measured" || isWeighedUnit(product.unit || "");
+      setQty(isMeasured ? 0.5 : 1);
       setPrice(product.sellingPrice || 0);
       // Auto-focus qty input after sheet animation
       setTimeout(() => qtyInputRef.current?.select(), 80);
@@ -137,7 +138,7 @@ function QuickAddSheet({
 
   if (!open || !product) return null;
 
-  const weighed = isWeighedUnit(product.unit || "");
+  const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");
   const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
   const isOut = product.stockQty === 0;
   const margin = product.purchasePrice && price
@@ -761,7 +762,7 @@ export default function POS() {
                 {(debouncedSearch || stockFilter !== "all" ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
                   const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
                   const isOut = product.stockQty === 0;
-                  const weighed = isWeighedUnit(product.unit || "");
+                  const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");
                   const inCart = cart.find(i => i.product.id === product.id);
 
                   return (

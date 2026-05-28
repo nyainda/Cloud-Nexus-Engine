@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS products (
   purchase_price REAL,
   selling_price REAL,
   profit_margin REAL,
+  product_type TEXT NOT NULL DEFAULT 'normal',
+  allow_decimals INTEGER NOT NULL DEFAULT 0,
   stock_qty REAL NOT NULL DEFAULT 0,
   alert_qty REAL NOT NULL DEFAULT 5,
   expiry_date TEXT,

@@ -70,6 +70,8 @@ productsRouter.get("/products", requireAuth, async (c) => {
           sku: p.sku,
           category: p.category,
           unit: p.unit,
+          productType: p.product_type ?? "normal",
+          allowDecimals: Boolean(p.allow_decimals),
           purchasePrice: p.purchase_price,
           sellingPrice: p.selling_price,
           profitMargin: p.profit_margin,
@@ -145,6 +147,8 @@ productsRouter.post("/products", requireAuth, async (c) => {
     sku?: string;
     category?: string;
     unit?: string;
+    productType?: string;
+    allowDecimals?: boolean;
     purchasePrice?: number;
     sellingPrice?: number;
     stockQty?: number;
@@ -168,6 +172,8 @@ productsRouter.post("/products", requireAuth, async (c) => {
     sku: body.sku ?? null,
     category: body.category ?? null,
     unit: body.unit ?? "unit",
+    productType: body.productType ?? "normal",
+    allowDecimals: body.allowDecimals ?? false,
     purchasePrice: body.purchasePrice ?? null,
     sellingPrice: body.sellingPrice ?? null,
     profitMargin,
@@ -329,6 +335,8 @@ productsRouter.patch("/products/:productId", requireAuth, async (c) => {
     alertQty?: number;
     category?: string | null;
     unit?: string;
+    productType?: string;
+    allowDecimals?: boolean;
     size?: string | null;
     isActive?: boolean;
     sku?: string | null;
@@ -352,6 +360,8 @@ productsRouter.patch("/products/:productId", requireAuth, async (c) => {
   if ("alertQty" in body) patch.alertQty = body.alertQty;
   if ("category" in body) patch.category = body.category ?? undefined;
   if ("unit" in body) patch.unit = body.unit;
+  if ("productType" in body) patch.productType = body.productType;
+  if ("allowDecimals" in body) patch.allowDecimals = body.allowDecimals;
   if ("size" in body) patch.size = body.size ?? undefined;
   if ("isActive" in body) patch.isActive = body.isActive;
   if ("sku" in body) patch.sku = body.sku ?? undefined;

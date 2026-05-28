@@ -269,6 +269,7 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
   const [sku, setSku] = useState(product.sku || "");
   const [category, setCategory] = useState(product.category || "");
   const [unit, setUnit] = useState(product.unit || "unit");
+  const [productType, setProductType] = useState<"normal" | "measured">(product.productType === "measured" ? "measured" : "normal");
   const [buyPrice, setBuyPrice] = useState(product.purchasePrice?.toString() || "");
   const [sellPrice, setSellPrice] = useState(product.sellingPrice?.toString() || "");
   const [alertQty, setAlertQty] = useState(product.alertQty?.toString() || "5");
@@ -286,6 +287,8 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     if (sku) patch.sku = sku;
     if (category) patch.category = category;
     if (unit) patch.unit = unit;
+    patch.productType = productType;
+    patch.allowDecimals = productType === "measured";
     if (buyPrice) patch.purchasePrice = parseFloat(buyPrice);
     if (sellPrice) patch.sellingPrice = parseFloat(sellPrice);
     if (alertQty) patch.alertQty = parseFloat(alertQty);
@@ -384,6 +387,29 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
               <span className="font-bold font-mono">{margin}%</span>
             </div>
           )}
+          <div className="col-span-full">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">Product Type</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setProductType("normal")}
+                className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors",
+                  productType === "normal" ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border text-muted-foreground hover:border-primary/50")}>
+                <Package className="h-4 w-4 shrink-0" />
+                <div className="text-left">
+                  <p className="text-xs font-bold">Normal</p>
+                  <p className="text-[10px] opacity-70 font-normal">Whole units (pcs, bags)</p>
+                </div>
+              </button>
+              <button type="button" onClick={() => { setProductType("measured"); if (!["kg","g","litre","ml","l"].includes(unit)) setUnit("kg"); }}
+                className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors",
+                  productType === "measured" ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border text-muted-foreground hover:border-primary/50")}>
+                <Scale className="h-4 w-4 shrink-0" />
+                <div className="text-left">
+                  <p className="text-xs font-bold">Measured</p>
+                  <p className="text-[10px] opacity-70 font-normal">Decimal qty (kg, L, g)</p>
+                </div>
+              </button>
+            </div>
+          </div>
           <div className="col-span-full space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Unit</Label>
             <Input value={unit} onChange={e => setUnit(e.target.value)} placeholder="e.g. kg, bag, litre..." />
@@ -399,7 +425,7 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Low Stock Alert</Label>
-            <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} step={isWeighedUnit(unit) ? "0.5" : "1"} />
+            <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} step={productType === "measured" ? "0.5" : "1"} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1">
@@ -425,6 +451,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   const [sku, setSku] = useState("");
   const [category, setCategory] = useState("");
   const [unit, setUnit] = useState("bag");
+  const [productType, setProductType] = useState<"normal" | "measured">("normal");
   const [buyPrice, setBuyPrice] = useState("");
   const [sellPrice, setSellPrice] = useState("");
   const [qty, setQty] = useState("0");
@@ -454,7 +481,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   const margin = buyPrice && sellPrice && Number(sellPrice) > 0
     ? (((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100).toFixed(1) : null;
 
-  const reset = () => { setName(""); setSku(""); setCategory(""); setUnit("bag"); setBuyPrice(""); setSellPrice(""); setQty("0"); setAlertQty("5"); setExpiryDate(""); };
+  const reset = () => { setName(""); setSku(""); setCategory(""); setUnit("bag"); setProductType("normal"); setBuyPrice(""); setSellPrice(""); setQty("0"); setAlertQty("5"); setExpiryDate(""); };
 
   const handleSubmit = () => {
     if (!name.trim()) return;
@@ -462,7 +489,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
     toast.success("Product added!");
     reset(); setOpen(false); onSuccess();
     createProduct.mutate(
-      { data: { shopId, canonicalName: name.trim(), sku: sku || undefined, category: category || undefined, unit, purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: parseFloat(alertQty) || 5, stockQty: parseFloat(qty) || 0, expiryDate: expiryDate || undefined } as any },
+      { data: { shopId, canonicalName: name.trim(), sku: sku || undefined, category: category || undefined, unit, productType, allowDecimals: productType === "measured", purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: parseFloat(alertQty) || 5, stockQty: parseFloat(qty) || 0, expiryDate: expiryDate || undefined } as any },
       {
         onSuccess: () => { onSuccess(); }, // refresh list with real server ID
         onError: () => { toast.error("Failed to add product — please retry"); onSuccess(); },
@@ -521,6 +548,29 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
               <span className="font-bold font-mono">{margin}%</span>
             </div>
           )}
+          <div className="col-span-full">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">Product Type</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setProductType("normal")}
+                className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors",
+                  productType === "normal" ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border text-muted-foreground hover:border-primary/50")}>
+                <Package className="h-4 w-4 shrink-0" />
+                <div className="text-left">
+                  <p className="text-xs font-bold">Normal</p>
+                  <p className="text-[10px] opacity-70 font-normal">Whole units (pcs, bags)</p>
+                </div>
+              </button>
+              <button type="button" onClick={() => { setProductType("measured"); if (!["kg","g","litre","ml","l"].includes(unit)) setUnit("kg"); }}
+                className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors",
+                  productType === "measured" ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border text-muted-foreground hover:border-primary/50")}>
+                <Scale className="h-4 w-4 shrink-0" />
+                <div className="text-left">
+                  <p className="text-xs font-bold">Measured</p>
+                  <p className="text-[10px] opacity-70 font-normal">Decimal qty (kg, L, g)</p>
+                </div>
+              </button>
+            </div>
+          </div>
           <div className="col-span-full space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Unit</Label>
             <Input value={unit} onChange={e => setUnit(e.target.value)} placeholder="bag, kg, litre..." className="h-9" />
@@ -536,11 +586,11 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Opening Qty</Label>
-            <Input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="0" className="h-9" />
+            <Input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="0" step={productType === "measured" ? "0.5" : "1"} className="h-9" />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Alert Threshold</Label>
-            <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} placeholder="5" className="h-9" />
+            <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} placeholder="5" step={productType === "measured" ? "0.5" : "1"} className="h-9" />
           </div>
           <div className="col-span-full space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Expiry Date (optional)</Label>
@@ -564,7 +614,7 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
   const [qty, setQty] = useState<number>(1);
   const [notes, setNotes] = useState("");
   const [isPending, setIsPending] = useState(false);
-  const weighed = isWeighedUnit(product.unit || "");
+  const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");
   const targetShopId = shopId === "shop-greenlink" ? "shop-sunrise" : "shop-greenlink";
   const targetLabel = targetShopId === "shop-greenlink" ? "GreenLink" : "Sunrise Agrovet";
 

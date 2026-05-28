@@ -35,6 +35,8 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     "ALTER TABLE price_history ADD COLUMN created_at TEXT",
     "ALTER TABLE shops ADD COLUMN gemini_api_key TEXT",
     "ALTER TABLE products ADD COLUMN expiry_date TEXT",
+    "ALTER TABLE products ADD COLUMN product_type TEXT NOT NULL DEFAULT 'normal'",
+    "ALTER TABLE products ADD COLUMN allow_decimals INTEGER NOT NULL DEFAULT 0",
     // D1 indexes — added after initial deployment; CREATE INDEX IF NOT EXISTS is idempotent
     "CREATE INDEX IF NOT EXISTS idx_products_shop_active ON products(shop_id, is_active)",
     "CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id)",

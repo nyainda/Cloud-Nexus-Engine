@@ -38,6 +38,8 @@ export const products = sqliteTable("products", {
   purchasePrice: real("purchase_price"),
   sellingPrice: real("selling_price"),
   profitMargin: real("profit_margin"),
+  productType: text("product_type").notNull().default("normal"),
+  allowDecimals: integer("allow_decimals", { mode: "boolean" }).notNull().default(false),
   stockQty: real("stock_qty").notNull().default(0),
   alertQty: real("alert_qty").notNull().default(5),
   expiryDate: text("expiry_date"),
