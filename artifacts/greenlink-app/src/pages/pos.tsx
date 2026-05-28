@@ -353,34 +353,41 @@ const CartPanel = memo(function CartPanel({
         ) : (
           <div className="divide-y divide-border/50">
             {cart.map(item => {
+              const isMeasured = item.product.productType === "measured" || isWeighedUnit(item.product.unit || "");
+              const cartStep = isMeasured ? 0.25 : 1;
+              const cartMin = isMeasured ? 0.1 : 1;
               const itemProfit = isOwner && item.product.purchasePrice
                 ? item.qty * (item.unitPrice - item.product.purchasePrice) : null;
               return (
                 <div key={item.product.id} className="px-4 py-3">
                   <div className="flex justify-between items-start gap-2 mb-2.5">
-                    <span className="text-sm font-semibold text-foreground leading-snug flex-1 pr-1">{item.product.canonicalName}</span>
+                    <div className="flex-1 pr-1 min-w-0">
+                      <span className="text-sm font-semibold text-foreground leading-snug">{item.product.canonicalName}</span>
+                      {isMeasured && <span className="ml-1.5 text-[10px] font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">{item.qty}{item.product.unit || "kg"}</span>}
+                    </div>
                     <button onClick={() => removeFromCart(item.product.id)} className="text-muted-foreground/40 hover:text-destructive shrink-0 p-0.5">
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center bg-muted rounded-lg border border-border overflow-hidden">
-                      <button className="h-8 w-8 flex items-center justify-center text-muted-foreground" onClick={() => updateQty(item.product.id, -1)}>
+                      <button className="h-8 w-8 flex items-center justify-center text-muted-foreground" onClick={() => updateQty(item.product.id, -cartStep)}>
                         <Minus className="h-3.5 w-3.5" />
                       </button>
                       <input
                         type="number"
-                        min={1}
+                        min={cartMin}
+                        step={cartStep}
                         max={item.product.stockQty}
                         value={item.qty}
                         onChange={e => {
-                          const v = parseInt(e.target.value);
-                          if (!isNaN(v) && v >= 1) setQtyDirect(item.product.id, Math.min(v, item.product.stockQty));
+                          const v = parseFloat(e.target.value);
+                          if (!isNaN(v) && v >= cartMin) setQtyDirect(item.product.id, Math.min(v, item.product.stockQty));
                         }}
                         onFocus={e => e.target.select()}
-                        className="w-10 h-8 text-center text-sm font-bold bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="w-12 h-8 text-center text-sm font-bold bg-transparent border-0 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
-                      <button className="h-8 w-8 flex items-center justify-center text-primary" onClick={() => updateQty(item.product.id, 1)} disabled={item.qty >= item.product.stockQty}>
+                      <button className="h-8 w-8 flex items-center justify-center text-primary" onClick={() => updateQty(item.product.id, cartStep)} disabled={item.qty >= item.product.stockQty}>
                         <Plus className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -574,15 +581,24 @@ export default function POS() {
 
   const updateQty = useCallback((productId: string, delta: number) => {
     setCart(prev =>
-      prev.map(i => i.product.id === productId ? { ...i, qty: Math.max(0, i.qty + delta) } : i)
-        .filter(i => i.qty > 0)
+      prev.map(i => {
+        if (i.product.id !== productId) return i;
+        const isMeasured = i.product.productType === "measured" || isWeighedUnit(i.product.unit || "");
+        const minQty = isMeasured ? 0.1 : 1;
+        const newQty = parseFloat((i.qty + delta).toFixed(3));
+        return { ...i, qty: Math.max(minQty, newQty) };
+      }).filter(i => i.qty > 0)
     );
   }, []);
 
   const setQtyDirect = useCallback((productId: string, qty: number) => {
     setCart(prev =>
-      prev.map(i => i.product.id === productId ? { ...i, qty: Math.max(1, qty) } : i)
-        .filter(i => i.qty > 0)
+      prev.map(i => {
+        if (i.product.id !== productId) return i;
+        const isMeasured = i.product.productType === "measured" || isWeighedUnit(i.product.unit || "");
+        const minQty = isMeasured ? 0.1 : 1;
+        return { ...i, qty: Math.max(minQty, qty) };
+      }).filter(i => i.qty > 0)
     );
   }, []);
 

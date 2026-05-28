@@ -45,6 +45,20 @@ function generateSku(name: string): string {
   return `${initials}-${suffix}`;
 }
 
+function inferCategory(name: string): string {
+  const n = name.toLowerCase();
+  if (/herbicide|weed killer|weedkiller|glyphosate|roundup|atrazine|pendimethalin|metolachlor|acetochlor|2,4-d|paraquat|dicamba/.test(n)) return "Herbicides";
+  if (/fungicide|mancozeb|metalaxyl|carbendazim|propiconazole|thiophanate|copper oxychloride|ridomil|dithane|mancozeb/.test(n)) return "Fungicides";
+  if (/insecticide|lambda|cypermethrin|imidacloprid|dimethoate|chlorpyrifos|acetamiprid|emamectin|abamectin|karate|actellic|decis/.test(n)) return "Insecticides";
+  if (/fertilizer|fertiliser|\bdap\b|\bcan\b|\bnpk\b|\burea\b|triple super|\btsp\b|muriate|potash|sulphate of ammonia|\bcrf\b|micronutrient|foliar|top dress|calcium ammonium/.test(n)) return "Fertilizers";
+  if (/\bseed\b|maize|bean|sorghum|sunflower|wheat|barley|kale|spinach|tomato seed|onion|cabbage|carrot seed/.test(n)) return "Seeds";
+  if (/acaricide|cattle dip|tick|mange|ectoparasit|coopers dip/.test(n)) return "Acaricides";
+  if (/animal health|veterinary|livestock|poultry|vaccine|dewormer|antibiotic|injection|bolus|vet |ivermectin|oxytetracycline/.test(n)) return "Animal Health";
+  if (/pump|sprayer|knapsack|hose|nozzle|equipment|spade|hoe|fork|wheelbarrow|watering/.test(n)) return "Equipment";
+  if (/agrochemical|pesticide/.test(n)) return "Agrochemicals";
+  return "";
+}
+
 function getCategoryStyle(category: string | null | undefined) {
   const c = (category || "").toLowerCase();
   if (c.includes("herbicide")) return { bg: "bg-green-500/15", text: "text-green-400", border: "border-green-500/25", abbr: "HB" };
@@ -543,6 +557,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   const [alertQty, setAlertQty] = useState("5");
   const [expiryDate, setExpiryDate] = useState("");
   const skuManuallyEdited = useRef(false);
+  const categoryManuallyEdited = useRef(false);
   const createProduct = useCreateProduct();
 
   useEffect(() => {
@@ -550,6 +565,14 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
       setSku(generateSku(name));
     }
     if (!name.trim()) { setSku(""); skuManuallyEdited.current = false; }
+  }, [name]);
+
+  useEffect(() => {
+    if (!categoryManuallyEdited.current && name.trim().length >= 3) {
+      const inferred = inferCategory(name);
+      if (inferred) setCategory(inferred);
+    }
+    if (!name.trim()) { setCategory(""); categoryManuallyEdited.current = false; }
   }, [name]);
 
   const UNIT_PRESETS = ["bag", "kg", "g", "litre", "ml", "sachet", "unit", "bottle", "pack", "box", "tin"];
@@ -574,7 +597,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   const margin = buyPrice && sellPrice && Number(sellPrice) > 0
     ? (((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100).toFixed(1) : null;
 
-  const reset = () => { setName(""); setSku(""); setCategory(""); setUnit("bag"); setProductType("normal"); setBuyPrice(""); setSellPrice(""); setQty("0"); setAlertQty("5"); setExpiryDate(""); skuManuallyEdited.current = false; };
+  const reset = () => { setName(""); setSku(""); setCategory(""); setUnit("bag"); setProductType("normal"); setBuyPrice(""); setSellPrice(""); setQty("0"); setAlertQty("5"); setExpiryDate(""); skuManuallyEdited.current = false; categoryManuallyEdited.current = false; };
 
   const handleSubmit = () => {
     if (!name.trim()) return;
@@ -620,8 +643,18 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
             )}
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
-            <Input value={category} onChange={e => setCategory(e.target.value)} placeholder="Fertilizer, Feed…" />
+            <div className="flex items-center justify-between">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
+              {category && !categoryManuallyEdited.current && (
+                <span className="text-[10px] text-primary font-semibold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />Auto-detected
+                </span>
+              )}
+            </div>
+            <Input value={category}
+              onChange={e => { setCategory(e.target.value); categoryManuallyEdited.current = true; }}
+              placeholder="Type name above to auto-detect…"
+              className={cn("h-9", category && !categoryManuallyEdited.current && "text-primary")} />
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
