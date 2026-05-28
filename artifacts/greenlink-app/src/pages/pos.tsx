@@ -514,8 +514,9 @@ export default function POS() {
     { query: { enabled: !!shopId, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
 
-  // Sync freshness: stale if last update > 12s ago and not currently refetching
-  const isStale = !isRefetching && dataUpdatedAt > 0 && (Date.now() - dataUpdatedAt) > 12_000;
+  // Sync freshness: stale if last update > 35s ago and not currently refetching
+  // (matches the 30s refetchInterval with 5s grace — avoids showing "stale" mid-cycle)
+  const isStale = !isRefetching && dataUpdatedAt > 0 && (Date.now() - dataUpdatedAt) > 35_000;
 
   const filteredProducts = useMemo(() => {
     let all = productsData?.products || [];

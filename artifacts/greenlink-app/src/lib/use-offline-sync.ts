@@ -134,7 +134,7 @@ export function useOfflineSync(shopId: string) {
         const opts = getListProductsQueryOptions({ shopId, limit: 3000 });
         const freshData = await qc.fetchQuery(opts) as { products?: any[] } | undefined;
         const negativeStock = (freshData?.products ?? []).filter(
-          (p: any) => typeof p.currentStock === "number" && p.currentStock < 0
+          (p: any) => typeof p.stockQty === "number" && p.stockQty < 0
         );
         if (negativeStock.length > 0) {
           const names = negativeStock
