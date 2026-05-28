@@ -566,7 +566,7 @@ export default function SalesHistory() {
 
   const { data: sales, isLoading } = useListSales(
     { shopId, date: dateStr, limit: 100 },
-    { query: { enabled: !!shopId } }
+    { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } }
   );
 
   const list = (sales || []) as any[];

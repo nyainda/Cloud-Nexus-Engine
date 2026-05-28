@@ -201,17 +201,17 @@ export default function Alerts() {
   };
 
   const { data: notifications, isLoading: notifsLoading, refetch } = useListNotifications(
-    { shopId }, { query: { enabled: !!shopId } }
+    { shopId }, { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } }
   );
 
   const { data: productsData, isLoading: productsLoading } = useListProducts(
-    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 60_000 } }
+    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 60_000, refetchInterval: 20_000, refetchIntervalInBackground: true } }
   );
 
-  const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId } });
+  const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } });
 
   const { data: debtsData } = useListDebts(
-    { shopId, limit: 500 }, { query: { enabled: !!shopId && isOwner } }
+    { shopId, limit: 500 }, { query: { enabled: !!shopId && isOwner, refetchInterval: 20_000, refetchIntervalInBackground: true } }
   );
 
   const markRead = useMarkNotificationRead();

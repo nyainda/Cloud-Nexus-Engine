@@ -107,11 +107,11 @@ export default function OwnerDashboard() {
 
   const { data: dataA, isLoading: loadingA } = useGetDashboard(
     { shopId: SHOP_A_ID, date: selectedDate },
-    { query: { enabled: !!SHOP_A_ID } }
+    { query: { enabled: !!SHOP_A_ID, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
   const { data: dataB, isLoading: loadingB } = useGetDashboard(
     { shopId: SHOP_B_ID, date: selectedDate },
-    { query: { enabled: !!SHOP_B_ID } }
+    { query: { enabled: !!SHOP_B_ID, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
 
   const allLoaded = !loadingA && !loadingB;

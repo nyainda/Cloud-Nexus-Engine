@@ -313,12 +313,12 @@ export default function Reports() {
 
   const { data: dashboard, isLoading: dashLoading } = useGetDashboard(
     { shopId, date: today },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
 
   const { data: reportRange, isLoading: rangeLoading } = useGetReportRange(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
 
   const { data: prevReport } = useGetReportRange(
@@ -328,22 +328,22 @@ export default function Reports() {
 
   const { data: topProducts, isLoading: topLoading } = useGetTopProducts(
     { shopId, from: dateRange.from, to: dateRange.to, limit: 10 },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
 
   const { data: categoryData, isLoading: catLoading } = useGetCategoryBreakdown(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
 
   const { data: hourlyData } = useGetHourlySales(
     { shopId, date: today },
-    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
 
   const { data: productsData } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
   );
 
   const lowMarginProducts = useMemo(() => {

@@ -501,7 +501,7 @@ export default function POS() {
 
   const { data: productsData, isLoading } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId } }
+    { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } }
   );
 
   const filteredProducts = useMemo(() => {
