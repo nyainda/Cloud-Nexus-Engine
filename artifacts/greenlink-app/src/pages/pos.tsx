@@ -499,10 +499,13 @@ export default function POS() {
   const debouncedSearch = useDebounce(search, 100);
   const [stockFilter, setStockFilter] = useState<StockFilter>("all");
 
-  const { data: productsData, isLoading } = useListProducts(
+  const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
     { shopId, limit: 3000 },
     { query: { enabled: !!shopId, refetchInterval: 5_000, refetchIntervalInBackground: true } }
   );
+
+  // Sync freshness: stale if last update > 12s ago and not currently refetching
+  const isStale = !isRefetching && dataUpdatedAt > 0 && (Date.now() - dataUpdatedAt) > 12_000;
 
   const filteredProducts = useMemo(() => {
     let all = productsData?.products || [];
@@ -689,18 +692,34 @@ export default function POS() {
               </button>
             )}
           </div>
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
-            {FILTERS.map(f => (
-              <button key={f.value} onClick={() => setStockFilter(f.value)} className={cn(
-                "shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold",
-                stockFilter === f.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-              )}>
-                {f.label}
-                <span className={cn("text-[10px] font-bold", stockFilter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/50")}>
-                  {filterCounts[f.value]}
-                </span>
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide flex-1">
+              {FILTERS.map(f => (
+                <button key={f.value} onClick={() => setStockFilter(f.value)} className={cn(
+                  "shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold",
+                  stockFilter === f.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                )}>
+                  {f.label}
+                  <span className={cn("text-[10px] font-bold", stockFilter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/50")}>
+                    {filterCounts[f.value]}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {/* Live sync indicator */}
+            <div className="shrink-0 flex items-center gap-1.5 pr-0.5" title={isStale ? "Reconnecting…" : isRefetching ? "Syncing…" : "Live"}>
+              <span className={cn(
+                "w-2 h-2 rounded-full transition-colors duration-500",
+                isStale
+                  ? "bg-muted-foreground/30"
+                  : isRefetching
+                  ? "bg-primary animate-pulse"
+                  : "bg-primary/60"
+              )} />
+              <span className="text-[10px] text-muted-foreground/50 font-medium hidden sm:block">
+                {isStale ? "Offline" : isRefetching ? "Syncing" : "Live"}
+              </span>
+            </div>
           </div>
         </div>
 

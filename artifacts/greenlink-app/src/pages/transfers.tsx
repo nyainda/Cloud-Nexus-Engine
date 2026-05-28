@@ -2,8 +2,8 @@ import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { customFetch, getListProductsQueryKey, getListInventoryMovementsQueryKey } from "@workspace/api-client-react";
 import { logInventory, newMutationId } from "@/lib/inventory-logger";
-import { ArrowUpRight, ArrowDownLeft, ArrowLeftRight, X, Package, ChevronRight } from "lucide-react";
-import { format, formatDistanceToNow } from "date-fns";
+import { ArrowUpRight, ArrowDownLeft, ArrowLeftRight, X, Package } from "lucide-react";
+import { format, isToday, isYesterday, isThisWeek } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -20,17 +20,23 @@ function shopLabel(id: string) {
 
 type TFilter = "all" | "sent" | "received";
 
-function TransferSkeleton() {
+function getDateGroup(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (isToday(d)) return "Today";
+  if (isYesterday(d)) return "Yesterday";
+  if (isThisWeek(d)) return format(d, "EEEE"); // "Monday", "Tuesday", etc.
+  return format(d, "d MMM yyyy");
+}
+
+function TransferRowSkeleton() {
   return (
-    <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-      <div className="flex items-center gap-3">
-        <Skeleton className="w-9 h-9 rounded-lg shrink-0" />
-        <div className="flex-1 space-y-1.5">
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-3 w-1/3" />
-        </div>
-        <Skeleton className="h-6 w-16 rounded-full" />
+    <div className="flex items-center gap-3 px-4 py-3 border-b border-border/40 last:border-0">
+      <Skeleton className="w-7 h-7 rounded-md shrink-0" />
+      <div className="flex-1 space-y-1.5">
+        <Skeleton className="h-3.5 w-2/3" />
+        <Skeleton className="h-3 w-1/3" />
       </div>
+      <Skeleton className="h-3 w-14" />
     </div>
   );
 }
@@ -48,7 +54,9 @@ export default function Transfers() {
     queryKey: ["transfers", shopId],
     queryFn: () => customFetch<any[]>(`/api/transfers?shopId=${encodeURIComponent(shopId)}&limit=200`),
     enabled: !!shopId,
-    staleTime: 60_000,
+    staleTime: 20_000,
+    refetchInterval: 20_000,
+    refetchIntervalInBackground: true,
   });
 
   const filtered = useMemo(() => {
@@ -58,11 +66,26 @@ export default function Transfers() {
     return transfers;
   }, [transfers, filter, shopId]);
 
+  // Group by date label
+  const grouped = useMemo(() => {
+    const groups: { label: string; items: any[] }[] = [];
+    const seen: Record<string, number> = {};
+    for (const t of filtered) {
+      const label = getDateGroup(t.createdAt);
+      if (seen[label] === undefined) {
+        seen[label] = groups.length;
+        groups.push({ label, items: [] });
+      }
+      groups[seen[label]].items.push(t);
+    }
+    return groups;
+  }, [filtered]);
+
   const sentCount = useMemo(() => (transfers ?? []).filter(t => t.fromShopId === shopId).length, [transfers, shopId]);
   const receivedCount = useMemo(() => (transfers ?? []).filter(t => t.toShopId === shopId).length, [transfers, shopId]);
 
   const handleCancel = async (transfer: any) => {
-    if (!confirm(`Cancel transfer of ${transfer.qty} ${transfer.unit || "units"} ${transfer.productName}?\n\nStock will be restored to ${shopLabel(transfer.fromShopId)} and deducted from ${shopLabel(transfer.toShopId)}.`)) return;
+    if (!confirm(`Cancel transfer of ${transfer.qty} ${transfer.unit || "units"} ${transfer.productName}?\n\nStock will be restored to ${shopLabel(transfer.fromShopId)}.`)) return;
 
     const mutationId = newMutationId();
     setCancelling(transfer.id);
@@ -91,8 +114,8 @@ export default function Transfers() {
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
-      {/* Header */}
-      <div className="sticky top-0 z-20 bg-background border-b border-border px-4 py-3 space-y-3">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-4 py-3 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-foreground flex items-center gap-2">
@@ -100,7 +123,10 @@ export default function Transfers() {
               Stock Transfers
             </h1>
             <p className="text-xs text-muted-foreground">
-              {shopLabel(shopId)} · {transfers ? `${transfers.length} transfer${transfers.length !== 1 ? "s" : ""}` : "Loading…"}
+              {shopLabel(shopId)}
+              {transfers !== undefined && (
+                <> · <span className="font-semibold">{transfers.length}</span> transfer{transfers.length !== 1 ? "s" : ""}</>
+              )}
             </p>
           </div>
           <Badge variant="outline" className="text-xs text-muted-foreground">
@@ -123,7 +149,10 @@ export default function Transfers() {
             >
               {f.label}
               {f.count !== undefined && (
-                <span className={cn("text-[10px] font-bold tabular-nums", filter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/50")}>
+                <span className={cn(
+                  "text-[10px] font-bold tabular-nums",
+                  filter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/50"
+                )}>
                   {f.count}
                 </span>
               )}
@@ -132,9 +161,12 @@ export default function Transfers() {
         </div>
       </div>
 
-      <div className="p-4 pb-8 space-y-3">
+      {/* Content */}
+      <div className="flex-1 p-4 pb-8 space-y-4">
         {isLoading ? (
-          <>{[1,2,3,4,5].map(i => <TransferSkeleton key={i} />)}</>
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            {[1, 2, 3, 4, 5, 6].map(i => <TransferRowSkeleton key={i} />)}
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
             <div className="w-14 h-14 rounded-2xl bg-muted/40 border border-border flex items-center justify-center">
@@ -150,95 +182,103 @@ export default function Transfers() {
             </p>
           </div>
         ) : (
-          filtered.map(transfer => {
-            const isSent = transfer.fromShopId === shopId;
-            const other = isSent ? transfer.toShopId : transfer.fromShopId;
-            const canCancel = isOwner && isSent;
-            const isCancelling = cancelling === transfer.id;
-
-            return (
-              <div key={transfer.id} className="bg-card border border-border rounded-xl p-4 space-y-3">
-                <div className="flex items-start gap-3">
-                  {/* Direction icon */}
-                  <div className={cn(
-                    "w-9 h-9 rounded-lg border flex items-center justify-center shrink-0",
-                    isSent
-                      ? "bg-orange-50 dark:bg-orange-950 border-orange-200 dark:border-orange-800 text-orange-600 dark:text-orange-400"
-                      : "bg-emerald-50 dark:bg-emerald-950 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400"
-                  )}>
-                    {isSent
-                      ? <ArrowUpRight className="h-4 w-4" />
-                      : <ArrowDownLeft className="h-4 w-4" />}
-                  </div>
-
-                  {/* Main info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={cn(
-                        "text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded",
-                        isSent
-                          ? "bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300"
-                          : "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
-                      )}>
-                        {isSent ? "Sent" : "Received"}
-                      </span>
-                      <ChevronRight className="h-3 w-3 text-muted-foreground/40" />
-                      <span className="text-xs text-muted-foreground font-medium">{shopLabel(other)}</span>
-                    </div>
-
-                    <p className="text-sm font-semibold text-foreground mt-1 truncate">
-                      {transfer.productName}
-                    </p>
-
-                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                      <span className="font-mono font-bold text-foreground">
-                        {transfer.qty} {transfer.unit || "units"}
-                      </span>
-                      <span>·</span>
-                      <span title={format(new Date(transfer.createdAt), "PPpp")}>
-                        {formatDistanceToNow(new Date(transfer.createdAt), { addSuffix: true })}
-                      </span>
-                    </div>
-
-                    {transfer.notes && (
-                      <p className="text-xs text-muted-foreground/70 mt-1 italic">"{transfer.notes}"</p>
-                    )}
-                  </div>
-
-                  {/* Cancel button */}
-                  {canCancel && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
-                      onClick={() => handleCancel(transfer)}
-                      disabled={isCancelling}
-                      title="Cancel transfer"
-                    >
-                      {isCancelling ? (
-                        <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <X className="h-4 w-4" />
-                      )}
-                    </Button>
-                  )}
-                </div>
-
-                {/* Footer row */}
-                <div className="flex items-center justify-between pt-2 border-t border-border/60">
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                    <Package className="h-3 w-3" />
-                    <span>{shopLabel(transfer.fromShopId)}</span>
-                    <ArrowUpRight className="h-2.5 w-2.5" />
-                    <span>{shopLabel(transfer.toShopId)}</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    {format(new Date(transfer.createdAt), "d MMM, h:mm a")}
-                  </span>
-                </div>
+          grouped.map(group => (
+            <div key={group.label}>
+              {/* Date group label */}
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="text-[11px] font-bold text-muted-foreground/60 uppercase tracking-wider">
+                  {group.label}
+                </span>
+                <span className="text-[10px] text-muted-foreground/40 font-semibold tabular-nums">
+                  {group.items.length}
+                </span>
+                <div className="flex-1 h-px bg-border/40" />
               </div>
-            );
-          })
+
+              {/* Compact rows */}
+              <div className="bg-card border border-border rounded-xl overflow-hidden">
+                {group.items.map((transfer, idx) => {
+                  const isSent = transfer.fromShopId === shopId;
+                  const other = isSent ? transfer.toShopId : transfer.fromShopId;
+                  const canCancel = isOwner && isSent;
+                  const isCancelling = cancelling === transfer.id;
+                  const d = new Date(transfer.createdAt);
+
+                  return (
+                    <div
+                      key={transfer.id}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3",
+                        idx < group.items.length - 1 && "border-b border-border/40"
+                      )}
+                    >
+                      {/* Direction icon */}
+                      <div className={cn(
+                        "w-7 h-7 rounded-md flex items-center justify-center shrink-0",
+                        isSent
+                          ? "bg-orange-500/10 text-orange-500"
+                          : "bg-emerald-500/10 text-emerald-500"
+                      )}>
+                        {isSent
+                          ? <ArrowUpRight className="h-3.5 w-3.5" />
+                          : <ArrowDownLeft className="h-3.5 w-3.5" />}
+                      </div>
+
+                      {/* Product + route */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-foreground truncate leading-tight">
+                          {transfer.productName}
+                        </p>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className="text-[11px] font-mono font-bold text-foreground/70">
+                            {transfer.qty} {transfer.unit || "units"}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground/40">·</span>
+                          <span className={cn(
+                            "text-[10px] font-bold uppercase tracking-wide",
+                            isSent ? "text-orange-500/80" : "text-emerald-500/80"
+                          )}>
+                            {isSent ? "→" : "←"}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground truncate">
+                            {shopLabel(other)}
+                          </span>
+                        </div>
+                        {transfer.notes && (
+                          <p className="text-[10px] text-muted-foreground/50 italic truncate mt-0.5">
+                            {transfer.notes}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Time + cancel */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[11px] text-muted-foreground/60 font-mono tabular-nums">
+                          {format(d, "h:mm a")}
+                        </span>
+                        {canCancel && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => handleCancel(transfer)}
+                            disabled={isCancelling}
+                            title="Cancel transfer"
+                          >
+                            {isCancelling ? (
+                              <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <X className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))
         )}
       </div>
     </div>
