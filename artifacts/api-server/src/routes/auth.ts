@@ -10,10 +10,11 @@ import {
   getSession,
 } from "../lib/auth";
 import { shops } from "@workspace/db/schema";
+import { loginRateLimit } from "../middleware/rate-limit";
 
 const auth = new Hono<AppEnv>();
 
-auth.post("/auth/login", async (c) => {
+auth.post("/auth/login", loginRateLimit, async (c) => {
   const body = await c.req.json<{
     shopId: string;
     role: "owner" | "cashier";
@@ -68,7 +69,7 @@ auth.post("/auth/logout", async (c) => {
   return c.json({ success: true });
 });
 
-auth.post("/auth/verify-pin", async (c) => {
+auth.post("/auth/verify-pin", loginRateLimit, async (c) => {
   const body = await c.req.json<{ shopId: string; pin: string }>();
   const db = createDb(c.env.DB);
   const shop = await db
@@ -83,7 +84,7 @@ auth.post("/auth/verify-pin", async (c) => {
 });
 
 // PIN reset — verified by shop name (no auth token required)
-auth.post("/auth/reset-pin", async (c) => {
+auth.post("/auth/reset-pin", loginRateLimit, async (c) => {
   const body = await c.req.json<{
     shopId: string;
     role: "owner" | "cashier";
