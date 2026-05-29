@@ -459,11 +459,31 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
             <Input value={name} onChange={e => setName(e.target.value)} className="h-10" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
-            <Input value={category} onChange={e => { setCategory(e.target.value); categoryManuallyEdited.current = true; }} />
-            {!categoryManuallyEdited.current && category && (
-              <p className="text-[10px] text-primary/70">Auto-inferred — edit to override</p>
-            )}
+            <div className="flex items-center justify-between">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
+              {category && !categoryManuallyEdited.current && (
+                <span className="text-[10px] text-primary font-semibold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />Auto-inferred
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {["Herbicides","Fungicides","Insecticides","Fertilizers","Seeds","Acaricides","Animal Health","Equipment","Agrochemicals"].map(cat => {
+                const s = getCategoryStyle(cat);
+                const active = category === cat;
+                return (
+                  <button key={cat} type="button"
+                    onClick={() => { setCategory(active ? "" : cat); categoryManuallyEdited.current = true; }}
+                    className={cn("px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all", active ? `${s.bg} ${s.text} ${s.border} ring-1 ring-current/40` : "bg-muted/40 text-muted-foreground border-border/40 hover:bg-muted/70")}>
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
+            <Input value={category}
+              onChange={e => { setCategory(e.target.value); categoryManuallyEdited.current = true; }}
+              placeholder="Or type a custom category…"
+              className={cn("h-9 mt-1", category && !categoryManuallyEdited.current && "text-primary")} />
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
@@ -669,10 +689,23 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
                 </span>
               )}
             </div>
+            <div className="flex flex-wrap gap-1.5">
+              {["Herbicides","Fungicides","Insecticides","Fertilizers","Seeds","Acaricides","Animal Health","Equipment","Agrochemicals"].map(cat => {
+                const s = getCategoryStyle(cat);
+                const active = category === cat;
+                return (
+                  <button key={cat} type="button"
+                    onClick={() => { setCategory(active ? "" : cat); categoryManuallyEdited.current = true; }}
+                    className={cn("px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all", active ? `${s.bg} ${s.text} ${s.border} ring-1 ring-current/40` : "bg-muted/40 text-muted-foreground border-border/40 hover:bg-muted/70")}>
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
             <Input value={category}
               onChange={e => { setCategory(e.target.value); categoryManuallyEdited.current = true; }}
-              placeholder="Type name above to auto-detect…"
-              className={cn("h-9", category && !categoryManuallyEdited.current && "text-primary")} />
+              placeholder="Or type a custom category…"
+              className={cn("h-9 mt-1", category && !categoryManuallyEdited.current && "text-primary")} />
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
