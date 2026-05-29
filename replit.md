@@ -101,6 +101,7 @@ Re-seeds both shops with 2,583 clean products from the Excel file. Cleaning rule
 - Fonts: Clash Display (headings), Syne, DM Sans (body), JetBrains Mono (numbers/prices)
 - Mobile-first PWA
 - Prices always in KES format with thousands separator
+- GEMINI_API_KEY is always managed manually by the user via the Replit Secrets settings tab — never prompt for it or request it programmatically
 
 ## Push Notifications (PWA)
 
