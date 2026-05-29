@@ -353,8 +353,25 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
   const [sellPrice, setSellPrice] = useState(product.sellingPrice?.toString() || "");
   const [alertQty, setAlertQty] = useState(product.alertQty?.toString() || "5");
   const [expiryDate, setExpiryDate] = useState(product.expiryDate || "");
+  const skuManuallyEdited = useRef(!!product.sku);
+  const categoryManuallyEdited = useRef(!!product.category);
   const updateProduct = useUpdateProduct();
   const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!open) return;
+    if (!skuManuallyEdited.current && name.trim().length >= 2) setSku(generateSku(name));
+    if (!name.trim()) { setSku(""); skuManuallyEdited.current = false; }
+  }, [name, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!categoryManuallyEdited.current && name.trim().length >= 3) {
+      const inferred = inferCategory(name);
+      if (inferred) setCategory(inferred);
+    }
+    if (!name.trim()) { setCategory(""); categoryManuallyEdited.current = false; }
+  }, [name, open]);
 
   const handleSubmit = async () => {
     // Only include fields that have actual values — never send undefined to the server
@@ -443,11 +460,26 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
-            <Input value={category} onChange={e => setCategory(e.target.value)} />
+            <Input value={category} onChange={e => { setCategory(e.target.value); categoryManuallyEdited.current = true; }} />
+            {!categoryManuallyEdited.current && category && (
+              <p className="text-[10px] text-primary/70">Auto-inferred — edit to override</p>
+            )}
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">SKU</Label>
-            <Input value={sku} onChange={e => setSku(e.target.value)} />
+            <div className="flex items-center justify-between">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">SKU</Label>
+              {sku && (
+                <button type="button" onClick={() => { setSku(generateSku(name)); skuManuallyEdited.current = false; }}
+                  className="text-[10px] text-primary font-semibold hover:underline flex items-center gap-1">
+                  <X className="h-2.5 w-2.5" />Regenerate
+                </button>
+              )}
+            </div>
+            <Input value={sku} onChange={e => { setSku(e.target.value); skuManuallyEdited.current = true; }}
+              className={cn("h-9 font-mono text-sm", sku && !skuManuallyEdited.current && "text-primary")} />
+            {sku && !skuManuallyEdited.current && (
+              <p className="text-[10px] text-muted-foreground">Auto-generated — edit manually or click Regenerate</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">

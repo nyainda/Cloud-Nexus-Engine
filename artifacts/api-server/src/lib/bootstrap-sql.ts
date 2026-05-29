@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS shops (
   owner_pin_hash TEXT NOT NULL,
   cashier_pin_hash TEXT NOT NULL,
   gemini_api_key TEXT,
+  groq_api_key TEXT,
   created_at TEXT NOT NULL
 );
 

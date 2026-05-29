@@ -72,6 +72,98 @@ async function findOrCreateSupplier(
   return id;
 }
 
+// ── Groq Vision call ───────────────────────────────────────────────────────
+
+async function callGroqOCR(
+  apiKey: string,
+  imageBase64: string,
+  mimeType: string,
+  scanType: string,
+  tesseractText?: string,
+): Promise<{ items: GeminiItem[]; meta: InvoiceMeta | null }> {
+  const ocrHint = tesseractText?.trim()
+    ? `\n\nA basic OCR engine pre-scanned this image and extracted the following raw text. Use it as an additional hint:\n\n"""\n${tesseractText.slice(0, 3000)}\n"""`
+    : "";
+
+  let prompt: string;
+  if (scanType === "invoice") {
+    prompt = `Analyze this supplier invoice carefully. Extract all information precisely.
+Return ONLY a valid JSON object (no markdown, no code blocks, no extra text) with this exact structure:
+{
+  "meta": {
+    "supplierName": "the supplier or company name, or null if not visible",
+    "invoiceNumber": "invoice/receipt/delivery note number, or null",
+    "invoiceDate": "date formatted as YYYY-MM-DD, or null if not visible",
+    "grandTotal": total invoice amount as a plain number (no currency symbols like KES/Ksh), or null
+  },
+  "items": [
+    {
+      "text": "exact raw line from invoice",
+      "productName": "clean product/item name only",
+      "qty": quantity as a plain number or null,
+      "unitPrice": unit buying price as a plain number (no currency symbols) or null,
+      "totalPrice": line total as a plain number (no currency symbols) or null
+    }
+  ]
+}
+Rules: strip currency symbols (KES, Ksh, Sh, K), remove commas from numbers, extract every product line item, use null for missing fields.${ocrHint}`;
+  } else {
+    prompt = `This is a handwritten inventory notebook. Extract each product entry carefully.
+Return ONLY a valid JSON array (no markdown, no code blocks, no extra text):
+[
+  {
+    "text": "raw handwritten line",
+    "productName": "clean product name",
+    "qty": quantity as a plain number or null,
+    "unitPrice": unit price as a plain number (no currency symbols) or null,
+    "totalPrice": total price as a plain number (no currency symbols) or null
+  }
+]
+Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entries.${ocrHint}`;
+  }
+
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "meta-llama/llama-4-scout-17b-16e-instruct",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.1,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText);
+    throw new Error(`Groq API error ${res.status}: ${err}`);
+  }
+
+  const json: any = await res.json();
+  const text: string = json?.choices?.[0]?.message?.content ?? "[]";
+
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return { items: parsed, meta: null };
+    if (parsed && typeof parsed === "object") {
+      return {
+        items: Array.isArray(parsed.items) ? parsed.items : [],
+        meta: parsed.meta ?? null,
+      };
+    }
+    return { items: [], meta: null };
+  } catch {
+    return { items: [], meta: null };
+  }
+}
+
 // ── Gemini Vision call ─────────────────────────────────────────────────────
 
 async function callGeminiOCR(
@@ -264,26 +356,53 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
     db.select().from(shops).where(eq(shops.id, body.shopId)).get(),
   ]);
 
+  const groqKey = shopRow?.groqApiKey || (c.env as any).GROQ_API_KEY || null;
   const geminiKey = shopRow?.geminiApiKey || c.env.AI_INTEGRATIONS_GEMINI_API_KEY || c.env.GEMINI_API_KEY || null;
   const aiBaseUrl = c.env.AI_INTEGRATIONS_GEMINI_BASE_URL || undefined;
 
   let lines: GeminiItem[] = [];
   let invoiceMeta: InvoiceMeta | null = null;
   let geminiError: string | null = null;
+  let aiProvider = "none";
 
-  if (geminiKey) {
+  if (groqKey) {
+    try {
+      const result = await callGroqOCR(groqKey, body.imageBase64, mimeType, body.scanType, body.tesseractText);
+      lines = result.items;
+      invoiceMeta = result.meta;
+      aiProvider = "groq";
+    } catch (err: any) {
+      const groqError = err?.message ?? "Groq call failed";
+      console.error("[ocr] Groq error:", groqError);
+      if (geminiKey) {
+        try {
+          const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText, aiBaseUrl);
+          lines = result.items;
+          invoiceMeta = result.meta;
+          aiProvider = "gemini";
+        } catch (err2: any) {
+          geminiError = err2?.message ?? "Gemini call failed";
+          console.error("[ocr] Gemini fallback error:", geminiError);
+        }
+      } else {
+        geminiError = groqError;
+      }
+    }
+  } else if (geminiKey) {
     try {
       const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText, aiBaseUrl);
       lines = result.items;
       invoiceMeta = result.meta;
+      aiProvider = "gemini";
     } catch (err: any) {
       geminiError = err?.message ?? "Gemini call failed";
       console.error("[ocr] Gemini error:", geminiError);
       lines = [];
     }
   } else {
-    geminiError = "No Gemini API key configured. Add it in Settings → Shop.";
+    geminiError = "No AI key configured. Add a Groq or Gemini key in Settings → AI Integration.";
   }
+  console.log(`[ocr] provider=${aiProvider} lines=${lines.length}`);
 
   const results = lines.map((line) => {
     const rawText = line.text ?? line.productName ?? "";

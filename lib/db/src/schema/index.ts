@@ -18,6 +18,7 @@ export const shops = sqliteTable("shops", {
   ownerPinHash: text("owner_pin_hash").notNull(),
   cashierPinHash: text("cashier_pin_hash").notNull(),
   geminiApiKey: text("gemini_api_key"),
+  groqApiKey: text("groq_api_key"),
   createdAt: createdAt(),
 });
 

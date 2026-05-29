@@ -67,6 +67,7 @@ shopsRouter.get("/shops/:shopId", async (c) => {
     name: shop.name,
     ownerWhatsapp: shop.ownerWhatsapp,
     hasGeminiKey: !!shop.geminiApiKey,
+    hasGroqKey: !!shop.groqApiKey,
     createdAt: shop.createdAt,
   });
 });
@@ -78,6 +79,7 @@ shopsRouter.patch("/shops/:shopId", requireAuth, async (c) => {
     ownerPin?: string;
     cashierPin?: string;
     geminiApiKey?: string | null;
+    groqApiKey?: string | null;
   }>();
   const db = createDb(c.env.DB);
   const patch: Partial<typeof shops.$inferInsert> = {};
@@ -86,6 +88,7 @@ shopsRouter.patch("/shops/:shopId", requireAuth, async (c) => {
   if (body.ownerPin) patch.ownerPinHash = await hashPin(body.ownerPin);
   if (body.cashierPin) patch.cashierPinHash = await hashPin(body.cashierPin);
   if (body.geminiApiKey !== undefined) patch.geminiApiKey = body.geminiApiKey || null;
+  if (body.groqApiKey !== undefined) patch.groqApiKey = body.groqApiKey || null;
   await db.update(shops).set(patch).where(eq(shops.id, c.req.param("shopId")));
   const shop = await db
     .select()
@@ -98,6 +101,7 @@ shopsRouter.patch("/shops/:shopId", requireAuth, async (c) => {
     name: shop.name,
     ownerWhatsapp: shop.ownerWhatsapp,
     hasGeminiKey: !!shop.geminiApiKey,
+    hasGroqKey: !!shop.groqApiKey,
     createdAt: shop.createdAt,
   });
 });

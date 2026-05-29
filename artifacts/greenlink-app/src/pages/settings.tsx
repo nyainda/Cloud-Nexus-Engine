@@ -532,6 +532,100 @@ function PinRow({ shopId, roleLabel }: { shopId: string; roleLabel: "owner" | "c
   );
 }
 
+// ─── Reusable AI key section ─────────────────────────────────────────────────
+function AiKeySection({
+  title, subtitle, activeText, inactiveText, icon: Icon, accentColor, steps, placeholder,
+  hasKey, onSave, onRemove, isPending,
+}: {
+  title: string; subtitle: string; activeText: string; inactiveText: string;
+  icon: any; accentColor: string; steps: string[]; placeholder: string;
+  hasKey: boolean; onSave: (key: string) => void; onRemove: () => void; isPending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState("");
+  const [show, setShow] = useState(false);
+
+  const handleSave = () => {
+    const trimmed = key.trim();
+    setOpen(false); setKey(""); setShow(false);
+    onSave(trimmed);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className={cn("rounded-2xl border p-5 flex items-center gap-4 transition-all",
+        hasKey ? `bg-${accentColor}-500/5 border-${accentColor}-500/20` : "bg-muted/20 border-border/40")}>
+        <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shrink-0", hasKey ? `bg-${accentColor}-500/15` : "bg-muted/60")}>
+          <Icon className={cn("h-6 w-6", hasKey ? `text-${accentColor}-400` : "text-muted-foreground/40")} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="font-bold text-foreground text-sm">{title}</p>
+            {hasKey ? (
+              <span className={cn("flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full", `text-${accentColor}-400 bg-${accentColor}-500/10`)}>
+                <CheckCircle2 className="h-2.5 w-2.5" />ACTIVE
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold text-muted-foreground/50 bg-muted px-2 py-0.5 rounded-full">NOT SET</span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground/60 mt-0.5 leading-relaxed">{hasKey ? activeText : inactiveText}</p>
+        </div>
+        <button onClick={() => setOpen(true)}
+          className="shrink-0 px-4 h-9 rounded-xl bg-muted hover:bg-muted/70 text-sm font-semibold text-foreground border border-border/40 transition-colors">
+          {hasKey ? "Replace" : "Add Key"}
+        </button>
+      </div>
+      <div className="rounded-2xl bg-muted/20 border border-border/30 p-4 space-y-2">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50">How to get a free key</p>
+        <ol className="space-y-1">
+          {steps.map((step, i) => (
+            <li key={i} className="flex items-center gap-2 text-xs text-muted-foreground/70">
+              <span className="w-4 h-4 rounded-full bg-muted/80 border border-border/50 flex items-center justify-center text-[9px] font-bold text-muted-foreground shrink-0">{i + 1}</span>
+              {step}
+            </li>
+          ))}
+        </ol>
+      </div>
+      <Dialog open={open} onOpenChange={o => { setOpen(o); if (!o) { setKey(""); setShow(false); } }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Icon className="h-5 w-5 text-primary" />
+              {hasKey ? `Replace ${title} Key` : `Add ${title} API Key`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">API Key</Label>
+              <div className="relative">
+                <input type={show ? "text" : "password"} value={key} onChange={e => setKey(e.target.value)} placeholder={placeholder} autoFocus
+                  className="flex h-12 w-full rounded-xl border border-border/60 bg-muted/30 px-4 pr-10 text-sm font-mono focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20" />
+                <button type="button" onClick={() => setShow(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            {hasKey && (
+              <button onClick={() => { setOpen(false); onRemove(); }}
+                className="h-11 px-4 rounded-xl bg-destructive/10 text-destructive text-sm font-semibold hover:bg-destructive/20 transition-colors border border-destructive/20">
+                Remove
+              </button>
+            )}
+            <button onClick={() => setOpen(false)} className="h-11 px-4 rounded-xl bg-muted text-muted-foreground text-sm font-semibold hover:bg-muted/70 transition-colors">Cancel</button>
+            <button onClick={handleSave} disabled={!key.trim() || isPending}
+              className="h-11 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-40">
+              {isPending ? "Saving…" : "Save Key"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 // ─── Gemini key section ──────────────────────────────────────────────────────
 function GeminiSection({ shopId, hasKey }: { shopId: string; hasKey: boolean }) {
   const [open, setOpen] = useState(false);
@@ -634,6 +728,133 @@ function GeminiSection({ shopId, hasKey }: { shopId: string; hasKey: boolean }) 
                   (async () => {
                     try {
                       await updateShop.mutateAsync({ shopId, data: { geminiApiKey: null } as any });
+                      toast.success("Key removed");
+                      qc.invalidateQueries();
+                    } catch {
+                      toast.error("Failed to remove key — please retry");
+                    }
+                  })();
+                }}
+                className="h-11 px-4 rounded-xl bg-destructive/10 text-destructive text-sm font-semibold hover:bg-destructive/20 transition-colors border border-destructive/20"
+              >
+                Remove
+              </button>
+            )}
+            <button onClick={() => setOpen(false)} className="h-11 px-4 rounded-xl bg-muted text-muted-foreground text-sm font-semibold hover:bg-muted/70 transition-colors">Cancel</button>
+            <button
+              onClick={handleSave}
+              disabled={!key.trim() || updateShop.isPending}
+              className="h-11 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-40"
+            >
+              {updateShop.isPending ? "Saving…" : "Save Key"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Groq key section ────────────────────────────────────────────────────────
+function GroqSection({ shopId, hasKey }: { shopId: string; hasKey: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState("");
+  const [show, setShow] = useState(false);
+  const updateShop = useUpdateShop();
+  const qc = useQueryClient();
+
+  const handleSave = () => {
+    const trimmedKey = key.trim();
+    setOpen(false); setKey(""); setShow(false);
+    (async () => {
+      try {
+        await updateShop.mutateAsync({ shopId, data: { groqApiKey: trimmedKey || null } as any });
+        toast.success(trimmedKey ? "Groq key saved — Smart Scanner active" : "Key removed");
+        qc.invalidateQueries();
+      } catch {
+        toast.error("Failed to save API key — please retry");
+      }
+    })();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className={cn(
+        "rounded-2xl border p-5 flex items-center gap-4 transition-all",
+        hasKey ? "bg-orange-500/5 border-orange-500/20" : "bg-muted/20 border-border/40"
+      )}>
+        <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shrink-0", hasKey ? "bg-orange-500/15" : "bg-muted/60")}>
+          <Bot className={cn("h-6 w-6", hasKey ? "text-orange-400" : "text-muted-foreground/40")} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="font-bold text-foreground text-sm">Groq Vision</p>
+            {hasKey ? (
+              <span className="flex items-center gap-1 text-[10px] font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded-full">
+                <CheckCircle2 className="h-2.5 w-2.5" />ACTIVE
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold text-muted-foreground/50 bg-muted px-2 py-0.5 rounded-full">NOT SET</span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground/60 mt-0.5 leading-relaxed">
+            {hasKey ? "Smart Scanner uses Llama 4 Scout vision — ultra-fast OCR" : "Add a Groq key for fast invoice & notebook scanning (used first)"}
+          </p>
+        </div>
+        <button
+          onClick={() => setOpen(true)}
+          className="shrink-0 px-4 h-9 rounded-xl bg-muted hover:bg-muted/70 text-sm font-semibold text-foreground border border-border/40 transition-colors"
+        >
+          {hasKey ? "Replace" : "Add Key"}
+        </button>
+      </div>
+
+      <div className="rounded-2xl bg-muted/20 border border-border/30 p-4 space-y-2">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50">How to get a free key</p>
+        <ol className="space-y-1">
+          {["Go to console.groq.com/keys", "Sign in or create a free account", "Click 'Create API Key'", "Paste it here"].map((step, i) => (
+            <li key={i} className="flex items-center gap-2 text-xs text-muted-foreground/70">
+              <span className="w-4 h-4 rounded-full bg-muted/80 border border-border/50 flex items-center justify-center text-[9px] font-bold text-muted-foreground shrink-0">{i + 1}</span>
+              {step}
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <Dialog open={open} onOpenChange={o => { setOpen(o); if (!o) { setKey(""); setShow(false); } }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Bot className="h-5 w-5 text-primary" />
+              {hasKey ? "Replace Groq Key" : "Add Groq API Key"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">API Key</Label>
+              <div className="relative">
+                <input
+                  type={show ? "text" : "password"}
+                  value={key}
+                  onChange={e => setKey(e.target.value)}
+                  placeholder="gsk_…"
+                  autoFocus
+                  className="flex h-12 w-full rounded-xl border border-border/60 bg-muted/30 px-4 pr-10 text-sm font-mono focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20"
+                />
+                <button type="button" onClick={() => setShow(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            {hasKey && (
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  (async () => {
+                    try {
+                      await updateShop.mutateAsync({ shopId, data: { groqApiKey: null } as any });
                       toast.success("Key removed");
                       qc.invalidateQueries();
                     } catch {
@@ -1016,9 +1237,21 @@ export default function Settings() {
           <div className="max-w-xl space-y-6">
             <div>
               <h2 className="text-2xl font-bold font-display text-foreground">AI Integration</h2>
-              <p className="text-sm text-muted-foreground mt-0.5">Connect Gemini Vision to power the Smart Scanner</p>
+              <p className="text-sm text-muted-foreground mt-0.5">Connect an AI provider to power the Smart Scanner. Groq is used first (faster), Gemini as fallback.</p>
             </div>
-            <GeminiSection shopId={shopId} hasKey={!!(shop as any)?.hasGeminiKey} />
+
+            {/* Groq */}
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground/50 mb-3">Groq — Vision OCR (Primary · Fastest)</p>
+              <GroqSection shopId={shopId} hasKey={!!(shop as any)?.hasGroqKey} />
+            </div>
+
+            {/* Gemini */}
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground/50 mb-3">Google Gemini — Vision OCR (Fallback)</p>
+              <GeminiSection shopId={shopId} hasKey={!!(shop as any)?.hasGeminiKey} />
+            </div>
+
             {/* Quick access to the scanner */}
             <button
               onClick={() => setLocation("/ocr")}

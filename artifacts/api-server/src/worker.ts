@@ -34,6 +34,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     "ALTER TABLE price_history ADD COLUMN changed_at TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE price_history ADD COLUMN created_at TEXT",
     "ALTER TABLE shops ADD COLUMN gemini_api_key TEXT",
+    "ALTER TABLE shops ADD COLUMN groq_api_key TEXT",
     "ALTER TABLE products ADD COLUMN expiry_date TEXT",
     "ALTER TABLE products ADD COLUMN product_type TEXT NOT NULL DEFAULT 'normal'",
     "ALTER TABLE products ADD COLUMN allow_decimals INTEGER NOT NULL DEFAULT 0",
