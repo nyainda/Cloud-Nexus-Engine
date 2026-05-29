@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
-  useOcrScan, useListScanSessions, useListProducts,
+  useOcrScan, useListScanSessions, useListProducts, useListSuppliers,
   customFetch, getListProductsQueryKey, getListInventoryMovementsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
@@ -310,6 +310,12 @@ export default function OCR() {
     subTotal: "", vatRate: "", vatAmount: "",
   });
 
+  // Supplier auto-complete state
+  const [supplierId, setSupplierId] = useState<string | null>(null);
+  const [supplierSearch, setSupplierSearch] = useState("");
+  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
+  const supplierRef = useRef<HTMLDivElement>(null);
+
   const qc = useQueryClient();
   const ocrScan = useOcrScan();
 
@@ -329,11 +335,37 @@ export default function OCR() {
     return m;
   }, [products]);
 
+  const { data: suppliersData } = useListSuppliers(
+    { shopId },
+    { query: { enabled: !!shopId } },
+  );
+  const suppliersList = useMemo(() => (suppliersData as any[]) ?? [], [suppliersData]);
+
+  // Filter suppliers for the dropdown
+  const supplierMatches = useMemo(() => {
+    const q = supplierSearch.trim().toLowerCase();
+    if (!q) return suppliersList.slice(0, 8);
+    return suppliersList.filter((s: any) => s.name.toLowerCase().includes(q)).slice(0, 6);
+  }, [suppliersList, supplierSearch]);
+
+  // Close supplier dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (supplierRef.current && !supplierRef.current.contains(e.target as Node)) {
+        setShowSupplierDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
   useEffect(() => {
     if (!scanResult?.lines) return;
     setEditedItems(initEditedItems(scanResult.lines, productsMap));
     setApplied(false);
     setApproving(false);
+
+    const aiSupplierName: string = scanResult.invoiceMeta?.supplierName ?? "";
     if (scanResult.invoiceMeta) {
       const m = scanResult.invoiceMeta;
       setInvoiceMeta({
@@ -348,7 +380,18 @@ export default function OCR() {
     } else {
       setInvoiceMeta({ supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "", subTotal: "", vatRate: "", vatAmount: "" });
     }
-  }, [scanResult, productsMap]);
+
+    // Auto-match supplier from AI-extracted name
+    setSupplierId(null);
+    setSupplierSearch(aiSupplierName);
+    if (aiSupplierName && suppliersList.length > 0) {
+      const q = aiSupplierName.toLowerCase();
+      const match = suppliersList.find(
+        (s: any) => s.name.toLowerCase().includes(q) || q.includes(s.name.toLowerCase())
+      );
+      if (match) setSupplierId(match.id);
+    }
+  }, [scanResult, productsMap, suppliersList]);
 
   const handleCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -487,6 +530,7 @@ export default function OCR() {
             lines: linesToApply,
             newProducts: newProductsToAdd.length > 0 ? newProductsToAdd : undefined,
             invoiceMeta: Object.values(meta).some(Boolean) ? meta : undefined,
+            supplierId: supplierId ?? undefined,
             performedBy: role,
           }),
         },
@@ -886,13 +930,74 @@ export default function OCR() {
                     <span className="text-xs font-bold uppercase tracking-wide">Invoice Details</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-[10px] text-muted-foreground flex items-center gap-1.5">
                         <Building2 className="h-3 w-3" />Supplier
+                        {supplierId && (
+                          <span className="flex items-center gap-0.5 bg-emerald-500/15 text-emerald-400 text-[8px] font-bold px-1.5 py-0.5 rounded-full">
+                            <Check className="h-2.5 w-2.5" />linked
+                          </span>
+                        )}
                       </Label>
-                      <Input value={invoiceMeta.supplierName}
-                        onChange={(e) => setInvoiceMeta((m) => ({ ...m, supplierName: e.target.value }))}
-                        placeholder="Supplier name" className="h-8 text-xs" />
+                      <div className="relative" ref={supplierRef}>
+                        <Input
+                          value={invoiceMeta.supplierName}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setInvoiceMeta((m) => ({ ...m, supplierName: v }));
+                            setSupplierSearch(v);
+                            setSupplierId(null);
+                            setShowSupplierDropdown(true);
+                          }}
+                          onFocus={() => setShowSupplierDropdown(true)}
+                          placeholder="Supplier name or search…"
+                          className="h-8 text-xs pr-6"
+                        />
+                        {supplierId && (
+                          <button
+                            type="button"
+                            onClick={() => { setSupplierId(null); setSupplierSearch(""); setInvoiceMeta((m) => ({ ...m, supplierName: "" })); }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {showSupplierDropdown && supplierMatches.length > 0 && (
+                          <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
+                            {supplierMatches.map((s: any) => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setInvoiceMeta((m) => ({ ...m, supplierName: s.name }));
+                                  setSupplierId(s.id);
+                                  setSupplierSearch(s.name);
+                                  setShowSupplierDropdown(false);
+                                }}
+                                className={cn(
+                                  "w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-muted/60 transition-colors",
+                                  s.id === supplierId ? "bg-primary/8 text-primary" : "",
+                                )}
+                              >
+                                <Building2 className="h-3 w-3 text-muted-foreground shrink-0" />
+                                <div className="min-w-0">
+                                  <span className="font-medium truncate block">{s.name}</span>
+                                  {s.phone && <span className="text-[10px] text-muted-foreground">{s.phone}</span>}
+                                </div>
+                                {s.id === supplierId && <Check className="h-3 w-3 text-primary ml-auto shrink-0" />}
+                              </button>
+                            ))}
+                            {invoiceMeta.supplierName && !supplierMatches.find((s: any) =>
+                              s.name.toLowerCase() === invoiceMeta.supplierName.toLowerCase()
+                            ) && (
+                              <div className="px-3 py-2 border-t border-border/40">
+                                <p className="text-[10px] text-muted-foreground/60 italic">No match — will save as new supplier name</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[10px] text-muted-foreground flex items-center gap-1">

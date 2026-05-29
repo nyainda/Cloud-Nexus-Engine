@@ -666,6 +666,7 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
       qty: number;
     }>;
     invoiceMeta?: InvoiceMeta;
+    supplierId?: string;
     performedBy?: string;
   }>();
 
@@ -785,9 +786,16 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
     newAdded,
     invoiceMeta: body.invoiceMeta ?? null,
   });
+  const sessionUpdate: Record<string, unknown> = {
+    status: "applied",
+    totalProducts: totalRecords,
+    resultJson: metaPayload,
+  };
+  if (body.supplierId) sessionUpdate.supplierId = body.supplierId;
+
   await db
     .update(scanSessions)
-    .set({ status: "applied", totalProducts: totalRecords, resultJson: metaPayload })
+    .set(sessionUpdate as any)
     .where(eq(scanSessions.id, sessionId));
 
   // Invalidate cache
