@@ -28,6 +28,10 @@ interface InvoiceMeta {
   invoiceNumber?: string | null;
   invoiceDate?: string | null;
   grandTotal?: number | null;
+  subTotal?: number | null;
+  vatRate?: number | null;
+  vatAmount?: number | null;
+  hasVat?: boolean;
 }
 
 // ── KV cache helpers ───────────────────────────────────────────────────────
@@ -87,33 +91,43 @@ async function callGroqOCR(
 
   let prompt: string;
   if (scanType === "invoice") {
-    prompt = `Analyze this supplier invoice carefully. Extract all information precisely.
+    prompt = `Analyze this Kenyan supplier invoice carefully. Extract ALL information with high precision.
 Return ONLY a valid JSON object (no markdown, no code blocks, no extra text) with this exact structure:
 {
   "meta": {
-    "supplierName": "the supplier or company name, or null if not visible",
-    "invoiceNumber": "invoice/receipt/delivery note number, or null",
-    "invoiceDate": "date formatted as YYYY-MM-DD, or null if not visible",
-    "grandTotal": total invoice amount as a plain number (no currency symbols like KES/Ksh), or null
+    "supplierName": "supplier or company name, or null",
+    "invoiceNumber": "invoice/receipt/LPO/DN number, or null",
+    "invoiceDate": "YYYY-MM-DD, or null",
+    "subTotal": subtotal BEFORE VAT as plain number or null,
+    "vatRate": VAT percentage as plain number (e.g. 16 for 16%) or null if no VAT shown,
+    "vatAmount": total VAT amount as plain number or null,
+    "grandTotal": FINAL total after VAT as plain number or null
   },
   "items": [
     {
       "text": "exact raw line from invoice",
-      "productName": "clean product/item name only",
-      "qty": quantity as a plain number or null,
-      "unitPrice": unit buying price as a plain number (no currency symbols) or null,
-      "totalPrice": line total as a plain number (no currency symbols) or null
+      "productName": "clean chemical/product name — keep active ingredient % if part of name (e.g. Dimethoate 40% EC, Roundup 480SL, Emamectin 1.9% EC). Strip pack size/volume from name.",
+      "qty": quantity ordered as plain number or null,
+      "unitPrice": unit price per item EXCLUDING VAT as plain number or null,
+      "totalPrice": line total EXCLUDING VAT as plain number or null
     }
   ]
 }
-Rules: strip currency symbols (KES, Ksh, Sh, K), remove commas from numbers, extract every product line item, use null for missing fields.${ocrHint}`;
+Rules:
+- Strip all currency symbols (KES, Ksh, Sh, K, /=, sh) from all numbers
+- Remove commas from numbers: 1,200 → 1200
+- Extract EVERY product line, even with partial data
+- Product name examples: "DIMETHOATE 40% EC 1L x12" → name:"Dimethoate 40% EC" qty:12 | "ROUNDUP 480SL 5LTR 6PCS" → name:"Roundup 480SL" qty:6 | "NPK 17:17:17 50KG" → name:"NPK 17:17:17" qty:1
+- VAT in Kenya is typically 16% — extract if shown as V.A.T, VAT, or Tax line
+- If only totalPrice and qty are visible: unitPrice = totalPrice / qty
+- DO NOT include header rows, subtotal rows, VAT rows, or delivery charges in items${ocrHint}`;
   } else {
     prompt = `This is a handwritten inventory notebook. Extract each product entry carefully.
 Return ONLY a valid JSON array (no markdown, no code blocks, no extra text):
 [
   {
     "text": "raw handwritten line",
-    "productName": "clean product name",
+    "productName": "clean product/chemical name — keep concentration % if present",
     "qty": quantity as a plain number or null,
     "unitPrice": unit price as a plain number (no currency symbols) or null,
     "totalPrice": total price as a plain number (no currency symbols) or null
@@ -181,39 +195,44 @@ async function callGeminiOCR(
   let prompt: string;
 
   if (scanType === "invoice") {
-    prompt = `Analyze this supplier invoice carefully. Extract all information precisely.
+    prompt = `Analyze this Kenyan supplier invoice carefully. Extract ALL information with high precision.
 Return ONLY a valid JSON object (no markdown, no code blocks, no extra text) with this exact structure:
 {
   "meta": {
-    "supplierName": "the supplier or company name, or null if not visible",
-    "invoiceNumber": "invoice/receipt/delivery note number, or null",
-    "invoiceDate": "date formatted as YYYY-MM-DD, or null if not visible",
-    "grandTotal": total invoice amount as a plain number (no currency symbols like KES/Ksh), or null
+    "supplierName": "supplier or company name, or null",
+    "invoiceNumber": "invoice/receipt/LPO/DN number, or null",
+    "invoiceDate": "YYYY-MM-DD, or null",
+    "subTotal": subtotal BEFORE VAT as plain number or null,
+    "vatRate": VAT percentage as plain number (e.g. 16 for 16%) or null if no VAT shown,
+    "vatAmount": total VAT amount as plain number or null,
+    "grandTotal": FINAL total after VAT as plain number or null
   },
   "items": [
     {
       "text": "exact raw line from invoice",
-      "productName": "clean product/item name only",
-      "qty": quantity as a plain number or null,
-      "unitPrice": unit buying price as a plain number (no currency symbols) or null,
-      "totalPrice": line total as a plain number (no currency symbols) or null
+      "productName": "clean chemical/product name — keep active ingredient % if part of name (e.g. Dimethoate 40% EC, Roundup 480SL, Emamectin 1.9% EC). Strip pack volume/weight from name.",
+      "qty": quantity ordered as plain number or null,
+      "unitPrice": unit price per item EXCLUDING VAT as plain number or null,
+      "totalPrice": line total EXCLUDING VAT as plain number or null
     }
   ]
 }
 
 Rules:
-- Strip all currency symbols (KES, Ksh, Sh, K) from numeric values
-- Remove commas from numbers (1,200 → 1200)
-- Extract EVERY product line item, including those with missing prices
-- If a field is not clearly visible, use null
-- Do not include header rows, subtotals, or tax rows in items${ocrHint}`;
+- Strip all currency symbols (KES, Ksh, Sh, K, /=, sh) from all numbers
+- Remove commas from numbers: 1,200 → 1200
+- Extract EVERY product line, even with partial data
+- Product name examples: "DIMETHOATE 40% EC 1L x12" → name:"Dimethoate 40% EC" qty:12 | "ROUNDUP 480SL 5LTR 6PCS" → name:"Roundup 480SL" qty:6 | "NPK 17:17:17 50KG BAG" → name:"NPK 17:17:17" qty:1
+- VAT in Kenya is typically 16% — extract if shown as V.A.T, VAT, or Tax line
+- If only totalPrice and qty are visible: unitPrice = totalPrice / qty
+- DO NOT include header rows, subtotal rows, VAT rows, or delivery charges in items${ocrHint}`;
   } else {
     prompt = `This is a handwritten inventory notebook. Extract each product entry carefully.
 Return ONLY a valid JSON array (no markdown, no code blocks, no extra text):
 [
   {
     "text": "raw handwritten line",
-    "productName": "clean product name",
+    "productName": "clean product/chemical name — keep concentration % if present (e.g. Dimethoate 40% EC)",
     "qty": quantity as a plain number or null,
     "unitPrice": unit price as a plain number (no currency symbols) or null,
     "totalPrice": total price as a plain number (no currency symbols) or null
@@ -262,36 +281,134 @@ Strip currency symbols (KES, Ksh, Sh) and commas from numbers. Extract all entri
 
 // ── Product matching ───────────────────────────────────────────────────────
 
+// Bigram/trigram similarity (Dice coefficient)
+function ngramSim(a: string, b: string, n = 3): number {
+  if (a === b) return 1;
+  if (a.length < n - 1 || b.length < n - 1) return 0;
+  const getNgrams = (s: string): Map<string, number> => {
+    const m = new Map<string, number>();
+    const p = " ".repeat(n - 1) + s + " ".repeat(n - 1);
+    for (let i = 0; i <= p.length - n; i++) {
+      const t = p.slice(i, i + n);
+      m.set(t, (m.get(t) ?? 0) + 1);
+    }
+    return m;
+  };
+  const ag = getNgrams(a);
+  const bg = getNgrams(b);
+  let inter = 0;
+  ag.forEach((cnt, t) => { inter += Math.min(cnt, bg.get(t) ?? 0); });
+  const total = [...ag.values()].reduce((s, v) => s + v, 0)
+              + [...bg.values()].reduce((s, v) => s + v, 0);
+  return total === 0 ? 0 : (2 * inter) / total;
+}
+
+// Weighted word overlap — longer words carry more weight (more specific)
+function wordOverlapScore(a: string, b: string): number {
+  const aW = a.split(" ").filter((w) => w.length > 1);
+  const bW = b.split(" ").filter((w) => w.length > 1);
+  if (!aW.length || !bW.length) return 0;
+  const bSet = new Set(bW);
+  let match = 0;
+  let total = 0;
+  for (const w of aW) {
+    const wt = Math.log2(w.length + 2);
+    total += wt;
+    if (bSet.has(w)) match += wt;
+    else {
+      // Partial: check if any bWord starts with this word or vice-versa
+      for (const bw of bSet) {
+        if (w.startsWith(bw) || bw.startsWith(w)) { match += wt * 0.6; break; }
+      }
+    }
+  }
+  return total > 0 ? match / total : 0;
+}
+
 function findProductMatches(
   rawText: string,
   allProducts: Array<{ id: string; canonicalName: string; normalizedName: string }>,
   aliases: Array<{ productId: string; alias: string }>,
 ) {
   const norm = normalizeProductName(rawText);
-  const scored: Array<{ productId: string; productName: string; confidence: number }> = [];
+  if (norm.length < 2) return [];
+
+  const scored = new Map<string, { productId: string; productName: string; confidence: number }>();
 
   for (const p of allProducts) {
+    const pn = p.normalizedName;
     let score = 0;
-    if (p.normalizedName === norm) score = 1.0;
-    else if (p.normalizedName.includes(norm) || norm.includes(p.normalizedName)) score = 0.8;
-    else {
-      const words = norm.split(" ");
-      const pWords = p.normalizedName.split(" ");
-      const overlap = words.filter((w) => pWords.includes(w)).length;
-      if (overlap > 0) score = overlap / Math.max(words.length, pWords.length);
+
+    if (pn === norm) {
+      score = 1.0;
+    } else if (pn.includes(norm) || norm.includes(pn)) {
+      const lenRatio = Math.min(norm.length, pn.length) / Math.max(norm.length, pn.length);
+      score = 0.72 + 0.18 * lenRatio;
+    } else {
+      const wo = wordOverlapScore(norm, pn);
+      const tri = ngramSim(norm, pn, 3);
+      const bi = ngramSim(norm, pn, 2);
+      score = Math.max(wo * 0.88, tri * 0.80, bi * 0.72, (wo + tri) / 2 * 0.92);
     }
-    if (score > 0.3) scored.push({ productId: p.id, productName: p.canonicalName, confidence: score });
+
+    if (score >= 0.27) {
+      const prev = scored.get(p.id);
+      if (!prev || score > prev.confidence) {
+        scored.set(p.id, { productId: p.id, productName: p.canonicalName, confidence: Math.min(score, 0.99) });
+      }
+    }
   }
 
+  // Alias matching
   for (const alias of aliases) {
-    const aliasNorm = normalizeProductName(alias.alias);
-    if (aliasNorm === norm || norm.includes(aliasNorm)) {
+    const an = normalizeProductName(alias.alias);
+    let aliasScore = 0;
+    if (an === norm) aliasScore = 0.95;
+    else if (an.includes(norm) || norm.includes(an)) aliasScore = 0.88;
+    else {
+      const wo = wordOverlapScore(norm, an);
+      const tri = ngramSim(norm, an, 3);
+      aliasScore = Math.max(wo, tri) * 0.88;
+    }
+    if (aliasScore >= 0.5) {
       const product = allProducts.find((p) => p.id === alias.productId);
-      if (product) scored.push({ productId: product.id, productName: product.canonicalName, confidence: 0.9 });
+      if (product) {
+        const prev = scored.get(product.id);
+        if (!prev || aliasScore > prev.confidence) {
+          scored.set(product.id, { productId: product.id, productName: product.canonicalName, confidence: aliasScore });
+        }
+      }
     }
   }
 
-  return scored.sort((a, b) => b.confidence - a.confidence).slice(0, 3);
+  return [...scored.values()]
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 5);
+}
+
+// ── VAT derivation ─────────────────────────────────────────────────────────
+// Fills in missing VAT fields when enough data is present.
+
+function deriveVatFields(meta: InvoiceMeta | null): InvoiceMeta | null {
+  if (!meta) return null;
+  const gt = meta.grandTotal ?? null;
+  const st = meta.subTotal ?? null;
+  const vr = meta.vatRate ?? null;
+  let va = meta.vatAmount ?? null;
+
+  if (gt && st && gt > st && !va) {
+    va = Math.round((gt - st) * 100) / 100;
+    meta.vatAmount = va;
+  }
+  if (gt && st && !vr && va) {
+    meta.vatRate = Math.round((va / st) * 100 * 10) / 10;
+  }
+  if (gt && vr && !st) {
+    meta.subTotal = Math.round((gt / (1 + vr / 100)) * 100) / 100;
+    meta.vatAmount = meta.vatAmount ?? Math.round((gt - meta.subTotal) * 100) / 100;
+  }
+  if ((va && va > 0) || (vr && vr > 0)) meta.hasVat = true;
+  return meta;
 }
 
 // ── Normalise raw DB row to camelCase session object ───────────────────────
@@ -404,24 +521,29 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   }
   console.log(`[ocr] provider=${aiProvider} lines=${lines.length}`);
 
+  // Derive missing VAT fields from what the AI returned
+  invoiceMeta = deriveVatFields(invoiceMeta);
+
   const results = lines.map((line) => {
     const rawText = line.text ?? line.productName ?? "";
-    const suggestions = findProductMatches(rawText, allProducts, allAliases);
+    // Use the AI-cleaned productName for matching — it's much more accurate than raw text
+    const matchText = (line.productName?.trim() || rawText).trim();
+    const suggestions = findProductMatches(matchText, allProducts, allAliases);
     const bestMatch = suggestions[0];
     const confidence = bestMatch?.confidence ?? 0;
     const inferredQty = line.qty ?? null;
     const inferredUnitPrice = line.unitPrice ?? null;
-    const inferredTotal = line.totalPrice ?? (line.unitPrice && line.qty ? line.unitPrice * line.qty : null);
+    const inferredTotal = line.totalPrice ?? (line.unitPrice && line.qty ? Math.round(line.unitPrice * line.qty * 100) / 100 : null);
 
     return {
       rawText,
-      productId: confidence > 0.7 ? (bestMatch?.productId ?? null) : null,
-      productName: confidence > 0.7 ? (bestMatch?.productName ?? null) : null,
+      productId: confidence >= 0.62 ? (bestMatch?.productId ?? null) : null,
+      productName: confidence >= 0.62 ? (bestMatch?.productName ?? null) : null,
       inferredQty,
       inferredUnitPrice,
       inferredTotal,
       confidence,
-      status: (confidence > 0.85 ? "confirmed" : confidence > 0.5 ? "review" : "unresolved") as "confirmed" | "review" | "unresolved",
+      status: (confidence >= 0.80 ? "confirmed" : confidence >= 0.42 ? "review" : "unresolved") as "confirmed" | "review" | "unresolved",
       suggestions,
     };
   });

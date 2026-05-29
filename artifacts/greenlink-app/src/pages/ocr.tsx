@@ -141,6 +141,8 @@ interface EditedItem {
   newCategory: string;
   newUnit: string;
   newSellingPrice: string;
+  suggestions: Array<{ productId: string; productName: string; confidence: number }>;
+  inferredTotal: number | null;
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -279,6 +281,8 @@ function initEditedItems(lines: any[], productsMap: Map<string, any>): EditedIte
       newCategory: "Agrochemicals",
       newUnit: "unit",
       newSellingPrice: "",
+      suggestions: line.suggestions ?? [],
+      inferredTotal: line.inferredTotal ?? null,
     };
   });
 }
@@ -301,7 +305,10 @@ export default function OCR() {
   const openLightbox = useCallback((url: string) => setLightboxUrl(url), []);
 
   const [editedItems, setEditedItems] = useState<EditedItem[]>([]);
-  const [invoiceMeta, setInvoiceMeta] = useState({ supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "" });
+  const [invoiceMeta, setInvoiceMeta] = useState({
+    supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "",
+    subTotal: "", vatRate: "", vatAmount: "",
+  });
 
   const qc = useQueryClient();
   const ocrScan = useOcrScan();
@@ -328,14 +335,18 @@ export default function OCR() {
     setApplied(false);
     setApproving(false);
     if (scanResult.invoiceMeta) {
+      const m = scanResult.invoiceMeta;
       setInvoiceMeta({
-        supplierName: scanResult.invoiceMeta.supplierName ?? "",
-        invoiceNumber: scanResult.invoiceMeta.invoiceNumber ?? "",
-        invoiceDate: scanResult.invoiceMeta.invoiceDate ?? "",
-        grandTotal: scanResult.invoiceMeta.grandTotal ? String(scanResult.invoiceMeta.grandTotal) : "",
+        supplierName: m.supplierName ?? "",
+        invoiceNumber: m.invoiceNumber ?? "",
+        invoiceDate: m.invoiceDate ?? "",
+        grandTotal: m.grandTotal != null ? String(m.grandTotal) : "",
+        subTotal: m.subTotal != null ? String(m.subTotal) : "",
+        vatRate: m.vatRate != null ? String(m.vatRate) : "",
+        vatAmount: m.vatAmount != null ? String(m.vatAmount) : "",
       });
     } else {
-      setInvoiceMeta({ supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "" });
+      setInvoiceMeta({ supplierName: "", invoiceNumber: "", invoiceDate: "", grandTotal: "", subTotal: "", vatRate: "", vatAmount: "" });
     }
   }, [scanResult, productsMap]);
 
@@ -461,6 +472,9 @@ export default function OCR() {
         invoiceNumber: invoiceMeta.invoiceNumber || undefined,
         invoiceDate: invoiceMeta.invoiceDate || undefined,
         grandTotal: invoiceMeta.grandTotal ? parseFloat(invoiceMeta.grandTotal) : undefined,
+        subTotal: invoiceMeta.subTotal ? parseFloat(invoiceMeta.subTotal) : undefined,
+        vatRate: invoiceMeta.vatRate ? parseFloat(invoiceMeta.vatRate) : undefined,
+        vatAmount: invoiceMeta.vatAmount ? parseFloat(invoiceMeta.vatAmount) : undefined,
       };
 
       return customFetch<{ applied: number; skipped: number; priceUpdated: number; newAdded: number; errors: string[] }>(
@@ -512,6 +526,16 @@ export default function OCR() {
   });
   const newProductItems = editedItems.filter((i) => !i.productId && i.addAsNew && i.newName.trim() && parseFloat(i.unitPrice) > 0);
   const totalActions = checkedRestocks.length + newProductItems.length;
+
+  // Calculated total from line items (for comparison with invoice total)
+  const calculatedTotal = useMemo(() =>
+    editedItems.reduce((sum, item) => {
+      if (!item.checked || !item.productId) return sum;
+      const price = parseFloat(item.unitPrice) || 0;
+      return sum + price * item.qty;
+    }, 0),
+    [editedItems],
+  );
 
   // ── Approval summary panel ────────────────────────────────────────────────
   if (scanResult && approving && !applied) {
@@ -895,6 +919,34 @@ export default function OCR() {
                         placeholder="0" className="h-8 text-xs font-mono" />
                     </div>
                   </div>
+                  {/* VAT breakdown (shown when detected or when subTotal is present) */}
+                  {(invoiceMeta.vatRate || invoiceMeta.vatAmount || invoiceMeta.subTotal) && (
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 space-y-2">
+                      <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1">
+                        <Banknote className="h-3 w-3" />VAT Breakdown
+                      </p>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <div className="space-y-0.5">
+                          <p className="text-[9px] text-muted-foreground">Subtotal (ex-VAT)</p>
+                          <Input type="number" value={invoiceMeta.subTotal}
+                            onChange={(e) => setInvoiceMeta((m) => ({ ...m, subTotal: e.target.value }))}
+                            placeholder="0" className="h-7 text-[10px] font-mono" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <p className="text-[9px] text-muted-foreground">VAT Rate (%)</p>
+                          <Input type="number" value={invoiceMeta.vatRate}
+                            onChange={(e) => setInvoiceMeta((m) => ({ ...m, vatRate: e.target.value }))}
+                            placeholder="16" className="h-7 text-[10px] font-mono" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <p className="text-[9px] text-muted-foreground">VAT Amount</p>
+                          <Input type="number" value={invoiceMeta.vatAmount}
+                            onChange={(e) => setInvoiceMeta((m) => ({ ...m, vatAmount: e.target.value }))}
+                            placeholder="0" className="h-7 text-[10px] font-mono" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -979,13 +1031,63 @@ export default function OCR() {
                               <p className="text-[10px] text-muted-foreground/50 truncate">{item.rawText}</p>
                             )}
 
-                            {/* Unresolved — not adding as new */}
-                            {!item.productId && !item.addAsNew && (
+                            {/* Suggestion picker — review items or unresolved with suggestions */}
+                            {(item.status === "review" || (!item.productId && !item.addAsNew && item.suggestions.length > 0)) && (
+                              <div className="space-y-1">
+                                <p className="text-[9px] text-muted-foreground/60 uppercase tracking-wide">
+                                  {item.status === "review" ? "Possible matches:" : "Similar products:"}
+                                </p>
+                                {item.suggestions.slice(0, 5).map((s) => (
+                                  <button
+                                    key={s.productId}
+                                    onClick={() => {
+                                      const dbProd = productsMap.get(s.productId);
+                                      updateItem(idx, {
+                                        productId: s.productId,
+                                        productName: s.productName,
+                                        checked: true,
+                                        status: "confirmed",
+                                        currentBuyingPrice: dbProd?.purchasePrice ?? null,
+                                        currentStock: dbProd?.stockQty ?? null,
+                                      });
+                                    }}
+                                    className={cn(
+                                      "w-full text-left px-2 py-1.5 rounded-lg text-[10px] border transition-all flex items-center justify-between gap-2",
+                                      item.productId === s.productId
+                                        ? "border-primary bg-primary/10 text-primary font-semibold"
+                                        : "border-border/40 bg-muted/30 hover:bg-muted/60 text-foreground",
+                                    )}
+                                  >
+                                    <span className="truncate">{s.productName}</span>
+                                    <span className={cn(
+                                      "text-[9px] font-bold shrink-0 tabular-nums",
+                                      s.confidence >= 0.80 ? "text-emerald-400" :
+                                      s.confidence >= 0.50 ? "text-orange-400" : "text-muted-foreground",
+                                    )}>
+                                      {Math.round(s.confidence * 100)}%
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Unresolved — not adding as new and no suggestions */}
+                            {!item.productId && !item.addAsNew && item.suggestions.length === 0 && (
                               <button
                                 onClick={() => updateItem(idx, { addAsNew: true, checked: true })}
                                 className="flex items-center gap-1 text-[10px] text-primary hover:underline"
                               >
                                 <PlusCircle className="h-3 w-3" />Add as new product
+                              </button>
+                            )}
+
+                            {/* Unresolved with suggestions — also show add as new option */}
+                            {!item.productId && !item.addAsNew && item.suggestions.length > 0 && (
+                              <button
+                                onClick={() => updateItem(idx, { addAsNew: true, checked: true })}
+                                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+                              >
+                                <PlusCircle className="h-3 w-3" />None match — add as new
                               </button>
                             )}
 
@@ -1164,6 +1266,53 @@ export default function OCR() {
                       No matches found. Free OCR works best on clear printed text. For handwritten invoices, try <strong className="text-foreground">Hybrid AI</strong>.
                     </p>
                   </div>
+                </div>
+              )}
+
+              {/* Total comparison (invoice total vs calculated) */}
+              {(invoiceMeta.grandTotal || calculatedTotal > 0) && (
+                <div className="px-4 py-3 border-t border-border/40 space-y-1.5">
+                  {calculatedTotal > 0 && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Calculated ({checkedRestocks.length} items)</span>
+                      <span className="font-bold font-mono">{fmtKes(calculatedTotal)}</span>
+                    </div>
+                  )}
+                  {invoiceMeta.subTotal && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Invoice subtotal (ex-VAT)</span>
+                      <span className="font-mono text-muted-foreground">{fmtKes(parseFloat(invoiceMeta.subTotal))}</span>
+                    </div>
+                  )}
+                  {invoiceMeta.vatAmount && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">
+                        VAT{invoiceMeta.vatRate ? ` (${invoiceMeta.vatRate}%)` : ""}
+                      </span>
+                      <span className="font-mono text-amber-400">+{fmtKes(parseFloat(invoiceMeta.vatAmount))}</span>
+                    </div>
+                  )}
+                  {invoiceMeta.grandTotal && (
+                    <div className="flex items-center justify-between text-xs border-t border-border/40 pt-1.5 mt-1.5">
+                      <span className="font-semibold">Invoice grand total</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold font-mono">{fmtKes(parseFloat(invoiceMeta.grandTotal))}</span>
+                        {calculatedTotal > 0 && (() => {
+                          const invoiceTotal = parseFloat(invoiceMeta.grandTotal);
+                          const diff = Math.abs(calculatedTotal - invoiceTotal);
+                          const isClose = diff / invoiceTotal < 0.02;
+                          return (
+                            <span className={cn(
+                              "text-[9px] font-bold px-1.5 py-0.5 rounded-full",
+                              isClose ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400",
+                            )}>
+                              {isClose ? "✓ match" : `${calculatedTotal > invoiceTotal ? "+" : "−"}${fmtKes(diff)} diff`}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
