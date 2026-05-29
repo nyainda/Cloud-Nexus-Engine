@@ -14,6 +14,7 @@ salesRouter.get("/sales", requireAuth, async (c) => {
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
   const limit = parseInt(c.req.query("limit") ?? "50");
   const offset = parseInt(c.req.query("offset") ?? "0");
+  const includeVoided = c.req.query("includeVoided") === "true";
 
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
@@ -24,13 +25,14 @@ salesRouter.get("/sales", requireAuth, async (c) => {
     .where(
       and(
         shopId ? eq(sales.shopId, shopId) : undefined,
-        eq(sales.isDeleted, false),
+        includeVoided ? undefined : eq(sales.isDeleted, false),
         gte(sales.createdAt, startOfDay),
         lte(sales.createdAt, endOfDay),
       ),
     )
     .limit(limit)
     .offset(offset)
+    .orderBy(sql`created_at DESC`)
     .all();
 
   return c.json(rows);
@@ -224,6 +226,7 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
   const saleId = c.req.param("saleId");
   const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
   if (!sale) return c.json({ error: "Not found" }, 404);
+  if (sale.isDeleted) return c.json({ error: "Sale already voided" }, 409);
   const now = new Date().toISOString();
 
   await db
@@ -252,7 +255,7 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
         qtyChange: item.qty,
         beforeQty,
         afterQty,
-        source: "sale_delete",
+        source: "void",
         referenceId: saleId,
         createdBy: body.performedBy ?? null,
         createdAt: now,
@@ -260,12 +263,34 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
     }
   }
 
+  if (sale.saleType === "debt") {
+    const linkedDebt = await db.select().from(debts).where(eq(debts.saleId, saleId)).get();
+    if (linkedDebt) {
+      if (linkedDebt.amountPaid === 0) {
+        await db.update(debts)
+          .set({ status: "cancelled" as any, balance: 0, paidAt: now })
+          .where(eq(debts.saleId, saleId));
+      } else {
+        await db.update(debts)
+          .set({ totalAmount: linkedDebt.amountPaid, balance: 0, status: "paid", paidAt: now })
+          .where(eq(debts.saleId, saleId));
+      }
+    }
+  }
+
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    shopId: sale.shopId,
+    action: "sale_voided",
+    entityType: "sale",
+    entityId: saleId,
+    performedBy: body.performedBy ?? "unknown",
+    details: JSON.stringify({ reason: body.reason ?? null, totalAmount: sale.totalAmount, saleType: sale.saleType }),
+    createdAt: now,
+  });
+
   const today = new Date().toISOString().slice(0, 10);
-  await kvDel(
-    c.env.SESSIONS,
-    CK.products(sale.shopId),
-    CK.dashboard(sale.shopId, today),
-  );
+  await kvDel(c.env.SESSIONS, CK.products(sale.shopId), CK.dashboard(sale.shopId, today));
   return c.body(null, 204);
 });
 

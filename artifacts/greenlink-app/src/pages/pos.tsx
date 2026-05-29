@@ -13,6 +13,7 @@ import {
   Search, Plus, Minus, Trash2, ShoppingCart,
   AlertTriangle, PackageX, Package, CreditCard, Banknote, X,
   ChevronRight, TrendingUp, Scale, User2, Phone, ChevronDown, ArrowUpDown,
+  ReceiptText, RotateCcw, ChevronUp, Ban,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -497,6 +498,214 @@ const CartPanel = memo(function CartPanel({
   );
 });
 
+// ─── Recent Sales Drawer ──────────────────────────────────────────────────────
+function RecentSalesDrawer({ shopId, userName, onClose }: { shopId: string; userName: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [voidingId, setVoidingId] = useState<string | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [localVoided, setLocalVoided] = useState<Set<string>>(new Set());
+
+  const { data: salesData, isLoading, refetch } = useQuery({
+    queryKey: ["recent-sales", shopId, today],
+    queryFn: async () => {
+      const res = await customFetch(`/api/sales?shopId=${encodeURIComponent(shopId)}&date=${today}&includeVoided=true&limit=50`);
+      if (!res.ok) throw new Error("Failed to load sales");
+      return res.json() as Promise<any[]>;
+    },
+    enabled: !!shopId,
+    staleTime: 0,
+  });
+
+  const { data: expandedItems } = useQuery({
+    queryKey: ["sale-detail", expandedId],
+    queryFn: async () => {
+      const res = await customFetch(`/api/sales/${expandedId}`);
+      if (!res.ok) throw new Error("Failed to load sale detail");
+      const data = await res.json() as any;
+      return (data.items ?? []) as any[];
+    },
+    enabled: !!expandedId,
+  });
+
+  const handleVoid = async (saleId: string) => {
+    setVoidingId(saleId);
+    try {
+      const res = await customFetch(`/api/sales/${saleId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: voidReason || "Voided at POS", performedBy: userName }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as any;
+        throw new Error(err?.error || "Failed to void sale");
+      }
+      setLocalVoided(prev => new Set([...prev, saleId]));
+      setConfirmId(null);
+      setVoidReason("");
+      toast.success("Sale voided — stock restored");
+      refetch();
+      qc.invalidateQueries({ queryKey: ["recent-sales"] });
+      qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+      qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
+    } catch (err: any) {
+      toast.error(err?.message || "Could not void sale");
+    } finally {
+      setVoidingId(null);
+    }
+  };
+
+  const salesList = salesData ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card shrink-0">
+        <button onClick={onClose} className="w-9 h-9 rounded-xl bg-muted/60 flex items-center justify-center text-muted-foreground hover:text-foreground">
+          <X className="h-4 w-4" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-base font-bold text-foreground">Today's Sales</h2>
+          <p className="text-[11px] text-muted-foreground/60">{salesList.length} transaction{salesList.length !== 1 ? "s" : ""} · tap to expand · void to reverse</p>
+        </div>
+        <button onClick={() => refetch()} className="w-9 h-9 rounded-xl bg-muted/60 flex items-center justify-center text-muted-foreground hover:text-primary">
+          <RotateCcw className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Sales list */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {isLoading ? (
+          Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="rounded-xl border border-border bg-card p-4 space-y-2 animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-muted" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3 bg-muted rounded w-1/3" />
+                  <div className="h-2.5 bg-muted rounded w-1/2" />
+                </div>
+                <div className="h-5 bg-muted rounded w-16" />
+              </div>
+            </div>
+          ))
+        ) : salesList.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-3">
+            <ReceiptText className="w-10 h-10 text-muted-foreground/20" />
+            <p className="text-sm font-medium">No sales yet today</p>
+            <p className="text-xs text-muted-foreground/50">Sales will appear here after checkout</p>
+          </div>
+        ) : (
+          salesList.map((sale, idx) => {
+            const isVoided = sale.isDeleted || localVoided.has(sale.id);
+            const isExpanded = expandedId === sale.id;
+            const isDebt = sale.saleType === "debt";
+            const time = new Date(sale.createdAt).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" });
+            const num = salesList.length - idx;
+
+            return (
+              <div key={sale.id} className={cn(
+                "rounded-xl border overflow-hidden transition-all",
+                isVoided ? "bg-muted/20 border-border/30 opacity-60" : "bg-card border-border"
+              )}>
+                {/* Sale row */}
+                <button
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left"
+                  onClick={() => setExpandedId(isExpanded ? null : sale.id)}
+                >
+                  <div className={cn(
+                    "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-xs font-bold",
+                    isVoided ? "bg-muted text-muted-foreground" :
+                    isDebt ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"
+                  )}>
+                    {isVoided ? <Ban className="h-4 w-4" /> : num}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-foreground">{formatKES(sale.totalAmount)}</span>
+                      {isVoided && <span className="text-[10px] font-bold text-muted-foreground bg-muted px-1.5 py-0.5 rounded">VOIDED</span>}
+                      {isDebt && !isVoided && <span className="text-[10px] font-bold text-destructive bg-destructive/10 px-1.5 py-0.5 rounded">DEBT</span>}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/60 truncate">
+                      {time} · by {sale.servedBy ?? "staff"}
+                      {sale.deleteReason && ` · ${sale.deleteReason}`}
+                    </p>
+                  </div>
+                  {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />}
+                </button>
+
+                {/* Expanded items */}
+                {isExpanded && (
+                  <div className="border-t border-border/40 bg-muted/20">
+                    {expandedItems ? (
+                      <div className="divide-y divide-border/30">
+                        {expandedItems.map((item: any) => (
+                          <div key={item.id ?? item.productId} className="flex items-center justify-between px-4 py-2.5 text-sm">
+                            <span className="text-foreground/80 flex-1 min-w-0 truncate">{item.productName}</span>
+                            <span className="text-muted-foreground font-mono text-xs shrink-0 ml-3">×{item.qty} @ {formatKES(item.unitPrice)}</span>
+                            <span className="font-bold font-mono text-xs text-foreground ml-3 shrink-0">{formatKES(item.totalPrice)}</span>
+                          </div>
+                        ))}
+                        {sale.discount > 0 && (
+                          <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground">
+                            <span>Discount</span>
+                            <span className="font-mono text-destructive">-{formatKES(sale.discount)}</span>
+                          </div>
+                        )}
+                        {!isVoided && (
+                          <div className="px-4 py-3">
+                            {confirmId === sale.id ? (
+                              <div className="space-y-2">
+                                <p className="text-xs font-semibold text-foreground">Void this sale?</p>
+                                <p className="text-[11px] text-muted-foreground/70">Stock will be restored.{isDebt ? " The linked debt will be cancelled." : ""}</p>
+                                <input
+                                  type="text"
+                                  value={voidReason}
+                                  onChange={e => setVoidReason(e.target.value)}
+                                  placeholder="Reason (optional)…"
+                                  className="w-full h-8 rounded-lg border border-border/50 bg-background px-3 text-xs focus:outline-none focus:border-primary/50"
+                                />
+                                <div className="flex gap-2">
+                                  <button onClick={() => { setConfirmId(null); setVoidReason(""); }}
+                                    className="flex-1 h-8 rounded-lg bg-muted text-muted-foreground text-xs font-semibold">
+                                    Cancel
+                                  </button>
+                                  <button
+                                    onClick={() => handleVoid(sale.id)}
+                                    disabled={voidingId === sale.id}
+                                    className="flex-1 h-8 rounded-lg bg-destructive text-destructive-foreground text-xs font-bold disabled:opacity-50">
+                                    {voidingId === sale.id ? "Voiding…" : "Confirm Void"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmId(sale.id)}
+                                className="w-full h-8 rounded-lg border border-destructive/40 text-destructive text-xs font-bold hover:bg-destructive/10 transition-colors flex items-center justify-center gap-1.5">
+                                <Ban className="h-3.5 w-3.5" />
+                                Void This Sale
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="px-4 py-3 flex items-center gap-2 text-xs text-muted-foreground">
+                        <RotateCcw className="h-3 w-3 animate-spin" />Loading items…
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function POS() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const userName = localStorage.getItem("greenlink_userName") || "";
@@ -508,6 +717,7 @@ export default function POS() {
   const debouncedSearch = useDebounce(search, 100);
   const [stockFilter, setStockFilter] = useState<StockFilter>("all");
   const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("az");
+  const [showRecentSales, setShowRecentSales] = useState(false);
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
     { shopId, limit: 3000 },
@@ -763,6 +973,15 @@ export default function POS() {
               </select>
               <ArrowUpDown className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
             </div>
+            {/* Recent Sales button */}
+            <button
+              onClick={() => setShowRecentSales(true)}
+              className="shrink-0 flex items-center gap-1.5 px-2.5 h-8 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/70 border border-border/40 transition-colors"
+              title="Today's sales history"
+            >
+              <ReceiptText className="h-3.5 w-3.5" />
+              <span className="hidden sm:block">Sales</span>
+            </button>
             {/* Live sync indicator */}
             <div className="shrink-0 flex items-center gap-1.5 pr-0.5" title={isStale ? "Reconnecting…" : isRefetching ? "Syncing…" : "Live"}>
               <span className={cn(
@@ -937,6 +1156,15 @@ export default function POS() {
         onClose={() => setQuickAddOpen(false)} onAdd={handleQuickAdd} isOwner={isOwner}
         cartQty={cart.find(i => i.product.id === quickAddProduct?.id)?.qty ?? 0}
       />
+
+      {/* Recent Sales Drawer */}
+      {showRecentSales && (
+        <RecentSalesDrawer
+          shopId={shopId}
+          userName={userName}
+          onClose={() => setShowRecentSales(false)}
+        />
+      )}
     </div>
   );
 }

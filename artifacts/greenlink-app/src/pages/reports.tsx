@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   useGetDashboard, useGetReportRange, useGetTopProducts,
   useGetCategoryBreakdown, useGetHourlySales,
-  useListProducts,
+  useListProducts, customFetch,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +14,7 @@ import {
   TrendingUp, ShoppingBag, CreditCard, AlertTriangle,
   Package, TrendingDown, Percent, BarChart2, Trophy, Flame,
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
-  ClipboardCheck, X, Share2, CheckCheck, Wallet, ReceiptText,
+  ClipboardCheck, X, Share2, CheckCheck, Wallet, ReceiptText, Ban,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
@@ -308,6 +308,18 @@ export default function Reports() {
     : getDateRange(quickRange);
 
   const isToday = dateRange.from === today && dateRange.to === today;
+
+  const { data: voidedSales } = useQuery({
+    queryKey: ["voided-sales", shopId, dateRange.from],
+    queryFn: async () => {
+      const res = await customFetch(`/api/sales?shopId=${encodeURIComponent(shopId)}&date=${dateRange.from}&includeVoided=true&limit=100`);
+      if (!res.ok) return [];
+      const all = await res.json() as any[];
+      return all.filter((s: any) => s.isDeleted);
+    },
+    enabled: !!shopId && isToday,
+    staleTime: 30_000,
+  });
 
   const prevRange = useMemo(() => getPrevDateRange(dateRange.from, dateRange.to), [dateRange.from, dateRange.to]);
 
@@ -825,6 +837,45 @@ export default function Reports() {
             )}
           </CardContent>
         </Card>
+
+        {/* Voided Sales (today only) */}
+        {isToday && voidedSales && voidedSales.length > 0 && (
+          <Card className="shadow-none border-destructive/20">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+                <Ban className="h-4 w-4 text-destructive" />
+                Voided Sales Today
+                <span className="text-xs font-normal text-muted-foreground ml-1">{voidedSales.length} reversal{voidedSales.length !== 1 ? "s" : ""}</span>
+                <span className="ml-auto text-xs font-bold text-destructive font-mono">
+                  -{formatKES(voidedSales.reduce((s: number, v: any) => s + (v.totalAmount ?? 0), 0))}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border/40">
+                {voidedSales.map((v: any) => {
+                  const time = new Date(v.createdAt).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" });
+                  return (
+                    <div key={v.id} className="flex items-center gap-3 px-4 py-3">
+                      <div className="w-7 h-7 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
+                        <Ban className="h-3.5 w-3.5 text-destructive" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-muted-foreground line-through truncate">
+                          {v.saleType === "debt" ? "Debt Sale" : "Cash Sale"} · {time}
+                        </p>
+                        {v.deleteReason && <p className="text-[11px] text-muted-foreground/50 truncate">{v.deleteReason}</p>}
+                      </div>
+                      <span className="text-sm font-bold font-mono text-destructive/70 line-through shrink-0">
+                        {formatKES(v.totalAmount ?? 0)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Low Margin Alert */}
         {lowMarginProducts.length > 0 && (
