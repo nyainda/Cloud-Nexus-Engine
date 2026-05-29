@@ -34,6 +34,98 @@ import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { cn } from "@/lib/utils";
 
+const CATEGORIES = ["Herbicides","Fungicides","Insecticides","Fertilizers","Seeds","Acaricides","Animal Health","Equipment","Agrochemicals"];
+
+function CategoryPicker({ value, onChange, autoDetected }: { value: string; onChange: (v: string) => void; autoDetected?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const isPreset = CATEGORIES.includes(value);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={cn(
+          "flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          value ? "text-foreground" : "text-muted-foreground"
+        )}
+      >
+        <span className="flex items-center gap-2">
+          {value ? (
+            <>
+              {isPreset && (
+                <span className={cn("w-2 h-2 rounded-full shrink-0", getCategoryStyle(value).text.replace("text-", "bg-"))} />
+              )}
+              <span>{value}</span>
+              {autoDetected && !isPreset && (
+                <span className="text-[10px] text-primary font-semibold">Auto-inferred</span>
+              )}
+              {autoDetected && isPreset && (
+                <span className="text-[10px] text-primary/70">Auto-inferred</span>
+              )}
+            </>
+          ) : (
+            "Select or type a category…"
+          )}
+        </span>
+        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform shrink-0", open && "rotate-180")} />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-xl border border-border/60 bg-popover shadow-xl p-3 space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            {CATEGORIES.map(cat => {
+              const s = getCategoryStyle(cat);
+              const active = value === cat;
+              return (
+                <button key={cat} type="button"
+                  onClick={() => { onChange(active ? "" : cat); setOpen(false); }}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all",
+                    active
+                      ? `${s.bg} ${s.text} ${s.border} ring-1 ring-current/30`
+                      : "bg-muted/50 text-muted-foreground border-border/40 hover:bg-muted"
+                  )}>
+                  {cat}
+                </button>
+              );
+            })}
+          </div>
+          <div className="border-t border-border/40 pt-2.5 flex gap-2">
+            <input
+              type="text"
+              value={custom}
+              onChange={e => setCustom(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && custom.trim()) { onChange(custom.trim()); setCustom(""); setOpen(false); } }}
+              placeholder="Custom category…"
+              className="flex-1 h-8 rounded-lg border border-border/50 bg-muted/30 px-3 text-xs focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20"
+            />
+            <button
+              type="button"
+              disabled={!custom.trim()}
+              onClick={() => { if (custom.trim()) { onChange(custom.trim()); setCustom(""); setOpen(false); } }}
+              className="h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-40 transition-opacity"
+            >
+              Set
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const WEIGHT_UNITS = new Set(["kg", "g", "gram", "grams", "litre", "liter", "l", "ml", "ton", "tonne"]);
 function isWeighedUnit(unit: string): boolean {
   return WEIGHT_UNITS.has(unit.trim().toLowerCase());
@@ -459,31 +551,12 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
             <Input value={name} onChange={e => setName(e.target.value)} className="h-10" />
           </div>
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
-              {category && !categoryManuallyEdited.current && (
-                <span className="text-[10px] text-primary font-semibold flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />Auto-inferred
-                </span>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {["Herbicides","Fungicides","Insecticides","Fertilizers","Seeds","Acaricides","Animal Health","Equipment","Agrochemicals"].map(cat => {
-                const s = getCategoryStyle(cat);
-                const active = category === cat;
-                return (
-                  <button key={cat} type="button"
-                    onClick={() => { setCategory(active ? "" : cat); categoryManuallyEdited.current = true; }}
-                    className={cn("px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all", active ? `${s.bg} ${s.text} ${s.border} ring-1 ring-current/40` : "bg-muted/40 text-muted-foreground border-border/40 hover:bg-muted/70")}>
-                    {cat}
-                  </button>
-                );
-              })}
-            </div>
-            <Input value={category}
-              onChange={e => { setCategory(e.target.value); categoryManuallyEdited.current = true; }}
-              placeholder="Or type a custom category…"
-              className={cn("h-9 mt-1", category && !categoryManuallyEdited.current && "text-primary")} />
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
+            <CategoryPicker
+              value={category}
+              onChange={v => { setCategory(v); categoryManuallyEdited.current = true; }}
+              autoDetected={!categoryManuallyEdited.current && !!category}
+            />
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
@@ -681,31 +754,12 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
             )}
           </div>
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
-              {category && !categoryManuallyEdited.current && (
-                <span className="text-[10px] text-primary font-semibold flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />Auto-detected
-                </span>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {["Herbicides","Fungicides","Insecticides","Fertilizers","Seeds","Acaricides","Animal Health","Equipment","Agrochemicals"].map(cat => {
-                const s = getCategoryStyle(cat);
-                const active = category === cat;
-                return (
-                  <button key={cat} type="button"
-                    onClick={() => { setCategory(active ? "" : cat); categoryManuallyEdited.current = true; }}
-                    className={cn("px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all", active ? `${s.bg} ${s.text} ${s.border} ring-1 ring-current/40` : "bg-muted/40 text-muted-foreground border-border/40 hover:bg-muted/70")}>
-                    {cat}
-                  </button>
-                );
-              })}
-            </div>
-            <Input value={category}
-              onChange={e => { setCategory(e.target.value); categoryManuallyEdited.current = true; }}
-              placeholder="Or type a custom category…"
-              className={cn("h-9 mt-1", category && !categoryManuallyEdited.current && "text-primary")} />
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
+            <CategoryPicker
+              value={category}
+              onChange={v => { setCategory(v); categoryManuallyEdited.current = true; }}
+              autoDetected={!categoryManuallyEdited.current && !!category}
+            />
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
