@@ -26,10 +26,6 @@ args = "GreenLink App"
 task = "workflow.run"
 args = "Mockup Sandbox"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "API Server"
-
 [[workflows.workflow]]
 name = "GreenLink App"
 author = "agent"
@@ -54,18 +50,6 @@ waitForPort = 8000
 [workflows.workflow.metadata]
 outputType = "console"
 isCanvasWorkflow = true
-
-[[workflows.workflow]]
-name = "API Server"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api-server run dev"
-waitForPort = 8080
 
 [agent]
 stack = "BEST_EFFORT_FALLBACK"

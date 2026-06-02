@@ -120,7 +120,7 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://localhost:8080",
+        target: "https://greenlink-pos-api.bruce42oyugi.workers.dev",
         changeOrigin: true,
         rewrite: (path) => path,
       },
