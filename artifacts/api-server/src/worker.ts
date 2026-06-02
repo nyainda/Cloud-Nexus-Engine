@@ -130,7 +130,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       `INSERT INTO shops (id, name, owner_pin_hash, cashier_pin_hash, owner_whatsapp, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(SHOP_B_ID, "Sunrise Agrovet", ownerHash, cashierHash, null, now).run();
-    console.log("[boot] Default shops created — Owner PIN: 1234 | Cashier PIN: 5678");
+    // Default shops seeded — PINs intentionally omitted from logs
   }
 
   bootstrapped = true;
@@ -146,6 +146,9 @@ async function archiveOldSessions(db: D1Database): Promise<void> {
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+// CORS is intentionally open (*) — the Worker is called from Replit dev proxy,
+// Vercel frontend, and the installed PWA (which has no predictable origin).
+// All sensitive routes are protected by Bearer token auth middleware.
 app.use("*", cors({
   origin: "*",
   allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],

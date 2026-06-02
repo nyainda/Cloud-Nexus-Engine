@@ -113,6 +113,23 @@ notificationsRouter.post("/notifications/generate", requireAuth, async (c) => {
     }
   }
 
+  // ── 3. Low-stock alerts ───────────────────────────────────────────────────
+  for (const product of allProducts) {
+    if (product.stockQty > product.alertQty) continue;
+    if (existingProductKeys.has(`low_stock:${product.id}`)) continue;
+
+    const stockLabel = product.stockQty <= 0
+      ? "Out of stock"
+      : `Only ${product.stockQty} ${product.unit || "units"} remaining`;
+
+    toInsert.push({
+      id: crypto.randomUUID(), shopId, type: "low_stock",
+      title: `Low Stock — ${product.canonicalName}`,
+      message: `${stockLabel} (reorder threshold: ${product.alertQty} ${product.unit || "units"}).`,
+      productId: product.id, debtId: null, isRead: false, createdAt: now,
+    });
+  }
+
   // ── Batch-insert all new notifications ───────────────────────────────────
   for (const n of toInsert) {
     await db.insert(notifications).values(n);
