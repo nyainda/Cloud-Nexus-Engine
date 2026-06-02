@@ -82,18 +82,26 @@ pnpm --filter @workspace/greenlink-app run dev
 
 ---
 
-## Deploying the Worker
+## Deploying
 
 ```bash
-# Deploy API to Cloudflare Workers
-pnpm --filter @workspace/api-server run deploy
+# Deploy everything (CF Worker + build frontend)
+pnpm deploy
 
-# Required secrets (set once via Wrangler)
+# Deploy only the CF Worker API
+pnpm deploy:api
+
+# Build only the frontend (for Vercel / static hosting)
+pnpm deploy:frontend
+```
+
+> Requires `CLOUDFLARE_API_TOKEN` set as an environment secret.
+
+### First-time Worker secrets (set once via Wrangler)
+```bash
 wrangler secret put GEMINI_API_KEY
 wrangler secret put VAPID_PRIVATE_KEY_JWK
 ```
-
-> Requires `CLOUDFLARE_API_TOKEN` environment variable or `wrangler login`.
 
 ---
 

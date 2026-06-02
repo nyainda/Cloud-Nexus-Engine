@@ -14,7 +14,10 @@
     "audit-deps": "pnpm audit --audit-level=critical",
     "check-updates": "pnpm outdated",
     "typecheck:full": "pnpm run typecheck",
-    "validate": "pnpm run typecheck:libs && pnpm run check-schema && pnpm run audit-deps"
+    "validate": "pnpm run typecheck:libs && pnpm run check-schema && pnpm run audit-deps",
+    "deploy:api": "pnpm --filter @workspace/api-server run deploy",
+    "deploy:frontend": "pnpm --filter @workspace/greenlink-app run build",
+    "deploy": "pnpm run deploy:api && pnpm run deploy:frontend"
   },
   "private": true,
   "devDependencies": {
