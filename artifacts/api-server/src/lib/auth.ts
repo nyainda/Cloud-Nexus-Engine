@@ -1,12 +1,20 @@
 import type { SessionData } from "../types";
 
+// Fast hex encoding — lookup table avoids Array.from().map().join() overhead
+const HEX = "0123456789abcdef";
+function toHex(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) {
+    s += HEX[bytes[i] >> 4] + HEX[bytes[i] & 0xf];
+  }
+  return s;
+}
+
 export async function hashPin(pin: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(`greenlink:${pin}`);
+  const data = new TextEncoder().encode(`greenlink:${pin}`);
   const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return toHex(hash);
 }
 
 export async function verifyPin(pin: string, hash: string): Promise<boolean> {

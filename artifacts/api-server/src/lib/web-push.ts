@@ -1,6 +1,12 @@
 // Web Push (RFC 8292 VAPID + RFC 8291 aes128gcm) for Cloudflare Workers
 // Uses only crypto.subtle — zero Node.js dependencies
 
+// ── Module-level caches (survive across requests in the same CF isolate) ──────
+// importKey + ECDSA sign are the top CPU consumers. By caching the imported
+// CryptoKey and the built JWT we skip both on every warm request.
+const _keyCache = new Map<string, CryptoKey>();
+const _jwtCache = new Map<string, { jwt: string; exp: number }>();
+
 function b64url(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   let str = "";
@@ -35,22 +41,36 @@ async function buildVapidJwt(
   subject: string,
   privateKeyJwk: JsonWebKey
 ): Promise<string> {
-  const enc = new TextEncoder();
+  // Return cached JWT if still valid (5-min buffer before expiry)
+  const cacheKey = `${audience}:${subject}`;
   const now = Math.floor(Date.now() / 1000);
+  const cached = _jwtCache.get(cacheKey);
+  if (cached && cached.exp > now + 300) return cached.jwt;
+
+  // Re-use imported CryptoKey across requests in the same isolate
+  const jwkId = (privateKeyJwk as any).kid ?? subject;
+  let key = _keyCache.get(jwkId);
+  if (!key) {
+    key = await crypto.subtle.importKey(
+      "jwk",
+      privateKeyJwk,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign"]
+    );
+    _keyCache.set(jwkId, key);
+  }
+
+  const enc = new TextEncoder();
+  const exp = now + 43200; // 12 hours
   const header = b64url(enc.encode(JSON.stringify({ typ: "JWT", alg: "ES256" })));
-  const payload = b64url(
-    enc.encode(JSON.stringify({ aud: audience, exp: now + 43200, sub: subject }))
-  );
+  const payload = b64url(enc.encode(JSON.stringify({ aud: audience, exp, sub: subject })));
   const input = `${header}.${payload}`;
-  const key = await crypto.subtle.importKey(
-    "jwk",
-    privateKeyJwk,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign"]
-  );
   const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, enc.encode(input));
-  return `${input}.${b64url(sig)}`;
+  const jwt = `${input}.${b64url(sig)}`;
+
+  _jwtCache.set(cacheKey, { jwt, exp });
+  return jwt;
 }
 
 async function encryptMessage(

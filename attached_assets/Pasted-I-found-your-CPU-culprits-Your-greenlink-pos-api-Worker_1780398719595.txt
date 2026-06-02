@@ -1,0 +1,43 @@
+I found your CPU culprits. Your greenlink-pos-api Worker is a Hono app with Drizzle ORM + SQLite (D1), and the 26 ms P90 CPU is coming from a few specific hotspots:
+
+What's Eating Your CPU
+Culprit	Location	Why It's Expensive
+PIN hashing	src/lib/auth.ts	crypto.subtle.digest("SHA-256") + hex encoding via Array.from().map().join() on every login
+VAPID JWT signing	src/routes/notifications.ts	ECDSA crypto.subtle.sign() for push notifications
+Drizzle ORM overhead	Query builders	Complex SQL generation + runtime validation
+Bundle bloat	~106K tokens	Large polyfills (unenv, node:process, node:console) add startup CPU
+Free-Tier Fixes (Get Under 10 ms)
+1. Cache the PIN hash comparison (biggest win)
+
+// Instead of hashing the input PIN every time:
+const hashed = await hashPin(pin);
+
+// Cache shop PIN hashes in KV for 1 hour:
+const cacheKey = `pin:${shopId}:${role}`;
+let hashToCheck = await c.env.KV.get(cacheKey);
+if (!hashToCheck) {
+  hashToCheck = role === "owner" ? shop.ownerPinHash : shop.cashierPinHash;
+  await c.env.KV.put(cacheKey, hashToCheck, { expirationTtl: 3600 });
+}
+// Now compare without crypto
+2. Pre-compute VAPID JWTs Your VAPID JWTs expire in 12 hours but you're building them per-request. Build once, cache in KV:
+
+const vapidToken = await c.env.KV.get('vapid:jwt');
+if (!vapidToken) { /* build and cache for 11 hours */ }
+3. Reduce Drizzle query complexity Batch your db.select() calls and avoid .get() with complex .where() chains. Use raw SQL for hot paths:
+
+// Instead of Drizzle builder:
+const result = await c.env.DB.prepare(
+  "SELECT * FROM shops WHERE id = ?"
+).bind(shopId).first();
+4. Bundle size You're shipping unenv, node:process, node:console, and full Drizzle ORM. Consider:
+
+Using wrangler deploy --minify if not already
+Replacing Drizzle with raw D1 queries for the 3-4 hottest endpoints
+Dropping node:stream polyfills if unused
+Quick Check
+Which of these happens most often in your app?
+
+Login/auth requests → Fix #1 (PIN caching) will get you under 10 ms immediately
+Push notification sends → Fix #2 (VAPID caching)
+Product/sales queries → Fix #3 (raw SQL)
