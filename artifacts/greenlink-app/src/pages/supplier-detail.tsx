@@ -399,10 +399,10 @@ export default function SupplierDetail() {
   const qc = useQueryClient();
 
   const { data: rawSessions, refetch } = useListScanSessions(
-    { shopId }, { query: { enabled: !!shopId, staleTime: 90_000 } },
+    { shopId }, { query: { enabled: !!shopId } },
   );
   const { data: rawSuppliers, refetch: refetchSuppliers } = useListSuppliers(
-    { shopId }, { query: { enabled: !!shopId, staleTime: 5 * 60_000 } },
+    { shopId }, { query: { enabled: !!shopId } },
   );
 
   const supplier = (rawSuppliers ?? []).find((s: any) => s.id === supplierId) as SupplierRecord | undefined;
