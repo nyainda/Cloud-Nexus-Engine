@@ -10,6 +10,7 @@
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "check-schema": "pnpm --filter @workspace/scripts exec tsx src/check-schema.ts",
     "smoke-test": "pnpm --filter @workspace/scripts exec tsx src/smoke-test.ts",
+    "smoke-test:prod": "pnpm --filter @workspace/scripts exec tsx src/smoke-test.ts --url https://greenlink-pos-api.bruce42oyugi.workers.dev",
     "audit-deps": "pnpm audit --audit-level=critical",
     "check-updates": "pnpm outdated",
     "typecheck:full": "pnpm run typecheck",

@@ -1,4 +1,1 @@
-- [Auth offline resilience](auth-offline.md) — AuthGuard must only kick to login on 401/403, never on network errors; products seed from IndexedDB before session validates.
-- [Offline queue](offline-queue.md) — Dexie DB `greenlink_offline_queue_v1` queues sales/restocks/debt_payments; useOfflineSync processes on reconnect; Settings has Offline Sync section.
-- [Validation automation](validation-automation.md) — five-layer safety net: validate script, schema guard, smoke tests, pre-commit hook, dep audit.
-- [xlsx audit known issue](xlsx-audit.md) — xlsx has unfixable high-severity CVEs; audit runs at --audit-level=critical to avoid false failures.
+- [AuthGuard offline-first fix](authguard-offline.md) — disable session query when offline; ready=true on offline+token; never redirect on network errors

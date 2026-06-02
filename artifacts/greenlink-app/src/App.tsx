@@ -152,16 +152,37 @@ function AuthGuard({ children }: { children: ReactNode }) {
   const token = localStorage.getItem("greenlink_token");
   const cachedSession = getCachedSession();
 
-  const [ready, setReady] = useState(!!token && !!cachedSession);
+  // ── Reactive online detection ──────────────────────────────────────────────
+  // navigator.onLine can be stale after JS engine pause (mobile background).
+  // Track it via events so we always have the current state.
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const onOnline  = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online",  onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online",  onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
+  // ── ready: can we paint the app shell now? ─────────────────────────────────
+  // true when we have token + cached session (instant render from local state),
+  // OR when we are offline (trust the token — can't validate anyway, OfflineBanner
+  // communicates the connectivity status to the user).
+  const [ready, setReady] = useState(
+    () => !!token && (!!cachedSession || !navigator.onLine)
+  );
+
   const redirectedRef = useRef(false);
   const prefetchedRef = useRef(false);
   const qc = useQueryClient();
 
   // ── INSTANT product seed ───────────────────────────────────────────────────
-  // Seed the React Query cache from IndexedDB on the very first render when
-  // we already have a cached session. This runs BEFORE the network session
-  // check completes — products are visible at 0ms instead of 500ms–2s.
-  // The background session check + prefetchQuery then overwrites with fresh data.
+  // Seed React Query cache from IndexedDB on first render when we already have
+  // a cached session. Runs BEFORE the network session check — products visible
+  // at 0 ms instead of 500ms–2s. Background prefetch overwrites with fresh data.
   useEffect(() => {
     if (prefetchedRef.current) return;
     const shopId = cachedSession?.shopId as string | undefined;
@@ -179,27 +200,43 @@ function AuthGuard({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally runs once on mount only
 
-  // retry: false → detect network failure immediately without waiting for retries.
-  // The offline banner handles the "no network" state; we must NOT kick the user
-  // out just because the CF Worker is cold-starting or the device is offline.
+  // ── Session validation — online only ───────────────────────────────────────
+  // When the device is offline there is no point hitting the network:
+  //  • We can't reach the CF Worker anyway → guaranteed TypeError
+  //  • The 5-second NetworkFirst SW timeout causes a visible hang
+  //  • The retry/error path can incorrectly land in the "no session" branch
+  //    if the error object shape is unexpected, logging the user out.
+  // Solution: disable the query while offline and re-enable when back online.
   const { data: session, isLoading, error } = useGetSession({
-    query: { enabled: !!token, retry: false },
+    query: { enabled: !!token && isOnline, retry: false },
   });
 
   useEffect(() => {
     if (redirectedRef.current) return;
+
+    // ── No token at all → go to login ─────────────────────────────────────
     if (!token) {
       redirectedRef.current = true;
       setCachedSession(null);
       setLocation("/login");
       return;
     }
+
+    // ── Offline path: trust the token, never redirect ──────────────────────
+    // The OfflineBanner shows the offline state to the user. Cached products
+    // (IndexedDB) and cached session (localStorage) keep the app functional.
+    // When connectivity returns the query re-enables and re-validates.
+    if (!isOnline) {
+      if (!ready) setReady(true);
+      return;
+    }
+
+    // ── Online path: wait for session query result ─────────────────────────
     if (!isLoading) {
       if (error) {
-        // ── Only log out on real auth failures (401/403). ─────────────────────
-        // Network errors (TypeError, no response, 5xx) must NOT kick the user
-        // out — the device may be offline or the Worker cold-starting.
-        // The OfflineBanner will show status; the cached session stays valid.
+        // Only log out on definitive auth rejections (401 / 403).
+        // Network errors (TypeError), 5xx, and CF Worker cold-starts must NOT
+        // kick the user out — the OfflineBanner handles the connectivity UX.
         const status = (error as any)?.status as number | undefined;
         const isAuthFailure = status === 401 || status === 403;
         if (isAuthFailure) {
@@ -207,14 +244,18 @@ function AuthGuard({ children }: { children: ReactNode }) {
           localStorage.removeItem("greenlink_token");
           setCachedSession(null);
           setLocation("/login");
+        } else {
+          // Network / 5xx: stay in app. If we have a cached session, render it.
+          if (!ready && cachedSession) setReady(true);
         }
-        // Network / 5xx error: silently stay on page — app remains functional
-        // using the cached product list (IndexedDB) and offline mutation queue.
+
       } else if (session) {
+        // Fresh session from server — update the localStorage cache and render.
         setCachedSession(session);
         if (!ready) setReady(true);
-        // Fallback seed: if prefetchedRef wasn't set on mount (no cached session),
-        // seed + prefetch now that we have the real shopId from the server.
+
+        // Fallback seed: if there was no cached session on mount we couldn't
+        // seed products earlier. Do it now with the confirmed shopId.
         if (!prefetchedRef.current && session.shopId) {
           prefetchedRef.current = true;
           const opts = getListProductsQueryOptions({ shopId: session.shopId, limit: 3000 });
@@ -227,14 +268,15 @@ function AuthGuard({ children }: { children: ReactNode }) {
             qc.prefetchQuery(opts);
           });
         }
+
       } else if (!cachedSession) {
-        // No error, no session, no cache → not logged in
+        // Online + no error + no session + no cache → genuinely not logged in.
         redirectedRef.current = true;
         setLocation("/login");
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, session, isLoading, error, setLocation, qc]);
+  }, [token, session, isLoading, error, isOnline, ready, setLocation, qc]);
 
   if (!token) return <Login />;
   if (!ready) return <PageLoader />;
