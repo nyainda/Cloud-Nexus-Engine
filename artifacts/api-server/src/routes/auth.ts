@@ -11,6 +11,7 @@ import {
 } from "../lib/auth";
 import { shops } from "@workspace/db/schema";
 import { loginRateLimit } from "../middleware/rate-limit";
+import { evictSessionCache } from "../middleware/auth";
 
 const auth = new Hono<AppEnv>();
 
@@ -64,7 +65,9 @@ auth.get("/auth/session", async (c) => {
 auth.post("/auth/logout", async (c) => {
   const authHeader = c.req.header("Authorization");
   if (authHeader?.startsWith("Bearer ")) {
-    await deleteSession(c.env.SESSIONS, authHeader.replace("Bearer ", ""));
+    const token = authHeader.replace("Bearer ", "");
+    evictSessionCache(token);
+    await deleteSession(c.env.SESSIONS, token);
   }
   return c.json({ success: true });
 });
