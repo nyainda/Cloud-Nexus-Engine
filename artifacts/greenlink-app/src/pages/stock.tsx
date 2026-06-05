@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useListProducts, useRestockProduct, useCreateProduct, useUpdateProduct,
-  useDeleteProduct, useBulkImportProducts, getListProductsQueryKey,
+  useDeleteProduct, getListProductsQueryKey,
   getListInventoryMovementsQueryKey, customFetch
 } from "@workspace/api-client-react";
 import { recordMutationResult } from "@/lib/product-version-guard";
@@ -26,7 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
 import {
-  Search, Plus, Minus, Package, Upload, Edit2, AlertTriangle, ArrowUpRight,
+  Search, Plus, Minus, Package, Edit2, AlertTriangle, ArrowUpRight,
   PackageX, Copy, TrendingUp, Scale, Wheat,
   Calendar, Trash2, ArrowLeftRight, Truck, Zap, CheckCircle2, X, ChevronDown, ArrowUpDown
 } from "lucide-react";
@@ -951,16 +951,18 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
 
     setIsPending(true);
 
-    // Cancel any in-flight product fetches so they don't race with our optimistic update
-    await qc.cancelQueries({ queryKey: productsKey });
+    // Cancel ALL in-flight product queries (broad match) so none race with our optimistic update
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
 
-    // Snapshot the current source-shop product list for rollback if the POST fails
-    const snapshot = qc.getQueryData(productsKey);
+    // Snapshot ALL variants for rollback on failure
+    const snapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
 
     // Optimistic update: immediately show the deducted qty in the source shop's list.
-    // User sees the change instantly without waiting for the network.
-    qc.setQueryData(productsKey, (old: any) => {
+    // Use setQueriesData (broad) so every cached query variant reflects the change.
+    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
+      const hasProduct = old.products.some((p: any) => p.id === product.id);
+      if (!hasProduct) return old;
       return {
         ...old,
         products: old.products.map((p: any) =>
@@ -992,8 +994,10 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
 
         // Use server-confirmed source qty (replaces our optimistic guess with the
         // atomic DB value — critical if another mutation ran concurrently).
-        qc.setQueryData(productsKey, (old: any) => {
+        qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
           if (!old?.products) return old;
+          const hasProduct = old.products.some((p: any) => p.id === product.id);
+          if (!hasProduct) return old;
           return {
             ...old,
             products: old.products.map((p: any) =>
@@ -1024,8 +1028,8 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
 
         toast.success(`Transferred ${transferQty} ${product.unit || "units"} to ${targetLabel}`);
       } catch (e: any) {
-        // Rollback source shop's list to pre-transfer state
-        qc.setQueryData(productsKey, snapshot);
+        // Rollback ALL cached product query variants to pre-transfer state
+        snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
         toast.error(e.message || "Transfer failed — please retry");
       } finally {
         setIsPending(false);
@@ -1092,20 +1096,26 @@ function DeleteProductButton({ productId, productName, onSuccess }: { productId:
   const qc = useQueryClient();
   const delProduct = useDeleteProduct();
   const handleDelete = async () => {
-    const shopId = localStorage.getItem("greenlink_shopId") || "";
-    // Use the exact key the stock list is stored under — includes shopId + limit params
-    const exactKey = getListProductsQueryKey({ shopId, limit: 3000 });
-    await qc.cancelQueries({ queryKey: exactKey });
-    const snapshot = qc.getQueryData(exactKey);
-    qc.setQueryData(exactKey, (old: any) => {
+    // Cancel ALL in-flight product queries (broad match) so none can race and restore the product
+    await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
+    // Snapshot ALL variants for rollback
+    const snapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
+    // Remove from every cached query variant at once — exact key + any other params
+    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
       return { ...old, products: old.products.filter((p: any) => p.id !== productId) };
     });
-    // Optimistic update already applied — confirm immediately
-    toast.success("Product removed"); onSuccess();
+    // Confirm immediately — do NOT call onSuccess()/refresh() here.
+    // Calling invalidateQueries before the DELETE reaches the server hits the still-warm
+    // KV cache which returns the old list (product still present), overwriting the optimistic remove.
+    toast.success("Product removed");
     delProduct.mutate({ productId }, {
-      onError: () => { qc.setQueryData(exactKey, snapshot); toast.error("Failed to delete product — please retry"); },
+      onError: () => {
+        snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
+        toast.error("Failed to delete product — please retry");
+      },
       onSettled: () => {
+        // KV cache is now busted by the DELETE — safe to background-sync
         qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
         qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       },
@@ -1216,61 +1226,6 @@ function CleanupDialog({ products: allProds, shopId }: { products: any[]; shopId
   );
 }
 
-function BulkImportDialog({ shopId, onSuccess }: { shopId: string; onSuccess: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [csv, setCsv] = useState("");
-  const bulkImport = useBulkImportProducts();
-
-  const parseCsv = (raw: string) => {
-    const lines = raw.trim().split("\n").filter(Boolean);
-    if (lines.length < 2) return [];
-    const headers = lines[0].split(",").map(h => h.trim().toLowerCase().replace(/\s+/g, "_"));
-    return lines.slice(1).map(line => {
-      const vals = line.split(",").map(v => v.trim());
-      const row: any = {};
-      headers.forEach((h, i) => { row[h] = vals[i] || ""; });
-      return { canonicalName: row.name || row.canonical_name || row.product_name || "", sku: row.sku || undefined, category: row.category || undefined, unit: row.unit || "bag", purchasePrice: row.purchase_price || row.buy_price ? parseFloat(row.purchase_price || row.buy_price) : undefined, sellingPrice: row.selling_price || row.sell_price ? parseFloat(row.selling_price || row.sell_price) : undefined, stockQty: row.stock_qty || row.qty ? parseFloat(row.stock_qty || row.qty) : 0, alertQty: row.alert_qty ? parseFloat(row.alert_qty) : 5 };
-    }).filter(p => p.canonicalName);
-  };
-
-  const handleImport = () => {
-    const products = parseCsv(csv);
-    if (!products.length) { toast.error("No valid products found"); return; }
-    bulkImport.mutate({ data: { shopId, products, deduplicateStrategy: "merge" } }, {
-      onSuccess: (result: any) => { toast.success(`${result.created} added · ${result.merged} merged · ${result.skipped} skipped`); setCsv(""); setOpen(false); onSuccess(); },
-      onError: () => toast.error("Import failed"),
-    });
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-8 text-xs px-3">
-          <Upload className="h-3.5 w-3.5 mr-1" />Import CSV
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader><DialogTitle>Bulk Import from CSV</DialogTitle></DialogHeader>
-        <div className="space-y-4 py-3">
-          <div className="border border-border rounded-lg p-3 text-sm text-muted-foreground">
-            <p className="font-semibold text-foreground mb-1">Required columns</p>
-            <code className="text-primary text-xs">name</code>
-            <span className="text-xs ml-1">— then optionally:</span>
-            <code className="text-xs ml-1 text-muted-foreground">sku, category, unit, buy_price, sell_price, qty, alert_qty</code>
-          </div>
-          <Textarea placeholder={"name,sku,category,unit,buy_price,sell_price,qty\nDAP Fertilizer 50KG,SKU-001,Fertilizer,bag,2500,3000,20"} value={csv} onChange={e => setCsv(e.target.value)} rows={7} className="font-mono text-xs" />
-          {csv && <p className="text-sm font-semibold text-primary">{parseCsv(csv).length} products detected</p>}
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={handleImport} disabled={!csv.trim() || bulkImport.isPending}>
-            {bulkImport.isPending ? "Importing…" : "Run Import"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 function TransferHistory({ shopId, isOwner }: { shopId: string; isOwner: boolean }) {
   const qc = useQueryClient();
@@ -1835,7 +1790,6 @@ export default function Stock() {
           <div className="flex gap-1.5 flex-wrap">
             <BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} />
             {isOwner && <CleanupDialog products={allProducts} shopId={shopId} />}
-            {isOwner && <BulkImportDialog shopId={shopId} onSuccess={refresh} />}
             <AddProductDialog shopId={shopId} onSuccess={refresh} existingProducts={allProducts} isOwner={isOwner} />
           </div>
         </div>
