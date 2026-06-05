@@ -766,6 +766,9 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
             if (!old?.products) return old;
             return { ...old, products: old.products.map((p: any) => p.id === tempId ? { ...p, ...serverProduct } : p) };
           });
+          // Register with version guard as a NEW product so it gets appended back
+          // if a stale background refetch response happens to omit it
+          recordMutationResult({ ...serverProduct }, true);
         },
         onError: () => {
           // Remove the optimistic entry on failure

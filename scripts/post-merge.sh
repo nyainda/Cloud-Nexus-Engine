@@ -1,4 +1,5 @@
 #!/bin/bash
 set -e
 pnpm install --frozen-lockfile
-pnpm --filter @workspace/db run db:push
+# Deploy the Cloudflare Worker with the latest code changes
+pnpm --filter @workspace/api-server run deploy
