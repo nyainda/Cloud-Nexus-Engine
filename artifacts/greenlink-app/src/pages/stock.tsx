@@ -253,7 +253,7 @@ function WeightPresets({ unit, onSelect }: { unit: string; onSelect: (v: number)
 function RestockDialog({ product }: { product: any }) {
   const [open, setOpen] = useState(false);
   const weighed = isWeighedUnit(product.unit || "");
-  const [qty, setQty] = useState<number | "">(1);
+  const [qty, setQty] = useState<number | "">(0);
   const [purchasePrice, setPurchasePrice] = useState(product.purchasePrice?.toString() || "");
   const [sellingPrice, setSellingPrice] = useState(product.sellingPrice?.toString() || "");
   const [submitting, setSubmitting] = useState(false);
@@ -262,7 +262,7 @@ function RestockDialog({ product }: { product: any }) {
 
   const handleRestock = async () => {
     const qtyNum = Number(qty);
-    if (!qtyNum || qtyNum <= 0 || submitting) return;
+    if (qtyNum === 0 || submitting) return;
 
     // Guard against double-tap immediately — before any async work
     setSubmitting(true);
@@ -281,9 +281,11 @@ function RestockDialog({ product }: { product: any }) {
     });
 
     // Close + confirm immediately — don't wait for the network
-    toast.success(`Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`);
+    toast.success(qtyNum > 0
+      ? `Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`
+      : `Removed ${Math.abs(qtyNum)} ${product.unit || "units"} from ${product.canonicalName}`);
     setOpen(false);
-    setQty(1);
+    setQty(0);
     setSubmitting(false);
 
     // If offline, queue the restock and return — sync will fire on reconnect
@@ -385,15 +387,17 @@ function RestockDialog({ product }: { product: any }) {
             </div>
           </div>
           <div className="space-y-2">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Quantity to Add ({product.unit || "units"}) *</Label>
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Qty adjustment — <span className="text-emerald-400">+ adds stock</span> / <span className="text-orange-400">− removes stock</span>
+            </Label>
             {weighed ? (
               <>
                 <div className="flex items-center gap-2">
-                  <Button type="button" variant="outline" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Math.max(0.25, Number(q || 0) - (Number(q || 0) <= 1 ? 0.25 : 1)))}>
+                  <Button type="button" variant="outline" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) - (Math.abs(Number(q || 0)) <= 1 ? 0.25 : 1))}>
                     <Minus className="h-4 w-4" />
                   </Button>
-                  <Input type="number" step="0.25" min="0.1" className="flex-1 h-10 text-xl font-bold font-mono text-center" value={qty} onChange={e => setQty(e.target.value === "" ? "" : parseFloat(e.target.value) || 0)} />
-                  <Button type="button" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) + (Number(q || 0) < 1 ? 0.25 : 1))}>
+                  <Input type="number" step="0.25" className="flex-1 h-10 text-xl font-bold font-mono text-center" value={qty} onChange={e => setQty(e.target.value === "" ? "" : parseFloat(e.target.value) || 0)} />
+                  <Button type="button" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) + (Math.abs(Number(q || 0)) < 1 ? 0.25 : 1))}>
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
@@ -401,14 +405,21 @@ function RestockDialog({ product }: { product: any }) {
               </>
             ) : (
               <div className="flex items-center gap-2">
-                <Button type="button" variant="outline" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Math.max(1, Number(q || 0) - 1))}>
+                <Button type="button" variant="outline" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) - 1)}>
                   <Minus className="h-4 w-4" />
                 </Button>
-                <Input type="number" step="1" min="1" className="flex-1 h-10 text-xl font-bold font-mono text-center" value={qty} onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))} />
+                <Input type="number" step="1" className="flex-1 h-10 text-xl font-bold font-mono text-center" value={qty} onChange={e => setQty(e.target.value === "" ? "" : parseInt(e.target.value) || 0)} />
                 <Button type="button" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) + 1)}>
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
+            )}
+            {Number(qty) < 0 && (
+              <p className={cn("text-xs font-medium", product.stockQty + Number(qty) < 0 ? "text-destructive" : "text-orange-400")}>
+                {product.stockQty + Number(qty) < 0
+                  ? `Cannot remove more than current stock (${product.stockQty} ${product.unit || "units"})`
+                  : `Stock will drop to ${product.stockQty + Number(qty)} ${product.unit || "units"}`}
+              </p>
             )}
           </div>
         </div>
@@ -416,7 +427,7 @@ function RestockDialog({ product }: { product: any }) {
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           <Button
             onClick={handleRestock}
-            disabled={!qty || Number(qty) <= 0 || submitting}
+            disabled={Number(qty) === 0 || submitting || (Number(qty) < 0 && product.stockQty + Number(qty) < 0)}
             className="min-w-[140px]"
           >
             {submitting ? (
@@ -424,8 +435,10 @@ function RestockDialog({ product }: { product: any }) {
                 <span className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
                 Saving…
               </span>
-            ) : (
+            ) : Number(qty) > 0 ? (
               `Add ${qty} ${product.unit || "units"}`
+            ) : (
+              `Remove ${Math.abs(Number(qty))} ${product.unit || "units"}`
             )}
           </Button>
         </DialogFooter>
@@ -670,6 +683,7 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
   const skuManuallyEdited = useRef(false);
   const categoryManuallyEdited = useRef(false);
   const createProduct = useCreateProduct();
+  const qc = useQueryClient();
 
   useEffect(() => {
     if (!skuManuallyEdited.current && name.trim().length >= 2) {
@@ -712,14 +726,59 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
 
   const handleSubmit = () => {
     if (!name.trim()) return;
-    // Close + confirm immediately — don't wait for the network
+    const tempId = `temp_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    const optimisticProduct = {
+      id: tempId,
+      shopId,
+      canonicalName: name.trim(),
+      sku: sku || null,
+      category: category || null,
+      unit,
+      productType,
+      allowDecimals: productType === "measured",
+      purchasePrice: buyPrice ? parseFloat(buyPrice) : null,
+      sellingPrice: sellPrice ? parseFloat(sellPrice) : null,
+      profitMargin: buyPrice && sellPrice && Number(sellPrice) > 0
+        ? ((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100 : null,
+      stockQty: parseFloat(qty) || 0,
+      alertQty: parseFloat(alertQty) || 5,
+      size: null,
+      expiryDate: expiryDate || null,
+      isActive: true,
+      lastSoldAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    // Optimistic insert — product appears instantly without waiting for network
+    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+      if (!old?.products) return old;
+      return { ...old, products: [...old.products, optimisticProduct], total: (old.total || 0) + 1 };
+    });
     toast.success("Product added!");
-    reset(); setOpen(false); onSuccess();
+    reset(); setOpen(false);
     createProduct.mutate(
       { data: { shopId, canonicalName: name.trim(), sku: sku || undefined, category: category || undefined, unit, productType, allowDecimals: productType === "measured", purchasePrice: buyPrice ? parseFloat(buyPrice) : undefined, sellingPrice: sellPrice ? parseFloat(sellPrice) : undefined, alertQty: parseFloat(alertQty) || 5, stockQty: parseFloat(qty) || 0, expiryDate: expiryDate || undefined } as any },
       {
-        onSuccess: () => { onSuccess(); }, // refresh list with real server ID
-        onError: () => { toast.error("Failed to add product — please retry"); onSuccess(); },
+        onSuccess: (serverProduct: any) => {
+          // Replace temp entry with server-confirmed data (real UUID + timestamps)
+          qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+            if (!old?.products) return old;
+            return { ...old, products: old.products.map((p: any) => p.id === tempId ? { ...p, ...serverProduct } : p) };
+          });
+        },
+        onError: () => {
+          // Remove the optimistic entry on failure
+          qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+            if (!old?.products) return old;
+            return { ...old, products: old.products.filter((p: any) => p.id !== tempId), total: Math.max(0, (old.total || 1) - 1) };
+          });
+          toast.error("Failed to add product — please retry");
+        },
+        onSettled: () => {
+          // Silent background sync after mutation settles
+          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+        },
       }
     );
   };
@@ -1075,6 +1134,88 @@ function DeleteProductButton({ productId, productName, onSuccess }: { productId:
   );
 }
 
+// ── Clean Up Dialog — removes products with no prices and zero stock ──────────
+function CleanupDialog({ products: allProds, shopId }: { products: any[]; shopId: string }) {
+  const [open, setOpen] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const qc = useQueryClient();
+
+  const junkProducts = useMemo(() =>
+    allProds.filter(p => !p.purchasePrice && !p.sellingPrice && p.stockQty === 0),
+  [allProds]);
+
+  const handleCleanup = async () => {
+    if (!junkProducts.length) return;
+    setCleaning(true);
+    const ids = junkProducts.map(p => p.id);
+
+    // Optimistic remove all at once
+    const snapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
+    const idSet = new Set(ids);
+    qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
+      if (!old?.products) return old;
+      return { ...old, products: old.products.filter((p: any) => !idSet.has(p.id)), total: Math.max(0, (old.total || 0) - ids.length) };
+    });
+    setOpen(false);
+
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        await customFetch(`/api/products/${id}`, { method: "DELETE" });
+        ok++;
+      } catch { /* individual failures are silent */ }
+    }
+
+    if (ok > 0) {
+      toast.success(`Cleaned up ${ok} incomplete product${ok !== 1 ? "s" : ""}`);
+    } else {
+      snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
+      toast.error("Cleanup failed — please retry");
+    }
+    qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+    setCleaning(false);
+  };
+
+  if (junkProducts.length === 0) return null;
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-8 text-xs px-3 gap-1 text-orange-400 border-orange-500/30 hover:bg-orange-500/10">
+          <Trash2 className="h-3.5 w-3.5" />
+          Clean DB ({junkProducts.length})
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent className="max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove {junkProducts.length} Incomplete Products?</AlertDialogTitle>
+          <AlertDialogDescription>
+            These products have <strong>no price</strong> and <strong>zero stock</strong> — likely leftover from a bulk import. Sales history is preserved.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="max-h-40 overflow-y-auto border border-border rounded-lg p-2 text-xs text-muted-foreground space-y-1">
+          {junkProducts.slice(0, 25).map(p => (
+            <div key={p.id} className="truncate py-0.5">{p.canonicalName}</div>
+          ))}
+          {junkProducts.length > 25 && (
+            <div className="text-muted-foreground/60 pt-1">…and {junkProducts.length - 25} more</div>
+          )}
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleCleanup}
+            disabled={cleaning}
+            className="bg-orange-500 hover:bg-orange-600 text-white"
+          >
+            {cleaning ? "Cleaning…" : `Remove ${junkProducts.length} Products`}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function BulkImportDialog({ shopId, onSuccess }: { shopId: string; onSuccess: () => void }) {
   const [open, setOpen] = useState(false);
   const [csv, setCsv] = useState("");
@@ -1276,7 +1417,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
   }, [allProds, debouncedSearch, catFilter]);
 
   const changedEntries = useMemo(() =>
-    Object.entries(entries).filter(([, v]) => v !== "" && Number(v) > 0),
+    Object.entries(entries).filter(([, v]) => v !== "" && Number(v) !== 0),
   [entries]);
 
   const handleQtyChange = useCallback((id: string, val: string) => {
@@ -1311,7 +1452,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
     // fully commits before the next one reads the updated stock level.
     for (const [productId, qtyStr] of changedEntries) {
       const qty = Number(qtyStr);
-      if (!qty || qty <= 0) continue;
+      if (qty === 0) continue;
       const mutId = newMutationId();
       try {
         const prevQty = (qc.getQueryData<any>(getListProductsQueryKey())?.products as any[] | undefined)?.find((p: any) => p.id === productId)?.stockQty ?? 0;
@@ -1469,7 +1610,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
                 {filtered.map((p, i) => {
                   const qty = entries[p.id] ?? "";
                   const addQty = Number(qty);
-                  const newTotal = addQty > 0 ? p.stockQty + addQty : null;
+                  const newTotal = addQty !== 0 ? p.stockQty + addQty : null;
                   const isSaved = savedIds.has(p.id);
                   const isLow = p.stockQty > 0 && p.stockQty <= p.alertQty;
                   const isOut = p.stockQty === 0;
@@ -1478,7 +1619,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
                   return (
                     <div key={p.id} className={cn(
                       "grid grid-cols-[1fr_80px_80px_72px] gap-2 items-center px-4 py-2.5 transition-colors",
-                      isSaved ? "bg-emerald-500/5" : qty && addQty > 0 ? "bg-primary/[0.03]" : "hover:bg-muted/30"
+                      isSaved ? "bg-emerald-500/5" : qty && addQty !== 0 ? (addQty < 0 ? "bg-orange-500/[0.03]" : "bg-primary/[0.03]") : "hover:bg-muted/30"
                     )}>
                       {/* Product name + badge */}
                       <div className="min-w-0 flex items-center gap-2">
@@ -1511,7 +1652,6 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
                         <input
                           ref={el => { inputRefs.current[p.id] = el; }}
                           type="number"
-                          min="0"
                           step={isWeighedUnit(p.unit || "") ? "0.25" : "1"}
                           value={qty}
                           placeholder="0"
@@ -1526,8 +1666,8 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
                           className={cn(
                             "w-16 h-8 rounded-lg border text-center text-sm font-bold font-mono tabular-nums bg-background transition-all outline-none",
                             "focus:border-primary focus:ring-2 focus:ring-primary/20",
-                            qty && addQty > 0
-                              ? "border-primary/50 text-primary"
+                            qty && addQty !== 0
+                              ? addQty < 0 ? "border-orange-500/50 text-orange-400" : "border-primary/50 text-primary"
                               : "border-border text-foreground",
                             "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           )}
@@ -1694,6 +1834,7 @@ export default function Stock() {
           </div>
           <div className="flex gap-1.5 flex-wrap">
             <BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} />
+            {isOwner && <CleanupDialog products={allProducts} shopId={shopId} />}
             {isOwner && <BulkImportDialog shopId={shopId} onSuccess={refresh} />}
             <AddProductDialog shopId={shopId} onSuccess={refresh} existingProducts={allProducts} isOwner={isOwner} />
           </div>
