@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { eq, and, like, or, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireOwner } from "../middleware/auth";
 import { kvGet, kvSet, kvDel, CK, CACHE_TTL } from "../lib/cache";
 import {
   products,
@@ -93,11 +93,11 @@ productsRouter.get("/products", requireAuth, async (c) => {
     }
   }
 
-  // ── KV cache: full product list (no search / no filter) ──────────────────────
-  if (!q && !category && !lowStock && shopId) {
-    const cached = await kvGet<object>(c.env.SESSIONS, CK.products(shopId));
-    if (cached) return c.json(cached);
-  }
+  // NOTE: product list cache intentionally removed.
+  // The in-memory cache is per-CF-isolate. With multiple warm isolates,
+  // a product created on isolate A clears A's cache, but GET routed to isolate B
+  // still serves B's stale 5-minute cache → the "disappearing product" bug.
+  // D1 queries run in ~50-100ms, well within our 800ms budget, so no cache needed.
 
   // ── Non-search / fallback path: SQL WHERE with LIKE ─────────────────────────
   const conditions: ReturnType<typeof eq>[] = [];
@@ -135,10 +135,6 @@ productsRouter.get("/products", requireAuth, async (c) => {
     }),
     total,
   };
-  // Cache the full list (no search/filter) so subsequent reads skip D1
-  if (!q && !category && !lowStock && shopId) {
-    await kvSet(c.env.SESSIONS, CK.products(shopId), payload, CACHE_TTL.products);
-  }
   return c.json(payload);
 });
 
@@ -274,7 +270,7 @@ productsRouter.patch("/products/:productId", requireAuth, async (c) => {
   });
 });
 
-productsRouter.delete("/products/:productId", requireAuth, async (c) => {
+productsRouter.delete("/products/:productId", requireAuth, requireOwner, async (c) => {
   const db = createDb(c.env.DB);
   const productId = c.req.param("productId");
   const session = c.get("session");

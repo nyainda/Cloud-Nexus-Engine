@@ -1,1 +1,3 @@
 - [AuthGuard offline-first fix](authguard-offline.md) — disable session query when offline; ready=true on offline+token; never redirect on network errors
+- [CF Worker in-memory cache pitfall](cf-cache-pitfall.md) — per-isolate Map cache causes cross-isolate stale reads; removed product list cache entirely
+- [Product list pagination for tests](product-list-pagination.md) — always use limit=3000 in tests; default limit=100 misses newly-created products at end of 2500+ rows
