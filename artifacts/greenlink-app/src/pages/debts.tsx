@@ -13,7 +13,7 @@ import { formatKES } from "@/lib/format";
 import {
   Search, Users, Phone, CalendarClock, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
-  ChevronDown, ChevronUp, Banknote, User2, Trash2, Send
+  ChevronDown, ChevronUp, Banknote, User2, Trash2, Send, BadgeCheck
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -180,19 +180,77 @@ function PaymentDialog({ debt }: { debt: any }) {
   );
 }
 
+// ─── Mark as Paid button ───────────────────────────────────────────────────────
+function MarkPaidButton({ debt }: { debt: any }) {
+  const [loading, setLoading] = useState(false);
+  const qc = useQueryClient();
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
+
+  if (debt.status === "paid") return null;
+
+  const handle = async () => {
+    if (loading) return;
+    setLoading(true);
+    const exactKey = getListDebtsQueryKey({ shopId });
+    const snapshot = qc.getQueryData(exactKey);
+    const now = new Date().toISOString();
+    qc.setQueryData(exactKey, (old: any) =>
+      Array.isArray(old)
+        ? old.map(d => d.id === debt.id ? { ...d, status: "paid", balance: 0, paidAt: now } : d)
+        : old
+    );
+    toast.success(`${debt.customerName} marked as paid`);
+    try {
+      await customFetch(`/api/debts/${debt.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "paid" }),
+      });
+    } catch {
+      qc.setQueryData(exactKey, snapshot);
+      toast.error("Failed to mark paid — please retry");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handle}
+      disabled={loading}
+      className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-semibold transition-colors disabled:opacity-50"
+      title="Mark debt as fully paid"
+    >
+      <BadgeCheck className="h-3.5 w-3.5" />
+      {loading ? "…" : "Mark Paid"}
+    </button>
+  );
+}
+
 // ─── Delete debt dialog ────────────────────────────────────────────────────────
 function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => void }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const qc = useQueryClient();
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
 
   const handleDelete = async () => {
     setLoading(true);
+    const exactKey = getListDebtsQueryKey({ shopId });
+    const snapshot = qc.getQueryData(exactKey);
+
+    // Remove from cache instantly — no waiting for network
+    qc.setQueryData(exactKey, (old: any) =>
+      Array.isArray(old) ? old.filter((d: any) => d.id !== debt.id) : old
+    );
+    setOpen(false);
+    onDeleted();
+
     try {
       await customFetch(`/api/debts/${debt.id}`, { method: "DELETE" });
       toast.success(`Debt for ${debt.customerName} deleted`);
-      setOpen(false);
-      onDeleted();
     } catch {
+      // Rollback
+      qc.setQueryData(exactKey, snapshot);
       toast.error("Failed to delete — please retry");
     } finally {
       setLoading(false);
@@ -360,7 +418,8 @@ export default function Debts() {
 
   const handleDeleted = () => {
     setExpandedDebtId(null);
-    qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
+    // No invalidateQueries needed — DeleteDebtDialog does optimistic removal instantly.
+    // The 20s refetchInterval will confirm server state eventually.
   };
 
   const stats = useMemo(() => {
@@ -705,6 +764,9 @@ export default function Debts() {
                               : <ChevronDown className="h-3 w-3" />
                             }
                           </button>
+                          {isOwner && debt.status !== "paid" && (
+                            <MarkPaidButton debt={debt} />
+                          )}
                           {isOwner && (
                             <DeleteDebtDialog debt={debt} onDeleted={handleDeleted} />
                           )}

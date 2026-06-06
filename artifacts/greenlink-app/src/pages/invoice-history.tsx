@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useListScanSessions, useListSuppliers, customFetch } from "@workspace/api-client-react";
+import { useListScanSessions, useListSuppliers, customFetch, getListScanSessionsQueryKey } from "@workspace/api-client-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -194,11 +194,25 @@ function EditModal({ session, onClose, onSaved }: { session: ParsedSession; onCl
   );
 }
 
-function DeleteModal({ session, onClose, onDeleted }: { session: ParsedSession; onClose: () => void; onDeleted: () => void }) {
+function DeleteModal({ session, shopId, onClose, onDeleted }: { session: ParsedSession; shopId: string; onClose: () => void; onDeleted: () => void }) {
+  const qc = useQueryClient();
   const mut = useMutation({
     mutationFn: () => customFetch(`/api/ocr/sessions/${session.id}`, { method: "DELETE" }),
-    onSuccess: () => { toast.success("Invoice deleted"); onDeleted(); onClose(); },
-    onError: () => toast.error("Failed to delete"),
+    onMutate: () => {
+      // Remove from cache immediately — dialog closes before network round-trip
+      const key = getListScanSessionsQueryKey({ shopId });
+      const snapshot = qc.getQueryData(key);
+      qc.setQueryData(key, (old: any) =>
+        Array.isArray(old) ? old.filter((s: any) => s.id !== session.id) : old
+      );
+      onClose();
+      return { snapshot };
+    },
+    onSuccess: () => { toast.success("Invoice deleted"); onDeleted(); },
+    onError: (_err: unknown, _vars: unknown, ctx: any) => {
+      qc.setQueryData(getListScanSessionsQueryKey({ shopId }), ctx?.snapshot);
+      toast.error("Failed to delete — please retry");
+    },
   });
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-4" onClick={onClose}>
@@ -216,7 +230,7 @@ function DeleteModal({ session, onClose, onDeleted }: { session: ParsedSession; 
         </div>
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1 h-9 text-xs" onClick={onClose}>Cancel</Button>
-          <Button variant="destructive" className="flex-1 h-9 text-xs font-bold gap-1.5" onClick={() => mut.mutate()} disabled={mut.isPending}>
+          <Button variant="destructive" className="flex-1 h-9 text-xs font-bold gap-1.5" onClick={() => mut.mutate(undefined as any)} disabled={mut.isPending}>
             {mut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}Delete
           </Button>
         </div>
@@ -639,7 +653,7 @@ export default function InvoiceHistory() {
       {/* Modals */}
       {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
       {editSession && <EditModal session={editSession} onClose={() => setEditSession(null)} onSaved={refresh} />}
-      {deleteSession && <DeleteModal session={deleteSession} onClose={() => setDeleteSession(null)} onDeleted={refresh} />}
+      {deleteSession && <DeleteModal session={deleteSession} shopId={shopId} onClose={() => setDeleteSession(null)} onDeleted={refresh} />}
       {linkSession && <LinkModal session={linkSession} suppliers={suppliers} onClose={() => setLinkSession(null)} onSaved={refresh} />}
 
       {/* Header */}

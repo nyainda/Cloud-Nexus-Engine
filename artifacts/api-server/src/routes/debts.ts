@@ -127,6 +127,7 @@ debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
     notes?: string;
     customerName?: string;
     customerPhone?: string;
+    status?: "unpaid" | "partial" | "paid";
   }>();
   const db = createDb(c.env.DB);
   const session = c.get("session");
@@ -137,6 +138,11 @@ debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
   if (body.notes !== undefined) patch.notes = body.notes;
   if (body.customerName) patch.customerName = body.customerName;
   if (body.customerPhone) patch.customerPhone = body.customerPhone;
+  if (body.status && ["unpaid", "partial", "paid"].includes(body.status)) {
+    patch.status = body.status;
+    patch.paidAt = body.status === "paid" ? new Date().toISOString() : null;
+  }
+  if (Object.keys(patch).length === 0) return c.json({ error: "No fields to update" }, 400);
   await db.update(debts).set(patch).where(eq(debts.id, c.req.param("debtId")));
   const debt = await db
     .select()
