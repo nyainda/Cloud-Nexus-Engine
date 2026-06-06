@@ -4,7 +4,10 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, inventoryMovements, notifications, saleReturns, auditLog } from "@workspace/db/schema";
-import { kvDel, CK } from "../lib/cache";
+import { kvGet, kvSet, kvDel, CK, CACHE_TTL } from "../lib/cache";
+
+// Sales list cache TTL — 60s. Busted on every sale write/void/return.
+const SALES_CACHE_TTL = 60;
 
 const salesRouter = new Hono<AppEnv>();
 
@@ -15,6 +18,16 @@ salesRouter.get("/sales", requireAuth, async (c) => {
   const limit = parseInt(c.req.query("limit") ?? "50");
   const offset = parseInt(c.req.query("offset") ?? "0");
   const includeVoided = c.req.query("includeVoided") === "true";
+
+  // Cache key — only cache the default (no voided, offset 0, limit 100)
+  const cacheKey = shopId && !includeVoided && offset === 0
+    ? `c:sales:${shopId}:${date}:${limit}`
+    : null;
+
+  if (cacheKey) {
+    const cached = await kvGet<object[]>(c.env.SESSIONS, cacheKey);
+    if (cached) return c.json(cached);
+  }
 
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
@@ -35,7 +48,39 @@ salesRouter.get("/sales", requireAuth, async (c) => {
     .orderBy(sql`created_at DESC`)
     .all();
 
-  return c.json(rows);
+  // Batch-fetch all sale items for this page in one query — embed in each sale
+  let result: any[] = rows;
+  if (rows.length > 0) {
+    const saleIds = rows.map(r => r.id);
+    const allItems = await db
+      .select({
+        saleId: saleItems.saleId,
+        productId: saleItems.productId,
+        productName: saleItems.productName,
+        qty: saleItems.qty,
+        unitPrice: saleItems.unitPrice,
+        unitCost: saleItems.unitCost,
+        totalPrice: saleItems.totalPrice,
+        totalProfit: saleItems.totalProfit,
+      })
+      .from(saleItems)
+      .where(sql`${saleItems.saleId} IN (${sql.join(saleIds.map(id => sql`${id}`), sql`, `)})`)
+      .all();
+
+    const itemsBySaleId: Record<string, any[]> = {};
+    for (const item of allItems) {
+      if (!item.saleId) continue;
+      if (!itemsBySaleId[item.saleId]) itemsBySaleId[item.saleId] = [];
+      itemsBySaleId[item.saleId].push(item);
+    }
+    result = rows.map(r => ({ ...r, items: itemsBySaleId[r.id] ?? [] }));
+  }
+
+  if (cacheKey) {
+    await kvSet(c.env.SESSIONS, cacheKey, result, SALES_CACHE_TTL);
+  }
+
+  return c.json(result);
 });
 
 salesRouter.post("/sales", requireAuth, async (c) => {
@@ -194,12 +239,14 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     });
   }
 
-  // Bust products + today's dashboard cache so next read is fresh from D1
+  // Bust products + today's dashboard + sales list cache
   const today = new Date().toISOString().slice(0, 10);
   await kvDel(
     c.env.SESSIONS,
     CK.products(body.shopId),
     CK.dashboard(body.shopId, today),
+    `c:sales:${body.shopId}:${today}:100`,
+    `c:sales:${body.shopId}:${today}:50`,
   );
 
   const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
@@ -290,7 +337,14 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
   });
 
   const today = new Date().toISOString().slice(0, 10);
-  await kvDel(c.env.SESSIONS, CK.products(sale.shopId), CK.dashboard(sale.shopId, today));
+  const saleDate = sale.createdAt.slice(0, 10);
+  await kvDel(
+    c.env.SESSIONS,
+    CK.products(sale.shopId),
+    CK.dashboard(sale.shopId, today),
+    `c:sales:${sale.shopId}:${saleDate}:100`,
+    `c:sales:${sale.shopId}:${saleDate}:50`,
+  );
   return c.body(null, 204);
 });
 
@@ -376,7 +430,13 @@ salesRouter.post("/returns", requireAuth, async (c) => {
   });
 
   const today = new Date().toISOString().slice(0, 10);
-  await kvDel(c.env.SESSIONS, CK.products(body.shopId), CK.dashboard(body.shopId, today));
+  await kvDel(
+    c.env.SESSIONS,
+    CK.products(body.shopId),
+    CK.dashboard(body.shopId, today),
+    `c:sales:${body.shopId}:${today}:100`,
+    `c:sales:${body.shopId}:${today}:50`,
+  );
 
   return c.json({ id: returnId, totalRefund: refundAmount, beforeQty, afterQty, productName: product.canonicalName }, 201);
 });
@@ -582,12 +642,15 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     }
   }
 
-  // Bust cache so dashboard/products reflect restored stock
+  // Bust cache so dashboard/products/sales list reflect restored stock + updated totals
   const today = new Date().toISOString().slice(0, 10);
+  const saleDateStr = sale.createdAt.slice(0, 10);
   await kvDel(
     c.env.SESSIONS,
     CK.products(body.shopId),
     CK.dashboard(body.shopId, today),
+    `c:sales:${body.shopId}:${saleDateStr}:100`,
+    `c:sales:${body.shopId}:${saleDateStr}:50`,
   );
 
   const result = await db

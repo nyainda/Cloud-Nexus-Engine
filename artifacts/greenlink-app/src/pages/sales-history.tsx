@@ -1,8 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
-  useListSales, useGetSale, useDeleteSale, getListSalesQueryKey,
+  useListSales, useDeleteSale, getListSalesQueryKey,
   useListSaleReturns, useCreateSaleReturn, getListSaleReturnsQueryKey,
   getListProductsQueryKey, getListInventoryMovementsQueryKey,
+  getGetSaleQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -35,6 +36,7 @@ function ReturnDialog({
   existingReturns,
   isDebtSale,
   debtCustomerName,
+  onReturnSuccess,
 }: {
   saleId: string;
   open: boolean;
@@ -43,13 +45,13 @@ function ReturnDialog({
   existingReturns: any[];
   isDebtSale?: boolean;
   debtCustomerName?: string;
+  onReturnSuccess?: (totalRefund: number, returnRecord: Record<string, unknown>) => void;
 }) {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "cashier";
   const qc = useQueryClient();
   const doReturn = useCreateSaleReturn();
 
-  // Compute already-returned qty per item index (match by productId or productName)
   const alreadyReturnedByIdx = useMemo(() => {
     const map: Record<number, number> = {};
     for (const ret of existingReturns) {
@@ -65,7 +67,6 @@ function ReturnDialog({
     return map;
   }, [existingReturns, saleItems]);
 
-  // maxReturnable per item = sold - already returned
   const maxReturnableByIdx = useMemo(() =>
     Object.fromEntries(saleItems.map((item, i) => [i, Math.max(0, (item.qty ?? 0) - (alreadyReturnedByIdx[i] ?? 0))])),
     [saleItems, alreadyReturnedByIdx]
@@ -101,18 +102,27 @@ function ReturnDialog({
 
     if (items.length === 0) return;
 
+    const now = new Date().toISOString();
+    const optimisticReturn = {
+      id: `opt-${Date.now()}`,
+      saleId,
+      shopId,
+      itemsJson: JSON.stringify(items),
+      totalRefund,
+      reason: reason.trim() || null,
+      processedBy: role,
+      createdAt: now,
+    };
+
     doReturn.mutate(
       { saleId, data: { shopId, reason: reason.trim() || undefined, processedBy: role, items } },
       {
-        onSuccess: () => {
+        onSuccess: (returnRecord: any) => {
           toast.success(`Return processed — ${fmt(totalRefund)} refund`);
-          // Invalidate sales list so totals update immediately
+          onReturnSuccess?.(totalRefund, returnRecord ?? optimisticReturn);
           qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
-          // Invalidate the returns shown inside this sale's detail panel
           qc.invalidateQueries({ queryKey: getListSaleReturnsQueryKey(saleId) });
-          // Invalidate the Returns page ("returns" prefix covers all dates/shops)
           qc.invalidateQueries({ queryKey: ["returns"] });
-          // Stock is restored on return — refresh products + inventory immediately
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
           setReturnQtys(Object.fromEntries(saleItems.map((_, i) => [i, 0])));
@@ -153,7 +163,6 @@ function ReturnDialog({
             </div>
           ) : (
             <>
-              {/* Debt sale notice */}
               {isDebtSale && (
                 <div className="flex items-start gap-2.5 bg-blue-500/8 border border-blue-500/20 rounded-xl px-3.5 py-3">
                   <CreditCard className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
@@ -288,27 +297,42 @@ function ReturnDialog({
   );
 }
 
-// ─── Sale Detail ──────────────────────────────────────────────────────────────
-function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: boolean; onVoid: () => void }) {
-  const { data: sale, isLoading } = useGetSale(saleId, { query: { enabled: !!saleId } });
-  const { data: existingReturns } = useListSaleReturns(saleId, { query: { enabled: !!saleId } });
+// ─── Sale Detail — reads items directly from embedded sale object (no fetch) ──
+function SaleDetail({
+  sale,
+  isOwner,
+  onVoid,
+  localReturns,
+  onReturnSuccess,
+}: {
+  sale: any;
+  isOwner: boolean;
+  onVoid: () => void;
+  localReturns: any[];
+  onReturnSuccess: (totalRefund: number, returnRecord: any) => void;
+}) {
+  // Fetch returns from server (fast since it's a small per-sale query)
+  const { data: serverReturns } = useListSaleReturns(sale.id, { query: { enabled: !!sale.id, staleTime: 30_000 } });
   const [returnOpen, setReturnOpen] = useState(false);
 
-  if (isLoading) return (
-    <div className="px-4 py-4 space-y-2 animate-pulse">
-      {[1, 2, 3].map(i => <div key={i} className="h-4 bg-muted rounded w-3/4" />)}
-    </div>
-  );
-  if (!sale) return null;
+  // Merge server returns with optimistic local ones (local wins on dupes by id)
+  const returns = useMemo(() => {
+    const base: any[] = serverReturns ?? [];
+    const extra = localReturns.filter(lr => !base.find((r: any) => r.id === lr.id));
+    return [...base, ...extra].sort((a, b) =>
+      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+  }, [serverReturns, localReturns]);
 
   const items = (sale.items || []) as any[];
-  const returns = (existingReturns || []) as any[];
 
   return (
     <div className="border-t border-border">
       {/* Items */}
       <div className="px-4 py-3 space-y-1.5">
-        {items.map((item: any, i: number) => (
+        {items.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-2">No item details available</p>
+        ) : items.map((item: any, i: number) => (
           <div key={i} className="flex items-center justify-between gap-3 py-1">
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-6 h-6 rounded border border-border flex items-center justify-center shrink-0">
@@ -389,7 +413,7 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
       )}
 
       {/* Debt sale indicator */}
-      {(sale as any).saleType === "debt" && (
+      {sale.saleType === "debt" && (
         <>
           <Separator />
           <div className="px-4 py-2.5 flex items-center gap-2">
@@ -427,12 +451,13 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
 
       {returnOpen && (
         <ReturnDialog
-          saleId={saleId}
+          saleId={sale.id}
           open={returnOpen}
           onClose={() => setReturnOpen(false)}
           saleItems={items}
           existingReturns={returns}
-          isDebtSale={(sale as any).saleType === "debt"}
+          isDebtSale={sale.saleType === "debt"}
+          onReturnSuccess={onReturnSuccess}
         />
       )}
     </div>
@@ -440,24 +465,47 @@ function SaleDetail({ saleId, isOwner, onVoid }: { saleId: string; isOwner: bool
 }
 
 // ─── Void Dialog ──────────────────────────────────────────────────────────────
-function VoidDialog({ saleId, open, onClose }: { saleId: string | null; open: boolean; onClose: () => void }) {
+function VoidDialog({
+  sale,
+  open,
+  onClose,
+  onVoidSuccess,
+}: {
+  sale: any | null;
+  open: boolean;
+  onClose: () => void;
+  onVoidSuccess: () => void;
+}) {
   const [reason, setReason] = useState("");
   const qc = useQueryClient();
   const del = useDeleteSale();
   const role = localStorage.getItem("greenlink_role") || "owner";
 
   const handleVoid = () => {
-    if (!saleId) return;
+    if (!sale) return;
     const voidReason = reason.trim() || "Voided by owner";
-    setReason(""); onClose();
+    setReason("");
+
+    // Optimistic: immediately remove from all sales list caches
+    qc.setQueriesData(
+      { queryKey: getListSalesQueryKey() },
+      (old: any) => Array.isArray(old) ? old.filter((s: any) => s.id !== sale.id) : old
+    );
+    onVoidSuccess();
+    onClose();
+
+    toast.success("Sale voided");
+
     (async () => {
       try {
-        await del.mutateAsync({ saleId, data: { reason: voidReason, performedBy: role } });
-        toast.success("Sale voided");
+        await del.mutateAsync({ saleId: sale.id, data: { reason: voidReason, performedBy: role } });
+        // Sync reality after server confirms
         qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
         qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
         qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       } catch {
+        // Roll back: re-add the sale back to the list
+        qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
         toast.error("Failed to void sale — please retry");
       }
     })();
@@ -492,64 +540,79 @@ function VoidDialog({ saleId, open, onClose }: { saleId: string | null; open: bo
 }
 
 // ─── Sale Row ─────────────────────────────────────────────────────────────────
-function SaleRow({ sale, isOwner }: { sale: any; isOwner: boolean }) {
+function SaleRow({ sale, isOwner, onVoidRequest }: { sale: any; isOwner: boolean; onVoidRequest: (s: any) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [voidTarget, setVoidTarget] = useState<string | null>(null);
+  // Local (optimistic) returns that appeared before server refresh
+  const [localReturns, setLocalReturns] = useState<any[]>([]);
   const time = format(new Date(sale.createdAt), "HH:mm");
   const isDebt = sale.saleType === "debt";
 
+  const handleReturnSuccess = (_totalRefund: number, returnRecord: any) => {
+    setLocalReturns(prev => [...prev, returnRecord]);
+  };
+
   return (
-    <>
-      <VoidDialog saleId={voidTarget} open={!!voidTarget} onClose={() => setVoidTarget(null)} />
-      <Card className={cn("shadow-none transition-colors", expanded ? "border-primary/40" : "border-border")}>
-        <button onClick={() => setExpanded(e => !e)} className="w-full text-left">
-          <CardContent className="p-3 flex items-center gap-3">
-            <div className={cn("w-9 h-9 rounded-lg border flex items-center justify-center shrink-0",
-              isDebt ? "border-amber-300 dark:border-amber-800" : "border-emerald-300 dark:border-emerald-800")}>
-              {isDebt
-                ? <CreditCard className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                : <Banknote className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
-            </div>
+    <Card className={cn("shadow-none transition-colors", expanded ? "border-primary/40" : "border-border")}>
+      <button onClick={() => setExpanded(e => !e)} className="w-full text-left">
+        <CardContent className="p-3 flex items-center gap-3">
+          <div className={cn("w-9 h-9 rounded-lg border flex items-center justify-center shrink-0",
+            isDebt ? "border-amber-300 dark:border-amber-800" : "border-emerald-300 dark:border-emerald-800")}>
+            {isDebt
+              ? <CreditCard className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              : <Banknote className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
+          </div>
 
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge className={cn("text-[10px] h-4 px-1.5 border-0",
-                  isDebt ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400")}>
-                  {isDebt ? "Debt" : "Cash"}
-                </Badge>
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Clock className="h-3 w-3" />{time}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge className={cn("text-[10px] h-4 px-1.5 border-0",
+                isDebt ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400")}>
+                {isDebt ? "Debt" : "Cash"}
+              </Badge>
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Clock className="h-3 w-3" />{time}
+              </span>
+              {sale.servedBy && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1 truncate">
+                  <User className="h-3 w-3" />{sale.servedBy}
                 </span>
-                {sale.servedBy && (
-                  <span className="text-xs text-muted-foreground flex items-center gap-1 truncate">
-                    <User className="h-3 w-3" />{sale.servedBy}
-                  </span>
-                )}
-              </div>
-              {sale.discount > 0 && (
-                <p className="text-xs text-muted-foreground mt-0.5">Discount {fmt(sale.discount)}</p>
               )}
             </div>
+            {sale.discount > 0 && (
+              <p className="text-xs text-muted-foreground mt-0.5">Discount {fmt(sale.discount)}</p>
+            )}
+            {/* Product name preview when collapsed */}
+            {!expanded && (sale.items ?? []).length > 0 && (
+              <p className="text-[11px] text-muted-foreground/70 mt-0.5 truncate">
+                {(sale.items as any[]).slice(0, 2).map((it: any) => it.productName).join(", ")}
+                {(sale.items as any[]).length > 2 ? ` +${(sale.items as any[]).length - 2}` : ""}
+              </p>
+            )}
+          </div>
 
-            <div className="text-right shrink-0">
-              <p className="text-base font-bold font-mono">{fmt(sale.totalAmount)}</p>
-              {isOwner && sale.totalProfit != null && (
-                <p className={cn("text-xs font-semibold font-mono", (sale.totalProfit ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
-                  +{fmt(sale.totalProfit)}
-                </p>
-              )}
-            </div>
-            <div className="shrink-0">
-              {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-            </div>
-          </CardContent>
-        </button>
+          <div className="text-right shrink-0">
+            <p className="text-base font-bold font-mono">{fmt(sale.totalAmount)}</p>
+            {isOwner && sale.totalProfit != null && (
+              <p className={cn("text-xs font-semibold font-mono", (sale.totalProfit ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+                +{fmt(sale.totalProfit)}
+              </p>
+            )}
+          </div>
+          <div className="shrink-0">
+            {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </div>
+        </CardContent>
+      </button>
 
-        {expanded && (
-          <SaleDetail saleId={sale.id} isOwner={isOwner} onVoid={() => setVoidTarget(sale.id)} />
-        )}
-      </Card>
-    </>
+      {expanded && (
+        <SaleDetail
+          sale={sale}
+          isOwner={isOwner}
+          onVoid={() => onVoidRequest(sale)}
+          localReturns={localReturns}
+          onReturnSuccess={handleReturnSuccess}
+        />
+      )}
+    </Card>
   );
 }
 
@@ -558,18 +621,44 @@ export default function SalesHistory() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "cashier";
   const isOwner = role === "owner";
+  const qc = useQueryClient();
 
   const [date, setDate] = useState(new Date());
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "cash" | "debt">("all");
+  const [voidTarget, setVoidTarget] = useState<any | null>(null);
   const dateStr = format(date, "yyyy-MM-dd");
 
-  const { data: sales, isLoading } = useListSales(
+  const { data: salesData, isLoading } = useListSales(
     { shopId, date: dateStr, limit: 100 },
-    { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } }
+    {
+      query: {
+        enabled: !!shopId,
+        staleTime: 60_000,
+        refetchInterval: 60_000,
+        refetchIntervalInBackground: false,
+      }
+    }
   );
 
-  const list = (sales || []) as any[];
+  // Pre-seed per-sale cache from list data so any code using useGetSale gets instant results
+  useEffect(() => {
+    if (!salesData) return;
+    for (const sale of salesData as any[]) {
+      qc.setQueryData(getGetSaleQueryKey(sale.id), sale, { updatedAt: Date.now() });
+    }
+  }, [salesData, qc]);
+
+  // Prefetch adjacent day so navigation is instant
+  useEffect(() => {
+    const yesterday = format(subDays(date, 1), "yyyy-MM-dd");
+    qc.prefetchQuery({
+      queryKey: getListSalesQueryKey({ shopId, date: yesterday, limit: 100 }),
+      staleTime: 60_000,
+    });
+  }, [dateStr, shopId, qc]);
+
+  const list = (salesData || []) as any[];
   const totalRevenue = list.reduce((a, s) => a + (s.totalAmount ?? 0), 0);
   const totalProfit = list.reduce((a, s) => a + (s.totalProfit ?? 0), 0);
   const cashCount = list.filter(s => s.saleType === "cash").length;
@@ -583,7 +672,8 @@ export default function SalesHistory() {
       const q = search.trim().toLowerCase();
       result = result.filter(s =>
         (s.servedBy || "").toLowerCase().includes(q) ||
-        String(s.totalAmount ?? "").includes(q)
+        String(s.totalAmount ?? "").includes(q) ||
+        (s.items ?? []).some((it: any) => it.productName?.toLowerCase().includes(q))
       );
     }
     return result;
@@ -593,6 +683,13 @@ export default function SalesHistory() {
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
+      <VoidDialog
+        sale={voidTarget}
+        open={!!voidTarget}
+        onClose={() => setVoidTarget(null)}
+        onVoidSuccess={() => setVoidTarget(null)}
+      />
+
       {/* Header */}
       <div className="sticky top-0 z-20 bg-background border-b border-border px-4 pt-4 pb-3 space-y-3">
         <div className="flex items-center justify-between gap-3">
@@ -627,7 +724,7 @@ export default function SalesHistory() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search by cashier or amount…"
+              placeholder="Search by cashier, amount or product…"
               className="w-full h-9 pl-9 pr-8 text-sm bg-muted/30 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all"
             />
             {search && (
@@ -693,31 +790,24 @@ export default function SalesHistory() {
               <div key={i} className="h-16 rounded-xl border border-border bg-muted/30 animate-pulse" />
             ))}
           </div>
-        ) : list.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-            <Receipt className="h-10 w-10 opacity-20 mb-4" />
-            <p className="font-bold">No sales {todayFlag ? "yet today" : "on this day"}</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              {todayFlag ? "Transactions will appear here as they're processed" : "Try a different date"}
-            </p>
-          </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <Search className="h-8 w-8 opacity-20 mb-3" />
-            <p className="font-bold text-sm">No matching transactions</p>
-            <button onClick={() => { setSearch(""); setTypeFilter("all"); }} className="text-xs text-primary mt-2 hover:underline">
-              Clear filters
-            </button>
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <div className="w-16 h-16 rounded-2xl border border-border flex items-center justify-center">
+              <Receipt className="h-7 w-7 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="font-bold text-foreground">
+                {isFiltering ? "No matching sales" : todayFlag ? "No sales today" : "No sales on this day"}
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {isFiltering ? "Try clearing your search or filter" : todayFlag ? "Sales will appear here as you process them" : "Navigate to another day"}
+              </p>
+            </div>
           </div>
         ) : (
-          <>
-            {isFiltering && (
-              <p className="text-[10px] text-muted-foreground px-0.5 pb-1">
-                Showing {filtered.length} of {list.length} transactions
-              </p>
-            )}
-            {filtered.map((sale: any) => <SaleRow key={sale.id} sale={sale} isOwner={isOwner} />)}
-          </>
+          filtered.map(sale => (
+            <SaleRow key={sale.id} sale={sale} isOwner={isOwner} onVoidRequest={setVoidTarget} />
+          ))
         )}
       </div>
     </div>
