@@ -73,16 +73,16 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
 
   // Batch-fetch sale items for all debts that have a saleId — single query, no N+1
   const saleIds = rows.map(r => r.saleId).filter((id): id is string => !!id);
-  let itemsByHuman: Record<string, { productName: string; quantity: number; unitPrice: number; totalPrice: number; discount?: number | null }[]> = {};
+  let itemsByHuman: Record<string, { productName: string; qty: number; unitPrice: number; totalPrice: number; totalProfit?: number | null }[]> = {};
   if (saleIds.length > 0) {
     const allItems = await db
       .select({
         saleId: saleItems.saleId,
         productName: saleItems.productName,
-        quantity: saleItems.quantity,
+        qty: saleItems.qty,
         unitPrice: saleItems.unitPrice,
         totalPrice: saleItems.totalPrice,
-        discount: saleItems.discount,
+        totalProfit: saleItems.totalProfit,
       })
       .from(saleItems)
       .where(inArray(saleItems.saleId, saleIds))
@@ -93,10 +93,10 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
       if (!itemsByHuman[item.saleId]) itemsByHuman[item.saleId] = [];
       itemsByHuman[item.saleId].push({
         productName: item.productName,
-        quantity: item.quantity,
+        qty: item.qty,
         unitPrice: item.unitPrice,
         totalPrice: item.totalPrice,
-        discount: item.discount,
+        totalProfit: item.totalProfit,
       });
     }
   }
@@ -281,7 +281,15 @@ debtsRouter.delete("/debts/:debtId", requireAuth, async (c) => {
   await db.delete(debts).where(eq(debts.id, debtId));
 
   const today = new Date().toISOString().slice(0, 10);
-  await kvDel(c.env.SESSIONS, CK.debts(debt.shopId), CK.dashboard(debt.shopId, today));
+  // Also bust the sales list cache for the day the linked sale occurred
+  const saleDate = debt.createdAt?.slice(0, 10) ?? today;
+  await kvDel(
+    c.env.SESSIONS,
+    CK.debts(debt.shopId),
+    CK.dashboard(debt.shopId, today),
+    `c:sales:${debt.shopId}:${saleDate}:100`,
+    `c:sales:${debt.shopId}:${saleDate}:50`,
+  );
 
   return c.json({ ok: true });
 });

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey, customFetch } from "@workspace/api-client-react";
+import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey, getListSalesQueryKey, customFetch } from "@workspace/api-client-react";
 import { enqueueMutation } from "@/lib/offline-queue";
 import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -239,7 +239,7 @@ function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => voi
     const exactKey = getListDebtsQueryKey({ shopId });
     const snapshot = qc.getQueryData(exactKey);
 
-    // Remove from cache instantly — no waiting for network
+    // Remove from debts cache instantly — no waiting for network
     qc.setQueryData(exactKey, (old: any) =>
       Array.isArray(old) ? old.filter((d: any) => d.id !== debt.id) : old
     );
@@ -249,6 +249,8 @@ function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => voi
     try {
       await customFetch(`/api/debts/${debt.id}`, { method: "DELETE" });
       toast.success(`Debt for ${debt.customerName} deleted`);
+      // Sync sales history so the linked sale no longer shows as a live debt
+      qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
     } catch {
       // Rollback
       qc.setQueryData(exactKey, snapshot);
