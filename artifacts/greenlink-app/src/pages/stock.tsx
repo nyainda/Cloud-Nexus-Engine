@@ -1689,7 +1689,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
   );
 }
 
-type StockView = "all" | "low" | "out" | "expiring" | "transfers";
+type StockView = "all" | "low" | "out" | "expiring" | "noprice" | "transfers";
 
 export default function Stock() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
@@ -1705,9 +1705,9 @@ export default function Stock() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
-  // Clear selection when switching away from "out" view
+  // Clear selection when switching away from cleanup views
   useEffect(() => {
-    if (view !== "out") setSelectedIds(new Set());
+    if (view !== "out" && view !== "noprice") setSelectedIds(new Set());
   }, [view]);
 
   const { data: productsData, isLoading } = useListProducts(
@@ -1734,7 +1734,7 @@ export default function Stock() {
     else if (view === "expiring") {
       const day90Str = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
       list = list.filter(p => p.expiryDate && p.expiryDate <= day90Str);
-    }
+    } else if (view === "noprice") list = list.filter(p => !p.sellingPrice || !p.purchasePrice);
     if (categoryFilter !== "all") list = list.filter(p => p.category === categoryFilter);
 
     return [...list].sort((a, b) => {
@@ -1758,6 +1758,7 @@ export default function Stock() {
       low: allProducts.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty).length,
       out: allProducts.filter(p => p.stockQty === 0).length,
       expiring: allProducts.filter(p => p.expiryDate && p.expiryDate <= day90Str).length,
+      noprice: allProducts.filter(p => !p.sellingPrice || !p.purchasePrice).length,
       totalItems: allProducts.reduce((s, p) => s + p.stockQty, 0),
     };
   }, [allProducts]);
@@ -1790,9 +1791,10 @@ export default function Stock() {
     }
   };
 
-  const allOutSelected = filtered.length > 0 && view === "out" && filtered.every(p => selectedIds.has(p.id));
+  const isBulkView = view === "out" || view === "noprice";
+  const allBulkSelected = filtered.length > 0 && isBulkView && filtered.every(p => selectedIds.has(p.id));
   const toggleSelectAll = () => {
-    if (allOutSelected) {
+    if (allBulkSelected) {
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(filtered.map(p => p.id)));
@@ -1871,11 +1873,12 @@ export default function Stock() {
         {/* View tabs */}
         <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
           {([
-            { value: "all",       count: counts.all,       label: "All",       activeClass: "bg-primary border-primary text-primary-foreground",       countClass: "text-primary" },
-            { value: "low",       count: counts.low,       label: "Low",       activeClass: "bg-orange-500 border-orange-500 text-white",               countClass: "text-orange-400" },
+            { value: "all",       count: counts.all,       label: "All",       activeClass: "bg-primary border-primary text-primary-foreground",           countClass: "text-primary" },
+            { value: "low",       count: counts.low,       label: "Low",       activeClass: "bg-orange-500 border-orange-500 text-white",                   countClass: "text-orange-400" },
             { value: "out",       count: counts.out,       label: "Out",       activeClass: "bg-destructive border-destructive text-destructive-foreground", countClass: "text-destructive" },
-            { value: "expiring",  count: counts.expiring,  label: "Expiring",  activeClass: "bg-amber-500 border-amber-500 text-white",                  countClass: "text-amber-400" },
-            { value: "transfers", count: null,             label: "Transfers", activeClass: "bg-primary border-primary text-primary-foreground",         countClass: "text-foreground" },
+            { value: "noprice",   count: counts.noprice,   label: "No Price",  activeClass: "bg-violet-600 border-violet-600 text-white",                   countClass: "text-violet-400" },
+            { value: "expiring",  count: counts.expiring,  label: "Expiring",  activeClass: "bg-amber-500 border-amber-500 text-white",                     countClass: "text-amber-400" },
+            { value: "transfers", count: null,             label: "Transfers", activeClass: "bg-primary border-primary text-primary-foreground",            countClass: "text-foreground" },
           ] as { value: StockView; count: number | null; label: string; activeClass: string; countClass: string }[]).map(tab => (
             <button key={tab.value} onClick={() => setView(tab.value)}
               className={cn(
@@ -1892,14 +1895,14 @@ export default function Stock() {
           ))}
         </div>
 
-        {/* Zero-stock bulk select bar */}
-        {view === "out" && counts.out > 0 && (
+        {/* Bulk-cleanup select bar — shown in Out and No Price views */}
+        {isBulkView && filtered.length > 0 && (
           <div className="flex items-center gap-3 py-0.5">
             <button onClick={toggleSelectAll} className="flex items-center gap-1.5 text-xs font-semibold text-primary">
-              {allOutSelected
+              {allBulkSelected
                 ? <CheckSquare2 className="h-4 w-4" />
                 : <Square className="h-4 w-4" />}
-              {allOutSelected ? "Deselect all" : `Select all ${filtered.length}`}
+              {allBulkSelected ? "Deselect all" : `Select all ${filtered.length}`}
             </button>
             {selectedIds.size > 0 && (
               <span className="text-xs text-muted-foreground ml-auto">{selectedIds.size} selected</span>
@@ -1943,7 +1946,7 @@ export default function Stock() {
       </div>
 
       {/* Bulk delete action bar — fixed between header and scroll content */}
-      {view === "out" && selectedIds.size > 0 && (
+      {isBulkView && selectedIds.size > 0 && (
         <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2.5 bg-destructive/10 border-b border-destructive/20">
           <p className="text-sm font-bold text-destructive">{selectedIds.size} product{selectedIds.size !== 1 ? "s" : ""} selected</p>
           <div className="flex gap-2">
@@ -2012,14 +2015,14 @@ export default function Stock() {
                   >
                     <div className={cn(
                       "flex items-center gap-3 px-3 py-3 rounded-xl border transition-colors",
-                      view === "out" && selectedIds.has(p.id) ? "bg-destructive/10 border-destructive/40" :
+                      isBulkView && selectedIds.has(p.id) ? "bg-violet-500/10 border-violet-500/40" :
                       isOut   ? "bg-destructive/[0.04] border-destructive/25" :
                       isLow   ? "bg-orange-500/[0.04] border-orange-500/25" :
                       isExpired ? "bg-red-500/[0.04] border-red-500/20" :
                       "bg-card border-border/50"
                     )}>
-                      {/* Checkbox — only in "Out" view */}
-                      {view === "out" && (
+                      {/* Checkbox — only in bulk-cleanup views */}
+                      {isBulkView && (
                         <input
                           type="checkbox"
                           checked={selectedIds.has(p.id)}
