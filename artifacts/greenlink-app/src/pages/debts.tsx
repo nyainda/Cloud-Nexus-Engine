@@ -772,6 +772,33 @@ export default function Debts() {
                           </p>
                         </div>
 
+                        {/* Items taken — shown inline on the card */}
+                        {(() => {
+                          const items: { productName: string; quantity: number; unitPrice: number; totalPrice: number }[] = (debt as any).items || [];
+                          if (items.length === 0) return null;
+                          const visible = items.slice(0, 3);
+                          const extra = items.length - visible.length;
+                          return (
+                            <div className="mt-2 mb-1 rounded-lg border border-border/30 bg-muted/20 overflow-hidden">
+                              {visible.map((item, i) => (
+                                <div key={i} className={cn("flex items-center gap-2 px-2.5 py-1.5", i > 0 && "border-t border-border/20")}>
+                                  <Package className="h-3 w-3 text-primary/60 shrink-0" />
+                                  <span className="flex-1 text-[11px] text-foreground/80 truncate font-medium">{item.productName}</span>
+                                  <span className="text-[10px] text-muted-foreground/60 font-mono shrink-0">
+                                    ×{item.quantity}
+                                  </span>
+                                  <span className="text-[11px] font-bold font-mono text-foreground/70 shrink-0">{formatKES(item.totalPrice)}</span>
+                                </div>
+                              ))}
+                              {extra > 0 && (
+                                <div className="px-2.5 py-1 border-t border-border/20 text-[10px] text-muted-foreground/50 text-center">
+                                  +{extra} more item{extra > 1 ? "s" : ""}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
                         {/* Action buttons */}
                         <div className="flex gap-2 mt-3 flex-wrap items-center">
                           {!isPaid && <PaymentDialog debt={debt} />}

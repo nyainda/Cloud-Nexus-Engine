@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, like } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -71,12 +71,47 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
     );
   }
 
-  // Write the unfiltered full list to KV so subsequent reads are instant
-  if (shopId && !status && !q) {
-    await kvSet(c.env.SESSIONS, CK.debts(shopId), rows, CACHE_TTL.debts);
+  // Batch-fetch sale items for all debts that have a saleId — single query, no N+1
+  const saleIds = rows.map(r => r.saleId).filter((id): id is string => !!id);
+  let itemsByHuman: Record<string, { productName: string; quantity: number; unitPrice: number; totalPrice: number; discount?: number | null }[]> = {};
+  if (saleIds.length > 0) {
+    const allItems = await db
+      .select({
+        saleId: saleItems.saleId,
+        productName: saleItems.productName,
+        quantity: saleItems.quantity,
+        unitPrice: saleItems.unitPrice,
+        totalPrice: saleItems.totalPrice,
+        discount: saleItems.discount,
+      })
+      .from(saleItems)
+      .where(inArray(saleItems.saleId, saleIds))
+      .all();
+
+    for (const item of allItems) {
+      if (!item.saleId) continue;
+      if (!itemsByHuman[item.saleId]) itemsByHuman[item.saleId] = [];
+      itemsByHuman[item.saleId].push({
+        productName: item.productName,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice,
+        discount: item.discount,
+      });
+    }
   }
 
-  return c.json(rows);
+  const result = rows.map(r => ({
+    ...r,
+    items: r.saleId ? (itemsByHuman[r.saleId] ?? []) : [],
+  }));
+
+  // Write the unfiltered full list to KV so subsequent reads are instant
+  if (shopId && !status && !q) {
+    await kvSet(c.env.SESSIONS, CK.debts(shopId), result, CACHE_TTL.debts);
+  }
+
+  return c.json(result);
 });
 
 debtsRouter.post("/debts", requireAuth, async (c) => {
