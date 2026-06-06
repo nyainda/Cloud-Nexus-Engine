@@ -13,7 +13,7 @@ import {
   Search, Plus, Minus, Trash2, ShoppingCart,
   AlertTriangle, PackageX, Package, CreditCard, Banknote, X,
   ChevronRight, TrendingUp, Scale, User2, Phone, ChevronDown, ArrowUpDown,
-  ReceiptText, RotateCcw, ChevronUp, Ban,
+  ReceiptText, RotateCcw, ChevronUp, Ban, LayoutGrid, LayoutList,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -717,6 +717,9 @@ export default function POS() {
   const debouncedSearch = useDebounce(search, 100);
   const [stockFilter, setStockFilter] = useState<StockFilter>("in_stock");
   const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("newest");
+  const [viewMode, setViewMode] = useState<"cards" | "table">(() =>
+    (localStorage.getItem("pos_view_mode") as "cards" | "table") || "cards"
+  );
   const [showRecentSales, setShowRecentSales] = useState(false);
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
@@ -973,6 +976,18 @@ export default function POS() {
               </select>
               <ArrowUpDown className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
             </div>
+            {/* Layout toggle */}
+            <button
+              onClick={() => setViewMode(v => {
+                const next = v === "cards" ? "table" : "cards";
+                localStorage.setItem("pos_view_mode", next);
+                return next;
+              })}
+              className="shrink-0 flex items-center justify-center h-8 w-8 rounded-full bg-muted border border-border text-muted-foreground hover:text-foreground transition-colors"
+              title={viewMode === "cards" ? "Switch to table view" : "Switch to card view"}
+            >
+              {viewMode === "cards" ? <LayoutList className="h-3.5 w-3.5" /> : <LayoutGrid className="h-3.5 w-3.5" />}
+            </button>
             {/* Recent Sales button */}
             <button
               onClick={() => setShowRecentSales(true)}
@@ -1033,63 +1048,132 @@ export default function POS() {
                   </p>
                 </div>
               )}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-                {(debouncedSearch || (stockFilter !== "all" && stockFilter !== "in_stock") ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
-                  const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
-                  const isOut = product.stockQty === 0;
-                  const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");
-                  const inCart = cart.find(i => i.product.id === product.id);
 
-                  return (
-                    <button
-                      key={product.id}
-                      onClick={() => !isOut && openQuickAdd(product)}
-                      disabled={isOut}
-                      className={cn(
-                        "relative flex flex-col text-left rounded-xl border p-3",
-                        isOut
-                          ? "opacity-40 cursor-not-allowed bg-muted/30 border-border/40"
-                          : inCart
-                          ? "bg-primary/10 border-primary/50"
-                          : "bg-card border-border cursor-pointer"
-                      )}
-                      style={{ contain: "layout style paint", isolation: "isolate" }}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className={cn(
-                          "w-7 h-7 rounded-lg flex items-center justify-center",
-                          weighed ? "bg-primary/10 text-primary" : "bg-muted/60 text-muted-foreground/40"
-                        )}>
-                          {weighed ? <Scale className="h-3.5 w-3.5" /> : <Package className="h-3.5 w-3.5" />}
+              {viewMode === "table" ? (
+                /* ── Table view ── */
+                <div className="rounded-xl border border-border overflow-hidden">
+                  {/* Table header */}
+                  <div className="grid grid-cols-[1fr_72px_88px_36px] gap-0 bg-muted border-b border-border px-3 py-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Product</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-right">Stock</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-right">Price</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-center">Cart</span>
+                  </div>
+                  <div className="divide-y divide-border/50">
+                    {(debouncedSearch || (stockFilter !== "all" && stockFilter !== "in_stock") ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
+                      const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
+                      const isOut = product.stockQty === 0;
+                      const inCart = cart.find(i => i.product.id === product.id);
+                      return (
+                        <button
+                          key={product.id}
+                          onClick={() => !isOut && openQuickAdd(product)}
+                          disabled={isOut}
+                          className={cn(
+                            "w-full grid grid-cols-[1fr_72px_88px_36px] gap-0 items-center px-3 py-2.5 text-left transition-colors",
+                            isOut
+                              ? "opacity-40 cursor-not-allowed bg-muted/20"
+                              : inCart
+                              ? "bg-primary/[0.07] hover:bg-primary/10"
+                              : "hover:bg-muted/40 cursor-pointer"
+                          )}
+                        >
+                          {/* Name + category dot */}
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className={cn(
+                              "w-1.5 h-1.5 rounded-full shrink-0",
+                              isOut ? "bg-destructive" : isLow ? "bg-orange-400" : "bg-emerald-500"
+                            )} />
+                            <span className="text-xs font-medium text-foreground truncate leading-tight">{product.canonicalName}</span>
+                            {product.category && (
+                              <span className="hidden sm:inline shrink-0 text-[9px] text-muted-foreground/50 font-medium">{product.category}</span>
+                            )}
+                          </div>
+                          {/* Stock */}
+                          <span className={cn(
+                            "text-xs font-mono font-bold text-right",
+                            isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-muted-foreground"
+                          )}>
+                            {isOut ? "—" : `${product.stockQty}${product.unit ? ` ${product.unit}` : ""}`}
+                          </span>
+                          {/* Price */}
+                          <span className="text-sm font-bold font-mono text-foreground text-right">
+                            {formatKES(product.sellingPrice || 0)}
+                          </span>
+                          {/* Cart indicator */}
+                          <div className="flex justify-center">
+                            <div className={cn(
+                              "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold",
+                              inCart ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground/30"
+                            )}>
+                              {inCart ? inCart.qty : <Plus className="h-2.5 w-2.5" />}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                /* ── Card grid view ── */
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+                  {(debouncedSearch || (stockFilter !== "all" && stockFilter !== "in_stock") ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
+                    const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
+                    const isOut = product.stockQty === 0;
+                    const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");
+                    const inCart = cart.find(i => i.product.id === product.id);
+
+                    return (
+                      <button
+                        key={product.id}
+                        onClick={() => !isOut && openQuickAdd(product)}
+                        disabled={isOut}
+                        className={cn(
+                          "relative flex flex-col text-left rounded-xl border p-3",
+                          isOut
+                            ? "opacity-40 cursor-not-allowed bg-muted/30 border-border/40"
+                            : inCart
+                            ? "bg-primary/10 border-primary/50"
+                            : "bg-card border-border cursor-pointer"
+                        )}
+                        style={{ contain: "layout style paint", isolation: "isolate" }}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className={cn(
+                            "w-7 h-7 rounded-lg flex items-center justify-center",
+                            weighed ? "bg-primary/10 text-primary" : "bg-muted/60 text-muted-foreground/40"
+                          )}>
+                            {weighed ? <Scale className="h-3.5 w-3.5" /> : <Package className="h-3.5 w-3.5" />}
+                          </div>
+                          <div className={cn(
+                            "w-2 h-2 rounded-full",
+                            isOut ? "bg-destructive" : isLow ? "bg-orange-400" : "bg-emerald-500"
+                          )} />
                         </div>
-                        <div className={cn(
-                          "w-2 h-2 rounded-full",
-                          isOut ? "bg-destructive" : isLow ? "bg-orange-400" : "bg-emerald-500"
-                        )} />
-                      </div>
 
-                      <p className="text-xs font-semibold text-foreground leading-tight line-clamp-2 mb-1.5 flex-1">{product.canonicalName}</p>
+                        <p className="text-xs font-semibold text-foreground leading-tight line-clamp-2 mb-1.5 flex-1">{product.canonicalName}</p>
 
-                      <p className={cn(
-                        "text-[10px] font-mono font-bold mb-2",
-                        isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-muted-foreground/50"
-                      )}>
-                        {isOut ? "Out of stock" : `${product.stockQty} ${product.unit || "units"}`}
-                      </p>
-
-                      <div className="flex items-center justify-between mt-auto">
-                        <span className="text-sm font-bold font-mono text-foreground">{formatKES(product.sellingPrice || 0)}</span>
-                        <div className={cn(
-                          "w-6 h-6 rounded-full flex items-center justify-center",
-                          inCart ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground/50"
+                        <p className={cn(
+                          "text-[10px] font-mono font-bold mb-2",
+                          isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-muted-foreground/50"
                         )}>
-                          {inCart ? <span className="text-[9px] font-bold">{inCart.qty}</span> : <Plus className="h-3 w-3" />}
+                          {isOut ? "Out of stock" : `${product.stockQty} ${product.unit || "units"}`}
+                        </p>
+
+                        <div className="flex items-center justify-between mt-auto">
+                          <span className="text-sm font-bold font-mono text-foreground">{formatKES(product.sellingPrice || 0)}</span>
+                          <div className={cn(
+                            "w-6 h-6 rounded-full flex items-center justify-center",
+                            inCart ? "bg-primary text-primary-foreground" : "bg-muted/60 text-muted-foreground/50"
+                          )}>
+                            {inCart ? <span className="text-[9px] font-bold">{inCart.qty}</span> : <Plus className="h-3 w-3" />}
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {filteredProducts.length > 0 && (
                 <p className="text-center text-[11px] text-muted-foreground/40 mt-4 pb-2">
