@@ -715,8 +715,8 @@ export default function POS() {
 
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 100);
-  const [stockFilter, setStockFilter] = useState<StockFilter>("all");
-  const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("az");
+  const [stockFilter, setStockFilter] = useState<StockFilter>("in_stock");
+  const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("newest");
   const [showRecentSales, setShowRecentSales] = useState(false);
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
@@ -738,7 +738,7 @@ export default function POS() {
         (p.category && p.category.toLowerCase().includes(q))
       );
     }
-    if (stockFilter === "in_stock") all = all.filter(p => p.stockQty > p.alertQty);
+    if (stockFilter === "in_stock") all = all.filter(p => p.stockQty > 0);
     else if (stockFilter === "low_stock") all = all.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty);
     else if (stockFilter === "out_of_stock") all = all.filter(p => p.stockQty === 0);
 
@@ -760,7 +760,7 @@ export default function POS() {
     const all = productsData?.products || [];
     return {
       all: all.length,
-      in_stock: all.filter(p => p.stockQty > p.alertQty).length,
+      in_stock: all.filter(p => p.stockQty > 0).length,
       low_stock: all.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty).length,
       out_of_stock: all.filter(p => p.stockQty === 0).length,
     };
@@ -1023,18 +1023,18 @@ export default function POS() {
             </div>
           ) : (
             <>
-              {!debouncedSearch && stockFilter === "all" && filteredProducts.length > 200 && (
+              {!debouncedSearch && (stockFilter === "all" || stockFilter === "in_stock") && filteredProducts.length > 200 && (
                 <div className="flex items-center gap-2 mb-3 px-1 py-2.5 rounded-xl bg-muted/30 border border-border/40">
                   <Search className="h-3.5 w-3.5 text-muted-foreground/50 ml-2 shrink-0" />
                   <p className="text-[11px] text-muted-foreground/60">
                     Showing first <span className="font-bold text-foreground/60">200</span> of{" "}
                     <span className="font-bold text-foreground/60">{filteredProducts.length.toLocaleString()}</span>{" "}
-                    products — search above to find any product instantly
+                    in-stock products — search above to find any product instantly
                   </p>
                 </div>
               )}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-                {(debouncedSearch || stockFilter !== "all" ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
+                {(debouncedSearch || (stockFilter !== "all" && stockFilter !== "in_stock") ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
                   const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
                   const isOut = product.stockQty === 0;
                   const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");

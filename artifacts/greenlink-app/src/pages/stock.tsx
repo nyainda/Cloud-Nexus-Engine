@@ -28,7 +28,7 @@ import { formatKES } from "@/lib/format";
 import {
   Search, Plus, Minus, Package, Edit2, AlertTriangle, ArrowUpRight,
   PackageX, Copy, TrendingUp, Scale, Wheat,
-  Calendar, Trash2, ArrowLeftRight, Truck, Zap, CheckCircle2, X, ChevronDown, ArrowUpDown
+  Calendar, Trash2, ArrowLeftRight, Truck, Zap, CheckCircle2, X, ChevronDown, ArrowUpDown, Square, CheckSquare2
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -1702,6 +1702,13 @@ export default function Stock() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("az");
   const qc = useQueryClient();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // Clear selection when switching away from "out" view
+  useEffect(() => {
+    if (view !== "out") setSelectedIds(new Set());
+  }, [view]);
 
   const { data: productsData, isLoading } = useListProducts(
     { shopId, limit: 3000 },
@@ -1758,6 +1765,38 @@ export default function Stock() {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
     qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0 || bulkDeleting) return;
+    setBulkDeleting(true);
+    const ids = Array.from(selectedIds);
+    const key = getListProductsQueryKey({ shopId, limit: 3000 });
+    const snapshot = qc.getQueryData(key);
+    // Optimistic removal — UI updates instantly
+    qc.setQueryData(key, (old: any) => {
+      if (!old?.products) return old;
+      return { ...old, products: old.products.filter((p: any) => !ids.includes(p.id)) };
+    });
+    setSelectedIds(new Set());
+    try {
+      await Promise.all(ids.map(id => customFetch(`/api/products/${id}`, { method: "DELETE" })));
+      toast.success(`${ids.length} product${ids.length !== 1 ? "s" : ""} removed from inventory`);
+    } catch {
+      qc.setQueryData(key, snapshot);
+      toast.error("Some deletions failed — please retry");
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const allOutSelected = filtered.length > 0 && view === "out" && filtered.every(p => selectedIds.has(p.id));
+  const toggleSelectAll = () => {
+    if (allOutSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map(p => p.id)));
+    }
   };
 
   const todayStr = new Date().toISOString().split("T")[0];
@@ -1853,6 +1892,21 @@ export default function Stock() {
           ))}
         </div>
 
+        {/* Zero-stock bulk select bar */}
+        {view === "out" && counts.out > 0 && (
+          <div className="flex items-center gap-3 py-0.5">
+            <button onClick={toggleSelectAll} className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+              {allOutSelected
+                ? <CheckSquare2 className="h-4 w-4" />
+                : <Square className="h-4 w-4" />}
+              {allOutSelected ? "Deselect all" : `Select all ${filtered.length}`}
+            </button>
+            {selectedIds.size > 0 && (
+              <span className="text-xs text-muted-foreground ml-auto">{selectedIds.size} selected</span>
+            )}
+          </div>
+        )}
+
         {/* Category filter + Sort */}
         {view !== "transfers" && (
           <div className="flex items-center gap-2">
@@ -1887,6 +1941,31 @@ export default function Stock() {
           </div>
         )}
       </div>
+
+      {/* Bulk delete action bar — fixed between header and scroll content */}
+      {view === "out" && selectedIds.size > 0 && (
+        <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2.5 bg-destructive/10 border-b border-destructive/20">
+          <p className="text-sm font-bold text-destructive">{selectedIds.size} product{selectedIds.size !== 1 ? "s" : ""} selected</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="px-3 h-7 rounded-full bg-muted text-muted-foreground text-xs font-semibold border border-border"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleBulkDelete}
+              disabled={bulkDeleting}
+              className="px-3 h-7 rounded-full bg-destructive text-destructive-foreground text-xs font-bold disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {bulkDeleting
+                ? <div className="w-3 h-3 border border-destructive-foreground/30 border-t-destructive-foreground rounded-full animate-spin" />
+                : <Trash2 className="h-3 w-3" />}
+              Delete {selectedIds.size}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Content — owns its scroll so useVirtualizer works correctly */}
       <div ref={listRef} className="flex-1 overflow-y-auto min-h-0">
@@ -1933,11 +2012,29 @@ export default function Stock() {
                   >
                     <div className={cn(
                       "flex items-center gap-3 px-3 py-3 rounded-xl border transition-colors",
+                      view === "out" && selectedIds.has(p.id) ? "bg-destructive/10 border-destructive/40" :
                       isOut   ? "bg-destructive/[0.04] border-destructive/25" :
                       isLow   ? "bg-orange-500/[0.04] border-orange-500/25" :
                       isExpired ? "bg-red-500/[0.04] border-red-500/20" :
                       "bg-card border-border/50"
                     )}>
+                      {/* Checkbox — only in "Out" view */}
+                      {view === "out" && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={e => {
+                            setSelectedIds(prev => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(p.id);
+                              else next.delete(p.id);
+                              return next;
+                            });
+                          }}
+                          className="h-4 w-4 rounded border-border accent-destructive shrink-0 cursor-pointer"
+                          onClick={e => e.stopPropagation()}
+                        />
+                      )}
                       {/* Category chip */}
                       <div className={cn(
                         "w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-[10px] font-bold border",
