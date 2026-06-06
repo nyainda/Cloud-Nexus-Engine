@@ -3,7 +3,7 @@ import { eq, and, like } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
-import { debts, debtPayments, notifications } from "@workspace/db/schema";
+import { debts, debtPayments, notifications, saleItems } from "@workspace/db/schema";
 import { kvGet, kvSet, kvDel, CK, CACHE_TTL } from "../lib/cache";
 
 const debtsRouter = new Hono<AppEnv>();
@@ -119,7 +119,25 @@ debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
     db.select().from(debtPayments).where(eq(debtPayments.debtId, debtId)).all(),
   ]);
   if (!debt) return c.json({ error: "Not found" }, 404);
-  return c.json({ ...debt, payments });
+
+  // Fetch sale items if this debt is linked to a sale
+  let items: { productName: string; quantity: number; unitPrice: number; totalPrice: number; discount?: number | null }[] = [];
+  if (debt.saleId) {
+    const rows = await db
+      .select({
+        productName: saleItems.productName,
+        quantity: saleItems.quantity,
+        unitPrice: saleItems.unitPrice,
+        totalPrice: saleItems.totalPrice,
+        discount: saleItems.discount,
+      })
+      .from(saleItems)
+      .where(eq(saleItems.saleId, debt.saleId))
+      .all();
+    items = rows;
+  }
+
+  return c.json({ ...debt, payments, items });
 });
 
 debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {

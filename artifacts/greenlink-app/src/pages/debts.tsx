@@ -13,7 +13,8 @@ import { formatKES } from "@/lib/format";
 import {
   Search, Users, Phone, CalendarClock, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
-  ChevronDown, ChevronUp, Banknote, User2, Trash2, Send, BadgeCheck
+  ChevronDown, ChevronUp, Banknote, User2, Trash2, Send, BadgeCheck,
+  ShoppingBasket, Package
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -328,9 +329,44 @@ function DebtHistoryPanel({ debtId }: { debtId: string }) {
   }
 
   const payments = (data as any)?.payments || [];
+  const items: { productName: string; quantity: number; unitPrice: number; totalPrice: number; discount?: number | null }[] = (data as any)?.items || [];
 
   return (
-    <div className="border-t border-border/30 bg-muted/10 px-4 py-4">
+    <div className="border-t border-border/30 bg-muted/10 px-4 py-4 space-y-4">
+
+      {/* Products taken */}
+      {items.length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-2 flex items-center gap-1.5">
+            <ShoppingBasket className="h-3 w-3" />Items Taken
+          </p>
+          <div className="rounded-xl border border-border/40 overflow-hidden bg-background/40">
+            {items.map((item, i) => (
+              <div
+                key={i}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5",
+                  i > 0 && "border-t border-border/30"
+                )}
+              >
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <Package className="h-3.5 w-3.5 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground truncate">{item.productName}</p>
+                  <p className="text-[10px] text-muted-foreground/60 font-mono">
+                    {item.quantity} × {formatKES(item.unitPrice)}
+                    {item.discount ? <span className="ml-1.5 text-orange-400">−{item.discount}%</span> : null}
+                  </p>
+                </div>
+                <p className="text-xs font-bold font-mono text-foreground shrink-0">{formatKES(item.totalPrice)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-3">
         Payment Timeline
       </p>
@@ -391,6 +427,7 @@ function DebtHistoryPanel({ debtId }: { debtId: string }) {
             {formatKES((data as any)?.balance ?? 0)}
           </p>
         </div>
+      </div>
       </div>
     </div>
   );
