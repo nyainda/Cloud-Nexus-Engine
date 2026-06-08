@@ -138,11 +138,12 @@ function avatarColor(name: string): string {
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
 
-function EditModal({ session, onClose, onSaved }: { session: ParsedSession; onClose: () => void; onSaved: () => void }) {
+function EditModal({ session, shopId, onClose, onSaved }: { session: ParsedSession; shopId: string; onClose: () => void; onSaved: () => void }) {
   const [supplierName, setSupplierName] = useState(session.meta?.supplierName ?? "");
   const [invoiceNumber, setInvoiceNumber] = useState(session.meta?.invoiceNumber ?? "");
   const [invoiceDate, setInvoiceDate] = useState(session.meta?.invoiceDate ?? "");
   const [grandTotal, setGrandTotal] = useState(session.meta?.grandTotal != null ? String(session.meta.grandTotal) : "");
+  const qc = useQueryClient();
 
   const mut = useMutation({
     mutationFn: () => customFetch(`/api/ocr/sessions/${session.id}`, {
@@ -154,8 +155,30 @@ function EditModal({ session, onClose, onSaved }: { session: ParsedSession; onCl
         grandTotal: grandTotal.trim() ? Number(grandTotal) : null,
       }),
     }),
-    onSuccess: () => { toast.success("Invoice updated"); onSaved(); onClose(); },
-    onError: () => toast.error("Failed to update"),
+    onMutate: () => {
+      const key = getListScanSessionsQueryKey({ shopId });
+      const snapshot = qc.getQueryData(key);
+      const newMeta: InvoiceMeta = {
+        supplierName: supplierName.trim() || null,
+        invoiceNumber: invoiceNumber.trim() || null,
+        invoiceDate: invoiceDate.trim() || null,
+        grandTotal: grandTotal.trim() ? Number(grandTotal) : null,
+      };
+      qc.setQueryData(key, (old: any) =>
+        Array.isArray(old) ? old.map((s: any) =>
+          s.id === session.id
+            ? { ...s, resultJson: JSON.stringify({ ...(s.resultJson ? (() => { try { return JSON.parse(s.resultJson); } catch { return {}; } })() : {}), invoiceMeta: newMeta }) }
+            : s
+        ) : old
+      );
+      onClose();
+      return { snapshot };
+    },
+    onSuccess: () => { toast.success("Invoice updated"); onSaved(); },
+    onError: (_err: unknown, _vars: unknown, ctx: any) => {
+      qc.setQueryData(getListScanSessionsQueryKey({ shopId }), ctx?.snapshot);
+      toast.error("Failed to update");
+    },
   });
 
   return (
@@ -185,7 +208,7 @@ function EditModal({ session, onClose, onSaved }: { session: ParsedSession; onCl
         </div>
         <div className="flex gap-2 pt-1">
           <Button variant="outline" className="flex-1 h-9 text-xs" onClick={onClose}>Cancel</Button>
-          <Button className="flex-1 h-9 text-xs font-bold gap-1.5" onClick={() => mut.mutate()} disabled={mut.isPending}>
+          <Button className="flex-1 h-9 text-xs font-bold gap-1.5" onClick={() => mut.mutate(undefined as any)} disabled={mut.isPending}>
             {mut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}Save
           </Button>
         </div>
@@ -240,16 +263,31 @@ function DeleteModal({ session, shopId, onClose, onDeleted }: { session: ParsedS
 }
 
 function LinkModal({
-  session, suppliers, onClose, onSaved,
-}: { session: ParsedSession; suppliers: SupplierRecord[]; onClose: () => void; onSaved: () => void }) {
+  session, shopId, suppliers, onClose, onSaved,
+}: { session: ParsedSession; shopId: string; suppliers: SupplierRecord[]; onClose: () => void; onSaved: () => void }) {
   const [selected, setSelected] = useState<string>(session.supplierId ?? "");
+  const qc = useQueryClient();
   const mut = useMutation({
     mutationFn: () => customFetch(`/api/ocr/sessions/${session.id}`, {
       method: "PATCH",
       body: JSON.stringify({ supplierId: selected || null }),
     }),
-    onSuccess: () => { toast.success("Invoice linked"); onSaved(); onClose(); },
-    onError: () => toast.error("Failed to link"),
+    onMutate: () => {
+      const key = getListScanSessionsQueryKey({ shopId });
+      const snapshot = qc.getQueryData(key);
+      qc.setQueryData(key, (old: any) =>
+        Array.isArray(old) ? old.map((s: any) =>
+          s.id === session.id ? { ...s, supplierId: selected || null } : s
+        ) : old
+      );
+      onClose();
+      return { snapshot };
+    },
+    onSuccess: () => { toast.success("Invoice linked"); onSaved(); },
+    onError: (_err: unknown, _vars: unknown, ctx: any) => {
+      qc.setQueryData(getListScanSessionsQueryKey({ shopId }), ctx?.snapshot);
+      toast.error("Failed to link");
+    },
   });
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-4" onClick={onClose}>
@@ -283,7 +321,7 @@ function LinkModal({
         </div>
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1 h-9 text-xs" onClick={onClose}>Cancel</Button>
-          <Button className="flex-1 h-9 text-xs font-bold gap-1.5" onClick={() => mut.mutate()} disabled={mut.isPending}>
+          <Button className="flex-1 h-9 text-xs font-bold gap-1.5" onClick={() => mut.mutate(undefined as any)} disabled={mut.isPending}>
             {mut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}Save Link
           </Button>
         </div>
@@ -565,7 +603,7 @@ export default function InvoiceHistory() {
   const qc = useQueryClient();
 
   const { data: rawSessions, isLoading: sessLoading, refetch } = useListScanSessions(
-    { shopId }, { query: { enabled: !!shopId, staleTime: 90_000 } },
+    { shopId }, { query: { enabled: !!shopId, staleTime: Infinity } },
   );
   const { data: rawSuppliers } = useListSuppliers(
     { shopId }, { query: { enabled: !!shopId, staleTime: 5 * 60_000 } },
@@ -652,9 +690,9 @@ export default function InvoiceHistory() {
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Modals */}
       {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
-      {editSession && <EditModal session={editSession} onClose={() => setEditSession(null)} onSaved={refresh} />}
+      {editSession && <EditModal session={editSession} shopId={shopId} onClose={() => setEditSession(null)} onSaved={refresh} />}
       {deleteSession && <DeleteModal session={deleteSession} shopId={shopId} onClose={() => setDeleteSession(null)} onDeleted={refresh} />}
-      {linkSession && <LinkModal session={linkSession} suppliers={suppliers} onClose={() => setLinkSession(null)} onSaved={refresh} />}
+      {linkSession && <LinkModal session={linkSession} shopId={shopId} suppliers={suppliers} onClose={() => setLinkSession(null)} onSaved={refresh} />}
 
       {/* Header */}
       <div className="px-4 py-3 border-b border-border bg-card shrink-0">

@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
+import { kvGet, kvSet, kvDel } from "../lib/cache";
 import {
   scanSessions,
   products,
@@ -18,15 +19,15 @@ import { findProductMatches, deriveVatFields } from "../lib/ocr-matching";
 
 const ocrRouter = new Hono<AppEnv>();
 
-// ── KV cache helpers ───────────────────────────────────────────────────────
-// Sessions list is cached in KV (shared with auth sessions namespace) for 90s.
-// Cache key is prefixed to avoid collisions with UUID-based session tokens.
+// ── In-memory cache helpers ────────────────────────────────────────────────
+// Use the shared in-memory cache (same Map as products/sales/debts).
+// Avoids KV reads/writes entirely — sub-millisecond on warm isolates.
 
-const KV_TTL = 90;
-function ocrCacheKey(shopId: string) { return `ocr_sess_v1:${shopId}`; }
+const OCR_TTL = 120; // 2 minutes
+function ocrCacheKey(shopId: string) { return `c:ocr:${shopId}`; }
 
-async function invalidateOcrCache(kv: KVNamespace, shopId: string) {
-  try { await kv.delete(ocrCacheKey(shopId)); } catch { /* non-fatal */ }
+async function invalidateOcrCache(_kv: KVNamespace, shopId: string) {
+  await kvDel(_kv, ocrCacheKey(shopId));
 }
 
 // ── Auto-supplier detection ────────────────────────────────────────────────
@@ -246,12 +247,10 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
 ocrRouter.get("/ocr/sessions", requireAuth, async (c) => {
   const shopId = c.req.query("shopId");
 
-  // Try KV cache first — avoids DB round-trip for repeated loads
+  // Try in-memory cache first — zero-latency on warm isolates
   if (shopId) {
-    try {
-      const cached = await c.env.SESSIONS.get(ocrCacheKey(shopId));
-      if (cached) return c.json(JSON.parse(cached));
-    } catch { /* cache miss — fall through to DB */ }
+    const cached = await kvGet<any[]>(c.env.SESSIONS, ocrCacheKey(shopId));
+    if (cached) return c.json(cached);
   }
 
   let rows: any[];
@@ -273,11 +272,8 @@ ocrRouter.get("/ocr/sessions", requireAuth, async (c) => {
 
   const normalized = rows.map(normalizeSessionRow);
 
-  // Store in KV — subsequent reads within TTL skip the DB entirely
   if (shopId) {
-    try {
-      await c.env.SESSIONS.put(ocrCacheKey(shopId), JSON.stringify(normalized), { expirationTtl: KV_TTL });
-    } catch { /* non-fatal */ }
+    await kvSet(c.env.SESSIONS, ocrCacheKey(shopId), normalized, OCR_TTL);
   }
 
   return c.json(normalized);
