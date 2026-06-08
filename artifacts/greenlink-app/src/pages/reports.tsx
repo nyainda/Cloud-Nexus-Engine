@@ -15,6 +15,7 @@ import {
   Package, TrendingDown, Percent, BarChart2, Trophy, Flame,
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
   ClipboardCheck, X, Share2, CheckCheck, Wallet, ReceiptText, Ban,
+  Download, Calendar,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
@@ -23,6 +24,50 @@ import {
   ResponsiveContainer, Cell,
 } from "recharts";
 import { cn } from "@/lib/utils";
+
+// ─── CSV download helper ───────────────────────────────────────────────────────
+function downloadCategoryCsv(categories: any[], period: string, shopName: string) {
+  const totalRev = categories.reduce((s, c) => s + c.totalRevenue, 0);
+  const headers = ["Category", "Revenue (KES)", "Profit (KES)", "Items Sold", "Margin %", "Share %"];
+  const rows = categories.map(c => {
+    const share = totalRev > 0 ? (c.totalRevenue / totalRev * 100).toFixed(1) : "0.0";
+    const margin = c.totalRevenue > 0 ? (c.totalProfit / c.totalRevenue * 100).toFixed(1) : "0.0";
+    return [
+      `"${c.category}"`,
+      c.totalRevenue.toFixed(0),
+      c.totalProfit.toFixed(0),
+      c.salesCount,
+      margin,
+      share,
+    ].join(",");
+  });
+  const totalRow = [
+    '"TOTAL"',
+    totalRev.toFixed(0),
+    categories.reduce((s, c) => s + c.totalProfit, 0).toFixed(0),
+    categories.reduce((s, c) => s + c.salesCount, 0),
+    totalRev > 0 ? (categories.reduce((s, c) => s + c.totalProfit, 0) / totalRev * 100).toFixed(1) : "0.0",
+    "100.0",
+  ].join(",");
+  const csv = [
+    `"${shopName} — Category Sales Report"`,
+    `"Period: ${period}"`,
+    `"Generated: ${new Date().toLocaleString("en-KE")}"`,
+    "",
+    headers.join(","),
+    ...rows,
+    totalRow,
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `category-sales-${period.replace(/\s/g, "-").toLowerCase()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 // ─── Cash-Up Modal ────────────────────────────────────────────────────────────
 function CashUpModal({ dashboard, shopName, onClose }: {
@@ -521,6 +566,91 @@ export default function Reports() {
           />
         </div>
 
+        {/* Month-over-Month Comparison */}
+        {prevReport && (
+          <Card className="shadow-none">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+                <Calendar className="h-4 w-4 text-blue-500" />
+                vs {useCustom ? "Previous Period" : quickRange === "today" ? "Yesterday" : quickRange === "week" ? "Last Week" : "Last Month"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  {
+                    label: "Revenue",
+                    current: revenue,
+                    prev: prevReport.totalRevenue ?? 0,
+                    format: formatKES,
+                    accent: "text-primary",
+                  },
+                  {
+                    label: "Profit",
+                    current: profit,
+                    prev: prevReport.totalProfit ?? 0,
+                    format: formatKES,
+                    accent: "text-emerald-500",
+                  },
+                  {
+                    label: "Sales",
+                    current: salesCount,
+                    prev: prevReport.salesCount ?? 0,
+                    format: (v: number) => String(v),
+                    accent: "text-blue-400",
+                  },
+                ].map(({ label, current, prev, format: fmt, accent }) => {
+                  const diff = current - prev;
+                  const pct = prev > 0 ? (diff / prev) * 100 : current > 0 ? 100 : 0;
+                  const up = diff >= 0;
+                  return (
+                    <div key={label} className="bg-muted/40 rounded-xl p-3 text-center">
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground mb-1">{label}</p>
+                      <p className={cn("text-sm font-bold font-mono", accent)}>{fmt(current)}</p>
+                      <div className={cn(
+                        "flex items-center justify-center gap-0.5 mt-1.5 text-[10px] font-bold",
+                        up ? "text-emerald-500" : "text-destructive"
+                      )}>
+                        {up ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />}
+                        {Math.abs(pct).toFixed(1)}%
+                      </div>
+                      <p className="text-[9px] text-muted-foreground mt-0.5">{fmt(prev)} prev</p>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Progress bars comparing current vs prev */}
+              {revenue > 0 && (prevReport.totalRevenue ?? 0) > 0 && (() => {
+                const maxRev = Math.max(revenue, prevReport.totalRevenue ?? 0);
+                const thisPct = (revenue / maxRev) * 100;
+                const prevPct = ((prevReport.totalRevenue ?? 0) / maxRev) * 100;
+                return (
+                  <div className="mt-3 space-y-2">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wide">This period</span>
+                        <span className="text-[9px] font-mono text-foreground">{formatKES(revenue)}</span>
+                      </div>
+                      <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full bg-primary rounded-full" style={{ width: `${thisPct}%` }} />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wide">Previous period</span>
+                        <span className="text-[9px] font-mono text-muted-foreground">{formatKES(prevReport.totalRevenue ?? 0)}</span>
+                      </div>
+                      <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full bg-muted-foreground/30 rounded-full" style={{ width: `${prevPct}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Inventory Value — full-width */}
         <Card className="shadow-none">
           <CardContent className="p-4">
@@ -817,13 +947,28 @@ export default function Reports() {
         {/* Category Breakdown */}
         <Card className="shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-              <Layers className="h-4 w-4 text-violet-500" />
-              Category Breakdown
-              <span className="text-xs font-normal text-muted-foreground ml-1">
-                {dateRange.from === dateRange.to ? "Today" : `${dateRange.from} – ${dateRange.to}`}
-              </span>
-            </CardTitle>
+            <div className="flex items-center justify-between w-full gap-2">
+              <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+                <Layers className="h-4 w-4 text-violet-500" />
+                Category Breakdown
+                <span className="text-xs font-normal text-muted-foreground ml-1">
+                  {dateRange.from === dateRange.to ? "Today" : `${dateRange.from} – ${dateRange.to}`}
+                </span>
+              </CardTitle>
+              {categoryData && (categoryData as any[]).length > 0 && (
+                <button
+                  onClick={() => downloadCategoryCsv(
+                    categoryData as any[],
+                    dateRange.from === dateRange.to ? dateRange.from : `${dateRange.from} to ${dateRange.to}`,
+                    shopName,
+                  )}
+                  className="flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors bg-muted/50 hover:bg-muted rounded-lg px-2.5 py-1.5 shrink-0"
+                >
+                  <Download className="h-3 w-3" />
+                  CSV
+                </button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {catLoading ? (
@@ -888,6 +1033,29 @@ export default function Reports() {
                 })}
               </div>
             )}
+            {/* Totals footer */}
+            {categoryData && (categoryData as any[]).length > 0 && (() => {
+              const cats = categoryData as any[];
+              const totalRev = cats.reduce((s, c) => s + c.totalRevenue, 0);
+              const totalProfit = cats.reduce((s, c) => s + c.totalProfit, 0);
+              const totalItems = cats.reduce((s, c) => s + c.salesCount, 0);
+              const totalMargin = totalRev > 0 ? (totalProfit / totalRev * 100) : 0;
+              return (
+                <div className="border-t border-border/60 bg-muted/20 px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-xs font-bold text-foreground">Total</span>
+                    <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
+                      {totalItems} items sold
+                    </span>
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 rounded px-1.5 py-0.5 font-mono">
+                      +{formatKES(totalProfit)} profit
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">{totalMargin.toFixed(0)}% avg margin</span>
+                  </div>
+                  <span className="font-bold text-sm font-mono">{formatKES(totalRev)}</span>
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
 
