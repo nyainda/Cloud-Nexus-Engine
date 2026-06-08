@@ -223,21 +223,47 @@ reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
     db.select().from(products).where(shopId ? eq(products.shopId, shopId) : undefined).all(),
   ]);
   const productCategoryMap = new Map(allProducts.map((p) => [p.id, p.category ?? "Uncategorized"]));
+  const productNameMap = new Map(allProducts.map((p) => [p.id, p.canonicalName ?? p.id]));
 
-  const map = new Map<string, { category: string; totalRevenue: number; totalProfit: number; salesCount: number }>();
+  type ProdEntry = { productId: string; productName: string; qtySold: number; totalRevenue: number; totalProfit: number };
+  type CatEntry = { category: string; totalRevenue: number; totalProfit: number; salesCount: number; products: Map<string, ProdEntry> };
+  const map = new Map<string, CatEntry>();
+
   for (const item of items) {
     const category = (item.productId ? productCategoryMap.get(item.productId) : null) ?? "Uncategorized";
-    const existing = map.get(category);
-    if (existing) {
-      existing.totalRevenue += item.totalPrice;
-      existing.totalProfit += item.totalProfit ?? 0;
-      existing.salesCount++;
-    } else {
-      map.set(category, { category, totalRevenue: item.totalPrice, totalProfit: item.totalProfit ?? 0, salesCount: 1 });
+    const productName = (item.productId ? productNameMap.get(item.productId) : null) ?? item.productName ?? "Unknown";
+    const productKey = item.productId ?? productName;
+
+    let catEntry = map.get(category);
+    if (!catEntry) {
+      catEntry = { category, totalRevenue: 0, totalProfit: 0, salesCount: 0, products: new Map() };
+      map.set(category, catEntry);
     }
+    catEntry.totalRevenue += item.totalPrice;
+    catEntry.totalProfit += item.totalProfit ?? 0;
+    catEntry.salesCount += item.qty;
+
+    let prodEntry = catEntry.products.get(productKey);
+    if (!prodEntry) {
+      prodEntry = { productId: item.productId ?? "", productName, qtySold: 0, totalRevenue: 0, totalProfit: 0 };
+      catEntry.products.set(productKey, prodEntry);
+    }
+    prodEntry.qtySold += item.qty;
+    prodEntry.totalRevenue += item.totalPrice;
+    prodEntry.totalProfit += item.totalProfit ?? 0;
   }
 
-  return c.json(Array.from(map.values()).sort((a, b) => b.totalRevenue - a.totalRevenue));
+  return c.json(
+    Array.from(map.values())
+      .sort((a, b) => b.totalRevenue - a.totalRevenue)
+      .map(cat => ({
+        category: cat.category,
+        totalRevenue: cat.totalRevenue,
+        totalProfit: cat.totalProfit,
+        salesCount: cat.salesCount,
+        products: Array.from(cat.products.values()).sort((a, b) => b.totalRevenue - a.totalRevenue),
+      }))
+  );
 });
 
 reportsRouter.get("/reports/hourly", requireAuth, async (c) => {
