@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, gte, lte, sql } from "drizzle-orm";
+import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -64,7 +64,7 @@ salesRouter.get("/sales", requireAuth, async (c) => {
         totalProfit: saleItems.totalProfit,
       })
       .from(saleItems)
-      .where(sql`${saleItems.saleId} IN (${sql.join(saleIds.map(id => sql`${id}`), sql`, `)})`)
+      .where(inArray(saleItems.saleId, saleIds))
       .all();
 
     const itemsBySaleId: Record<string, any[]> = {};

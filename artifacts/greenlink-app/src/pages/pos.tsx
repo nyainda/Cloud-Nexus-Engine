@@ -263,15 +263,44 @@ function QuickAddSheet({
             {profit !== null && (
               <div className="flex justify-between items-center pt-1 border-t border-border/40">
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <TrendingUp className="h-3 w-3 text-emerald-400" />
-                  Est. Profit {margin && <span className="text-[10px] text-emerald-400">({margin}%)</span>}
+                  <TrendingUp className={cn("h-3 w-3", profit < 0 ? "text-destructive" : Number(margin) < 10 ? "text-orange-400" : "text-emerald-400")} />
+                  Est. Profit
+                  {margin && (
+                    <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",
+                      profit < 0 ? "bg-destructive/15 text-destructive" :
+                      Number(margin) < 10 ? "bg-orange-500/15 text-orange-400" :
+                      "bg-emerald-500/10 text-emerald-400"
+                    )}>
+                      {margin}%
+                    </span>
+                  )}
                 </span>
-                <span className={cn("font-bold font-mono text-sm", profit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                <span className={cn("font-bold font-mono text-sm", profit >= 0 ? (Number(margin) < 10 ? "text-orange-400" : "text-emerald-400") : "text-destructive")}>
                   {formatKES(profit)}
                 </span>
               </div>
             )}
           </div>
+
+          {/* Low / negative margin warning */}
+          {profit !== null && profit < 0 && (
+            <div className="flex items-start gap-2 bg-destructive/10 border border-destructive/30 rounded-xl px-3 py-2.5">
+              <span className="text-destructive text-sm font-bold shrink-0">⚠</span>
+              <div>
+                <p className="text-xs font-bold text-destructive">Selling below cost!</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Price is KES {formatKES(price - product.purchasePrice)} below buying price. You will lose money on this sale.</p>
+              </div>
+            </div>
+          )}
+          {profit !== null && profit >= 0 && Number(margin) < 10 && Number(margin) >= 0 && (
+            <div className="flex items-start gap-2 bg-orange-500/8 border border-orange-500/25 rounded-xl px-3 py-2.5">
+              <span className="text-orange-400 text-sm font-bold shrink-0">↓</span>
+              <div>
+                <p className="text-xs font-bold text-orange-400">Low margin ({margin}%)</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Consider raising the price — typical margin should be above 10%.</p>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="px-5 pb-5 flex gap-2">
@@ -360,12 +389,20 @@ const CartPanel = memo(function CartPanel({
               const cartMin = isMeasured ? 0.1 : 1;
               const itemProfit = isOwner && item.product.purchasePrice
                 ? item.qty * (item.unitPrice - item.product.purchasePrice) : null;
+              const itemMarginPct = item.product.purchasePrice && item.unitPrice
+                ? ((item.unitPrice - item.product.purchasePrice) / item.unitPrice) * 100 : null;
+              const isLoss = itemProfit !== null && itemProfit < 0;
+              const isLowMargin = !isLoss && itemMarginPct !== null && itemMarginPct < 10;
               return (
-                <div key={item.product.id} className="px-4 py-3">
+                <div key={item.product.id} className={cn("px-4 py-3", isLoss ? "bg-destructive/5" : isLowMargin ? "bg-orange-500/5" : "")}>
                   <div className="flex justify-between items-start gap-2 mb-2.5">
                     <div className="flex-1 pr-1 min-w-0">
-                      <span className="text-sm font-semibold text-foreground leading-snug">{item.product.canonicalName}</span>
-                      {isMeasured && <span className="ml-1.5 text-[10px] font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">{item.qty}{item.product.unit || "kg"}</span>}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-semibold text-foreground leading-snug">{item.product.canonicalName}</span>
+                        {isMeasured && <span className="text-[10px] font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">{item.qty}{item.product.unit || "kg"}</span>}
+                        {isOwner && isLoss && <span className="text-[9px] font-bold bg-destructive/20 text-destructive px-1.5 py-0.5 rounded-full">LOSS</span>}
+                        {isOwner && isLowMargin && <span className="text-[9px] font-bold bg-orange-500/15 text-orange-400 px-1.5 py-0.5 rounded-full">LOW MARGIN</span>}
+                      </div>
                     </div>
                     <button onClick={() => removeFromCart(item.product.id)} className="text-muted-foreground/40 hover:text-destructive shrink-0 p-0.5">
                       <X className="h-3.5 w-3.5" />
@@ -447,12 +484,23 @@ const CartPanel = memo(function CartPanel({
               <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total</span>
               <span className="text-2xl font-bold text-primary font-mono">{formatKES(total)}</span>
             </div>
-            {isOwner && totalProfit > 0 && (
+            {isOwner && (
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground/60 flex items-center gap-1">
-                  <TrendingUp className="h-3 w-3 text-emerald-400" />Est. Profit
+                  <TrendingUp className={cn("h-3 w-3", totalProfit < 0 ? "text-destructive" : totalProfit === 0 ? "text-muted-foreground" : "text-emerald-400")} />
+                  Est. Profit
                 </span>
-                <span className="font-mono text-emerald-400 font-semibold">{formatKES(totalProfit)}</span>
+                <span className={cn("font-mono font-semibold", totalProfit < 0 ? "text-destructive" : totalProfit === 0 ? "text-muted-foreground" : "text-emerald-400")}>
+                  {totalProfit < 0 ? "-" : "+"}{formatKES(Math.abs(totalProfit))}
+                </span>
+              </div>
+            )}
+            {isOwner && cart.some(i => i.product.purchasePrice && i.unitPrice < i.product.purchasePrice) && (
+              <div className="flex items-center gap-2 bg-destructive/10 border border-destructive/25 rounded-lg px-2.5 py-2 mt-1">
+                <span className="text-destructive font-bold text-xs shrink-0">⚠</span>
+                <p className="text-[11px] text-destructive font-semibold">
+                  {cart.filter(i => i.product.purchasePrice && i.unitPrice < i.product.purchasePrice).length} item{cart.filter(i => i.product.purchasePrice && i.unitPrice < i.product.purchasePrice).length > 1 ? "s" : ""} priced below cost — selling at a loss
+                </p>
               </div>
             )}
           </div>
