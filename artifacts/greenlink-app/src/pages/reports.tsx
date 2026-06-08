@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
-  AreaChart, Area, BarChart, Bar,
+  ComposedChart, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from "recharts";
@@ -295,7 +295,7 @@ function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, change
 export default function Reports() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
 
-  const [quickRange, setQuickRange] = useState<QuickRange>("today");
+  const [quickRange, setQuickRange] = useState<QuickRange>("month");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [useCustom, setUseCustom] = useState(false);
@@ -589,67 +589,107 @@ export default function Reports() {
           </Card>
         </div>
 
-        {/* Revenue + Profit Chart */}
+        {/* Revenue + Profit + Transaction Count Chart */}
         <Card className="shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-bold">Revenue & Profit Trend</CardTitle>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-primary inline-block" />Revenue</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />Profit</span>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <CardTitle className="text-sm font-bold">Monthly Sales Profile</CardTitle>
+              <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary inline-block" />Revenue</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Profit</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-blue-400/60 inline-block" />Transactions</span>
               </div>
             </div>
           </CardHeader>
           <CardContent className="px-2 pb-4">
             {rangeLoading ? (
-              <div className="h-52 flex items-center justify-center">
-                <Skeleton className="h-40 w-full rounded-xl" />
+              <div className="h-56 flex items-center justify-center">
+                <Skeleton className="h-44 w-full rounded-xl" />
               </div>
-            ) : !reportRange?.dailyBreakdown || reportRange.dailyBreakdown.length <= 1 ? (
-              <div className="h-52 flex items-center justify-center text-muted-foreground">
+            ) : !reportRange?.dailyBreakdown || reportRange.dailyBreakdown.length === 0 ? (
+              <div className="h-56 flex items-center justify-center text-muted-foreground">
                 <div className="text-center">
                   <BarChart2 className="h-8 w-8 mx-auto opacity-20 mb-2" />
-                  <p className="text-xs">Not enough data to draw a trend</p>
-                  <p className="text-xs opacity-60">Select a wider date range</p>
+                  <p className="text-xs">No sales data for this period</p>
+                  <p className="text-xs opacity-60">Try a wider date range</p>
                 </div>
               </div>
             ) : (
-              <div className="h-52">
+              <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={reportRange.dailyBreakdown} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                  <ComposedChart data={reportRange.dailyBreakdown} margin={{ top: 5, right: 8, left: -20, bottom: 0 }}>
                     <defs>
                       <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#84cc16" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#84cc16" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#C8FF00" stopOpacity={0.18} />
+                        <stop offset="95%" stopColor="#C8FF00" stopOpacity={0} />
                       </linearGradient>
                       <linearGradient id="profGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.2} />
+                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.18} />
                         <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                     <XAxis
                       dataKey="date"
-                      tickFormatter={v => { try { return format(new Date(v + "T00:00:00"), "MMM d"); } catch { return v; } }}
-                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                      tickFormatter={v => { try { return format(new Date(v + "T00:00:00"), "d"); } catch { return v; } }}
+                      tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                      axisLine={false} tickLine={false}
+                      interval={reportRange.dailyBreakdown.length > 20 ? 2 : 0}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                      tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
                       axisLine={false} tickLine={false}
                     />
                     <YAxis
-                      tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
-                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                      yAxisId="right"
+                      orientation="right"
+                      tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
                       axisLine={false} tickLine={false}
+                      allowDecimals={false}
+                      width={22}
                     />
                     <Tooltip
-                      formatter={(v: number, name: string) => [formatKES(v), name === "revenue" ? "Revenue" : "Profit"]}
+                      formatter={(v: number, name: string) =>
+                        name === "salesCount" ? [v, "Transactions"] :
+                        name === "revenue" ? [formatKES(v), "Revenue"] :
+                        [formatKES(v), "Profit"]
+                      }
                       labelFormatter={l => { try { return format(new Date(l + "T00:00:00"), "EEEE, MMM d yyyy"); } catch { return l; } }}
-                      contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "12px", color: "hsl(var(--card-foreground))" }}
+                      contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
                     />
-                    <Area type="monotone" dataKey="revenue" stroke="#84cc16" strokeWidth={2} fill="url(#revGrad)" activeDot={{ r: 4, fill: "#84cc16", strokeWidth: 0 }} isAnimationActive={false} />
-                    <Area type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2} fill="url(#profGrad)" activeDot={{ r: 4, fill: "#22c55e", strokeWidth: 0 }} isAnimationActive={false} />
-                  </AreaChart>
+                    <Bar yAxisId="right" dataKey="salesCount" fill="hsl(var(--muted))" radius={[2, 2, 0, 0]} barSize={6} opacity={0.7} />
+                    <Area yAxisId="left" type="monotone" dataKey="revenue" stroke="#C8FF00" strokeWidth={2} fill="url(#revGrad)" activeDot={{ r: 4, fill: "#C8FF00", strokeWidth: 0 }} isAnimationActive={false} />
+                    <Area yAxisId="left" type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={1.5} fill="url(#profGrad)" activeDot={{ r: 3, fill: "#22c55e", strokeWidth: 0 }} isAnimationActive={false} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
             )}
+            {/* Best day callout */}
+            {reportRange?.dailyBreakdown && reportRange.dailyBreakdown.length > 0 && (() => {
+              const best = (reportRange.dailyBreakdown as any[]).reduce((b, d) => d.revenue > b.revenue ? d : b);
+              const total = (reportRange.dailyBreakdown as any[]).reduce((s, d) => s + d.salesCount, 0);
+              const activeDays = (reportRange.dailyBreakdown as any[]).filter(d => d.salesCount > 0).length;
+              return (
+                <div className="flex items-center gap-3 px-3 mt-3 flex-wrap">
+                  <div className="bg-primary/10 rounded-lg px-2.5 py-1.5">
+                    <p className="text-[9px] text-primary/70 font-bold uppercase tracking-wide">Best Day</p>
+                    <p className="text-xs font-bold text-primary">{(() => { try { return format(new Date(best.date + "T00:00:00"), "MMM d"); } catch { return best.date; } })()}</p>
+                  </div>
+                  <div className="bg-muted/50 rounded-lg px-2.5 py-1.5">
+                    <p className="text-[9px] text-muted-foreground font-bold uppercase tracking-wide">Total Sales</p>
+                    <p className="text-xs font-bold">{total} transactions</p>
+                  </div>
+                  {activeDays > 0 && (
+                    <div className="bg-muted/50 rounded-lg px-2.5 py-1.5">
+                      <p className="text-[9px] text-muted-foreground font-bold uppercase tracking-wide">Avg / Day</p>
+                      <p className="text-xs font-bold font-mono">{formatKES(Math.round(revenue / activeDays))}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
 
@@ -812,22 +852,35 @@ export default function Reports() {
                   const color = CATEGORY_COLORS[i % CATEGORY_COLORS.length];
                   const totalRev = (categoryData as any[]).reduce((s, c) => s + c.totalRevenue, 0);
                   const share = totalRev > 0 ? (cat.totalRevenue / totalRev * 100) : 0;
+                  const marginPct = cat.totalRevenue > 0 ? (cat.totalProfit / cat.totalRevenue * 100) : 0;
                   return (
-                    <div key={cat.category} className="flex items-center gap-3 px-4 py-3">
-                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-1">
-                          <p className="text-sm font-semibold truncate">{cat.category}</p>
-                          <span className="text-xs text-muted-foreground ml-2 shrink-0">{share.toFixed(0)}%</span>
+                    <div key={cat.category} className="px-4 py-3">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-2.5 h-2.5 rounded-full shrink-0 mt-0.5" style={{ background: color }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-semibold truncate">{cat.category}</p>
+                            <span className="text-xs font-bold text-muted-foreground ml-2 shrink-0">{share.toFixed(0)}%</span>
+                          </div>
                         </div>
-                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                        <div className="text-right shrink-0">
+                          <p className="font-bold text-sm font-mono">{formatKES(cat.totalRevenue)}</p>
                         </div>
                       </div>
-                      <div className="text-right shrink-0 ml-2">
-                        <p className="font-bold text-sm font-mono">{formatKES(cat.totalRevenue)}</p>
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden mb-2 ml-5">
+                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                      </div>
+                      <div className="flex items-center gap-2 ml-5">
+                        <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
+                          {cat.salesCount} item{cat.salesCount !== 1 ? "s" : ""} sold
+                        </span>
                         {cat.totalProfit > 0 && (
-                          <p className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">+{formatKES(cat.totalProfit)}</p>
+                          <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 rounded px-1.5 py-0.5">
+                            +{formatKES(cat.totalProfit)} profit
+                          </span>
+                        )}
+                        {marginPct > 0 && (
+                          <span className="text-[10px] text-muted-foreground">{marginPct.toFixed(0)}% margin</span>
                         )}
                       </div>
                     </div>
