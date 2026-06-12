@@ -208,7 +208,8 @@ function AuthGuard({ children }: { children: ReactNode }) {
   //    if the error object shape is unexpected, logging the user out.
   // Solution: disable the query while offline and re-enable when back online.
   const { data: session, isLoading, error } = useGetSession({
-    query: { enabled: !!token && isOnline, retry: false },
+    // queryKey is defaulted by the generated hook at runtime; cast silences the RQ v5 strict type
+    query: { enabled: !!token && isOnline, retry: false } as any,
   });
 
   useEffect(() => {

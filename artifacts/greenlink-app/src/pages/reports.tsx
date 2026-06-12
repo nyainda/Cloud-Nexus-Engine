@@ -589,9 +589,8 @@ export default function Reports() {
   const { data: voidedSales } = useQuery({
     queryKey: ["voided-sales", shopId, dateRange.from],
     queryFn: async () => {
-      const res = await customFetch(`/api/sales?shopId=${encodeURIComponent(shopId)}&date=${dateRange.from}&includeVoided=true&limit=100`);
-      if (!res.ok) return [];
-      const all = await res.json() as any[];
+      // customFetch returns parsed data directly and throws on non-2xx
+      const all = await customFetch(`/api/sales?shopId=${encodeURIComponent(shopId)}&date=${dateRange.from}&includeVoided=true&limit=100`) as any[];
       return all.filter((s: any) => s.isDeleted);
     },
     enabled: !!shopId && isToday,

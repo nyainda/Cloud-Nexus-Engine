@@ -231,7 +231,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const { data: notifications } = useListNotifications(
     { shopId },
-    { query: { enabled: !!shopId } }
+    { query: { enabled: !!shopId } as any }
   );
   const unreadCount = (notifications || []).filter((n: any) => !n.isRead).length;
 

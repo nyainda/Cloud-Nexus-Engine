@@ -201,17 +201,18 @@ export default function Alerts() {
   };
 
   const { data: notifications, isLoading: notifsLoading, refetch } = useListNotifications(
-    { shopId }, { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } }
+    { shopId }, { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } as any }
   );
 
   const { data: productsData, isLoading: productsLoading } = useListProducts(
-    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 60_000, refetchInterval: 20_000, refetchIntervalInBackground: true } }
+    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 60_000, refetchInterval: 20_000, refetchIntervalInBackground: true } as any }
   );
 
-  const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } });
+  const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any });
 
+  // limit is not in the OpenAPI spec for GET /debts — omit it; backend returns all debts for the shop
   const { data: debtsData } = useListDebts(
-    { shopId, limit: 500 }, { query: { enabled: !!shopId && isOwner, refetchInterval: 20_000, refetchIntervalInBackground: true } }
+    { shopId }, { query: { enabled: !!shopId && isOwner, refetchInterval: 20_000, refetchIntervalInBackground: true } as any }
   );
 
   const markRead = useMarkNotificationRead();
@@ -266,9 +267,10 @@ export default function Alerts() {
   const today = new Date().toISOString().split("T")[0];
   const day30Str = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
   const day90Str = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-  const expiredProducts = allProducts.filter(p => p.expiryDate && p.expiryDate < today);
-  const expiringSoonProducts = allProducts.filter(p => p.expiryDate && p.expiryDate >= today && p.expiryDate <= day30Str);
-  const expiryWarningProducts = allProducts.filter(p => p.expiryDate && p.expiryDate > day30Str && p.expiryDate <= day90Str);
+  // expiryDate is not in the generated Product type (field added after codegen) — cast to any
+  const expiredProducts = allProducts.filter(p => (p as any).expiryDate && (p as any).expiryDate < today);
+  const expiringSoonProducts = allProducts.filter(p => (p as any).expiryDate && (p as any).expiryDate >= today && (p as any).expiryDate <= day30Str);
+  const expiryWarningProducts = allProducts.filter(p => (p as any).expiryDate && (p as any).expiryDate > day30Str && (p as any).expiryDate <= day90Str);
   const expiryCount = expiredProducts.length + expiringSoonProducts.length + expiryWarningProducts.length;
 
   const ownerPhones = (shop?.ownerWhatsapp || "").split(",").map((p: string) => p.trim()).filter(Boolean);
@@ -653,7 +655,7 @@ export default function Alerts() {
                       </p>
                       <div className="space-y-2">
                         {expiringSoonProducts
-                          .sort((a, b) => (a.expiryDate || "").localeCompare(b.expiryDate || ""))
+                          .sort((a, b) => ((a as any).expiryDate || "").localeCompare((b as any).expiryDate || ""))
                           .slice(0, showAllExpiringSoon ? 1000 : PREVIEW).map(p => (
                             <ExpiryCard key={p.id} product={p} state="soon" />
                           ))}
@@ -669,7 +671,7 @@ export default function Alerts() {
                       </p>
                       <div className="space-y-2">
                         {expiryWarningProducts
-                          .sort((a, b) => (a.expiryDate || "").localeCompare(b.expiryDate || ""))
+                          .sort((a, b) => ((a as any).expiryDate || "").localeCompare((b as any).expiryDate || ""))
                           .slice(0, showAllExpiryWarning ? 1000 : PREVIEW).map(p => (
                             <ExpiryCard key={p.id} product={p} state="warning" />
                           ))}

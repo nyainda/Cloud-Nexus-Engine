@@ -95,6 +95,12 @@ function makeD1(sqliteDb: Database.Database): D1Database {
       }
       return { count, duration: 0 } as D1ExecResult;
     },
+    // withSession is a newer D1 API (Sessions API for read replication).
+    // Not used in this app — stub satisfies the D1Database type contract.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    withSession(_token?: any): any {
+      return this;
+    },
   };
   return d1;
 }

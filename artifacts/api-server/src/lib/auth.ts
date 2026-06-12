@@ -6,7 +6,8 @@ function toHex(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let s = "";
   for (let i = 0; i < bytes.length; i++) {
-    s += HEX[bytes[i] >> 4] + HEX[bytes[i] & 0xf];
+    const b = bytes[i]!;
+    s += HEX[b >> 4]! + HEX[b & 0xf]!;
   }
   return s;
 }

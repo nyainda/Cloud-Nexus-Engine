@@ -91,7 +91,7 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
     for (const item of allItems) {
       if (!item.saleId) continue;
       if (!itemsByHuman[item.saleId]) itemsByHuman[item.saleId] = [];
-      itemsByHuman[item.saleId].push({
+      itemsByHuman[item.saleId]!.push({
         productName: item.productName,
         qty: item.qty,
         unitPrice: item.unitPrice,

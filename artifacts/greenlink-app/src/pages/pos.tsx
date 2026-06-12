@@ -1167,7 +1167,7 @@ export default function POS() {
                   {(debouncedSearch || (stockFilter !== "all" && stockFilter !== "in_stock") ? filteredProducts : filteredProducts.slice(0, 200)).map(product => {
                     const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
                     const isOut = product.stockQty === 0;
-                    const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");
+                    const weighed = (product as any).productType === "measured" || isWeighedUnit(product.unit || "");
                     const inCart = cart.find(i => i.product.id === product.id);
 
                     return (

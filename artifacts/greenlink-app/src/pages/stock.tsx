@@ -1733,7 +1733,7 @@ export default function Stock() {
     else if (view === "low") list = list.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty);
     else if (view === "expiring") {
       const day90Str = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-      list = list.filter(p => p.expiryDate && p.expiryDate <= day90Str);
+      list = list.filter(p => (p as any).expiryDate && (p as any).expiryDate <= day90Str);
     } else if (view === "noprice") list = list.filter(p => !p.sellingPrice || !p.purchasePrice);
     if (categoryFilter !== "all") list = list.filter(p => p.category === categoryFilter);
 
@@ -1757,7 +1757,7 @@ export default function Stock() {
       all: allProducts.length,
       low: allProducts.filter(p => p.stockQty > 0 && p.stockQty <= p.alertQty).length,
       out: allProducts.filter(p => p.stockQty === 0).length,
-      expiring: allProducts.filter(p => p.expiryDate && p.expiryDate <= day90Str).length,
+      expiring: allProducts.filter(p => (p as any).expiryDate && (p as any).expiryDate <= day90Str).length,
       noprice: allProducts.filter(p => !p.sellingPrice || !p.purchasePrice).length,
       totalItems: allProducts.reduce((s, p) => s + p.stockQty, 0),
     };

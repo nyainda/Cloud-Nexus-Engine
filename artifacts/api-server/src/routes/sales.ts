@@ -71,7 +71,7 @@ salesRouter.get("/sales", requireAuth, async (c) => {
     for (const item of allItems) {
       if (!item.saleId) continue;
       if (!itemsBySaleId[item.saleId]) itemsBySaleId[item.saleId] = [];
-      itemsBySaleId[item.saleId].push(item);
+      itemsBySaleId[item.saleId]!.push(item);
     }
     result = rows.map(r => ({ ...r, items: itemsBySaleId[r.id] ?? [] }));
   }
@@ -334,7 +334,7 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
     entityType: "sale",
     entityId: saleId,
     performedBy: body.performedBy ?? "unknown",
-    details: JSON.stringify({ reason: body.reason ?? null, totalAmount: sale.totalAmount, saleType: sale.saleType }),
+    newValueJson: JSON.stringify({ reason: body.reason ?? null, totalAmount: sale.totalAmount, saleType: sale.saleType }),
     createdAt: now,
   });
 

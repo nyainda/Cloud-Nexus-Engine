@@ -93,11 +93,14 @@ async function encryptMessage(
     { name: "ECDH", namedCurve: "P-256" },
     true,
     ["deriveBits"]
-  );
-  const serverPub = new Uint8Array(await crypto.subtle.exportKey("raw", serverKP.publicKey));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ) as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const serverPub = new Uint8Array(await (crypto.subtle as any).exportKey("raw", serverKP.publicKey));
 
   const sharedBits = await crypto.subtle.deriveBits(
-    { name: "ECDH", public: recipientKey },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    { name: "ECDH", public: recipientKey } as any,
     serverKP.privateKey,
     256
   );
