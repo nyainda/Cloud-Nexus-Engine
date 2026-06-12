@@ -204,9 +204,10 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
 
     return {
       rawText,
-      // Lower display threshold from 0.62 → 0.50: the catalog-aware AI and
-      // improved matching push genuine matches above 0.50 reliably, so showing
-      // them earlier gives the user more to work with in the review UI.
+      // matchText = the AI-extracted clean product name used for fuzzy matching.
+      // Returned so the frontend can save it as an alias when the user confirms a suggestion.
+      // Saving matchText (not rawText) avoids polluting aliases with qty/price suffixes.
+      matchText: matchText !== rawText ? matchText : null,
       productId: confidence >= 0.50 ? (bestMatch?.productId ?? null) : null,
       productName: confidence >= 0.50 ? (bestMatch?.productName ?? null) : null,
       inferredQty,
