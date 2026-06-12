@@ -25,7 +25,7 @@ type Engine = "ai" | "free";
 // Reduces a typical 3 MB phone photo to ~150-300 KB before upload/storage.
 // Always outputs JPEG regardless of input format.
 
-async function compressImage(dataUrl: string, maxPx = 2048, quality = 0.88): Promise<string> {
+async function compressImage(dataUrl: string, maxPx = 2560, quality = 0.92): Promise<string> {
   return new Promise((resolve) => {
     const img = new window.Image();
     img.onload = () => {

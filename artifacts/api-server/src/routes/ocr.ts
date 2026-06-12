@@ -127,6 +127,23 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   const geminiKey = shopRow?.geminiApiKey || c.env.AI_INTEGRATIONS_GEMINI_API_KEY || c.env.GEMINI_API_KEY || null;
   const aiBaseUrl = c.env.AI_INTEGRATIONS_GEMINI_BASE_URL || undefined;
 
+  // ── Build catalog hint ────────────────────────────────────────────────────
+  // Sends a uniform sample of the shop's product names to the AI so it can
+  // match invoice/notebook lines directly to known products rather than
+  // inventing clean names that don't match our DB.
+  // Uniform sampling (every Nth) gives a spread across the full catalog.
+  const sortedProducts = [...allProducts].sort((a, b) =>
+    a.canonicalName.localeCompare(b.canonicalName)
+  );
+  const CATALOG_SAMPLE = 500;
+  const step = Math.max(1, Math.floor(sortedProducts.length / CATALOG_SAMPLE));
+  const catalogSample = sortedProducts
+    .filter((_, i) => i % step === 0)
+    .slice(0, CATALOG_SAMPLE);
+  const catalogHint = catalogSample.length > 0
+    ? `(${sortedProducts.length} total, showing ${catalogSample.length}): ${catalogSample.map((p) => p.canonicalName).join(" | ")}`
+    : undefined;
+
   let lines: GeminiItem[] = [];
   let invoiceMeta: InvoiceMeta | null = null;
   let geminiError: string | null = null;
@@ -134,7 +151,7 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
 
   if (groqKey) {
     try {
-      const result = await callGroqOCR(groqKey, body.imageBase64, mimeType, body.scanType, body.tesseractText);
+      const result = await callGroqOCR(groqKey, body.imageBase64, mimeType, body.scanType, body.tesseractText, catalogHint);
       lines = result.items;
       invoiceMeta = result.meta;
       aiProvider = "groq";
@@ -143,7 +160,7 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
       console.error("[ocr] Groq error:", groqError);
       if (geminiKey) {
         try {
-          const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText, aiBaseUrl);
+          const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText, aiBaseUrl, catalogHint);
           lines = result.items;
           invoiceMeta = result.meta;
           aiProvider = "gemini";
@@ -157,7 +174,7 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
     }
   } else if (geminiKey) {
     try {
-      const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText, aiBaseUrl);
+      const result = await callGeminiOCR(geminiKey, body.imageBase64, mimeType, body.scanType, body.tesseractText, aiBaseUrl, catalogHint);
       lines = result.items;
       invoiceMeta = result.meta;
       aiProvider = "gemini";
@@ -169,7 +186,7 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
   } else {
     geminiError = "No AI key configured. Add a Groq or Gemini key in Settings → AI Integration.";
   }
-  console.log(`[ocr] provider=${aiProvider} lines=${lines.length}`);
+  console.log(`[ocr] provider=${aiProvider} lines=${lines.length} catalog=${catalogSample.length}`);
 
   // Derive missing VAT fields from what the AI returned
   invoiceMeta = deriveVatFields(invoiceMeta);
@@ -187,13 +204,19 @@ ocrRouter.post("/ocr/scan", requireAuth, async (c) => {
 
     return {
       rawText,
-      productId: confidence >= 0.62 ? (bestMatch?.productId ?? null) : null,
-      productName: confidence >= 0.62 ? (bestMatch?.productName ?? null) : null,
+      // Lower display threshold from 0.62 → 0.50: the catalog-aware AI and
+      // improved matching push genuine matches above 0.50 reliably, so showing
+      // them earlier gives the user more to work with in the review UI.
+      productId: confidence >= 0.50 ? (bestMatch?.productId ?? null) : null,
+      productName: confidence >= 0.50 ? (bestMatch?.productName ?? null) : null,
       inferredQty,
       inferredUnitPrice,
       inferredTotal,
       confidence,
-      status: (confidence >= 0.80 ? "confirmed" : confidence >= 0.42 ? "review" : "unresolved") as "confirmed" | "review" | "unresolved",
+      // Confirmed: ≥0.80 (high confidence — catalog-aware AI hit or near-exact match)
+      // Review:    ≥0.40 (user should verify)
+      // Unresolved: <0.40 (no usable match found)
+      status: (confidence >= 0.80 ? "confirmed" : confidence >= 0.40 ? "review" : "unresolved") as "confirmed" | "review" | "unresolved",
       suggestions,
     };
   });

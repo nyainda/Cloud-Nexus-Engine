@@ -5,6 +5,28 @@
 import { normalizeProductName } from "./db";
 import type { InvoiceMeta } from "./ocr-ai";
 
+// ── Agrochemical-aware normalisation ──────────────────────────────────────
+// Extends the base normalizer with rules specific to agrochemical product names:
+//   - Removes spaces between digits and letter-only formulation codes
+//     so "40 EC" and "40EC" and "40%EC" all collapse to "40ec"
+//   - Removes spaces between digits and "%"
+//     so "40 %" and "40%" both become "40"
+//   - This makes "Dimethoate 40% EC" and "Dimethoate 40%EC" match perfectly.
+export function agroNorm(raw: string): string {
+  let s = normalizeProductName(raw); // lowercase, strip non-alphanumeric, collapse spaces
+  // Compact: "40 ec" → "40ec",  "480 sl" → "480sl",  "25 wp" → "25wp"
+  // (digit followed by space followed by 2–3 letter code)
+  s = s.replace(/(\d)\s+([a-z]{2,3})(?=\s|$)/g, "$1$2");
+  // Also compact in reverse: "ec 40" stays as-is (rare, but keep)
+  return s;
+}
+
+// Space-stripped form for comparison (handles any spacing variation)
+// "dimethoate 40 ec 1l" and "dimethoate40ec1l" will both collapse to the same
+function compact(s: string): string {
+  return s.replace(/\s+/g, "");
+}
+
 // Bigram/trigram similarity (Dice coefficient)
 export function ngramSim(a: string, b: string, n = 3): number {
   if (a === b) return 1;
@@ -27,7 +49,9 @@ export function ngramSim(a: string, b: string, n = 3): number {
   return total === 0 ? 0 : (2 * inter) / total;
 }
 
-// Weighted word overlap — longer words carry more weight (more specific)
+// Weighted word overlap — longer words carry more weight (more specific).
+// Words that contain digits (e.g. "40ec", "480sl") get extra weight since
+// they are concentration codes that uniquely identify a product variant.
 export function wordOverlapScore(a: string, b: string): number {
   const aW = a.split(" ").filter((w) => w.length > 1);
   const bW = b.split(" ").filter((w) => w.length > 1);
@@ -36,69 +60,130 @@ export function wordOverlapScore(a: string, b: string): number {
   let match = 0;
   let total = 0;
   for (const w of aW) {
-    const wt = Math.log2(w.length + 2);
+    const hasDigit = /\d/.test(w);
+    const wt = Math.log2(w.length + 2) * (hasDigit ? 1.6 : 1.0);
     total += wt;
-    if (bSet.has(w)) match += wt;
-    else {
+    if (bSet.has(w)) {
+      match += wt;
+    } else {
+      // Prefix / suffix partial match
       for (const bw of bSet) {
         if (w.startsWith(bw) || bw.startsWith(w)) { match += wt * 0.6; break; }
+        if (w.endsWith(bw) || bw.endsWith(w)) { match += wt * 0.5; break; }
       }
     }
   }
   return total > 0 ? match / total : 0;
 }
 
+// ── Core length-ratio helper ───────────────────────────────────────────────
+function lenRatio(a: string, b: string): number {
+  return Math.min(a.length, b.length) / Math.max(a.length, b.length);
+}
+
+// ── Main matching entry point ──────────────────────────────────────────────
 export function findProductMatches(
   rawText: string,
   allProducts: Array<{ id: string; canonicalName: string; normalizedName: string }>,
   aliases: Array<{ productId: string; alias: string }>,
 ) {
   const norm = normalizeProductName(rawText);
+  const anorm = agroNorm(rawText);         // agrochemical-normalised form
+  const normC = compact(norm);              // all-spaces-stripped form
+  const anormC = compact(anorm);
+
   if (norm.length < 2) return [];
 
   const scored = new Map<string, { productId: string; productName: string; confidence: number }>();
 
   for (const p of allProducts) {
-    const pn = p.normalizedName;
+    const pn = p.normalizedName;              // stored normalised name
+    const pan = agroNorm(p.canonicalName);    // freshly agronomised canonical name
+    const pnC = compact(pn);
+    const panC = compact(pan);
+
     let score = 0;
 
-    if (pn === norm) {
+    // ── Tier 1: exact matches (including space-insensitive) ────────────────
+    if (pn === norm || pan === anorm) {
       score = 1.0;
-    } else if (pn.includes(norm) || norm.includes(pn)) {
-      const lenRatio = Math.min(norm.length, pn.length) / Math.max(norm.length, pn.length);
-      score = 0.72 + 0.18 * lenRatio;
-    } else {
-      const wo = wordOverlapScore(norm, pn);
+    } else if (pnC === normC || panC === anormC) {
+      // Spacing-only difference (e.g. "40 EC" vs "40EC")
+      score = 0.99;
+    }
+    // ── Tier 2: substring containment ─────────────────────────────────────
+    else if (pn.includes(norm) || norm.includes(pn)) {
+      score = 0.78 + 0.16 * lenRatio(norm, pn);
+    } else if (pan.includes(anorm) || anorm.includes(pan)) {
+      score = 0.76 + 0.14 * lenRatio(anorm, pan);
+    } else if (pnC.includes(normC) || normC.includes(pnC)) {
+      // Space-compact containment (handles "40ec" in "dimethoate40ec1l")
+      score = 0.74 + 0.12 * lenRatio(normC, pnC);
+    }
+    // ── Tier 3: prefix match (query is a prefix of product name) ──────────
+    // e.g. "Dimethoate 40" matches "Dimethoate 40% EC 1L"
+    else if (pn.startsWith(norm) || pan.startsWith(anorm)) {
+      score = 0.82 + 0.1 * lenRatio(norm, pn);
+    } else if (norm.startsWith(pn) || anorm.startsWith(pan)) {
+      score = 0.80 + 0.1 * lenRatio(norm, pn);
+    } else if (pnC.startsWith(normC) || panC.startsWith(anormC)) {
+      score = 0.78;
+    }
+    // ── Tier 4: fuzzy (word overlap + ngram) ──────────────────────────────
+    else {
+      const wo = wordOverlapScore(anorm, pan);
+      const woBase = wordOverlapScore(norm, pn);
       const tri = ngramSim(norm, pn, 3);
       const bi = ngramSim(norm, pn, 2);
-      score = Math.max(wo * 0.88, tri * 0.80, bi * 0.72, (wo + tri) / 2 * 0.92);
+      // Prefer the agrochemical-normalised word overlap — it handles "40ec" better
+      score = Math.max(
+        Math.max(wo, woBase) * 0.90,
+        tri * 0.82,
+        bi * 0.74,
+        (Math.max(wo, woBase) + tri) / 2 * 0.94,
+      );
     }
 
-    if (score >= 0.27) {
+    if (score >= 0.25) {
       const prev = scored.get(p.id);
       if (!prev || score > prev.confidence) {
-        scored.set(p.id, { productId: p.id, productName: p.canonicalName, confidence: Math.min(score, 0.99) });
+        scored.set(p.id, {
+          productId: p.id,
+          productName: p.canonicalName,
+          confidence: Math.min(score, 0.99),
+        });
       }
     }
   }
 
-  // Alias matching
+  // ── Alias matching ─────────────────────────────────────────────────────
   for (const alias of aliases) {
     const an = normalizeProductName(alias.alias);
+    const aan = agroNorm(alias.alias);
+    const anC = compact(an);
+    const aanC = compact(aan);
+
     let aliasScore = 0;
-    if (an === norm) aliasScore = 0.95;
-    else if (an.includes(norm) || norm.includes(an)) aliasScore = 0.88;
+    if (an === norm || aan === anorm) aliasScore = 0.97;
+    else if (anC === normC || aanC === anormC) aliasScore = 0.96;
+    else if (an.includes(norm) || norm.includes(an)) aliasScore = 0.88 + 0.06 * lenRatio(norm, an);
+    else if (aan.includes(anorm) || anorm.includes(aan)) aliasScore = 0.86 + 0.05 * lenRatio(anorm, aan);
     else {
-      const wo = wordOverlapScore(norm, an);
+      const wo = wordOverlapScore(anorm, aan);
       const tri = ngramSim(norm, an, 3);
-      aliasScore = Math.max(wo, tri) * 0.88;
+      aliasScore = Math.max(wo, tri) * 0.90;
     }
-    if (aliasScore >= 0.5) {
+
+    if (aliasScore >= 0.45) {
       const product = allProducts.find((p) => p.id === alias.productId);
       if (product) {
         const prev = scored.get(product.id);
         if (!prev || aliasScore > prev.confidence) {
-          scored.set(product.id, { productId: product.id, productName: product.canonicalName, confidence: aliasScore });
+          scored.set(product.id, {
+            productId: product.id,
+            productName: product.canonicalName,
+            confidence: Math.min(aliasScore, 0.99),
+          });
         }
       }
     }
