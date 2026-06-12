@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -332,7 +332,8 @@ ocrRouter.post("/ocr/sessions/:sessionId/apply", requireAuth, async (c) => {
 
       const beforeQty = product.stockQty;
       const afterQty = beforeQty + line.qty;
-      const updates: Record<string, unknown> = { stockQty: afterQty, updatedAt: now };
+      // Atomic increment — prevents overwrite race on concurrent restocks
+      const updates: Record<string, unknown> = { stockQty: sql`stock_qty + ${line.qty}`, updatedAt: now };
 
       const newPrice = line.unitPrice && line.unitPrice > 0 ? line.unitPrice : null;
       const oldPrice = product.purchasePrice ?? null;

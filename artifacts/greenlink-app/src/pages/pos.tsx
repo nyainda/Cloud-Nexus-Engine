@@ -558,11 +558,8 @@ function RecentSalesDrawer({ shopId, userName, onClose }: { shopId: string; user
 
   const { data: salesData, isLoading, refetch } = useQuery({
     queryKey: ["recent-sales", shopId, today],
-    queryFn: async () => {
-      const res = await customFetch(`/api/sales?shopId=${encodeURIComponent(shopId)}&date=${today}&includeVoided=true&limit=50`);
-      if (!res.ok) throw new Error("Failed to load sales");
-      return res.json() as Promise<any[]>;
-    },
+    // customFetch already parses the body and throws ApiError on non-2xx responses
+    queryFn: () => customFetch<any[]>(`/api/sales?shopId=${encodeURIComponent(shopId)}&date=${today}&includeVoided=true&limit=50`),
     enabled: !!shopId,
     staleTime: 0,
   });
@@ -570,9 +567,7 @@ function RecentSalesDrawer({ shopId, userName, onClose }: { shopId: string; user
   const { data: expandedItems } = useQuery({
     queryKey: ["sale-detail", expandedId],
     queryFn: async () => {
-      const res = await customFetch(`/api/sales/${expandedId}`);
-      if (!res.ok) throw new Error("Failed to load sale detail");
-      const data = await res.json() as any;
+      const data = await customFetch<any>(`/api/sales/${expandedId}`);
       return (data.items ?? []) as any[];
     },
     enabled: !!expandedId,
@@ -581,15 +576,12 @@ function RecentSalesDrawer({ shopId, userName, onClose }: { shopId: string; user
   const handleVoid = async (saleId: string) => {
     setVoidingId(saleId);
     try {
-      const res = await customFetch(`/api/sales/${saleId}`, {
+      // customFetch throws ApiError on non-2xx — no manual .ok/.json() check needed
+      await customFetch(`/api/sales/${saleId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason: voidReason || "Voided at POS", performedBy: userName }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as any;
-        throw new Error(err?.error || "Failed to void sale");
-      }
       setLocalVoided(prev => new Set([...prev, saleId]));
       setConfirmId(null);
       setVoidReason("");
@@ -823,6 +815,8 @@ export default function POS() {
   const [debtCustomerName, setDebtCustomerName] = useState("");
   const [debtCustomerPhone, setDebtCustomerPhone] = useState("");
   const createSale = useCreateSale();
+  // Guard against double-tapping the checkout button — cleared in onSettled / onError / offline path
+  const submittingRef = useRef(false);
 
   const [quickAddProduct, setQuickAddProduct] = useState<any | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -890,8 +884,10 @@ export default function POS() {
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
   const handleCheckout = useCallback(async (saleType: "cash" | "debt") => {
-    if (cart.length === 0) { toast.error("Cart is empty"); return; }
-    if (saleType === "debt" && !debtCustomerName.trim()) { toast.error("Enter customer name for debt sale"); return; }
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    if (cart.length === 0) { submittingRef.current = false; toast.error("Cart is empty"); return; }
+    if (saleType === "debt" && !debtCustomerName.trim()) { submittingRef.current = false; toast.error("Enter customer name for debt sale"); return; }
     const cartSnapshot = [...cart];
     const discountSnapshot = discount;
     const debtName = debtCustomerName;
@@ -940,6 +936,7 @@ export default function POS() {
     if (!navigator.onLine) {
       await enqueueMutation("sale", shopId, salePayload);
       logInventory({ stage: "queued_offline", mutationId, source: "pos", timestamp: ts(), extra: { saleType } });
+      submittingRef.current = false;
       return;
     }
 
@@ -947,6 +944,7 @@ export default function POS() {
       { data: salePayload },
       {
         onError: (err: any) => {
+          submittingRef.current = false;
           // Rollback all product cache entries to pre-sale state
           productsSnapshot.forEach(([key, data]) => qc.setQueryData(key, data));
           setCart(cartSnapshot); setDiscount(discountSnapshot);
@@ -954,6 +952,7 @@ export default function POS() {
           toast.error(err?.message || "Sale failed — please retry");
         },
         onSettled: () => {
+          submittingRef.current = false;
           // Invalidate only after mutation is committed — avoids stale-refetch race
           if (saleType === "debt") qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });

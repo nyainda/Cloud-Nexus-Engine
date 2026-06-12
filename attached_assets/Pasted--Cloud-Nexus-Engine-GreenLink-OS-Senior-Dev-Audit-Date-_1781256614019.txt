@@ -1,0 +1,300 @@
+# Cloud-Nexus-Engine (GreenLink OS) — Senior Dev Audit
+**Date:** June 12, 2026  
+**Auditor:** Senior dev pass — every file reviewed
+
+---
+
+## Executive Summary
+
+This is a well-architected Cloudflare Workers + Hono + D1/SQLite POS system with a React PWA frontend. The core is solid, but there are **9 bugs that will hurt you in production**, **5 things that will break over time**, and **several security gaps** that need addressing. Organized by severity.
+
+---
+
+## 🔴 CRITICAL — Will Break or Corrupt Data
+
+### 1. `transfers.ts` — Destination stock deducted TWICE on cancel
+**File:** `artifacts/api-server/src/routes/transfers.ts`
+
+```typescript
+// In the db.batch([...]) call, statements 2 and 3 are IDENTICAL:
+// Statement 2: CASE WHEN stock_qty >= qty THEN stock_qty - qty ...
+// Statement 3: CASE WHEN stock_qty >= qty THEN stock_qty - qty ...
+// (both operate on the same toProductId / toShopId)
+```
+
+This is a copy-paste bug. When a transfer is cancelled, the destination shop's stock is deducted **twice** — meaning you lose 2× the transferred qty from the destination, and it never comes back. Only the source shop is correctly restored.
+
+**Fix:** Remove the duplicate statement (keep only one of statements 2 or 3).
+
+---
+
+### 2. `sales.ts` — N+1 query inside sale creation loop
+**File:** `artifacts/api-server/src/routes/sales.ts` (POST `/sales`)
+
+```typescript
+// In the stock-decrement loop, this re-fetches the same product AGAIN:
+for (const item of body.items) {
+  const product = await db.select().from(products)...  // ← fetch 1
+  ...
+}
+// Then later:
+for (const item of body.items) {
+  const product = await db.select().from(products)...  // ← fetch 2 (same product!)
+```
+
+Products are fetched once to build `lineItems`, then fetched **again** in the second loop for stock decrement and notification logic. On a 10-item sale that's 20 D1 reads instead of 10. More importantly, the `beforeQty` logged in `inventoryMovements` comes from the **second** fetch — which could already have a different value if another concurrent request ran between the two loops. The inventory log will show incorrect before/after quantities.
+
+**Fix:** Collect the product objects from the first loop into a `Map<productId, product>` and reuse them in the second loop.
+
+---
+
+### 3. `sales.ts` — Void reversal uses non-atomic write for stock
+**File:** `artifacts/api-server/src/routes/sales.ts` (DELETE `/sales/:saleId`)
+
+```typescript
+// void handler uses absolute write — a race condition:
+const afterQty = beforeQty + item.qty;
+await db.update(products).set({ stockQty: afterQty, ... })
+```
+
+Unlike sale creation (which correctly uses `sql\`MAX(0, stock_qty - qty)\``), the void/reversal writes an absolute value calculated from a prior read. Two concurrent void requests will both read the same `beforeQty`, calculate the same `afterQty`, and one of them will silently overwrite the other's restore — net result: only one reversal is applied, the other is lost.
+
+**Fix:** Use `sql\`stock_qty + ${item.qty}\`` same as the restock handler.
+
+---
+
+### 4. `ocr.ts` — `apply` endpoint writes absolute stockQty for restocks
+**File:** `artifacts/api-server/src/routes/ocr.ts` (POST `/ocr/sessions/:sessionId/apply`)
+
+```typescript
+const afterQty = beforeQty + line.qty;
+const updates: Record<string, unknown> = { stockQty: afterQty, ... };
+await db.update(products).set(updates)...
+```
+
+Same read-modify-write race as above. If two OCR sessions are applied concurrently, one overwrites the other. Only one restock actually lands.
+
+**Fix:** Use `sql\`stock_qty + ${line.qty}\`` atomic delta.
+
+---
+
+### 5. `worker.ts` — Module-level `bootstrapped` flag is isolate-local
+**File:** `artifacts/api-server/src/worker.ts`
+
+```typescript
+let bootstrapped = false;  // ← lives in one CF isolate
+```
+
+Cloudflare spins up new isolates on cold starts. Each fresh isolate starts with `bootstrapped = false` and runs the full migration batch on the first request. The `CREATE IF NOT EXISTS` guards make this safe for tables, but the **FTS populate INSERT** (`INSERT OR IGNORE INTO products_fts...`) runs on every cold start on every isolate. On a busy day with many cold starts, this is unnecessary repeated work. Bigger issue: if CF ever spawns two isolates simultaneously both hitting cold start on the same DB, the FTS table gets concurrent inserts. `INSERT OR IGNORE` handles duplicates, but it's wasted work that adds latency to user-facing requests.
+
+**Fix:** Add a `SELECT 1 FROM products_fts LIMIT 1` check before the FTS populate INSERT. Or better — run migrations as a Wrangler migration file rather than at runtime.
+
+---
+
+## 🟠 HIGH — Security Vulnerabilities
+
+### 6. `auth.ts` — PIN reset authenticated only by shop name (trivially guessable)
+**File:** `artifacts/api-server/src/routes/auth.ts`
+
+```typescript
+// "Verify by shop name (case-insensitive)"
+if (normalise(body.shopName) !== normalise(shop.name)) {
+  return c.json({ error: "Shop name does not match..." }, 403);
+}
+```
+
+The `/auth/reset-pin` endpoint lets anyone reset a shop's owner or cashier PIN by knowing only the `shopId` (which is exposed via the public `/api/shops` endpoint — it's literally just `shop-greenlink`) and the shop name (also public). Anyone who knows the shop exists can lock out the owner by repeatedly resetting their PIN. This is a significant vulnerability for a POS system handling real money.
+
+**Fix:** Require the current owner PIN to authorize a PIN reset, OR require a one-time code sent to the registered `ownerWhatsapp`. At minimum, add rate limiting to `/auth/reset-pin` — it's missing this even though `/auth/login` has it.
+
+---
+
+### 7. `shops.ts` — Shop creation is unauthenticated and unguarded
+**File:** `artifacts/api-server/src/routes/shops.ts`
+
+```typescript
+shopsRouter.post("/shops", async (c) => {   // ← no requireAuth
+```
+
+Anyone who can reach the API can create shops with arbitrary PINs. For a 2-shop internal POS this isn't exploited today, but if this worker URL is ever exposed (it already has `origin: "*"` CORS), someone can register shops and potentially use them to store data or probe the system.
+
+**Fix:** Either add `requireAuth + requireOwner` middleware, or add a `SHOP_CREATION_SECRET` env var that must be passed in the request body.
+
+---
+
+### 8. `web-push.ts` — VAPID subject hardcoded to a specific email
+**File:** `artifacts/api-server/src/lib/web-push.ts`
+
+```typescript
+subject: "mailto:admin@greenlink.co.ke",
+```
+
+This is hardcoded. If you ever hand this codebase to another client/shop, their push notifications will identify as `admin@greenlink.co.ke`. Push servers (especially Firefox) will sometimes refuse pushes if the VAPID subject doesn't match the sender's identity. 
+
+**Fix:** Move this to an env var (`VAPID_SUBJECT`) with a fallback.
+
+---
+
+## 🟡 MEDIUM — Will Degrade Over Time
+
+### 9. `inventory.ts` — shopId filter is applied client-side in memory
+**File:** `artifacts/api-server/src/routes/inventory.ts`
+
+```typescript
+let rows = await db.select().from(inventoryMovements).where(
+  and(
+    productId ? eq(inventoryMovements.productId, productId) : undefined,
+    // NO shopId filter here!
+  )
+).all();
+
+if (shopId) {
+  // shopId filter applied client-side since inventoryMovements has no shopId column
+}
+```
+
+The `inventoryMovements` table has no `shopId` column. When filtering by shopId, the route fetches **ALL movements across all shops** into memory and then discards the wrong-shop records in JS. As the DB grows, this will load thousands of rows on every request. The comment acknowledges this but offers no fix.
+
+**Fix:** Add `shop_id TEXT` column to `inventory_movements` and backfill it via migration. Index it too.
+
+---
+
+### 10. `audit.ts` — Audit log also fetches all rows into memory before pagination
+**File:** `artifacts/api-server/src/routes/audit.ts`
+
+```typescript
+let rows = await db.select().from(auditLog).where(...).all();  // full table
+rows = rows.sort(...);                                         // JS sort
+return c.json(rows.slice(offset, offset + limit)...);         // JS slice
+```
+
+This loads the entire audit log into memory before paginating. D1 supports `ORDER BY` and `LIMIT`/`OFFSET` natively. This will get slower every week as logs accumulate.
+
+**Fix:** Push ORDER BY, LIMIT, and OFFSET into the SQL query.
+
+---
+
+### 11. `reports.ts` — Dashboard fetches ALL products for low-stock count
+**File:** `artifacts/api-server/src/routes/reports.ts`
+
+```typescript
+db.select().from(products).where(shopId ? eq(products.shopId, shopId) : undefined).all()
+// then JS filter:
+const lowStockCount = allProducts.filter(p => p.isActive && p.stockQty <= p.alertQty...).length;
+```
+
+Every dashboard load (polled every few minutes by the frontend) fetches every product row to count low-stock items. At 1000 products this is a 1000-row D1 query just to get a number. 
+
+**Fix:** Use `SELECT COUNT(*) FROM products WHERE shop_id = ? AND is_active = 1 AND stock_qty <= alert_qty AND stock_qty > 0` instead.
+
+---
+
+### 12. `worker.ts` — Migrations list is append-only and grows forever
+**File:** `artifacts/api-server/src/worker.ts`
+
+The `MIGRATIONS` array currently has ~35 entries and is evaluated on every cold start. Every failed `ALTER TABLE` (which is every warm request to an already-migrated DB) throws an exception that's caught and swallowed. That's 35 try-catch exceptions per cold boot. It will only get longer. On D1's free tier with tight CPU budgets, this adds real overhead.
+
+**Fix:** Use Wrangler's official D1 migrations (`wrangler d1 migrations apply`) and move migration logic out of the runtime request path entirely.
+
+---
+
+### 13. `debts.ts` — Debt payment overwrites amountPaid with calculated total (race condition)
+**File:** `artifacts/api-server/src/routes/debts.ts`
+
+```typescript
+const newAmountPaid = debt.amountPaid + body.amount;  // read-modify
+await db.update(debts).set({ amountPaid: newAmountPaid, balance: newBalance, ... })
+```
+
+If two payments land simultaneously (unlikely but possible with a spotty connection that retries), both reads get the same `amountPaid`, and one payment silently overwrites the other. The debt records will show an incorrect paid amount.
+
+**Fix:** Use atomic delta: `sql\`amount_paid + ${body.amount}\`` and recalculate balance in SQL too.
+
+---
+
+## 🔵 LOW — Code Quality / Will Cause Confusion
+
+### 14. `storage.ts` — `createMultipartUpload` misused for single-part uploads
+**File:** `artifacts/api-server/src/routes/storage.ts`
+
+```typescript
+const url = await c.env.STORAGE.createMultipartUpload(key);
+return c.json({ uploadURL: url.uploadId, ... });  // ← uploadId is not a URL
+```
+
+`R2Bucket.createMultipartUpload()` returns an `R2MultipartUpload` object, not a presigned URL. The `uploadId` field is an opaque identifier for the multipart session, not something a browser can POST to. This endpoint will silently fail in production when R2 is configured — it returns the wrong value and the frontend will try to upload to a non-URL string.
+
+**Fix:** Use `STORAGE.createPresignedUrl(...)` or implement a direct upload handler. The fallback path (`/api/storage/direct-upload/:key`) that's returned when R2 is absent doesn't have a corresponding route handler either.
+
+---
+
+### 15. `saleItems` schema — `quantity` vs `qty` field name mismatch
+**File:** `lib/db/src/schema/index.ts` vs `artifacts/api-server/src/routes/debts.ts`
+
+The schema defines `qty` on `saleItems`. But in `debts.ts` the GET `/debts/:debtId` handler tries to select:
+```typescript
+quantity: saleItems.quantity,  // ← this field doesn't exist in the schema
+```
+
+This will silently return `undefined` for the `quantity` field on debt items. It doesn't crash because Drizzle doesn't throw on unknown column aliases, but the frontend gets `undefined` where it expects a number.
+
+---
+
+### 16. PIN hashing uses a static app-level salt, not a per-user salt
+**File:** `artifacts/api-server/src/lib/auth.ts`
+
+```typescript
+const data = new TextEncoder().encode(`greenlink:${pin}`);
+const hash = await crypto.subtle.digest("SHA-256", data);
+```
+
+The "salt" here (`greenlink:`) is static and shared across all shops. This means anyone with access to the DB can build a rainbow table for all 4-6 digit PINs (that's at most 1,000,000 possible values) in seconds. A proper implementation uses bcrypt/scrypt/argon2 or at minimum a random per-shop salt stored separately.
+
+This is acceptable for a small internal POS with limited exposure, but if this ever gets wider deployment, PIN hashes are trivially reversible.
+
+---
+
+### 17. `bootstrap-sql.ts` — Missing closing `)` in `debts` table definition
+**File:** `artifacts/api-server/src/lib/bootstrap-sql.ts`
+
+The `debts` table DDL in the BOOTSTRAP_SQL string appears to be missing its closing `);\n` terminator (truncated mid-definition in the source file). If this is the actual state of the string, the SQL parse step in `bootstrapD1` would silently skip the debt table creation (the try-catch swallows errors). Verify the full string is intact in the actual file.
+
+---
+
+## Summary Table
+
+| # | Severity | Location | Issue |
+|---|----------|----------|-------|
+| 1 | 🔴 Critical | `transfers.ts` | Destination stock deducted twice on cancel |
+| 2 | 🔴 Critical | `sales.ts POST` | N+1 query + stale `beforeQty` in inventory log |
+| 3 | 🔴 Critical | `sales.ts DELETE` | Non-atomic stock restore (race condition) |
+| 4 | 🔴 Critical | `ocr.ts apply` | Non-atomic restock (race condition) |
+| 5 | 🔴 Critical | `worker.ts` | FTS repopulate runs on every cold start |
+| 6 | 🟠 High | `auth.ts` | PIN reset bypassed with just shopId + shop name |
+| 7 | 🟠 High | `shops.ts` | Unauthenticated shop creation |
+| 8 | 🟠 High | `web-push.ts` | Hardcoded VAPID subject email |
+| 9 | 🟡 Medium | `inventory.ts` | shopId filter is in-memory (full table scan) |
+| 10 | 🟡 Medium | `audit.ts` | Full table loaded before JS pagination |
+| 11 | 🟡 Medium | `reports.ts` | All products fetched for low-stock count |
+| 12 | 🟡 Medium | `worker.ts` | 35+ try-catch exceptions on every cold boot |
+| 13 | 🟡 Medium | `debts.ts` | Debt payment amountPaid race condition |
+| 14 | 🔵 Low | `storage.ts` | R2 multipart uploadId returned as URL |
+| 15 | 🔵 Low | `debts.ts` | `saleItems.quantity` field doesn't exist |
+| 16 | 🔵 Low | `auth.ts` | Static PIN salt (reversible rainbow table) |
+| 17 | 🔵 Low | `bootstrap-sql.ts` | Verify debts table DDL isn't truncated |
+
+---
+
+## What's Actually Good (Don't Touch)
+
+- ✅ The in-memory session cache with 30s TTL is smart — saves KV reads without stale-session risk
+- ✅ The in-memory product/dashboard cache replacing KV was the right call for free-tier budget
+- ✅ Sale creation uses atomic `MAX(0, stock_qty - qty)` correctly
+- ✅ Restock uses atomic `stock_qty + qty` correctly  
+- ✅ Transfer creation uses atomic deltas correctly (only cancel is broken)
+- ✅ FTS5 full-text search with LIKE fallback is excellent
+- ✅ Groq → Gemini OCR fallback chain is solid
+- ✅ The `bootstrapped` flag preventing repeated full migration on warm requests is correct
+- ✅ Rate limiting on login with per-IP KV counters is appropriate for free tier
+- ✅ `db.batch()` for transfer cancel atomic commit is the right pattern (just has the duplicate bug)
+- ✅ IndexedDB write-through for offline product cache is well-designed

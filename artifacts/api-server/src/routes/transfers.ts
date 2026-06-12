@@ -73,20 +73,6 @@ transfersRouter.delete("/transfers/:id", requireAuth, async (c) => {
       ),
 
     // 2. Deduct qty from destination shop — atomic decrement.
-    // Prevent negative stock if destination already sold some stock.
-    db
-      .update(products)
-      .set({
-        stockQty: sql`CASE WHEN stock_qty >= ${transfer.qty} THEN stock_qty - ${transfer.qty} ELSE stock_qty END`,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(products.id, transfer.toProductId),
-          eq(products.shopId, transfer.toShopId),
-        ),
-      ),
-    // 2. Deduct qty from destination shop — atomic decrement.
     //    CASE WHEN guard prevents going negative if the destination
     //    already sold the stock; the transaction still commits cleanly.
     db

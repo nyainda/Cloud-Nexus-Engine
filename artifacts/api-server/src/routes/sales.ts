@@ -120,12 +120,17 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     totalProfit: number | null;
   }> = [];
 
+  // Collect products during the first loop — reused in the stock-deduction loop
+  // to eliminate the N+1 re-fetch (one DB hit per item instead of two).
+  const productMap = new Map<string, typeof products.$inferSelect>();
+
   for (const item of body.items) {
     const product = await db
       .select()
       .from(products)
       .where(eq(products.id, item.productId))
       .get();
+    if (product) productMap.set(item.productId, product);
 
     const lineTotal = item.unitPrice * item.qty;
     const unitCost = product?.purchasePrice ?? null;
@@ -172,11 +177,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   }
 
   for (const item of body.items) {
-    const product = await db
-      .select()
-      .from(products)
-      .where(eq(products.id, item.productId))
-      .get();
+    const product = productMap.get(item.productId);
     if (product) {
       const beforeQty = product.stockQty;
       const afterQty = Math.max(0, beforeQty - item.qty);
@@ -293,7 +294,8 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
     if (product) {
       const beforeQty = product.stockQty;
       const afterQty = beforeQty + item.qty;
-      await db.update(products).set({ stockQty: afterQty, updatedAt: now }).where(eq(products.id, item.productId));
+      // Atomic increment — prevents overwrite race on concurrent voids
+      await db.update(products).set({ stockQty: sql`stock_qty + ${item.qty}`, updatedAt: now }).where(eq(products.id, item.productId));
       await db.insert(inventoryMovements).values({
         id: crypto.randomUUID(),
         productId: item.productId,
@@ -375,8 +377,9 @@ salesRouter.post("/returns", requireAuth, async (c) => {
   const unitPrice = body.unitPrice ?? product.sellingPrice ?? 0;
   const refundAmount = body.qty * unitPrice;
 
+  // Atomic increment — prevents overwrite race on concurrent restocks
   await db.update(products)
-    .set({ stockQty: afterQty, updatedAt: now })
+    .set({ stockQty: sql`stock_qty + ${body.qty}`, updatedAt: now })
     .where(eq(products.id, body.productId));
 
   await db.insert(inventoryMovements).values({
@@ -554,9 +557,10 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     const beforeQty = product.stockQty;
     const afterQty = beforeQty + item.qty;
 
+    // Atomic increment — prevents overwrite race on concurrent sale returns
     await db
       .update(products)
-      .set({ stockQty: afterQty, updatedAt: now })
+      .set({ stockQty: sql`stock_qty + ${item.qty}`, updatedAt: now })
       .where(eq(products.id, item.productId));
 
     await db.insert(inventoryMovements).values({

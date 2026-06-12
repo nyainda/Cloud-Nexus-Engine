@@ -22,8 +22,8 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
 
-  // All 6 D1 reads are independent — fire them in parallel to cut CPU time ~5×
-  const [daySales, allProducts, pendingDebts, unreadNotifications, itemsSold, cashCollectedRow] = await Promise.all([
+  // All reads are independent — fire them in parallel to cut CPU time ~5×
+  const [daySales, lowStockRow, outOfStockRow, pendingDebts, unreadNotifications, itemsSold, cashCollectedRow] = await Promise.all([
     db.select().from(sales).where(
       and(
         shopId ? eq(sales.shopId, shopId) : undefined,
@@ -32,7 +32,19 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
         lte(sales.createdAt, endOfDay),
       ),
     ).all(),
-    db.select().from(products).where(shopId ? eq(products.shopId, shopId) : undefined).all(),
+    // Count low-stock products in SQL — avoids fetching all 2600+ rows just to count
+    db.select({ count: sql<number>`COUNT(*)` }).from(products).where(
+      and(
+        shopId ? eq(products.shopId, shopId) : undefined,
+        sql`is_active = 1 AND stock_qty > 0 AND stock_qty <= alert_qty`,
+      ),
+    ).get(),
+    db.select({ count: sql<number>`COUNT(*)` }).from(products).where(
+      and(
+        shopId ? eq(products.shopId, shopId) : undefined,
+        sql`is_active = 1 AND stock_qty = 0`,
+      ),
+    ).get(),
     db.select().from(debts).where(
       and(shopId ? eq(debts.shopId, shopId) : undefined, sql`status != 'paid'`),
     ).all(),
@@ -53,8 +65,8 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const cashSales = daySales.filter((s) => s.saleType === "cash").reduce((sum, s) => sum + s.totalAmount, 0);
   const debtSales = daySales.filter((s) => s.saleType === "debt").reduce((sum, s) => sum + s.totalAmount, 0);
 
-  const lowStockCount = allProducts.filter((p) => p.isActive && p.stockQty <= p.alertQty && p.stockQty > 0).length;
-  const outOfStockCount = allProducts.filter((p) => p.isActive && p.stockQty === 0).length;
+  const lowStockCount = lowStockRow?.count ?? 0;
+  const outOfStockCount = outOfStockRow?.count ?? 0;
   const pendingDebtsTotal = pendingDebts.reduce((s, d) => s + d.balance, 0);
 
   const productSales = new Map<string, { productId: string; productName: string; totalQtySold: number; totalRevenue: number; totalProfit: number | null }>();

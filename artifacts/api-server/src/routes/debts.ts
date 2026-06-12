@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -156,15 +156,14 @@ debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
   if (!debt) return c.json({ error: "Not found" }, 404);
 
   // Fetch sale items if this debt is linked to a sale
-  let items: { productName: string; quantity: number; unitPrice: number; totalPrice: number; discount?: number | null }[] = [];
+  let items: { productName: string; qty: number; unitPrice: number; totalPrice: number }[] = [];
   if (debt.saleId) {
     const rows = await db
       .select({
         productName: saleItems.productName,
-        quantity: saleItems.quantity,
+        qty: saleItems.qty,
         unitPrice: saleItems.unitPrice,
         totalPrice: saleItems.totalPrice,
-        discount: saleItems.discount,
       })
       .from(saleItems)
       .where(eq(saleItems.saleId, debt.saleId))
@@ -228,20 +227,21 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
     paidAt: now,
   });
 
-  const newAmountPaid = debt.amountPaid + body.amount;
-  const newBalance = Math.max(0, debt.totalAmount - newAmountPaid);
-  const newStatus: "unpaid" | "partial" | "paid" =
-    newBalance === 0 ? "paid" : newAmountPaid > 0 ? "partial" : "unpaid";
-
+  // Fully atomic — all four columns derive from the DB's current values plus the
+  // payment delta, so concurrent payments cannot overwrite each other.
   await db
     .update(debts)
     .set({
-      amountPaid: newAmountPaid,
-      balance: newBalance,
-      status: newStatus,
-      paidAt: newStatus === "paid" ? now : null,
+      amountPaid: sql`amount_paid + ${body.amount}`,
+      balance: sql`MAX(0, total_amount - amount_paid - ${body.amount})`,
+      status: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${body.amount}) = 0 THEN 'paid' WHEN amount_paid + ${body.amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
+      paidAt: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${body.amount}) = 0 THEN ${now} ELSE NULL END`,
     })
     .where(eq(debts.id, debtId));
+
+  // Re-read updated status to drive notification cleanup
+  const updatedDebt = await db.select({ status: debts.status }).from(debts).where(eq(debts.id, debtId)).get();
+  const newStatus = updatedDebt?.status;
 
   if (newStatus === "paid") {
     await db
