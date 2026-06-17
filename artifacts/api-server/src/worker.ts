@@ -139,6 +139,54 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }
   }
 
+  // ── Fix old quotations schema (has extra NOT NULL columns: type, customer_address, updated_at)
+  // that break Drizzle inserts. Detect via PRAGMA table_info, then recreate correctly.
+  try {
+    const { results: colInfo } = await db.prepare("PRAGMA table_info(quotations)").all();
+    const colNames = (colInfo as Array<{ name: string }>).map(c => c.name);
+    const hasOldSchema = colNames.includes("updated_at") || colNames.includes("type") || colNames.includes("customer_address");
+    if (hasOldSchema) {
+      // Back up existing rows
+      const { results: oldRows } = await db.prepare("SELECT * FROM quotations").all();
+      // Recreate with correct schema via rename trick
+      await db.prepare(`CREATE TABLE IF NOT EXISTS quotations_new (
+        id TEXT PRIMARY KEY,
+        shop_id TEXT NOT NULL,
+        quote_number TEXT NOT NULL,
+        customer_name TEXT NOT NULL,
+        customer_phone TEXT NOT NULL DEFAULT '',
+        customer_email TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        notes TEXT,
+        valid_until TEXT,
+        subtotal REAL NOT NULL DEFAULT 0,
+        discount_amount REAL NOT NULL DEFAULT 0,
+        total REAL NOT NULL DEFAULT 0,
+        items_json TEXT NOT NULL DEFAULT '[]',
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`).run();
+      // Migrate existing rows
+      for (const q of (oldRows as any[])) {
+        try {
+          await db.prepare(`INSERT OR IGNORE INTO quotations_new
+            (id,shop_id,quote_number,customer_name,customer_phone,customer_email,status,notes,valid_until,subtotal,discount_amount,total,items_json,created_by,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+            .bind(q.id, q.shop_id, q.quote_number, q.customer_name,
+              q.customer_phone ?? "", q.customer_email ?? null, q.status ?? "draft",
+              q.notes ?? null, q.valid_until ?? null, q.subtotal ?? 0,
+              q.discount_amount ?? q.discount ?? 0, q.total ?? 0,
+              q.items_json ?? "[]", q.created_by ?? null, q.created_at)
+            .run();
+        } catch { /* skip bad rows */ }
+      }
+      await db.prepare("DROP TABLE quotations").run();
+      await db.prepare("ALTER TABLE quotations_new RENAME TO quotations").run();
+      try { await db.prepare("CREATE INDEX IF NOT EXISTS idx_quotations_shop_date ON quotations(shop_id, created_at)").run(); } catch {}
+      try { await db.prepare("CREATE INDEX IF NOT EXISTS idx_quotations_shop_status ON quotations(shop_id, status)").run(); } catch {}
+    }
+  } catch { /* quota table may not exist yet — safe to skip */ }
+
   const { results } = await db.prepare("SELECT COUNT(*) as n FROM shops").all();
   const shopCount = Number((results as Array<{ n: number }>)[0]?.n ?? 0);
 

@@ -18,7 +18,16 @@ import { BOOTSTRAP_SQL } from "./lib/bootstrap-sql";
 import router from "./routes";
 
 // ── Data directory ──────────────────────────────────────────────────────────
-const DATA_DIR = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
+// DATA_DIR env var is set relative to the workspace root. pnpm changes CWD to
+// the package directory, so we must resolve relative paths from the workspace
+// root (3 levels up: src → package → artifacts → workspace).
+const __srcDir = path.dirname(new URL(import.meta.url).pathname);
+const _workspaceRoot = path.resolve(__srcDir, "..", "..", "..");
+const DATA_DIR = process.env.DATA_DIR
+  ? path.isAbsolute(process.env.DATA_DIR)
+    ? process.env.DATA_DIR
+    : path.resolve(_workspaceRoot, process.env.DATA_DIR)
+  : path.join(path.resolve(__srcDir, ".."), "data");
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_PATH = path.join(DATA_DIR, "greenlink.db");
 
