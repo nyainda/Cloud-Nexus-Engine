@@ -31,7 +31,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=5000 BASE_PATH=/ VITE_API_BASE_URL=https://greenlink-pos-api.bruce42oyugi.workers.dev pnpm --filter @workspace/greenlink-app run dev -- --port 5000 --strictPort"
+args = "PORT=5000 BASE_PATH=/ API_BASE_URL=https://greenlink-pos-api.bruce42oyugi.workers.dev pnpm --filter @workspace/greenlink-app run dev -- --port 5000 --strictPort"
 waitForPort = 5000
 
 [agent]
@@ -46,10 +46,6 @@ timeoutMs = 20000
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 8080
-externalPort = 8080
 
 [[ports]]
 localPort = 19001
