@@ -61,7 +61,7 @@ function StatusBadge({ status }: { status: Quotation["status"] }) {
   );
 }
 
-// ─── PDF generation (jsPDF + autotable) ───────────────────────────────────────
+// ─── PDF generation — clean professional light-mode ────────────────────────────
 
 async function downloadPdf(quotation: Quotation, shop: any) {
   toast.loading("Generating PDF…", { id: "pdf" });
@@ -71,190 +71,243 @@ async function downloadPdf(quotation: Quotation, shop: any) {
 
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+    const ML = 14; // margin left
+    const MR = 14; // margin right
+    const CW = W - ML - MR; // content width
 
-    // ── Header band ──
-    doc.setFillColor(10, 10, 10);
-    doc.rect(0, 0, W, 42, "F");
+    // ── White background (default) ──
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, W, H, "F");
 
-    // Lime accent stripe
-    doc.setFillColor(200, 255, 0);
-    doc.rect(0, 0, W, 3, "F");
+    // ── Top accent bar (green) ──
+    doc.setFillColor(34, 139, 60); // forest green — prints clearly
+    doc.rect(0, 0, W, 5, "F");
 
-    // Shop name
-    doc.setTextColor(200, 255, 0);
-    doc.setFontSize(7);
+    // ── Header: left = shop info, right = QUOTATION label ──
+    let y = 14;
+
+    // Shop name — large, dark
     doc.setFont("helvetica", "bold");
-    doc.text("OFFICIAL QUOTATION", 14, 11);
+    doc.setFontSize(17);
+    doc.setTextColor(15, 23, 42);
+    doc.text(shop?.name ?? "Our Shop", ML, y);
 
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(16);
-    doc.text(shop?.name ?? "Our Shop", 14, 20);
-
-    if (shop?.address) {
-      doc.setFontSize(8);
-      doc.setTextColor(156, 163, 175);
-      doc.text(shop.address, 14, 27);
-    }
-
-    const contactParts: string[] = [];
-    if (shop?.ownerWhatsapp) contactParts.push(shop.ownerWhatsapp);
-    if (shop?.email) contactParts.push(shop.email);
-    if (contactParts.length) {
-      doc.setFontSize(7.5);
-      doc.setTextColor(156, 163, 175);
-      doc.text(contactParts.join("   "), 14, 33);
-    }
-
-    // Quote number (right side)
-    doc.setTextColor(200, 255, 0);
-    doc.setFontSize(18);
-    doc.setFont("courier", "bold");
-    doc.text(quotation.quoteNumber, W - 14, 18, { align: "right" });
-
+    // Shop sub-info
+    y += 6;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
-    doc.setTextColor(156, 163, 175);
-    doc.text(`Date: ${format(new Date(quotation.createdAt), "dd MMM yyyy")}`, W - 14, 26, { align: "right" });
-    if (quotation.validUntil) {
-      doc.text(`Valid Until: ${format(new Date(quotation.validUntil), "dd MMM yyyy")}`, W - 14, 32, { align: "right" });
-    }
-    doc.setTextColor(200, 200, 200);
-    doc.text(STATUS_META[quotation.status].label.toUpperCase(), W - 14, 39, { align: "right" });
+    doc.setTextColor(100, 116, 139);
+    const shopLines: string[] = [];
+    if (shop?.address) shopLines.push(shop.address);
+    const contacts: string[] = [];
+    if (shop?.ownerWhatsapp) contacts.push(shop.ownerWhatsapp);
+    if (shop?.email) contacts.push(shop.email);
+    if (contacts.length) shopLines.push(contacts.join("  ·  "));
+    shopLines.forEach((line) => {
+      doc.text(line, ML, y);
+      y += 5;
+    });
 
-    // ── Bill To ──
-    let y = 50;
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(14, y, W - 28, 24, 3, 3, "F");
-    doc.setDrawColor(226, 232, 240);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(14, y, W - 28, 24, 3, 3, "S");
-
+    // Right side — "QUOTATION" block
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(7);
-    doc.setTextColor(148, 163, 184);
-    doc.text("BILL TO", 20, y + 7);
+    doc.setFontSize(22);
+    doc.setTextColor(34, 139, 60);
+    doc.text("QUOTATION", W - MR, 16, { align: "right" });
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
     doc.setTextColor(15, 23, 42);
-    doc.text(quotation.customerName, 20, y + 15);
+    doc.text(quotation.quoteNumber, W - MR, 24, { align: "right" });
 
-    const billParts: string[] = [];
-    if (quotation.customerPhone) billParts.push(quotation.customerPhone);
-    if (quotation.customerEmail) billParts.push(quotation.customerEmail);
-    if (billParts.length) {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
-      doc.setTextColor(100, 116, 139);
-      doc.text(billParts.join("   "), 20, y + 21);
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Date: ${format(new Date(quotation.createdAt), "dd MMM yyyy")}`, W - MR, 30, { align: "right" });
+    if (quotation.validUntil) {
+      doc.text(`Valid Until: ${format(new Date(quotation.validUntil), "dd MMM yyyy")}`, W - MR, 36, { align: "right" });
     }
 
-    y += 32;
+    // Status badge (right)
+    const statusColors: Record<string, [number, number, number]> = {
+      draft:    [148, 163, 184],
+      sent:     [59, 130, 246],
+      accepted: [34, 197, 94],
+      rejected: [239, 68, 68],
+      expired:  [245, 158, 11],
+    };
+    const sc = statusColors[quotation.status] ?? [148, 163, 184];
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...sc);
+    doc.text(STATUS_META[quotation.status].label.toUpperCase(), W - MR, 42, { align: "right" });
+
+    // ── Divider line ──
+    y = Math.max(y, 46) + 4;
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.4);
+    doc.line(ML, y, W - MR, y);
+    y += 6;
+
+    // ── Bill To section ──
+    doc.setFillColor(247, 250, 252);
+    const billH = quotation.customerPhone || quotation.customerEmail ? 26 : 20;
+    doc.roundedRect(ML, y, CW, billH, 2, 2, "F");
+    doc.setDrawColor(209, 213, 219);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(ML, y, CW, billH, 2, 2, "S");
+
+    // Green left accent on bill-to box
+    doc.setFillColor(34, 139, 60);
+    doc.rect(ML, y, 3, billH, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(107, 114, 128);
+    doc.text("BILL TO", ML + 7, y + 7);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(15, 23, 42);
+    doc.text(quotation.customerName, ML + 7, y + 14);
+
+    const billContact: string[] = [];
+    if (quotation.customerPhone) billContact.push(quotation.customerPhone);
+    if (quotation.customerEmail) billContact.push(quotation.customerEmail);
+    if (billContact.length) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(billContact.join("   ·   "), ML + 7, y + 21);
+    }
+
+    y += billH + 8;
 
     // ── Items table ──
     autoTable(doc, {
       startY: y,
-      head: [["#", "Product", "Unit", "Qty", "Unit Price", "Total"]],
+      head: [["#", "Description", "Unit", "Qty", "Unit Price (KES)", "Total (KES)"]],
       body: quotation.items.map((item, i) => [
         String(i + 1),
         item.productName,
         item.unit || "unit",
         item.qty % 1 === 0 ? String(item.qty) : item.qty.toFixed(2),
-        KES(item.unitPrice),
-        KES(item.total),
+        item.unitPrice.toLocaleString("en-KE"),
+        item.total.toLocaleString("en-KE"),
       ]),
       headStyles: {
-        fillColor: [10, 10, 10],
-        textColor: [200, 255, 0],
+        fillColor: [34, 139, 60],
+        textColor: [255, 255, 255],
         fontStyle: "bold",
         fontSize: 8,
         cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
       },
       bodyStyles: {
         fontSize: 9,
-        cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
+        cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
         textColor: [30, 41, 59],
+        lineColor: [226, 232, 240],
+        lineWidth: 0.2,
       },
-      alternateRowStyles: { fillColor: [250, 250, 252] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
       columnStyles: {
-        0: { cellWidth: 8, halign: "center", fontStyle: "bold" },
+        0: { cellWidth: 9,  halign: "center", fontStyle: "bold", textColor: [107, 114, 128] },
         1: { cellWidth: "auto" },
-        2: { cellWidth: 16, halign: "center", textColor: [100, 116, 139] },
-        3: { cellWidth: 14, halign: "right" },
-        4: { cellWidth: 28, halign: "right" },
-        5: { cellWidth: 28, halign: "right", fontStyle: "bold" },
+        2: { cellWidth: 18, halign: "center", textColor: [107, 114, 128] },
+        3: { cellWidth: 12, halign: "right" },
+        4: { cellWidth: 34, halign: "right" },
+        5: { cellWidth: 34, halign: "right", fontStyle: "bold", textColor: [15, 23, 42] },
       },
-      margin: { left: 14, right: 14 },
-      tableLineColor: [241, 245, 249],
-      tableLineWidth: 0.3,
+      margin: { left: ML, right: MR },
+      tableLineColor: [226, 232, 240],
+      tableLineWidth: 0.2,
     });
 
-    const finalY = (doc as any).lastAutoTable.finalY + 6;
+    let ty: number = (doc as any).lastAutoTable.finalY + 8;
 
-    // ── Totals ──
-    const totalsX = W - 14 - 60;
-    let ty = finalY;
+    // ── Totals block (right-aligned) ──
+    const totW = 80;
+    const totX = W - MR - totW;
 
     if (quotation.discountAmount > 0) {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(100, 116, 139);
-      doc.text("Subtotal", totalsX, ty);
-      doc.text(KES(quotation.subtotal), W - 14, ty, { align: "right" });
-      ty += 7;
-
-      doc.setTextColor(239, 68, 68);
-      doc.text("Discount", totalsX, ty);
-      doc.text(`- ${KES(quotation.discountAmount)}`, W - 14, ty, { align: "right" });
-      ty += 4;
-
+      // Subtotal row
       doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.3);
-      doc.line(totalsX, ty, W - 14, ty);
-      ty += 6;
+      doc.setLineWidth(0.2);
+      doc.setFillColor(248, 250, 252);
+      doc.rect(totX, ty, totW, 8, "F");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(107, 114, 128);
+      doc.text("Subtotal", totX + 4, ty + 5.5);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`KES ${quotation.subtotal.toLocaleString("en-KE")}`, W - MR - 4, ty + 5.5, { align: "right" });
+      ty += 8;
+
+      // Discount row
+      doc.setFillColor(255, 249, 249);
+      doc.rect(totX, ty, totW, 8, "F");
+      doc.setTextColor(220, 38, 38);
+      doc.text("Discount", totX + 4, ty + 5.5);
+      doc.text(`- KES ${quotation.discountAmount.toLocaleString("en-KE")}`, W - MR - 4, ty + 5.5, { align: "right" });
+      ty += 8;
+
+      // Divider
+      doc.setDrawColor(209, 213, 219);
+      doc.line(totX, ty, W - MR, ty);
+      ty += 3;
     }
 
-    doc.setFillColor(10, 10, 10);
-    doc.roundedRect(totalsX - 6, ty - 5, W - 14 - totalsX + 20, 14, 2, 2, "F");
+    // Total row — green background
+    doc.setFillColor(34, 139, 60);
+    doc.roundedRect(totX, ty, totW, 11, 1.5, 1.5, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.setTextColor(200, 255, 0);
-    doc.text("TOTAL", totalsX, ty + 4);
     doc.setTextColor(255, 255, 255);
-    doc.text(KES(quotation.total), W - 14, ty + 4, { align: "right" });
+    doc.text("TOTAL DUE", totX + 4, ty + 7.5);
+    doc.text(`KES ${quotation.total.toLocaleString("en-KE")}`, W - MR - 4, ty + 7.5, { align: "right" });
     ty += 18;
 
     // ── Notes ──
     if (quotation.notes) {
-      doc.setFillColor(248, 250, 252);
-      doc.roundedRect(14, ty, W - 28, 20, 2, 2, "F");
-      doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(14, ty, W - 28, 20, 2, 2, "S");
+      doc.setFillColor(255, 253, 235);
+      const noteLines = doc.splitTextToSize(quotation.notes, CW - 12);
+      const noteH = Math.max(18, noteLines.length * 5 + 13);
+      doc.roundedRect(ML, ty, CW, noteH, 2, 2, "F");
+      doc.setDrawColor(253, 230, 138);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(ML, ty, CW, noteH, 2, 2, "S");
+      // amber left accent
+      doc.setFillColor(245, 158, 11);
+      doc.rect(ML, ty, 3, noteH, "F");
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(7);
-      doc.setTextColor(148, 163, 184);
-      doc.text("NOTES & TERMS", 20, ty + 7);
+      doc.setFontSize(6.5);
+      doc.setTextColor(146, 64, 14);
+      doc.text("NOTES & TERMS", ML + 7, ty + 7);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8.5);
-      doc.setTextColor(71, 85, 105);
-      const noteLines = doc.splitTextToSize(quotation.notes, W - 48);
-      doc.text(noteLines.slice(0, 2), 20, ty + 14);
-      ty += 26;
+      doc.setTextColor(92, 45, 5);
+      doc.text(noteLines, ML + 7, ty + 14);
+      ty += noteH + 6;
     }
 
     // ── Footer ──
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(ML, H - 18, W - MR, H - 18);
+
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(148, 163, 184);
     const validText = quotation.validUntil
       ? `This quotation is valid until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}.`
       : "This quotation is valid for 30 days from the date of issue.";
-    doc.text(validText + " Prices are subject to availability.", 14, ty + 6, { maxWidth: W - 28 });
+    doc.text(validText + "  Prices are subject to availability.", ML, H - 12, { maxWidth: CW - 30 });
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(34, 139, 60);
+    doc.text(shop?.name ?? "", W - MR, H - 12, { align: "right" });
 
-    // Bottom lime stripe
-    const pageH = doc.internal.pageSize.getHeight();
-    doc.setFillColor(200, 255, 0);
-    doc.rect(0, pageH - 3, W, 3, "F");
+    // Bottom green bar
+    doc.setFillColor(34, 139, 60);
+    doc.rect(0, H - 4, W, 4, "F");
 
     doc.save(`${quotation.quoteNumber}.pdf`);
     toast.success("PDF downloaded!", { id: "pdf" });

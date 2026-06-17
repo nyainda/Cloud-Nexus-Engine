@@ -89,6 +89,7 @@ quotationsRouter.post("/quotations", requireAuth, async (c) => {
   const total = Math.max(0, subtotal - discountAmount);
 
   const id = crypto.randomUUID();
+  const now = new Date().toISOString();
   await db.insert(quotations).values({
     id,
     shopId: body.shopId,
@@ -104,7 +105,7 @@ quotationsRouter.post("/quotations", requireAuth, async (c) => {
     total,
     itemsJson: JSON.stringify(items),
     createdBy: body.createdBy ?? null,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
   });
 
   const q = await db.select().from(quotations).where(eq(quotations.id, id)).get();
