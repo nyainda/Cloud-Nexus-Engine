@@ -821,6 +821,49 @@ export default function POS() {
   const [quickAddProduct, setQuickAddProduct] = useState<any | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
+  // ── Load pending cart from quotation "Convert to Sale" ──
+  useEffect(() => {
+    const raw = sessionStorage.getItem("greenlink_pending_cart");
+    if (!raw) return;
+    const products = productsData?.products;
+    if (!products?.length) return; // wait until products loaded
+    try {
+      const pending = JSON.parse(raw);
+      const cartItems: CartItem[] = [];
+      for (const item of pending.items ?? []) {
+        const product = products.find((p: any) => p.id === item.productId);
+        if (product) {
+          cartItems.push({ product, qty: item.qty, unitPrice: item.unitPrice });
+        } else {
+          // Product not found by ID — create a minimal stub so nothing is silently lost
+          cartItems.push({
+            product: {
+              id: item.productId || `stub-${Math.random()}`,
+              canonicalName: item.productName,
+              normalizedName: item.productName,
+              sellingPrice: item.unitPrice,
+              purchasePrice: 0,
+              stockQty: 9999,
+              unit: item.unit || "unit",
+              category: "",
+              sku: "",
+              isActive: true,
+            },
+            qty: item.qty,
+            unitPrice: item.unitPrice,
+          });
+        }
+      }
+      if (cartItems.length > 0) {
+        setCart(cartItems);
+        if (pending.discount > 0) setDiscount(pending.discount);
+        if (pending.customerName) setDebtCustomerName(pending.customerName);
+        toast.success(`${pending.fromQuote ?? "Quote"} loaded into cart (${cartItems.length} item${cartItems.length !== 1 ? "s" : ""})`);
+      }
+    } catch {}
+    sessionStorage.removeItem("greenlink_pending_cart");
+  }, [productsData]);
+
   // Lock body scroll when mobile cart is open
   useEffect(() => {
     if (showCartMobile) document.body.style.overflow = "hidden";

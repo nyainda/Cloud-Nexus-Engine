@@ -1,10 +1,11 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useLocation } from "wouter";
 import { customFetch, useListProducts, useGetShop } from "@workspace/api-client-react";
 import {
   Plus, Search, Trash2, ChevronLeft, Printer, CheckCircle2,
   XCircle, Clock, FileText, User, Phone, Mail, Calendar, StickyNote,
   Edit2, Package, Loader2, X, Eye, Download, MessageCircle,
-  ChevronDown, ChevronUp, ShoppingCart, Copy, MoreVertical,
+  ChevronDown, ChevronUp, ShoppingCart, Copy, MoreVertical, TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -61,7 +62,7 @@ function StatusBadge({ status }: { status: Quotation["status"] }) {
   );
 }
 
-// ─── PDF generation — clean professional light-mode ────────────────────────────
+// ─── PDF generation — premium dark-header design ──────────────────────────────
 
 async function downloadPdf(quotation: Quotation, shop: any) {
   toast.loading("Generating PDF…", { id: "pdf" });
@@ -72,103 +73,87 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const W = doc.internal.pageSize.getWidth();
     const H = doc.internal.pageSize.getHeight();
-    const ML = 14; // margin left
-    const MR = 14; // margin right
-    const CW = W - ML - MR; // content width
+    const ML = 15;
+    const MR = 15;
+    const CW = W - ML - MR;
 
-    // ── White background (default) ──
+    // ── Full white background ──
     doc.setFillColor(255, 255, 255);
     doc.rect(0, 0, W, H, "F");
 
-    // ── Top accent bar (green) ──
-    doc.setFillColor(34, 139, 60); // forest green — prints clearly
-    doc.rect(0, 0, W, 5, "F");
+    // ── Dark header block ──
+    const HDR_H = 44;
+    doc.setFillColor(10, 10, 10); // #0A0A0A
+    doc.rect(0, 0, W, HDR_H, "F");
 
-    // ── Header: left = shop info, right = QUOTATION label ──
-    let y = 14;
+    // Electric Lime top stripe
+    doc.setFillColor(200, 255, 0); // #C8FF00
+    doc.rect(0, 0, W, 2.5, "F");
 
-    // Shop name — large, dark
+    // Shop name (white)
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(17);
-    doc.setTextColor(15, 23, 42);
-    doc.text(shop?.name ?? "Our Shop", ML, y);
+    doc.setFontSize(16);
+    doc.setTextColor(255, 255, 255);
+    doc.text(shop?.name ?? "Our Shop", ML, 16);
 
-    // Shop sub-info
-    y += 6;
+    // Shop sub-info (gray)
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    const shopLines: string[] = [];
-    if (shop?.address) shopLines.push(shop.address);
+    doc.setFontSize(7.5);
+    doc.setTextColor(156, 163, 175);
+    let subY = 22;
+    if (shop?.address) { doc.text(shop.address, ML, subY); subY += 4.5; }
     const contacts: string[] = [];
     if (shop?.ownerWhatsapp) contacts.push(shop.ownerWhatsapp);
     if (shop?.email) contacts.push(shop.email);
-    if (contacts.length) shopLines.push(contacts.join("  ·  "));
-    shopLines.forEach((line) => {
-      doc.text(line, ML, y);
-      y += 5;
-    });
+    if (contacts.length) doc.text(contacts.join("   ·   "), ML, subY);
 
-    // Right side — "QUOTATION" block
+    // Right: QUOTATION label in Lime
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(22);
-    doc.setTextColor(34, 139, 60);
-    doc.text("QUOTATION", W - MR, 16, { align: "right" });
-
-    doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.setTextColor(15, 23, 42);
-    doc.text(quotation.quoteNumber, W - MR, 24, { align: "right" });
+    doc.setTextColor(200, 255, 0); // lime
+    doc.text("QUOTATION", W - MR, 13, { align: "right" });
 
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
+    // Quote number (white, mono-style)
+    doc.setFontSize(18);
+    doc.setTextColor(255, 255, 255);
+    doc.text(quotation.quoteNumber, W - MR, 23, { align: "right" });
+
+    // Date / valid until (gray)
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(156, 163, 175);
     doc.text(`Date: ${format(new Date(quotation.createdAt), "dd MMM yyyy")}`, W - MR, 30, { align: "right" });
     if (quotation.validUntil) {
-      doc.text(`Valid Until: ${format(new Date(quotation.validUntil), "dd MMM yyyy")}`, W - MR, 36, { align: "right" });
+      doc.text(`Valid Until: ${format(new Date(quotation.validUntil), "dd MMM yyyy")}`, W - MR, 35.5, { align: "right" });
     }
 
-    // Status badge (right)
-    const statusColors: Record<string, [number, number, number]> = {
-      draft:    [148, 163, 184],
-      sent:     [59, 130, 246],
-      accepted: [34, 197, 94],
-      rejected: [239, 68, 68],
-      expired:  [245, 158, 11],
+    // Status pill (right of header)
+    const statusPillColors: Record<string, [number, number, number]> = {
+      draft: [100, 116, 139], sent: [59, 130, 246], accepted: [34, 197, 94],
+      rejected: [239, 68, 68], expired: [245, 158, 11],
     };
-    const sc = statusColors[quotation.status] ?? [148, 163, 184];
-    doc.setFontSize(7.5);
+    const sp = statusPillColors[quotation.status] ?? [100, 116, 139];
+    doc.setFontSize(6.5);
     doc.setFont("helvetica", "bold");
-    doc.setTextColor(...sc);
-    doc.text(STATUS_META[quotation.status].label.toUpperCase(), W - MR, 42, { align: "right" });
+    doc.setTextColor(...sp);
+    doc.text(`● ${STATUS_META[quotation.status].label.toUpperCase()}`, W - MR, 41, { align: "right" });
 
-    // ── Divider line ──
-    y = Math.max(y, 46) + 4;
-    doc.setDrawColor(226, 232, 240);
-    doc.setLineWidth(0.4);
-    doc.line(ML, y, W - MR, y);
-    y += 6;
+    // ── Bill To ──
+    let y = HDR_H + 10;
 
-    // ── Bill To section ──
-    doc.setFillColor(247, 250, 252);
-    const billH = quotation.customerPhone || quotation.customerEmail ? 26 : 20;
-    doc.roundedRect(ML, y, CW, billH, 2, 2, "F");
-    doc.setDrawColor(209, 213, 219);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(ML, y, CW, billH, 2, 2, "S");
-
-    // Green left accent on bill-to box
-    doc.setFillColor(34, 139, 60);
-    doc.rect(ML, y, 3, billH, "F");
+    // Lime left accent bar
+    doc.setFillColor(200, 255, 0);
+    doc.rect(ML, y, 3, 0.8, "F");
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(6.5);
-    doc.setTextColor(107, 114, 128);
-    doc.text("BILL TO", ML + 7, y + 7);
+    doc.setTextColor(150, 150, 150);
+    doc.text("BILL TO", ML, y + 5);
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
+    doc.setFontSize(13);
     doc.setTextColor(15, 23, 42);
-    doc.text(quotation.customerName, ML + 7, y + 14);
+    doc.text(quotation.customerName, ML, y + 12);
 
     const billContact: string[] = [];
     if (quotation.customerPhone) billContact.push(quotation.customerPhone);
@@ -177,15 +162,21 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
       doc.setTextColor(100, 116, 139);
-      doc.text(billContact.join("   ·   "), ML + 7, y + 21);
+      doc.text(billContact.join("   ·   "), ML, y + 18.5);
     }
 
-    y += billH + 8;
+    // Thin divider
+    const billH = billContact.length ? 24 : 18;
+    y += billH + 6;
+    doc.setDrawColor(230, 232, 235);
+    doc.setLineWidth(0.3);
+    doc.line(ML, y, W - MR, y);
+    y += 6;
 
     // ── Items table ──
     autoTable(doc, {
       startY: y,
-      head: [["#", "Description", "Unit", "Qty", "Unit Price (KES)", "Total (KES)"]],
+      head: [["#", "Product / Description", "Unit", "Qty", "Unit Price", "Total (KES)"]],
       body: quotation.items.map((item, i) => [
         String(i + 1),
         item.productName,
@@ -195,119 +186,120 @@ async function downloadPdf(quotation: Quotation, shop: any) {
         item.total.toLocaleString("en-KE"),
       ]),
       headStyles: {
-        fillColor: [34, 139, 60],
-        textColor: [255, 255, 255],
+        fillColor: [10, 10, 10],
+        textColor: [200, 255, 0],
         fontStyle: "bold",
-        fontSize: 8,
-        cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
+        fontSize: 7.5,
+        cellPadding: { top: 5, bottom: 5, left: 5, right: 5 },
       },
       bodyStyles: {
         fontSize: 9,
-        cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
+        cellPadding: { top: 5.5, bottom: 5.5, left: 5, right: 5 },
         textColor: [30, 41, 59],
-        lineColor: [226, 232, 240],
-        lineWidth: 0.2,
+        lineColor: [241, 245, 249],
+        lineWidth: 0.25,
       },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      alternateRowStyles: { fillColor: [249, 250, 251] },
       columnStyles: {
-        0: { cellWidth: 9,  halign: "center", fontStyle: "bold", textColor: [107, 114, 128] },
+        0: { cellWidth: 10, halign: "center", fontStyle: "bold", textColor: [160, 160, 160] },
         1: { cellWidth: "auto" },
-        2: { cellWidth: 18, halign: "center", textColor: [107, 114, 128] },
-        3: { cellWidth: 12, halign: "right" },
-        4: { cellWidth: 34, halign: "right" },
-        5: { cellWidth: 34, halign: "right", fontStyle: "bold", textColor: [15, 23, 42] },
+        2: { cellWidth: 16, halign: "center", textColor: [100, 116, 139] },
+        3: { cellWidth: 13, halign: "right" },
+        4: { cellWidth: 32, halign: "right", textColor: [71, 85, 105] },
+        5: { cellWidth: 35, halign: "right", fontStyle: "bold", textColor: [10, 10, 10] },
       },
       margin: { left: ML, right: MR },
       tableLineColor: [226, 232, 240],
       tableLineWidth: 0.2,
+      didDrawCell: (data: any) => {
+        // Lime bottom border on header row
+        if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
+          doc.setDrawColor(200, 255, 0);
+          doc.setLineWidth(1);
+          doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
+        }
+      },
     });
 
-    let ty: number = (doc as any).lastAutoTable.finalY + 8;
+    let ty: number = (doc as any).lastAutoTable.finalY + 10;
 
-    // ── Totals block (right-aligned) ──
-    const totW = 80;
+    // ── Totals block ──
+    const totW = 82;
     const totX = W - MR - totW;
 
     if (quotation.discountAmount > 0) {
-      // Subtotal row
-      doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.2);
-      doc.setFillColor(248, 250, 252);
+      doc.setFillColor(249, 250, 251);
       doc.rect(totX, ty, totW, 8, "F");
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8.5);
       doc.setTextColor(107, 114, 128);
-      doc.text("Subtotal", totX + 4, ty + 5.5);
+      doc.text("Subtotal", totX + 5, ty + 5.5);
       doc.setTextColor(30, 41, 59);
-      doc.text(`KES ${quotation.subtotal.toLocaleString("en-KE")}`, W - MR - 4, ty + 5.5, { align: "right" });
+      doc.text(`KES ${quotation.subtotal.toLocaleString("en-KE")}`, W - MR - 5, ty + 5.5, { align: "right" });
       ty += 8;
 
-      // Discount row
-      doc.setFillColor(255, 249, 249);
+      doc.setFillColor(254, 242, 242);
       doc.rect(totX, ty, totW, 8, "F");
-      doc.setTextColor(220, 38, 38);
-      doc.text("Discount", totX + 4, ty + 5.5);
-      doc.text(`- KES ${quotation.discountAmount.toLocaleString("en-KE")}`, W - MR - 4, ty + 5.5, { align: "right" });
-      ty += 8;
-
-      // Divider
-      doc.setDrawColor(209, 213, 219);
-      doc.line(totX, ty, W - MR, ty);
-      ty += 3;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(185, 28, 28);
+      doc.text("Discount", totX + 5, ty + 5.5);
+      doc.text(`− KES ${quotation.discountAmount.toLocaleString("en-KE")}`, W - MR - 5, ty + 5.5, { align: "right" });
+      ty += 9;
     }
 
-    // Total row — green background
-    doc.setFillColor(34, 139, 60);
-    doc.roundedRect(totX, ty, totW, 11, 1.5, 1.5, "F");
+    // Total — black pill with lime text
+    doc.setFillColor(10, 10, 10);
+    doc.roundedRect(totX, ty, totW, 12, 2, 2, "F");
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
+    doc.setFontSize(9);
+    doc.setTextColor(200, 255, 0);
+    doc.text("TOTAL DUE", totX + 5, ty + 8);
+    doc.setFontSize(11);
     doc.setTextColor(255, 255, 255);
-    doc.text("TOTAL DUE", totX + 4, ty + 7.5);
-    doc.text(`KES ${quotation.total.toLocaleString("en-KE")}`, W - MR - 4, ty + 7.5, { align: "right" });
-    ty += 18;
+    doc.text(`KES ${quotation.total.toLocaleString("en-KE")}`, W - MR - 5, ty + 8, { align: "right" });
+    ty += 20;
 
     // ── Notes ──
     if (quotation.notes) {
-      doc.setFillColor(255, 253, 235);
-      const noteLines = doc.splitTextToSize(quotation.notes, CW - 12);
-      const noteH = Math.max(18, noteLines.length * 5 + 13);
+      doc.setFillColor(249, 250, 251);
+      const noteLines = doc.splitTextToSize(quotation.notes, CW - 14);
+      const noteH = Math.max(20, noteLines.length * 5 + 14);
       doc.roundedRect(ML, ty, CW, noteH, 2, 2, "F");
-      doc.setDrawColor(253, 230, 138);
-      doc.setLineWidth(0.3);
+      doc.setDrawColor(220, 225, 230);
+      doc.setLineWidth(0.25);
       doc.roundedRect(ML, ty, CW, noteH, 2, 2, "S");
-      // amber left accent
-      doc.setFillColor(245, 158, 11);
+      // Lime left accent
+      doc.setFillColor(200, 255, 0);
       doc.rect(ML, ty, 3, noteH, "F");
       doc.setFont("helvetica", "bold");
       doc.setFontSize(6.5);
-      doc.setTextColor(146, 64, 14);
+      doc.setTextColor(100, 116, 139);
       doc.text("NOTES & TERMS", ML + 7, ty + 7);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8.5);
-      doc.setTextColor(92, 45, 5);
+      doc.setTextColor(55, 65, 81);
       doc.text(noteLines, ML + 7, ty + 14);
-      ty += noteH + 6;
+      ty += noteH + 8;
     }
 
     // ── Footer ──
-    doc.setDrawColor(226, 232, 240);
-    doc.setLineWidth(0.3);
-    doc.line(ML, H - 18, W - MR, H - 18);
+    // Thin lime line above footer
+    doc.setDrawColor(200, 255, 0);
+    doc.setLineWidth(0.8);
+    doc.line(ML, H - 16, W - MR, H - 16);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(148, 163, 184);
+    doc.setFontSize(7);
+    doc.setTextColor(150, 150, 150);
     const validText = quotation.validUntil
-      ? `This quotation is valid until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}.`
-      : "This quotation is valid for 30 days from the date of issue.";
-    doc.text(validText + "  Prices are subject to availability.", ML, H - 12, { maxWidth: CW - 30 });
+      ? `Valid until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")} · Prices subject to availability`
+      : "Valid for 30 days from issue · Prices subject to availability";
+    doc.text(validText, ML, H - 10);
     doc.setFont("helvetica", "bold");
-    doc.setTextColor(34, 139, 60);
-    doc.text(shop?.name ?? "", W - MR, H - 12, { align: "right" });
-
-    // Bottom green bar
-    doc.setFillColor(34, 139, 60);
-    doc.rect(0, H - 4, W, 4, "F");
+    doc.setFontSize(7);
+    doc.setTextColor(10, 10, 10);
+    doc.text(shop?.name ?? "", W - MR, H - 10, { align: "right" });
 
     doc.save(`${quotation.quoteNumber}.pdf`);
     toast.success("PDF downloaded!", { id: "pdf" });
@@ -405,98 +397,119 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
       <div className="flex-1 overflow-y-auto px-3 py-6 sm:px-6">
         <div
           id="quote-doc"
-          className="mx-auto bg-white text-gray-900 rounded-2xl shadow-2xl overflow-hidden"
-          style={{ fontFamily: "'DM Sans', sans-serif", maxWidth: "720px" }}
+          className="mx-auto bg-white text-gray-900 shadow-2xl overflow-hidden"
+          style={{ fontFamily: "'DM Sans', sans-serif", maxWidth: "760px", borderRadius: "16px" }}
         >
-          <div style={{ height: "5px", background: "linear-gradient(90deg, #C8FF00 0%, #0A0A0A 60%, #C8FF00 100%)" }} />
-          <div style={{ background: "#0A0A0A", color: "#fff", padding: "28px 32px 24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: "200px" }}>
-                <p style={{ fontSize: "10px", fontWeight: 800, letterSpacing: "0.2em", color: "#C8FF00", textTransform: "uppercase", marginBottom: "6px" }}>Official Quotation</p>
-                <h1 style={{ fontSize: "22px", fontWeight: 900, color: "#fff", margin: "0 0 4px", letterSpacing: "-0.02em" }}>{shop?.name ?? "Our Shop"}</h1>
-                {shop?.address && <p style={{ fontSize: "12px", color: "#9ca3af", margin: "2px 0" }}>📍 {shop.address}</p>}
-                <div style={{ display: "flex", gap: "16px", marginTop: "6px", flexWrap: "wrap" }}>
-                  {shop?.ownerWhatsapp && <span style={{ fontSize: "11px", color: "#9ca3af" }}>📞 {shop.ownerWhatsapp}</span>}
-                  {shop?.email && <span style={{ fontSize: "11px", color: "#9ca3af" }}>✉️ {shop.email}</span>}
+          {/* ── Premium header ── */}
+          <div style={{ background: "#0A0A0A", padding: "0" }}>
+            {/* Lime top stripe */}
+            <div style={{ height: "4px", background: "#C8FF00" }} />
+            <div style={{ padding: "28px 36px 26px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "20px", flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: "180px" }}>
+                <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.25em", color: "#C8FF00", textTransform: "uppercase", marginBottom: "8px", margin: "0 0 8px" }}>Official Quotation</p>
+                <h1 style={{ fontSize: "24px", fontWeight: 900, color: "#fff", margin: "0 0 8px", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{shop?.name ?? "Our Shop"}</h1>
+                <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                  {shop?.address && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.address}</span>}
+                  {shop?.ownerWhatsapp && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.ownerWhatsapp}</span>}
+                  {shop?.email && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.email}</span>}
                 </div>
               </div>
               <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <p style={{ fontSize: "24px", fontWeight: 900, color: "#C8FF00", fontFamily: "monospace", margin: "0 0 6px" }}>{quotation.quoteNumber}</p>
-                <p style={{ fontSize: "11px", color: "#9ca3af", margin: "2px 0" }}>📅 {format(new Date(quotation.createdAt), "dd MMM yyyy")}</p>
-                {quotation.validUntil && <p style={{ fontSize: "11px", color: "#9ca3af", margin: "2px 0" }}>⏳ Valid: {format(new Date(quotation.validUntil), "dd MMM yyyy")}</p>}
-                <span style={{ display: "inline-block", marginTop: "8px", fontSize: "10px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", padding: "3px 10px", borderRadius: "20px", background: "rgba(255,255,255,0.1)", color: "#d1d5db" }}>
+                <p style={{ fontSize: "9px", fontWeight: 800, color: "#C8FF00", letterSpacing: "0.2em", textTransform: "uppercase", margin: "0 0 6px" }}>QUOTATION</p>
+                <p style={{ fontSize: "26px", fontWeight: 900, color: "#ffffff", fontFamily: "monospace", margin: "0 0 10px", letterSpacing: "-0.01em" }}>{quotation.quoteNumber}</p>
+                <p style={{ fontSize: "11px", color: "#9ca3af", margin: "2px 0" }}>Date: {format(new Date(quotation.createdAt), "dd MMM yyyy")}</p>
+                {quotation.validUntil && <p style={{ fontSize: "11px", color: "#9ca3af", margin: "2px 0" }}>Valid Until: {format(new Date(quotation.validUntil), "dd MMM yyyy")}</p>}
+                <span style={{
+                  display: "inline-block", marginTop: "10px", fontSize: "9px", fontWeight: 800,
+                  textTransform: "uppercase", letterSpacing: "0.12em", padding: "4px 12px", borderRadius: "20px",
+                  background: quotation.status === "accepted" ? "rgba(34,197,94,0.15)" : quotation.status === "rejected" ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.08)",
+                  color: quotation.status === "accepted" ? "#4ade80" : quotation.status === "rejected" ? "#f87171" : quotation.status === "sent" ? "#60a5fa" : "#9ca3af",
+                  border: `1px solid ${quotation.status === "accepted" ? "rgba(34,197,94,0.3)" : quotation.status === "rejected" ? "rgba(239,68,68,0.3)" : "rgba(255,255,255,0.1)"}`,
+                }}>
                   {STATUS_META[quotation.status].label}
                 </span>
               </div>
             </div>
           </div>
 
-          <div style={{ padding: "24px 32px", background: "#fff" }}>
-            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "14px 18px", marginBottom: "24px" }}>
-              <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.2em", color: "#94a3b8", textTransform: "uppercase", marginBottom: "8px" }}>Bill To</p>
-              <p style={{ fontSize: "16px", fontWeight: 800, color: "#0f172a", margin: "0 0 4px" }}>{quotation.customerName}</p>
-              {quotation.customerPhone && <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0" }}>📞 {quotation.customerPhone}</p>}
-              {quotation.customerEmail && <p style={{ fontSize: "12px", color: "#64748b", margin: "2px 0" }}>✉️ {quotation.customerEmail}</p>}
+          {/* ── Bill To ── */}
+          <div style={{ padding: "24px 36px 0" }}>
+            <div style={{ display: "flex", alignItems: "stretch", gap: "0", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden", marginBottom: "24px" }}>
+              <div style={{ width: "4px", background: "#C8FF00", flexShrink: 0 }} />
+              <div style={{ padding: "14px 18px", flex: 1 }}>
+                <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.2em", color: "#94a3b8", textTransform: "uppercase", margin: "0 0 8px" }}>Bill To</p>
+                <p style={{ fontSize: "17px", fontWeight: 800, color: "#0f172a", margin: "0 0 5px" }}>{quotation.customerName}</p>
+                <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
+                  {quotation.customerPhone && <span style={{ fontSize: "12px", color: "#64748b" }}>{quotation.customerPhone}</span>}
+                  {quotation.customerEmail && <span style={{ fontSize: "12px", color: "#64748b" }}>{quotation.customerEmail}</span>}
+                </div>
+              </div>
             </div>
 
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", marginBottom: "24px" }}>
+            {/* ── Items table ── */}
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", marginBottom: "20px" }}>
               <thead>
                 <tr style={{ background: "#0A0A0A" }}>
-                  <th style={{ textAlign: "left", padding: "9px 8px", fontSize: "9px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "4%" }}>#</th>
-                  <th style={{ textAlign: "left", padding: "9px 8px", fontSize: "9px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00" }}>Product</th>
-                  <th style={{ textAlign: "center", padding: "9px 8px", fontSize: "9px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "8%" }}>Unit</th>
-                  <th style={{ textAlign: "right", padding: "9px 8px", fontSize: "9px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "8%" }}>Qty</th>
-                  <th style={{ textAlign: "right", padding: "9px 8px", fontSize: "9px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "18%" }}>Unit Price</th>
-                  <th style={{ textAlign: "right", padding: "9px 8px", fontSize: "9px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "18%" }}>Total</th>
+                  <th style={{ textAlign: "center", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "4%" }}>#</th>
+                  <th style={{ textAlign: "left", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00" }}>Product / Description</th>
+                  <th style={{ textAlign: "center", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "9%" }}>Unit</th>
+                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "8%" }}>Qty</th>
+                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "17%" }}>Unit Price</th>
+                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "18%" }}>Total (KES)</th>
                 </tr>
+                <tr><td colSpan={6} style={{ height: "2px", background: "#C8FF00", padding: 0 }} /></tr>
               </thead>
               <tbody>
                 {quotation.items.map((item, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid #f1f5f9", background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                    <td style={{ padding: "10px 8px", textAlign: "center", fontSize: "10px", fontWeight: 800, color: "#94a3b8" }}>{i + 1}</td>
-                    <td style={{ padding: "10px 8px", fontWeight: 600, color: "#0f172a" }}>{item.productName}</td>
-                    <td style={{ padding: "10px 8px", textAlign: "center", color: "#64748b", fontSize: "11px" }}>{item.unit || "unit"}</td>
-                    <td style={{ padding: "10px 8px", textAlign: "right", color: "#374151", fontFamily: "monospace" }}>{item.qty}</td>
-                    <td style={{ padding: "10px 8px", textAlign: "right", color: "#374151", fontFamily: "monospace" }}>{KES(item.unitPrice)}</td>
-                    <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 800, color: "#0f172a", fontFamily: "monospace" }}>{KES(item.total)}</td>
+                  <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#f9fafb" }}>
+                    <td style={{ padding: "11px 10px", textAlign: "center", fontSize: "10px", fontWeight: 800, color: "#94a3b8", borderBottom: "1px solid #f1f5f9" }}>{i + 1}</td>
+                    <td style={{ padding: "11px 10px", fontWeight: 600, color: "#0f172a", borderBottom: "1px solid #f1f5f9" }}>{item.productName}</td>
+                    <td style={{ padding: "11px 10px", textAlign: "center", color: "#64748b", fontSize: "11px", borderBottom: "1px solid #f1f5f9" }}>{item.unit || "unit"}</td>
+                    <td style={{ padding: "11px 10px", textAlign: "right", color: "#374151", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{item.qty}</td>
+                    <td style={{ padding: "11px 10px", textAlign: "right", color: "#475569", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{KES(item.unitPrice)}</td>
+                    <td style={{ padding: "11px 10px", textAlign: "right", fontWeight: 800, color: "#0f172a", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{KES(item.total)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
+            {/* ── Totals ── */}
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "24px" }}>
-              <div style={{ width: "240px" }}>
+              <div style={{ width: "260px" }}>
                 {quotation.discountAmount > 0 && <>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "13px", color: "#64748b" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", fontSize: "13px", color: "#64748b", background: "#f8fafc", borderRadius: "6px 6px 0 0" }}>
                     <span>Subtotal</span><span style={{ fontFamily: "monospace" }}>{KES(quotation.subtotal)}</span>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "13px", color: "#ef4444" }}>
-                    <span>Discount</span><span style={{ fontFamily: "monospace" }}>-{KES(quotation.discountAmount)}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", fontSize: "13px", color: "#dc2626", background: "#fef2f2" }}>
+                    <span>Discount</span><span style={{ fontFamily: "monospace" }}>− {KES(quotation.discountAmount)}</span>
                   </div>
                 </>}
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", marginTop: "8px", background: "#0A0A0A", borderRadius: "8px" }}>
-                  <span style={{ fontSize: "13px", fontWeight: 900, color: "#C8FF00", textTransform: "uppercase" }}>Total</span>
-                  <span style={{ fontSize: "15px", fontWeight: 900, color: "#fff", fontFamily: "monospace" }}>{KES(quotation.total)}</span>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#0A0A0A", borderRadius: quotation.discountAmount > 0 ? "0 0 10px 10px" : "10px" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 900, color: "#C8FF00", textTransform: "uppercase", letterSpacing: "0.1em" }}>Total Due</span>
+                  <span style={{ fontSize: "18px", fontWeight: 900, color: "#fff", fontFamily: "monospace" }}>{KES(quotation.total)}</span>
                 </div>
               </div>
             </div>
 
+            {/* ── Notes ── */}
             {quotation.notes && (
-              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "12px 16px", marginBottom: "20px" }}>
-                <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.2em", color: "#94a3b8", textTransform: "uppercase", marginBottom: "6px" }}>Notes & Terms</p>
-                <p style={{ fontSize: "12px", color: "#475569", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{quotation.notes}</p>
+              <div style={{ display: "flex", gap: "0", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden", marginBottom: "20px" }}>
+                <div style={{ width: "4px", background: "#C8FF00", flexShrink: 0 }} />
+                <div style={{ padding: "12px 16px", flex: 1, background: "#f8fafc" }}>
+                  <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.2em", color: "#94a3b8", textTransform: "uppercase", margin: "0 0 7px" }}>Notes & Terms</p>
+                  <p style={{ fontSize: "12px", color: "#475569", whiteSpace: "pre-wrap", lineHeight: 1.7, margin: 0 }}>{quotation.notes}</p>
+                </div>
               </div>
             )}
 
-            <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: "14px", textAlign: "center" }}>
-              <p style={{ fontSize: "10px", color: "#94a3b8", lineHeight: 1.6 }}>
-                This quotation is valid {quotation.validUntil ? `until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}` : "for 30 days from the date of issue"}.
-                Prices are subject to availability. Thank you for your business.
+            {/* ── Footer ── */}
+            <div style={{ borderTop: "2px solid #C8FF00", paddingTop: "14px", paddingBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+              <p style={{ fontSize: "10px", color: "#94a3b8", lineHeight: 1.6, margin: 0 }}>
+                Valid {quotation.validUntil ? `until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}` : "for 30 days from issue"} · Prices subject to availability
               </p>
+              <p style={{ fontSize: "11px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{shop?.name ?? ""}</p>
             </div>
           </div>
-
-          <div style={{ height: "5px", background: "linear-gradient(90deg, #C8FF00 0%, #0A0A0A 60%, #C8FF00 100%)" }} />
         </div>
         <div className="h-8" />
       </div>
@@ -990,7 +1003,7 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
 
 // ─── Quotation Card ────────────────────────────────────────────────────────────
 
-function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onDownloadPdf }: {
+function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onDownloadPdf, onConvertToSale }: {
   q: Quotation;
   shop: any;
   onEdit: () => void;
@@ -998,41 +1011,58 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
   onStatusChange: (s: Quotation["status"]) => void;
   onDelete: () => void;
   onDownloadPdf: () => void;
+  onConvertToSale: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <div className="bg-card border border-border rounded-2xl overflow-hidden hover:border-border/80 transition-all">
+    <div className="bg-card border border-border rounded-2xl overflow-hidden hover:border-primary/20 transition-all group">
+      {/* Top lime accent on hover */}
+      <div className="h-0.5 bg-primary/0 group-hover:bg-primary/60 transition-colors" />
+
       {/* Main row */}
       <div className="px-4 py-3.5">
-        <div className="flex items-start gap-2 mb-2">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-black text-primary font-mono">{q.quoteNumber}</span>
+        {/* Header row: quote# + status + amount */}
+        <div className="flex items-start justify-between gap-3 mb-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="text-sm font-black text-primary font-mono tracking-tight">{q.quoteNumber}</span>
               <StatusBadge status={q.status} />
-              {q.validUntil && new Date(q.validUntil) < new Date() && q.status === "draft" && (
-                <span className="text-[9px] font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-full border border-amber-400/20">EXPIRED</span>
+              {q.validUntil && new Date(q.validUntil) < new Date() && q.status !== "expired" && q.status !== "rejected" && q.status !== "accepted" && (
+                <span className="text-[9px] font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-full border border-amber-400/20">OVERDUE</span>
               )}
             </div>
-            <p className="text-sm font-bold text-foreground mt-1 truncate">{q.customerName}</p>
-            {q.customerPhone && <p className="text-xs text-muted-foreground/50 font-mono mt-0.5">{q.customerPhone}</p>}
+            <p className="text-sm font-bold text-foreground truncate leading-tight">{q.customerName}</p>
+            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+              {q.customerPhone && <span className="text-[11px] text-muted-foreground/50 font-mono">{q.customerPhone}</span>}
+              <span className="text-[11px] text-muted-foreground/35">
+                {format(new Date(q.createdAt), "dd MMM yyyy")}
+                {q.validUntil && ` · Valid till ${format(new Date(q.validUntil), "dd MMM")}`}
+              </span>
+            </div>
           </div>
           <div className="text-right shrink-0">
             <p className="text-base font-black text-primary font-mono">{KES(q.total)}</p>
             <p className="text-[10px] text-muted-foreground/40 mt-0.5">
               {q.items.length} item{q.items.length !== 1 ? "s" : ""}
+              {q.discountAmount > 0 && ` · −${KES(q.discountAmount)}`}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-          <p className="text-[10px] text-muted-foreground/40 flex-1">
-            {format(new Date(q.createdAt), "dd MMM yyyy")}
-            {q.validUntil && ` · Valid ${format(new Date(q.validUntil), "dd MMM")}`}
-          </p>
+        {/* Action bar */}
+        <div className="flex items-center gap-1 pt-2 border-t border-border/30 flex-wrap">
+          {/* Convert to Sale — primary action, lime pill */}
+          <button
+            onClick={onConvertToSale}
+            title="Load items into POS cart"
+            className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary hover:text-primary-foreground text-[10px] font-black transition-all"
+          >
+            <ShoppingCart className="h-3 w-3" />
+            <span>Sell</span>
+          </button>
 
-          {/* Action buttons */}
           <button
             onClick={() => setExpanded(v => !v)}
             className="h-7 px-2 flex items-center gap-1 rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors text-[10px] font-semibold"
@@ -1040,6 +1070,9 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
             {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
             {expanded ? "Hide" : "Items"}
           </button>
+
+          <div className="flex-1" />
+
           <button
             onClick={() => shareWhatsApp(q, shop)}
             className="h-7 w-7 flex items-center justify-center rounded-lg text-[#25D366] hover:bg-[#25D366]/10 transition-colors"
@@ -1103,7 +1136,6 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
               </>
             )}
           </div>
-          {/* Direct delete button */}
           <button
             onClick={onDelete}
             className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
@@ -1117,25 +1149,30 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
       {/* Expanded items */}
       {expanded && (
         <div className="border-t border-border/40 bg-muted/10">
-          <div className="px-4 py-1.5 grid grid-cols-[1fr_auto_auto] gap-x-3 text-[9px] font-black uppercase tracking-widest text-muted-foreground/30 border-b border-border/20">
-            <span>Product</span><span className="text-right">Qty</span><span className="text-right">Total</span>
+          <div className="px-4 py-1.5 grid grid-cols-[1fr_auto_auto_auto] gap-x-4 text-[9px] font-black uppercase tracking-widest text-muted-foreground/30 border-b border-border/20">
+            <span>Product</span><span className="text-right">Qty</span><span className="text-right">Unit Price</span><span className="text-right">Total</span>
           </div>
           {q.items.map((item, i) => (
-            <div key={i} className="px-4 py-2 grid grid-cols-[1fr_auto_auto] gap-x-3 items-center border-b border-border/15 last:border-0">
+            <div key={i} className="px-4 py-2.5 grid grid-cols-[1fr_auto_auto_auto] gap-x-4 items-center border-b border-border/15 last:border-0">
               <div className="min-w-0">
-                <p className="text-xs font-medium text-foreground truncate">{item.productName}</p>
-                <p className="text-[10px] text-muted-foreground/40">{KES(item.unitPrice)} / {item.unit}</p>
+                <p className="text-xs font-semibold text-foreground truncate">{item.productName}</p>
+                <p className="text-[10px] text-muted-foreground/40 mt-0.5">{item.unit}</p>
               </div>
-              <span className="text-xs font-mono text-muted-foreground text-right">{item.qty} {item.unit}</span>
+              <span className="text-xs font-mono text-muted-foreground text-right">{item.qty}</span>
+              <span className="text-xs font-mono text-muted-foreground/60 text-right">{KES(item.unitPrice)}</span>
               <span className="text-xs font-black font-mono text-foreground text-right">{KES(item.total)}</span>
             </div>
           ))}
           {q.discountAmount > 0 && (
-            <div className="px-4 py-2 flex justify-between text-xs border-t border-border/20">
-              <span className="text-muted-foreground/50">Discount</span>
-              <span className="font-mono text-red-400">-{KES(q.discountAmount)}</span>
+            <div className="px-4 py-2 flex justify-between text-xs border-t border-border/20 bg-muted/20">
+              <span className="text-muted-foreground/50">Discount applied</span>
+              <span className="font-mono font-bold text-red-400">−{KES(q.discountAmount)}</span>
             </div>
           )}
+          <div className="px-4 py-2.5 flex justify-between items-center bg-primary/5 border-t border-primary/10">
+            <span className="text-[10px] font-black text-primary/60 uppercase tracking-wider">Total</span>
+            <span className="text-sm font-black font-mono text-primary">{KES(q.total)}</span>
+          </div>
         </div>
       )}
     </div>
@@ -1149,6 +1186,7 @@ type PageView = "list" | "builder" | "print";
 
 export default function Quotations() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const [, setLocation] = useLocation();
   const [view, setView] = useState<PageView>("list");
   const [quoteList, setQuoteList] = useState<Quotation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1239,6 +1277,23 @@ export default function Quotations() {
     setClearingDrafts(false);
   };
 
+  const handleConvertToSale = (q: Quotation) => {
+    sessionStorage.setItem("greenlink_pending_cart", JSON.stringify({
+      items: q.items.map(item => ({
+        productId: item.productId,
+        productName: item.productName,
+        qty: item.qty,
+        unitPrice: item.unitPrice,
+        unit: item.unit,
+      })),
+      customerName: q.customerName,
+      discount: q.discountAmount,
+      fromQuote: q.quoteNumber,
+    }));
+    toast.success(`Loading ${q.quoteNumber} into POS…`);
+    setLocation("/pos");
+  };
+
   // Print view
   if (view === "print" && printTarget) {
     return <PrintView quotation={printTarget} shop={shop} onClose={() => { setView("list"); setPrintTarget(null); }} />;
@@ -1268,7 +1323,9 @@ export default function Quotations() {
   ];
 
   const draftCount = counts["draft"] ?? 0;
+  const acceptedCount = counts["accepted"] ?? 0;
   const totalValue = filtered.reduce((s, q) => s + q.total, 0);
+  const acceptedValue = quoteList.filter(q => q.status === "accepted").reduce((s, q) => s + q.total, 0);
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -1280,7 +1337,6 @@ export default function Quotations() {
             <p className="text-[11px] text-muted-foreground/50">
               {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""}
               {filtered.length !== quoteList.length ? ` · ${filtered.length} shown` : ""}
-              {filtered.length > 0 && ` · ${KES(totalValue)}`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1291,7 +1347,7 @@ export default function Quotations() {
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-destructive/10 text-destructive border border-destructive/20 text-xs font-bold hover:bg-destructive/20 disabled:opacity-50 transition-colors"
               >
                 {clearingDrafts ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                {draftCount} Draft{draftCount !== 1 ? "s" : ""}
+                Clear {draftCount} Draft{draftCount !== 1 ? "s" : ""}
               </button>
             )}
             <button
@@ -1302,6 +1358,24 @@ export default function Quotations() {
             </button>
           </div>
         </div>
+
+        {/* Stats row */}
+        {quoteList.length > 0 && (
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="bg-muted/30 rounded-xl px-3 py-2 border border-border/40">
+              <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground/40 mb-0.5">Total Value</p>
+              <p className="text-sm font-black text-foreground font-mono">{KES(totalValue)}</p>
+            </div>
+            <div className="bg-emerald-500/5 rounded-xl px-3 py-2 border border-emerald-500/15">
+              <p className="text-[9px] font-black uppercase tracking-wider text-emerald-500/60 mb-0.5">Accepted</p>
+              <p className="text-sm font-black text-emerald-400 font-mono">{KES(acceptedValue)}</p>
+            </div>
+            <div className="bg-primary/5 rounded-xl px-3 py-2 border border-primary/15">
+              <p className="text-[9px] font-black uppercase tracking-wider text-primary/50 mb-0.5">Open</p>
+              <p className="text-sm font-black text-primary font-mono">{(counts["draft"] ?? 0) + (counts["sent"] ?? 0)}</p>
+            </div>
+          </div>
+        )}
 
         {/* Search */}
         <div className="relative mb-3">
@@ -1376,7 +1450,7 @@ export default function Quotations() {
             )}
           </div>
         ) : (
-          <div className="p-4 space-y-2.5">
+          <div className="p-4 space-y-3">
             {filtered.map(q => (
               <QuotationCard
                 key={q.id}
@@ -1387,6 +1461,7 @@ export default function Quotations() {
                 onStatusChange={(s) => handleStatusChange(q, s)}
                 onDelete={() => handleDelete(q)}
                 onDownloadPdf={() => downloadPdf(q, shop)}
+                onConvertToSale={() => handleConvertToSale(q)}
               />
             ))}
           </div>
