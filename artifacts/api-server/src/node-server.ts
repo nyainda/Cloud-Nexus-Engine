@@ -168,6 +168,19 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     }
   }
 
+  // ── One-time guard: if quotations table has old schema (has updated_at
+  // column which was NOT NULL, incompatible with Drizzle inserts), drop it
+  // so the migration CREATE TABLE recreates it with the correct schema.
+  try {
+    const qtInfo = db.prepare("PRAGMA table_info(quotations)").all() as any[];
+    const hasUpdatedAt = qtInfo.some((c: any) => c.name === "updated_at");
+    if (hasUpdatedAt) {
+      console.log("[api] Dropping old quotations schema (has updated_at — incompatible) — recreating with new schema");
+      try { db.prepare("DROP TABLE IF EXISTS quotation_items").run(); } catch {}
+      db.prepare("DROP TABLE IF EXISTS quotations").run();
+    }
+  } catch { /* quotations table may not exist yet */ }
+
   const MIGRATIONS = [
     "ALTER TABLE scan_sessions ADD COLUMN image_url TEXT",
     "ALTER TABLE scan_sessions ADD COLUMN r2_key TEXT",
@@ -218,6 +231,33 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     "ALTER TABLE scan_sessions ADD COLUMN supplier_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_scan_sessions_supplier ON scan_sessions(supplier_id)",
     "CREATE INDEX IF NOT EXISTS idx_scan_sessions_shop_date ON scan_sessions(shop_id, created_at)",
+    // Quotation builder feature
+    "ALTER TABLE shops ADD COLUMN owner_name TEXT",
+    "ALTER TABLE shops ADD COLUMN address TEXT",
+    "ALTER TABLE shops ADD COLUMN email TEXT",
+    `CREATE TABLE IF NOT EXISTS quotations (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      quote_number TEXT NOT NULL,
+      customer_name TEXT NOT NULL,
+      customer_phone TEXT NOT NULL DEFAULT '',
+      customer_email TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      notes TEXT,
+      valid_until TEXT,
+      subtotal REAL NOT NULL DEFAULT 0,
+      discount_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      items_json TEXT NOT NULL DEFAULT '[]',
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_quotations_shop_date ON quotations(shop_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_quotations_shop_status ON quotations(shop_id, status)",
+    // Migrate old quotations schema → add missing columns for Drizzle compatibility
+    "ALTER TABLE quotations ADD COLUMN customer_email TEXT",
+    "ALTER TABLE quotations ADD COLUMN discount_amount REAL DEFAULT 0",
+    "ALTER TABLE quotations ADD COLUMN items_json TEXT DEFAULT '[]'",
   ];
   for (const m of MIGRATIONS) {
     try {
