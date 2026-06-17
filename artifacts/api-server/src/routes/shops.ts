@@ -65,6 +65,9 @@ shopsRouter.get("/shops/:shopId", async (c) => {
   return c.json({
     id: shop.id,
     name: shop.name,
+    ownerName: (shop as any).ownerName ?? null,
+    address: (shop as any).address ?? null,
+    email: (shop as any).email ?? null,
     ownerWhatsapp: shop.ownerWhatsapp,
     hasGeminiKey: !!shop.geminiApiKey,
     hasGroqKey: !!shop.groqApiKey,
@@ -75,6 +78,9 @@ shopsRouter.get("/shops/:shopId", async (c) => {
 shopsRouter.patch("/shops/:shopId", requireAuth, async (c) => {
   const body = await c.req.json<{
     name?: string;
+    ownerName?: string;
+    address?: string;
+    email?: string;
     ownerWhatsapp?: string;
     ownerPin?: string;
     cashierPin?: string;
@@ -84,6 +90,9 @@ shopsRouter.patch("/shops/:shopId", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const patch: Partial<typeof shops.$inferInsert> = {};
   if (body.name) patch.name = body.name;
+  if (body.ownerName !== undefined) (patch as any).ownerName = body.ownerName;
+  if (body.address !== undefined) (patch as any).address = body.address;
+  if (body.email !== undefined) (patch as any).email = body.email;
   if (body.ownerWhatsapp !== undefined) patch.ownerWhatsapp = body.ownerWhatsapp;
   if (body.ownerPin) patch.ownerPinHash = await hashPin(body.ownerPin);
   if (body.cashierPin) patch.cashierPinHash = await hashPin(body.cashierPin);
@@ -99,6 +108,9 @@ shopsRouter.patch("/shops/:shopId", requireAuth, async (c) => {
   return c.json({
     id: shop.id,
     name: shop.name,
+    ownerName: (shop as any).ownerName ?? null,
+    address: (shop as any).address ?? null,
+    email: (shop as any).email ?? null,
     ownerWhatsapp: shop.ownerWhatsapp,
     hasGeminiKey: !!shop.geminiApiKey,
     hasGroqKey: !!shop.groqApiKey,

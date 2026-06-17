@@ -2,6 +2,9 @@ export const BOOTSTRAP_SQL = `
 CREATE TABLE IF NOT EXISTS shops (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  owner_name TEXT,
+  address TEXT,
+  email TEXT,
   owner_whatsapp TEXT,
   owner_pin_hash TEXT NOT NULL,
   cashier_pin_hash TEXT NOT NULL,
@@ -197,6 +200,24 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   endpoint TEXT NOT NULL UNIQUE,
   keys_p256dh TEXT NOT NULL,
   keys_auth TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quotations (
+  id TEXT PRIMARY KEY,
+  shop_id TEXT NOT NULL REFERENCES shops(id),
+  quote_number TEXT NOT NULL,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT NOT NULL DEFAULT '',
+  customer_email TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  notes TEXT,
+  valid_until TEXT,
+  subtotal REAL NOT NULL DEFAULT 0,
+  discount_amount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  items_json TEXT NOT NULL DEFAULT '[]',
+  created_by TEXT,
   created_at TEXT NOT NULL
 );
 

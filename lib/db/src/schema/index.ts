@@ -14,6 +14,9 @@ const createdAt = () =>
 export const shops = sqliteTable("shops", {
   id: pk(),
   name: text("name").notNull(),
+  ownerName: text("owner_name"),
+  address: text("address"),
+  email: text("email"),
   ownerWhatsapp: text("owner_whatsapp"),
   ownerPinHash: text("owner_pin_hash").notNull(),
   cashierPinHash: text("cashier_pin_hash").notNull(),
@@ -280,6 +283,30 @@ export const saleReturns = sqliteTable("sale_returns", {
 
 export type SaleReturn = typeof saleReturns.$inferSelect;
 export type InsertSaleReturn = typeof saleReturns.$inferInsert;
+
+// ─── quotations ──────────────────────────────────────────────────────────────
+export const quotations = sqliteTable("quotations", {
+  id: pk(),
+  shopId: text("shop_id").notNull().references(() => shops.id),
+  quoteNumber: text("quote_number").notNull(),
+  customerName: text("customer_name").notNull(),
+  customerPhone: text("customer_phone").notNull().default(""),
+  customerEmail: text("customer_email"),
+  status: text("status", { enum: ["draft", "sent", "accepted", "rejected", "expired"] })
+    .notNull()
+    .default("draft"),
+  notes: text("notes"),
+  validUntil: text("valid_until"),
+  subtotal: real("subtotal").notNull().default(0),
+  discountAmount: real("discount_amount").notNull().default(0),
+  total: real("total").notNull().default(0),
+  itemsJson: text("items_json").notNull().default("[]"),
+  createdBy: text("created_by"),
+  createdAt: createdAt(),
+});
+
+export type Quotation = typeof quotations.$inferSelect;
+export type InsertQuotation = typeof quotations.$inferInsert;
 
 // ─── scan sessions ───────────────────────────────────────────────────────────
 export const scanSessions = sqliteTable("scan_sessions", {

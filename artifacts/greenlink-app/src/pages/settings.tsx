@@ -1110,6 +1110,39 @@ export default function Settings() {
                       }}
                     />
                     <div className="border-t border-border/30" />
+                    <EditableField
+                      label="Owner / Contact Name"
+                      value={(shop as any)?.ownerName || ""}
+                      placeholder="e.g. John Kamau"
+                      hint="Appears on printed quotations"
+                      onSave={async (v) => {
+                        await updateShop.mutateAsync({ shopId, data: { ownerName: v } as any });
+                        toast.success("Owner name updated");
+                      }}
+                    />
+                    <div className="border-t border-border/30" />
+                    <EditableField
+                      label="Business Address"
+                      value={(shop as any)?.address || ""}
+                      placeholder="e.g. Nairobi, Ngara Road, Shop 4"
+                      hint="Appears on printed quotations"
+                      onSave={async (v) => {
+                        await updateShop.mutateAsync({ shopId, data: { address: v } as any });
+                        toast.success("Address updated");
+                      }}
+                    />
+                    <div className="border-t border-border/30" />
+                    <EditableField
+                      label="Business Email"
+                      value={(shop as any)?.email || ""}
+                      placeholder="e.g. info@greenlinkfarm.co.ke"
+                      hint="Appears on printed quotations"
+                      onSave={async (v) => {
+                        await updateShop.mutateAsync({ shopId, data: { email: v } as any });
+                        toast.success("Email updated");
+                      }}
+                    />
+                    <div className="border-t border-border/30" />
                     <WhatsAppField
                       numbers={(shop?.ownerWhatsapp || "").split(",").map(n => n.trim()).filter(Boolean)}
                       onSave={(nums) => {

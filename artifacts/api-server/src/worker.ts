@@ -111,6 +111,29 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     "ALTER TABLE scan_sessions ADD COLUMN supplier_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_scan_sessions_supplier ON scan_sessions(supplier_id)",
     "CREATE INDEX IF NOT EXISTS idx_scan_sessions_shop_date ON scan_sessions(shop_id, created_at)",
+    // Quotation builder feature
+    "ALTER TABLE shops ADD COLUMN owner_name TEXT",
+    "ALTER TABLE shops ADD COLUMN address TEXT",
+    "ALTER TABLE shops ADD COLUMN email TEXT",
+    `CREATE TABLE IF NOT EXISTS quotations (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      quote_number TEXT NOT NULL,
+      customer_name TEXT NOT NULL,
+      customer_phone TEXT NOT NULL DEFAULT '',
+      customer_email TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      notes TEXT,
+      valid_until TEXT,
+      subtotal REAL NOT NULL DEFAULT 0,
+      discount_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      items_json TEXT NOT NULL DEFAULT '[]',
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_quotations_shop_date ON quotations(shop_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_quotations_shop_status ON quotations(shop_id, status)",
   ];
   for (const m of MIGRATIONS) {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }
