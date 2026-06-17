@@ -139,44 +139,42 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     doc.text(`● ${STATUS_META[quotation.status].label.toUpperCase()}`, W - MR, 41, { align: "right" });
 
     // ── Bill To ──
-    let y = HDR_H + 10;
-
-    // Lime left accent bar
-    doc.setFillColor(200, 255, 0);
-    doc.rect(ML, y, 3, 0.8, "F");
+    let y = HDR_H + 8;
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
+    doc.setFontSize(6);
     doc.setTextColor(150, 150, 150);
-    doc.text("BILL TO", ML, y + 5);
+    doc.text("BILL TO", ML, y);
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
+    doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text(quotation.customerName, ML, y + 12);
+    doc.text(quotation.customerName, ML, y + 6);
 
     const billContact: string[] = [];
     if (quotation.customerPhone) billContact.push(quotation.customerPhone);
     if (quotation.customerEmail) billContact.push(quotation.customerEmail);
     if (billContact.length) {
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
+      doc.setFontSize(7.5);
       doc.setTextColor(100, 116, 139);
-      doc.text(billContact.join("   ·   "), ML, y + 18.5);
+      doc.text(billContact.join("   ·   "), ML, y + 12);
     }
 
     // Thin divider
-    const billH = billContact.length ? 24 : 18;
-    y += billH + 6;
+    const billH = billContact.length ? 18 : 12;
+    y += billH + 4;
     doc.setDrawColor(230, 232, 235);
     doc.setLineWidth(0.3);
     doc.line(ML, y, W - MR, y);
-    y += 6;
+    y += 4;
+
+    const totalPages = { n: 1 };
 
     // ── Items table ──
     autoTable(doc, {
       startY: y,
-      head: [["#", "Product / Description", "Unit", "Qty", "Unit Price", "Total (KES)"]],
+      head: [["#", "Product / Description", "Unit", "Qty", "Unit Price (KES)", "Total (KES)"]],
       body: quotation.items.map((item, i) => [
         String(i + 1),
         item.productName,
@@ -189,39 +187,57 @@ async function downloadPdf(quotation: Quotation, shop: any) {
         fillColor: [10, 10, 10],
         textColor: [200, 255, 0],
         fontStyle: "bold",
-        fontSize: 7.5,
-        cellPadding: { top: 5, bottom: 5, left: 5, right: 5 },
+        fontSize: 6.5,
+        cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 },
       },
       bodyStyles: {
-        fontSize: 9,
-        cellPadding: { top: 5.5, bottom: 5.5, left: 5, right: 5 },
+        fontSize: 7.5,
+        cellPadding: { top: 2.5, bottom: 2.5, left: 4, right: 4 },
         textColor: [30, 41, 59],
-        lineColor: [241, 245, 249],
-        lineWidth: 0.25,
+        lineColor: [235, 238, 242],
+        lineWidth: 0.2,
       },
-      alternateRowStyles: { fillColor: [249, 250, 251] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
       columnStyles: {
-        0: { cellWidth: 10, halign: "center", fontStyle: "bold", textColor: [160, 160, 160] },
+        0: { cellWidth: 8, halign: "center", fontStyle: "bold", textColor: [180, 180, 180], fontSize: 6.5 },
         1: { cellWidth: "auto" },
-        2: { cellWidth: 16, halign: "center", textColor: [100, 116, 139] },
-        3: { cellWidth: 13, halign: "right" },
-        4: { cellWidth: 32, halign: "right", textColor: [71, 85, 105] },
-        5: { cellWidth: 35, halign: "right", fontStyle: "bold", textColor: [10, 10, 10] },
+        2: { cellWidth: 14, halign: "center", textColor: [100, 116, 139] },
+        3: { cellWidth: 11, halign: "right" },
+        4: { cellWidth: 30, halign: "right", textColor: [71, 85, 105] },
+        5: { cellWidth: 30, halign: "right", fontStyle: "bold", textColor: [10, 10, 10] },
       },
       margin: { left: ML, right: MR },
-      tableLineColor: [226, 232, 240],
-      tableLineWidth: 0.2,
+      tableLineColor: [220, 225, 232],
+      tableLineWidth: 0.15,
+      showHead: "everyPage",
       didDrawCell: (data: any) => {
-        // Lime bottom border on header row
         if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
           doc.setDrawColor(200, 255, 0);
-          doc.setLineWidth(1);
+          doc.setLineWidth(0.8);
           doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
         }
       },
+      didDrawPage: (data: any) => {
+        totalPages.n = (doc as any).internal.getNumberOfPages();
+        // Repeat lime top stripe + footer on each page after the first
+        const pg = (doc as any).internal.getCurrentPageInfo().pageNumber;
+        if (pg > 1) {
+          doc.setFillColor(200, 255, 0);
+          doc.rect(0, 0, W, 2, "F");
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6.5);
+          doc.setTextColor(150, 150, 150);
+          doc.text(`${shop?.name ?? ""} · ${quotation.quoteNumber} (continued)`, ML, 7);
+        }
+        // Page number at bottom
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.5);
+        doc.setTextColor(180, 180, 180);
+        doc.text(`Page ${pg}`, W / 2, H - 6, { align: "center" });
+      },
     });
 
-    let ty: number = (doc as any).lastAutoTable.finalY + 10;
+    let ty: number = (doc as any).lastAutoTable.finalY + 8;
 
     // ── Totals block ──
     const totW = 82;
