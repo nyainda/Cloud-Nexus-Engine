@@ -168,16 +168,52 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     }
   }
 
-  // ── One-time guard: if quotations table has old schema (has updated_at
-  // column which was NOT NULL, incompatible with Drizzle inserts), drop it
-  // so the migration CREATE TABLE recreates it with the correct schema.
+  // ── One-time guard: if quotations table has old schema (has `type` or
+  // `updated_at` columns which were NOT NULL, incompatible with Drizzle
+  // inserts), drop and immediately recreate with the correct schema.
   try {
     const qtInfo = db.prepare("PRAGMA table_info(quotations)").all() as any[];
-    const hasUpdatedAt = qtInfo.some((c: any) => c.name === "updated_at");
-    if (hasUpdatedAt) {
-      console.log("[api] Dropping old quotations schema (has updated_at — incompatible) — recreating with new schema");
+    const colNames = qtInfo.map((c: any) => c.name);
+    const hasOldSchema = colNames.includes("updated_at") || colNames.includes("type") || colNames.includes("customer_address");
+    if (hasOldSchema) {
+      console.log("[api] Detected old quotations schema — dropping and recreating with correct schema");
+      // Back up existing rows before dropping
+      let oldRows: any[] = [];
+      try { oldRows = db.prepare("SELECT * FROM quotations").all() as any[]; } catch {}
       try { db.prepare("DROP TABLE IF EXISTS quotation_items").run(); } catch {}
       db.prepare("DROP TABLE IF EXISTS quotations").run();
+      // Recreate immediately with correct schema (don't wait for MIGRATIONS loop)
+      db.prepare(`CREATE TABLE IF NOT EXISTS quotations (
+        id TEXT PRIMARY KEY,
+        shop_id TEXT NOT NULL REFERENCES shops(id),
+        quote_number TEXT NOT NULL,
+        customer_name TEXT NOT NULL,
+        customer_phone TEXT NOT NULL DEFAULT '',
+        customer_email TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        notes TEXT,
+        valid_until TEXT,
+        subtotal REAL NOT NULL DEFAULT 0,
+        discount_amount REAL NOT NULL DEFAULT 0,
+        total REAL NOT NULL DEFAULT 0,
+        items_json TEXT NOT NULL DEFAULT '[]',
+        created_by TEXT,
+        created_at TEXT NOT NULL
+      )`).run();
+      // Re-insert backed-up rows, mapping old column names to new ones
+      const ins = db.prepare(`INSERT OR IGNORE INTO quotations
+        (id, shop_id, quote_number, customer_name, customer_phone, customer_email, status, notes, valid_until, subtotal, discount_amount, total, items_json, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const q of oldRows) {
+        try {
+          ins.run(q.id, q.shop_id, q.quote_number, q.customer_name,
+            q.customer_phone ?? "", q.customer_email ?? null, q.status ?? "draft",
+            q.notes ?? null, q.valid_until ?? null, q.subtotal ?? 0,
+            q.discount_amount ?? q.discount ?? 0, q.total ?? 0,
+            q.items_json ?? "[]", q.created_by ?? null, q.created_at);
+        } catch {}
+      }
+      console.log(`[api] Quotations schema fixed — migrated ${oldRows.length} existing rows`);
     }
   } catch { /* quotations table may not exist yet */ }
 
