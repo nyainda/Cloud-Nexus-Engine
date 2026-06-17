@@ -62,7 +62,7 @@ function StatusBadge({ status }: { status: Quotation["status"] }) {
   );
 }
 
-// ─── PDF generation — premium dark-header design ──────────────────────────────
+// ─── PDF generation ────────────────────────────────────────────────────────────
 
 async function downloadPdf(quotation: Quotation, shop: any) {
   toast.loading("Generating PDF…", { id: "pdf" });
@@ -71,251 +71,280 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     const autoTable = (await import("jspdf-autotable")).default;
 
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W = doc.internal.pageSize.getWidth();
-    const H = doc.internal.pageSize.getHeight();
-    const ML = 15;
-    const MR = 15;
+    const W  = doc.internal.pageSize.getWidth();   // 210
+    const H  = doc.internal.pageSize.getHeight();  // 297
+    const ML = 12;
+    const MR = 12;
     const CW = W - ML - MR;
 
-    // ── Full white background ──
-    doc.setFillColor(255, 255, 255);
+    // ── helpers ──────────────────────────────────────────────────────────────
+    const LIME: [number,number,number]  = [200, 255, 0];
+    const DARK: [number,number,number]  = [10, 10, 10];
+    const WHITE: [number,number,number] = [255, 255, 255];
+
+    // Draws the fixed footer bar on any page (called at end)
+    function drawFooter(pageH: number) {
+      doc.setDrawColor(...LIME);
+      doc.setLineWidth(0.5);
+      doc.line(ML, pageH - 12, W - MR, pageH - 12);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+      doc.setTextColor(160, 160, 160);
+      const validText = quotation.validUntil
+        ? `Valid until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}  ·  Prices subject to availability`
+        : "Valid for 30 days from issue  ·  Prices subject to availability";
+      doc.text(validText, ML, pageH - 7);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(...DARK);
+      doc.text(shop?.name ?? "", W - MR, pageH - 7, { align: "right" });
+    }
+
+    // ── PAGE 1 ───────────────────────────────────────────────────────────────
+
+    // White canvas
+    doc.setFillColor(...WHITE);
     doc.rect(0, 0, W, H, "F");
 
-    // ── Dark header block ──
-    const HDR_H = 44;
-    doc.setFillColor(10, 10, 10); // #0A0A0A
-    doc.rect(0, 0, W, HDR_H, "F");
+    // Dark header band — compact 28 mm
+    const HDR = 28;
+    doc.setFillColor(...DARK);
+    doc.rect(0, 0, W, HDR, "F");
 
-    // Electric Lime top stripe
-    doc.setFillColor(200, 255, 0); // #C8FF00
-    doc.rect(0, 0, W, 2.5, "F");
+    // Lime top stripe 2 mm
+    doc.setFillColor(...LIME);
+    doc.rect(0, 0, W, 2, "F");
 
-    // Shop name (white)
+    // Shop name — left
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(255, 255, 255);
-    doc.text(shop?.name ?? "Our Shop", ML, 16);
+    doc.setFontSize(13);
+    doc.setTextColor(...WHITE);
+    doc.text(shop?.name ?? "Our Shop", ML, 13);
 
-    // Shop sub-info (gray)
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(156, 163, 175);
-    let subY = 22;
-    if (shop?.address) { doc.text(shop.address, ML, subY); subY += 4.5; }
-    const contacts: string[] = [];
-    if (shop?.ownerWhatsapp) contacts.push(shop.ownerWhatsapp);
-    if (shop?.email) contacts.push(shop.email);
-    if (contacts.length) doc.text(contacts.join("   ·   "), ML, subY);
-
-    // Right: QUOTATION label in Lime
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(200, 255, 0); // lime
-    doc.text("QUOTATION", W - MR, 13, { align: "right" });
-
-    // Quote number (white, mono-style)
-    doc.setFontSize(18);
-    doc.setTextColor(255, 255, 255);
-    doc.text(quotation.quoteNumber, W - MR, 23, { align: "right" });
-
-    // Date / valid until (gray)
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(156, 163, 175);
-    doc.text(`Date: ${format(new Date(quotation.createdAt), "dd MMM yyyy")}`, W - MR, 30, { align: "right" });
-    if (quotation.validUntil) {
-      doc.text(`Valid Until: ${format(new Date(quotation.validUntil), "dd MMM yyyy")}`, W - MR, 35.5, { align: "right" });
+    // Shop contact line — left
+    const shopBits: string[] = [];
+    if (shop?.address)       shopBits.push(shop.address);
+    if (shop?.ownerWhatsapp) shopBits.push(shop.ownerWhatsapp);
+    if (shop?.email)         shopBits.push(shop.email);
+    if (shopBits.length) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+      doc.setTextColor(156, 163, 175);
+      doc.text(shopBits.join("  ·  "), ML, 19);
     }
 
-    // Status pill (right of header)
-    const statusPillColors: Record<string, [number, number, number]> = {
-      draft: [100, 116, 139], sent: [59, 130, 246], accepted: [34, 197, 94],
-      rejected: [239, 68, 68], expired: [245, 158, 11],
-    };
-    const sp = statusPillColors[quotation.status] ?? [100, 116, 139];
+    // QUOTATION label — right top
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.setTextColor(...LIME);
+    doc.text("QUOTATION", W - MR, 10, { align: "right" });
+
+    // Quote number — right
+    doc.setFontSize(14);
+    doc.setTextColor(...WHITE);
+    doc.text(quotation.quoteNumber, W - MR, 18, { align: "right" });
+
+    // Date line — right
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
+    doc.setTextColor(156, 163, 175);
+    const dateStr = format(new Date(quotation.createdAt), "dd MMM yyyy");
+    const validStr = quotation.validUntil ? `  Valid: ${format(new Date(quotation.validUntil), "dd MMM yyyy")}` : "";
+    doc.text(`${dateStr}${validStr}`, W - MR, 24, { align: "right" });
+
+    // Status dot — right
+    const statusPillColors: Record<string, [number,number,number]> = {
+      draft: [100,116,139], sent: [59,130,246], accepted: [34,197,94],
+      rejected: [239,68,68], expired: [245,158,11],
+    };
+    const sp = statusPillColors[quotation.status] ?? [100,116,139];
+    doc.setFontSize(6);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(...sp);
-    doc.text(`● ${STATUS_META[quotation.status].label.toUpperCase()}`, W - MR, 41, { align: "right" });
+    doc.text(`● ${STATUS_META[quotation.status].label.toUpperCase()}`, W - MR, H - 7, { align: "right" });
 
-    // ── Bill To ──
-    let y = HDR_H + 8;
+    // ── Info band — Bill To (left) | Items count (right) — all on one row ──
+    let y = HDR + 6;
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(6);
-    doc.setTextColor(150, 150, 150);
+    doc.setFontSize(5.5);
+    doc.setTextColor(160, 160, 160);
     doc.text("BILL TO", ML, y);
+    doc.text(`${quotation.items.length} ITEM${quotation.items.length !== 1 ? "S" : ""}`, W - MR, y, { align: "right" });
 
+    y += 5;
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
+    doc.setFontSize(10);
     doc.setTextColor(15, 23, 42);
-    doc.text(quotation.customerName, ML, y + 6);
+    doc.text(quotation.customerName, ML, y);
 
-    const billContact: string[] = [];
-    if (quotation.customerPhone) billContact.push(quotation.customerPhone);
-    if (quotation.customerEmail) billContact.push(quotation.customerEmail);
-    if (billContact.length) {
+    const billParts: string[] = [];
+    if (quotation.customerPhone) billParts.push(quotation.customerPhone);
+    if (quotation.customerEmail) billParts.push(quotation.customerEmail);
+    if (billParts.length) {
+      y += 4.5;
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(7.5);
+      doc.setFontSize(7);
       doc.setTextColor(100, 116, 139);
-      doc.text(billContact.join("   ·   "), ML, y + 12);
+      doc.text(billParts.join("  ·  "), ML, y);
     }
 
-    // Thin divider
-    const billH = billContact.length ? 18 : 12;
-    y += billH + 4;
-    doc.setDrawColor(230, 232, 235);
-    doc.setLineWidth(0.3);
+    // Thin rule
+    y += 5;
+    doc.setDrawColor(225, 228, 233);
+    doc.setLineWidth(0.25);
     doc.line(ML, y, W - MR, y);
-    y += 4;
+    y += 3;
 
-    const totalPages = { n: 1 };
+    // ── Items table ──────────────────────────────────────────────────────────
+    // Rows are ~5 mm each: padding 1.2+1.2 + font 7pt (2.47mm) = ~4.9mm
+    // First page capacity (header only page 1):
+    //   297 - header28 - infoBand~18 - rule3 - tableHeader~7 - footer12 = ~229mm → ~46 rows
+    // Continuation pages (slim 8mm breadcrumb):
+    //   297 - 8 - footer10 = 279mm → ~57 rows per continuation page
 
-    // ── Items table ──
+    const ROW_PAD = { top: 1.2, bottom: 1.2, left: 3.5, right: 3.5 };
+    const HDR_PAD = { top: 2.5, bottom: 2.5, left: 3.5, right: 3.5 };
+
     autoTable(doc, {
       startY: y,
-      head: [["#", "Product / Description", "Unit", "Qty", "Unit Price (KES)", "Total (KES)"]],
+      margin: { left: ML, right: MR, bottom: 14 },
+      showHead: "firstPage",
+      head: [["#", "Product / Description", "Unit", "Qty", "Unit Price", "Total (KES)"]],
       body: quotation.items.map((item, i) => [
         String(i + 1),
         item.productName,
-        item.unit || "unit",
+        item.unit || "—",
         item.qty % 1 === 0 ? String(item.qty) : item.qty.toFixed(2),
         item.unitPrice.toLocaleString("en-KE"),
         item.total.toLocaleString("en-KE"),
       ]),
       headStyles: {
-        fillColor: [10, 10, 10],
-        textColor: [200, 255, 0],
+        fillColor: DARK,
+        textColor: LIME,
         fontStyle: "bold",
         fontSize: 6.5,
-        cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 },
+        cellPadding: HDR_PAD,
       },
       bodyStyles: {
-        fontSize: 7.5,
-        cellPadding: { top: 2.5, bottom: 2.5, left: 4, right: 4 },
-        textColor: [30, 41, 59],
-        lineColor: [235, 238, 242],
-        lineWidth: 0.2,
+        fontSize: 7,
+        cellPadding: ROW_PAD,
+        textColor: [25, 35, 55],
+        lineColor: [232, 235, 240],
+        lineWidth: 0.15,
       },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      alternateRowStyles: { fillColor: [247, 249, 252] },
       columnStyles: {
-        0: { cellWidth: 8, halign: "center", fontStyle: "bold", textColor: [180, 180, 180], fontSize: 6.5 },
+        0: { cellWidth: 7,  halign: "center", fontStyle: "bold", textColor: [190,190,190], fontSize: 6 },
         1: { cellWidth: "auto" },
-        2: { cellWidth: 14, halign: "center", textColor: [100, 116, 139] },
-        3: { cellWidth: 11, halign: "right" },
-        4: { cellWidth: 30, halign: "right", textColor: [71, 85, 105] },
-        5: { cellWidth: 30, halign: "right", fontStyle: "bold", textColor: [10, 10, 10] },
+        2: { cellWidth: 13, halign: "center", textColor: [120,130,150], fontSize: 6.5 },
+        3: { cellWidth: 10, halign: "right" },
+        4: { cellWidth: 28, halign: "right", textColor: [80,95,115] },
+        5: { cellWidth: 28, halign: "right", fontStyle: "bold", textColor: DARK },
       },
-      margin: { left: ML, right: MR },
-      tableLineColor: [220, 225, 232],
-      tableLineWidth: 0.15,
-      showHead: "everyPage",
+      tableLineColor: [215, 220, 228],
+      tableLineWidth: 0.1,
       didDrawCell: (data: any) => {
+        // Lime underline below header
         if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
-          doc.setDrawColor(200, 255, 0);
-          doc.setLineWidth(0.8);
+          doc.setDrawColor(...LIME);
+          doc.setLineWidth(0.7);
           doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
         }
       },
-      didDrawPage: (data: any) => {
-        totalPages.n = (doc as any).internal.getNumberOfPages();
-        // Repeat lime top stripe + footer on each page after the first
-        const pg = (doc as any).internal.getCurrentPageInfo().pageNumber;
+      didDrawPage: (_data: any) => {
+        const pg: number = (doc as any).internal.getCurrentPageInfo().pageNumber;
+        const totalPg: number = (doc as any).internal.getNumberOfPages();
+        // Continuation pages: slim lime strip + breadcrumb, NO full header repeat
         if (pg > 1) {
-          doc.setFillColor(200, 255, 0);
-          doc.rect(0, 0, W, 2, "F");
+          doc.setFillColor(...WHITE);
+          doc.rect(0, 0, W, H, "F");
+          doc.setFillColor(...LIME);
+          doc.rect(0, 0, W, 1.5, "F");
           doc.setFont("helvetica", "normal");
-          doc.setFontSize(6.5);
+          doc.setFontSize(6);
           doc.setTextColor(150, 150, 150);
-          doc.text(`${shop?.name ?? ""} · ${quotation.quoteNumber} (continued)`, ML, 7);
+          doc.text(
+            `${shop?.name ?? ""}  ·  ${quotation.quoteNumber}  ·  continued`,
+            ML, 6,
+          );
+          doc.text(`Page ${pg} of ${totalPg}`, W - MR, 6, { align: "right" });
         }
-        // Page number at bottom
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(6.5);
-        doc.setTextColor(180, 180, 180);
-        doc.text(`Page ${pg}`, W / 2, H - 6, { align: "center" });
       },
     });
 
-    let ty: number = (doc as any).lastAutoTable.finalY + 8;
+    let ty: number = (doc as any).lastAutoTable.finalY + 5;
 
-    // ── Totals block ──
-    const totW = 82;
+    // ── Totals block — right-aligned, compact ────────────────────────────────
+    const totW = 75;
     const totX = W - MR - totW;
 
     if (quotation.discountAmount > 0) {
-      doc.setFillColor(249, 250, 251);
-      doc.rect(totX, ty, totW, 8, "F");
+      // Subtotal row
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
-      doc.setTextColor(107, 114, 128);
-      doc.text("Subtotal", totX + 5, ty + 5.5);
-      doc.setTextColor(30, 41, 59);
-      doc.text(`KES ${quotation.subtotal.toLocaleString("en-KE")}`, W - MR - 5, ty + 5.5, { align: "right" });
-      ty += 8;
+      doc.setFontSize(7.5);
+      doc.setTextColor(110, 120, 135);
+      doc.text("Subtotal", totX, ty + 4.5);
+      doc.setTextColor(25, 35, 55);
+      doc.text(`KES ${quotation.subtotal.toLocaleString("en-KE")}`, W - MR, ty + 4.5, { align: "right" });
+      ty += 7;
 
-      doc.setFillColor(254, 242, 242);
-      doc.rect(totX, ty, totW, 8, "F");
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
-      doc.setTextColor(185, 28, 28);
-      doc.text("Discount", totX + 5, ty + 5.5);
-      doc.text(`− KES ${quotation.discountAmount.toLocaleString("en-KE")}`, W - MR - 5, ty + 5.5, { align: "right" });
-      ty += 9;
+      // Discount row
+      doc.setTextColor(180, 28, 28);
+      doc.text("Discount", totX, ty + 4.5);
+      doc.text(`− KES ${quotation.discountAmount.toLocaleString("en-KE")}`, W - MR, ty + 4.5, { align: "right" });
+      ty += 7;
+
+      // Divider
+      doc.setDrawColor(220, 223, 228);
+      doc.setLineWidth(0.2);
+      doc.line(totX, ty, W - MR, ty);
+      ty += 3;
     }
 
-    // Total — black pill with lime text
-    doc.setFillColor(10, 10, 10);
-    doc.roundedRect(totX, ty, totW, 12, 2, 2, "F");
+    // Total pill
+    doc.setFillColor(...DARK);
+    doc.roundedRect(totX, ty, totW, 10, 1.5, 1.5, "F");
     doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...LIME);
+    doc.text("TOTAL DUE", totX + 4, ty + 6.5);
     doc.setFontSize(9);
-    doc.setTextColor(200, 255, 0);
-    doc.text("TOTAL DUE", totX + 5, ty + 8);
-    doc.setFontSize(11);
-    doc.setTextColor(255, 255, 255);
-    doc.text(`KES ${quotation.total.toLocaleString("en-KE")}`, W - MR - 5, ty + 8, { align: "right" });
-    ty += 20;
+    doc.setTextColor(...WHITE);
+    doc.text(`KES ${quotation.total.toLocaleString("en-KE")}`, W - MR - 4, ty + 6.5, { align: "right" });
+    ty += 14;
 
-    // ── Notes ──
+    // ── Notes — compact ──────────────────────────────────────────────────────
     if (quotation.notes) {
-      doc.setFillColor(249, 250, 251);
-      const noteLines = doc.splitTextToSize(quotation.notes, CW - 14);
-      const noteH = Math.max(20, noteLines.length * 5 + 14);
-      doc.roundedRect(ML, ty, CW, noteH, 2, 2, "F");
-      doc.setDrawColor(220, 225, 230);
-      doc.setLineWidth(0.25);
-      doc.roundedRect(ML, ty, CW, noteH, 2, 2, "S");
-      // Lime left accent
-      doc.setFillColor(200, 255, 0);
-      doc.rect(ML, ty, 3, noteH, "F");
+      const noteLines = doc.splitTextToSize(quotation.notes, CW - 10);
+      const noteH = Math.max(14, noteLines.length * 4.2 + 10);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(ML, ty, CW, noteH, 1.5, 1.5, "F");
+      doc.setFillColor(...LIME);
+      doc.rect(ML, ty, 2.5, noteH, "F");
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(6.5);
-      doc.setTextColor(100, 116, 139);
-      doc.text("NOTES & TERMS", ML + 7, ty + 7);
+      doc.setFontSize(5.5);
+      doc.setTextColor(120, 130, 145);
+      doc.text("NOTES & TERMS", ML + 6, ty + 5.5);
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
-      doc.setTextColor(55, 65, 81);
-      doc.text(noteLines, ML + 7, ty + 14);
-      ty += noteH + 8;
+      doc.setFontSize(7);
+      doc.setTextColor(50, 60, 75);
+      doc.text(noteLines, ML + 6, ty + 11);
+      ty += noteH + 6;
     }
 
-    // ── Footer ──
-    // Thin lime line above footer
-    doc.setDrawColor(200, 255, 0);
-    doc.setLineWidth(0.8);
-    doc.line(ML, H - 16, W - MR, H - 16);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(150, 150, 150);
-    const validText = quotation.validUntil
-      ? `Valid until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")} · Prices subject to availability`
-      : "Valid for 30 days from issue · Prices subject to availability";
-    doc.text(validText, ML, H - 10);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7);
-    doc.setTextColor(10, 10, 10);
-    doc.text(shop?.name ?? "", W - MR, H - 10, { align: "right" });
+    // ── Footer on every page ─────────────────────────────────────────────────
+    const numPages: number = (doc as any).internal.getNumberOfPages();
+    for (let p = 1; p <= numPages; p++) {
+      doc.setPage(p);
+      drawFooter(H);
+      // Page n of N — bottom centre (page 1 only, continuation pages already have it in didDrawPage)
+      if (p === 1) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6);
+        doc.setTextColor(190, 190, 190);
+        doc.text(`Page 1 of ${numPages}`, W / 2, H - 4, { align: "center" });
+      }
+    }
 
     doc.save(`${quotation.quoteNumber}.pdf`);
     toast.success("PDF downloaded!", { id: "pdf" });
