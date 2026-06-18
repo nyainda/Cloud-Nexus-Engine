@@ -320,7 +320,7 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     db.prepare(
       `INSERT INTO shops (id, name, owner_pin_hash, cashier_pin_hash, owner_whatsapp, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(SHOP_A_ID, "GreenLink Farm Supplies", ownerHash, cashierHash, "+254700000000", now);
+    ).run(SHOP_A_ID, "GreenLink Farm Supplies", ownerHash, cashierHash, "+25414040052", now);
     db.prepare(
       `INSERT INTO shops (id, name, owner_pin_hash, cashier_pin_hash, owner_whatsapp, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,

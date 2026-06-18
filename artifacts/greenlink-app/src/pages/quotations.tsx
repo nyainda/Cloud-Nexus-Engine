@@ -89,13 +89,25 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     const DKTXT:  RGB = [ 18,  28,  48];
     const BORD:   RGB = [210, 215, 222];
 
-    // ── Fetch shop logo as base64 for embedding ────────────────────────────
+    // ── Fetch shop logo — capture natural dimensions to preserve aspect ratio ─
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
     const logoUrl = shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
     let logoBase64 = "";
+    let logoNatW  = 0;
+    let logoNatH  = 0;
     try {
       const resp = await fetch(logoUrl);
       const blob = await resp.blob();
+      // Measure natural dimensions via HTMLImageElement
+      const blobUrl = URL.createObjectURL(blob);
+      await new Promise<void>(resolve => {
+        const img = new Image();
+        img.onload  = () => { logoNatW = img.naturalWidth; logoNatH = img.naturalHeight; resolve(); };
+        img.onerror = () => resolve();
+        img.src = blobUrl;
+      });
+      URL.revokeObjectURL(blobUrl);
+      // Convert to base64
       logoBase64 = await new Promise<string>(resolve => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
@@ -178,12 +190,16 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     doc.rect(0, 0, W, H, "F");
 
     // ── HEADER AREA (white, 28 mm) — logo right, shop info left ─────────────
-    const LOGO_W = 58;
-    const LOGO_H = 22;
-    const LOGO_X = W - MR - LOGO_W;
-    const LOGO_Y = 3;
-    if (logoBase64) {
-      doc.addImage(logoBase64, "JPEG", LOGO_X, LOGO_Y, LOGO_W, LOGO_H);
+    // Fit logo inside a 52×20 mm bounding box, preserving aspect ratio
+    const BOX_W = 52;
+    const BOX_H = 20;
+    if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
+      const scale = Math.min(BOX_W / logoNatW, BOX_H / logoNatH);
+      const drawW = logoNatW * scale;
+      const drawH = logoNatH * scale;
+      const logoX = W - MR - BOX_W + (BOX_W - drawW) / 2;  // centre within box
+      const logoY = 3 + (BOX_H - drawH) / 2;
+      doc.addImage(logoBase64, "JPEG", logoX, logoY, drawW, drawH);
     }
 
     doc.setFont("helvetica", "bold");
@@ -250,16 +266,6 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     if (quotation.validUntil) {
       fieldRow(RBX, qy, RBW, "Valid Until", format(new Date(quotation.validUntil), "dd MMM yyyy")); qy += GAP;
     }
-    const statusColors: Record<string, RGB> = {
-      draft: [100,116,139], sent: [59,130,246], accepted: [34,197,94],
-      rejected: [239,68,68], expired: [245,158,11],
-    };
-    const sc = statusColors[quotation.status] ?? [100,116,139];
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
-    doc.setTextColor(...sc);
-    doc.text(`● ${STATUS_META[quotation.status].label.toUpperCase()}`, RBX + 5, qy);
-
     y += INFO_H + 4;
 
     // ── ITEMS TABLE ───────────────────────────────────────────────────────────
