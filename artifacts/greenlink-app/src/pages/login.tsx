@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import PinKeypad from "@/components/pin-keypad";
-import { Leaf, Store, Shield, KeyRound, ChevronLeft, CheckCircle2, Eye, EyeOff } from "lucide-react";
+import { Store, Shield, KeyRound, ChevronLeft, CheckCircle2, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SHOPS_CACHE_KEY = "greenlink_shops_cache";
@@ -283,11 +283,14 @@ export default function Login() {
       {/* Brand Panel */}
       <div className="hidden md:flex md:w-1/2 bg-sidebar flex-col justify-between p-12 text-sidebar-foreground">
         <div>
-          <div className="w-16 h-16 rounded-xl bg-sidebar-primary flex items-center justify-center shadow-lg mb-8">
-            <Leaf className="h-8 w-8 text-sidebar-primary-foreground" />
-          </div>
+          <img
+            src={shopId.includes("sunrise") ? "/logo-sunrise.jpg" : "/logo-greenlink.jpg"}
+            alt="shop logo"
+            className="h-20 w-auto mb-8 rounded-lg"
+            style={{ objectFit: "contain", background: "white", padding: "6px" }}
+          />
           <h1 className="text-4xl lg:text-5xl font-bold font-display tracking-tight text-white mb-4">
-            GreenLink OS
+            {shopId.includes("sunrise") ? "Kabatha Sunrise" : "GreenLink OS"}
           </h1>
           <p className="text-sidebar-foreground/80 text-lg max-w-md font-sans">
             The professional operating system for agrovet businesses. Manage your inventory, track debts, and process sales with confidence.
@@ -304,10 +307,15 @@ export default function Login() {
         <div className="w-full max-w-md">
           {/* Mobile Header */}
           <div className="md:hidden flex flex-col items-center mb-8 text-center">
-            <div className="w-16 h-16 rounded-xl bg-primary flex items-center justify-center shadow-lg mb-4">
-              <Leaf className="h-8 w-8 text-primary-foreground" />
-            </div>
-            <h1 className="text-3xl font-bold font-display tracking-tight text-foreground">GreenLink</h1>
+            <img
+              src={shopId.includes("sunrise") ? "/logo-sunrise.jpg" : "/logo-greenlink.jpg"}
+              alt="shop logo"
+              className="h-16 w-auto mb-4 rounded-lg"
+              style={{ objectFit: "contain", background: "white", padding: "4px" }}
+            />
+            <h1 className="text-3xl font-bold font-display tracking-tight text-foreground">
+              {shopId.includes("sunrise") ? "Kabatha Sunrise" : "GreenLink"}
+            </h1>
           </div>
 
           <Card className="border-none shadow-2xl bg-card">

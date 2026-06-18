@@ -79,16 +79,31 @@ async function downloadPdf(quotation: Quotation, shop: any) {
 
     // ── Brand palette ────────────────────────────────────────────────────────
     type RGB = [number, number, number];
-    const LIME:  RGB = [200, 255,   0];
-    const DARK:  RGB = [ 10,  10,  10];
-    const WHITE: RGB = [255, 255, 255];
-    const LLIME: RGB = [245, 255, 213];   // very light lime — alternating rows
-    const LGRAY: RGB = [245, 247, 250];   // light gray — total rows
-    const MGRAY: RGB = [120, 130, 148];
-    const DKTXT: RGB = [ 18,  28,  48];
-    const BORD:  RGB = [210, 215, 222];
+    const GREEN:  RGB = [ 45, 106,  30];  // forest green (brand primary)
+    const GOLD:   RGB = [245, 166,  35];  // amber/gold accent
+    const DARK:   RGB = [ 10,  10,  10];
+    const WHITE:  RGB = [255, 255, 255];
+    const LTGREEN: RGB = [238, 248, 236]; // very light green — alternating rows
+    const LGRAY:  RGB = [245, 247, 250];  // light gray — total rows
+    const MGRAY:  RGB = [120, 130, 148];
+    const DKTXT:  RGB = [ 18,  28,  48];
+    const BORD:   RGB = [210, 215, 222];
 
-    // ── Helper: box with dark header strip + lime left accent ────────────────
+    // ── Fetch shop logo as base64 for embedding ────────────────────────────
+    const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
+    const logoUrl = shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
+    let logoBase64 = "";
+    try {
+      const resp = await fetch(logoUrl);
+      const blob = await resp.blob();
+      logoBase64 = await new Promise<string>(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch { /* logo optional */ }
+
+    // ── Helper: box with dark header strip + green left accent ───────────────
     function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
       doc.setDrawColor(...BORD);
       doc.setLineWidth(0.25);
@@ -96,11 +111,11 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       const hh = 7.5;
       doc.setFillColor(...DARK);
       doc.rect(bx, by, bw, hh, "F");
-      doc.setFillColor(...LIME);
+      doc.setFillColor(...GREEN);
       doc.rect(bx, by, 2.5, hh, "F");
       doc.setFont("helvetica", "bold");
       doc.setFontSize(7);
-      doc.setTextColor(...LIME);
+      doc.setTextColor(...GOLD);
       doc.text(label, bx + 6, by + 5.3);
     }
 
@@ -119,11 +134,11 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     function drawFooter() {
       doc.setFillColor(...DARK);
       doc.rect(0, H - 13, W, 13, "F");
-      doc.setFillColor(...LIME);
-      doc.rect(0, H - 13, W, 1, "F");  // lime top strip on footer
+      doc.setFillColor(...GREEN);
+      doc.rect(0, H - 13, W, 1, "F");  // green top strip on footer
       const cols = [ML, W / 2, W - MR];
       const align: ("left"|"center"|"right")[] = ["left","center","right"];
-      const heads = ["LOCATION", "CONTACT US", shop?.name ? "FOLLOW US" : ""];
+      const heads = ["LOCATION", "CONTACT US", shop?.name ? "SHOP" : ""];
       const bits: string[] = [
         shop?.address ?? "",
         [shop?.ownerWhatsapp, shop?.email].filter(Boolean).join("  /  "),
@@ -133,7 +148,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
         if (!h && !bits[i]) return;
         doc.setFont("helvetica", "bold");
         doc.setFontSize(6);
-        doc.setTextColor(...LIME);
+        doc.setTextColor(...GOLD);
         doc.text(h, cols[i], H - 8.5, { align: align[i] });
         doc.setFont("helvetica", "normal");
         doc.setTextColor(185, 192, 200);
@@ -147,7 +162,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       doc.rect(0, 0, W, H, "F");
       doc.setFillColor(...DARK);
       doc.rect(0, 0, W, 8, "F");
-      doc.setFillColor(...LIME);
+      doc.setFillColor(...GREEN);
       doc.rect(0, 0, W, 1.5, "F");
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6);
@@ -162,28 +177,34 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     doc.setFillColor(...WHITE);
     doc.rect(0, 0, W, H, "F");
 
-    // ── HEADER AREA (white, 24 mm) ────────────────────────────────────────────
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(...DARK);
-    doc.text(shop?.name ?? "Our Shop", ML, 13);
+    // ── HEADER AREA (white, 28 mm) — logo right, shop info left ─────────────
+    const LOGO_W = 58;
+    const LOGO_H = 22;
+    const LOGO_X = W - MR - LOGO_W;
+    const LOGO_Y = 3;
+    if (logoBase64) {
+      doc.addImage(logoBase64, "JPEG", LOGO_X, LOGO_Y, LOGO_W, LOGO_H);
+    }
 
-    // Contact / address line
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(...GREEN);
+    doc.text(shop?.name ?? "Our Shop", ML, 11);
+
     const shopBits = [shop?.address, shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
     doc.setTextColor(...MGRAY);
-    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 19.5);
+    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 17);
 
-    // Tagline right-aligned
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.5);
-    doc.setTextColor(...LIME);
-    doc.text("QUALITY  ·  RELIABILITY  ·  GROWTH", W - MR, 19.5, { align: "right" });
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(6);
+    doc.setTextColor(...GOLD);
+    doc.text("QUALITY  ·  RELIABILITY  ·  GROWTH", ML, 22);
 
-    // ── LIME stripe + DARK QUOTATION BANNER ──────────────────────────────────
-    const STRIPE_Y = 24;
-    doc.setFillColor(...LIME);
+    // ── GREEN stripe + DARK QUOTATION BANNER ─────────────────────────────────
+    const STRIPE_Y = 27;
+    doc.setFillColor(...GREEN);
     doc.rect(0, STRIPE_Y, W, 2, "F");
 
     const BANNER_Y = STRIPE_Y + 2;
@@ -191,14 +212,14 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     doc.setFillColor(...DARK);
     doc.rect(0, BANNER_Y, W, BANNER_H, "F");
 
-    // Decorative lime rules flanking "QUOTATION"
+    // Decorative gold rules flanking "QUOTATION"
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    doc.setTextColor(...LIME);
+    doc.setTextColor(...GOLD);
     const qText  = "  QUOTATION  ";
     const qTextW = doc.getTextWidth(qText);
     const qTextX = W / 2 - qTextW / 2;
-    doc.setDrawColor(...LIME);
+    doc.setDrawColor(...GOLD);
     doc.setLineWidth(0.5);
     doc.line(ML + 4, BANNER_Y + BANNER_H / 2, qTextX, BANNER_Y + BANNER_H / 2);
     doc.line(qTextX + qTextW, BANNER_Y + BANNER_H / 2, W - MR - 4, BANNER_Y + BANNER_H / 2);
@@ -262,7 +283,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       ]),
       headStyles: {
         fillColor: DARK,
-        textColor: LIME,
+        textColor: GOLD,
         fontStyle: "bold",
         fontSize: 7,
         cellPadding: { top: 2.5, bottom: 2.5, left: 3.5, right: 3.5 },
@@ -275,7 +296,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
         lineColor: BORD,
         lineWidth: 0.15,
       },
-      alternateRowStyles: { fillColor: LLIME },
+      alternateRowStyles: { fillColor: LTGREEN },
       columnStyles: {
         0: { cellWidth: 10,   halign: "center", fontStyle: "bold", textColor: MGRAY, fontSize: 6.5 },
         1: { cellWidth: "auto", halign: "left" },
@@ -287,9 +308,9 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       tableLineColor: BORD,
       tableLineWidth: 0.2,
       didDrawCell: (data: any) => {
-        // Lime underline beneath header row
+        // Green underline beneath header row
         if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
-          doc.setDrawColor(...LIME);
+          doc.setDrawColor(...GREEN);
           doc.setLineWidth(0.8);
           doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
         }
@@ -351,8 +372,8 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     const payStep    = LCW / (payMethods.length + 1);
     payMethods.forEach((pm, i) => {
       const px = LCX + payStep * (i + 1);
-      // Lime dot
-      doc.setFillColor(...LIME);
+      // Green dot
+      doc.setFillColor(...GREEN);
       doc.circle(px - 3, PAY_Y + 9.5, 1.5, "F");
       doc.setTextColor(...DKTXT);
       doc.text(pm, px - 1, PAY_Y + 9.5 + 0.5);
@@ -368,7 +389,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
         doc.rect(RCX, ry, RCW, ROW_H, "F");
         doc.setFont("helvetica", "bold");
         doc.setFontSize(8);
-        doc.setTextColor(...LIME);
+        doc.setTextColor(...GOLD);
         doc.text(label, RCX + 4, ry + 5.5);
         doc.setTextColor(...WHITE);
         doc.text(value, RCX + RCW - 4, ry + 5.5, { align: "right" });
@@ -394,15 +415,15 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     }
     totRow("TOTAL AMOUNT", `KES ${quotation.total.toLocaleString("en-KE")}`, true);
 
-    // Thank you box (lime-tinted)
+    // Thank you box (light green tint)
     const TY_BOX_Y = ry + 3;
     const TY_BOX_H = 16;
-    doc.setFillColor(243, 255, 210);
+    doc.setFillColor(235, 248, 235);
     doc.rect(RCX, TY_BOX_Y, RCW, TY_BOX_H, "F");
-    doc.setDrawColor(...LIME);
+    doc.setDrawColor(...GREEN);
     doc.setLineWidth(0.4);
     doc.rect(RCX, TY_BOX_Y, RCW, TY_BOX_H, "S");
-    doc.setFillColor(...LIME);
+    doc.setFillColor(...GREEN);
     doc.rect(RCX, TY_BOX_Y, 3, TY_BOX_H, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.5);

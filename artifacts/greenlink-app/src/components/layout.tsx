@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { OfflineBanner } from "@/components/offline-banner";
 import {
   ShoppingCart, Package, Users, Bell, BarChart3,
-  ScanLine, Settings, Leaf, LogOut, LayoutDashboard, Receipt,
+  ScanLine, Settings, LogOut, LayoutDashboard, Receipt,
   Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
   MoreHorizontal, X, Truck, ArrowLeftRight, FileText,
 } from "lucide-react";
@@ -209,6 +209,11 @@ function MoreSheetItem({ href, icon: Icon, label }: { href: string; icon: React.
   );
 }
 
+function ShopLogo({ shopId, className }: { shopId: string; className?: string }) {
+  const src = shopId.includes("sunrise") ? "/logo-sunrise.jpg" : "/logo-greenlink.jpg";
+  return <img src={src} alt="shop logo" className={className} style={{ objectFit: "contain" }} />;
+}
+
 export default function Layout({ children }: { children: React.ReactNode }) {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "cashier";
@@ -265,19 +270,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         )}>
           {!collapsed && (
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
-                <Leaf className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-sidebar-foreground leading-tight font-display">GreenLink OS</p>
-                <p className="text-[10px] text-sidebar-foreground/50 truncate">{shopName}</p>
-              </div>
+              <ShopLogo shopId={shopId} className="h-9 w-auto max-w-[120px] rounded" />
             </div>
           )}
           {collapsed && (
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Leaf className="h-4 w-4 text-primary-foreground" />
-            </div>
+            <ShopLogo shopId={shopId} className="h-8 w-8 rounded object-contain" />
           )}
           {/* Collapse toggle always visible */}
           <button
@@ -380,11 +377,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Mobile Topbar */}
         <div className="lg:hidden flex items-center justify-between px-4 py-2.5 border-b border-border bg-sidebar shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center shrink-0">
-              <Leaf className="h-3.5 w-3.5 text-primary-foreground" />
-            </div>
+            <ShopLogo shopId={shopId} className="h-8 w-auto max-w-[110px] rounded" />
             <div>
-              <p className="text-sm font-bold text-foreground leading-tight font-display">{shopName}</p>
               <div className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 <p className="text-[10px] text-muted-foreground capitalize">{role}</p>
