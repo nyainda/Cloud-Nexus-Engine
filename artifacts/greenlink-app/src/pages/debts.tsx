@@ -14,7 +14,7 @@ import {
   Search, Users, Phone, CalendarClock, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
   ChevronDown, ChevronUp, Banknote, User2, Trash2, Send, BadgeCheck,
-  ShoppingBasket, Package
+  ShoppingBasket, Package, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -306,6 +306,360 @@ function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => voi
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── Debt PDF download ─────────────────────────────────────────────────────
+async function downloadDebtPdf(debtId: string, shopId: string) {
+  toast.loading("Generating statement…", { id: "debt-pdf" });
+  try {
+    // ── Fetch data ─────────────────────────────────────────────────────────
+    const [shopsResp, debtResp] = await Promise.all([
+      fetch("/api/shops"),
+      customFetch(`/api/debts/${debtId}`),
+    ]);
+    const shops: any[] = await shopsResp.json();
+    const debt: any  = await (debtResp as any).json();
+    const shop       = shops.find((s: any) => s.id === shopId) ?? shops[0] ?? { name: "GreenLink", id: shopId };
+    const payments: any[] = debt.payments ?? [];
+    const items: any[]    = debt.items    ?? [];
+
+    // ── jsPDF ──────────────────────────────────────────────────────────────
+    const { jsPDF }  = await import("jspdf");
+    const autoTable  = (await import("jspdf-autotable")).default;
+    const doc        = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const W          = doc.internal.pageSize.getWidth();
+    const PH         = doc.internal.pageSize.getHeight();
+    const ML = 10, MR = 10;
+    const CW = W - ML - MR;
+
+    type RGB = [number, number, number];
+    const GREEN:   RGB = [ 45, 106,  30];
+    const GOLD:    RGB = [245, 166,  35];
+    const DARK:    RGB = [ 10,  10,  10];
+    const WHITE:   RGB = [255, 255, 255];
+    const LTGREEN: RGB = [238, 248, 236];
+    const LGRAY:   RGB = [245, 247, 250];
+    const MGRAY:   RGB = [120, 130, 148];
+    const DKTXT:   RGB = [ 18,  28,  48];
+    const BORD:    RGB = [210, 215, 222];
+    const RED:     RGB = [190,  30,  30];
+    const ORANGE:  RGB = [200, 100,  20];
+    const EMERALD: RGB = [ 16, 150, 100];
+
+    const statusColor: RGB =
+      debt.status === "paid" ? EMERALD :
+      debt.status === "partial" ? ORANGE : RED;
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+    function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
+      doc.setDrawColor(...BORD); doc.setLineWidth(0.25);
+      doc.rect(bx, by, bw, bh, "S");
+      const hh = 7.5;
+      doc.setFillColor(...DARK);  doc.rect(bx, by, bw, hh, "F");
+      doc.setFillColor(...GREEN); doc.rect(bx, by, 2.5, hh, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+      doc.setTextColor(...GOLD);
+      doc.text(label, bx + 6, by + 5.3);
+    }
+
+    function fieldRow(bx: number, by: number, bw: number, label: string, value: string, valueColor?: RGB) {
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7);
+      doc.setTextColor(...MGRAY);
+      doc.text(label, bx + 5, by);
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+      doc.setTextColor(...(valueColor ?? DKTXT));
+      doc.text(value, bx + bw - 5, by, { align: "right", maxWidth: bw - 32 });
+    }
+
+    // ── Logo ───────────────────────────────────────────────────────────────
+    const isGreenlink = !(shop.id ?? "").includes("sunrise") && !(shop.name ?? "").toLowerCase().includes("sunrise");
+    const logoUrl     = isGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
+    let logoBase64 = "", logoNatW = 0, logoNatH = 0;
+    try {
+      const blob    = await fetch(logoUrl).then(r => r.blob());
+      const blobUrl = URL.createObjectURL(blob);
+      await new Promise<void>(res => {
+        const img    = new Image();
+        img.onload   = () => { logoNatW = img.naturalWidth; logoNatH = img.naturalHeight; res(); };
+        img.onerror  = () => res();
+        img.src      = blobUrl;
+      });
+      URL.revokeObjectURL(blobUrl);
+      logoBase64 = await new Promise<string>(res => {
+        const r   = new FileReader();
+        r.onload  = () => res(r.result as string);
+        r.readAsDataURL(blob);
+      });
+    } catch { /* logo optional */ }
+
+    // ── HEADER BAND ────────────────────────────────────────────────────────
+    const HEADER_H = 36;
+    doc.setFillColor(...DARK); doc.rect(0, 0, W, HEADER_H, "F");
+    doc.setFillColor(...GREEN); doc.rect(0, 0, 3, HEADER_H, "F");
+
+    if (logoBase64) {
+      const LOGO_MAX_W = 52, LOGO_MAX_H = 20;
+      const scale = Math.min(LOGO_MAX_W / logoNatW, LOGO_MAX_H / logoNatH);
+      const lw = logoNatW * scale, lh = logoNatH * scale;
+      doc.addImage(logoBase64, "JPEG", ML + 3 + (LOGO_MAX_W - lw) / 2, (HEADER_H - lh) / 2, lw, lh);
+    }
+
+    const textX = ML + 60;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+    doc.setTextColor(...WHITE);
+    doc.text((shop.name ?? "GreenLink").toUpperCase(), textX, 13);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+    doc.setTextColor(...GOLD);
+    doc.text("QUALITY · RELIABILITY · GROWTH", textX, 20);
+
+    // "DEBT STATEMENT" pill
+    doc.setFillColor(...GREEN);
+    doc.roundedRect(W - MR - 46, 8, 44, 15, 2, 2, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.setTextColor(...WHITE);
+    doc.text("DEBT STATEMENT", W - MR - 24, 15.5, { align: "center" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
+    doc.setTextColor(...GOLD);
+    doc.text("CUSTOMER ACCOUNT", W - MR - 24, 20.5, { align: "center" });
+
+    // Green tagline bar
+    doc.setFillColor(...GREEN); doc.rect(0, HEADER_H, W, 5, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5);
+    doc.setTextColor(...WHITE);
+    const phone = shop.ownerWhatsapp ?? shop.contactPhone ?? "";
+    if (phone) doc.text(`CONTACT: ${phone}`, ML + 4, HEADER_H + 3.5);
+    doc.text("GENERATED: " + format(new Date(), "d MMMM yyyy  ·  HH:mm"), W / 2, HEADER_H + 3.5, { align: "center" });
+
+    // Status chip in tagline bar
+    doc.setFillColor(...statusColor);
+    doc.roundedRect(W - MR - 26, HEADER_H + 0.7, 24, 3.7, 1, 1, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(5.5);
+    doc.setTextColor(...WHITE);
+    doc.text(debt.status.toUpperCase(), W - MR - 14, HEADER_H + 3.1, { align: "center" });
+
+    let y = HEADER_H + 5 + 6;
+
+    // ── REF BAR ────────────────────────────────────────────────────────────
+    doc.setFillColor(...LGRAY); doc.rect(ML, y, CW, 9, "F");
+    doc.setDrawColor(...BORD); doc.setLineWidth(0.2); doc.rect(ML, y, CW, 9, "S");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+    doc.setTextColor(...DKTXT);
+    doc.text(`REF: DEBT-${debt.id.slice(0, 8).toUpperCase()}`, ML + 4, y + 5.8);
+    const openedDate   = format(new Date(debt.createdAt), "d MMM yyyy");
+    const daysOpen     = differenceInDays(new Date(), new Date(debt.createdAt));
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7);
+    doc.setTextColor(...MGRAY);
+    doc.text(`Opened: ${openedDate}  ·  ${daysOpen} day${daysOpen !== 1 ? "s" : ""} outstanding`, W / 2, y + 5.8, { align: "center" });
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+    doc.setTextColor(...statusColor);
+    doc.text(`● ${debt.status.toUpperCase()}`, W - MR - 4, y + 5.8, { align: "right" });
+    y += 9 + 5;
+
+    // ── INFO BOXES ─────────────────────────────────────────────────────────
+    const LBW = CW * 0.52, RBW = CW - LBW - 3;
+    const LBX = ML,        RBX = ML + LBW + 3;
+    const INFO_H = 36;
+    const totalPaid = debt.totalAmount - debt.balance;
+
+    infoBox(LBX, y, LBW, INFO_H, "CUSTOMER DETAILS");
+    let fy = y + 12;
+    fieldRow(LBX, fy, LBW, "Customer Name", debt.customerName); fy += 5.5;
+    fieldRow(LBX, fy, LBW, "Phone Number", debt.customerPhone || "—"); fy += 5.5;
+    if (debt.notes) { fieldRow(LBX, fy, LBW, "Notes", debt.notes); fy += 5.5; }
+    fieldRow(LBX, fy, LBW, "Payments Recorded", `${payments.length} payment${payments.length !== 1 ? "s" : ""}`);
+
+    infoBox(RBX, y, RBW, INFO_H, "DEBT SUMMARY");
+    let qy = y + 12;
+    fieldRow(RBX, qy, RBW, "Total Debt Amount", `KES ${debt.totalAmount.toLocaleString("en-KE")}`); qy += 5.5;
+    fieldRow(RBX, qy, RBW, "Total Amount Paid",  `KES ${totalPaid.toLocaleString("en-KE")}`,         EMERALD); qy += 5.5;
+    // balance — bigger & coloured
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
+    doc.text("Balance Due", RBX + 5, qy);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...statusColor);
+    doc.text(`KES ${debt.balance.toLocaleString("en-KE")}`, RBX + RBW - 5, qy, { align: "right" }); qy += 7;
+    fieldRow(RBX, qy, RBW, "Settled Date", debt.paidAt ? format(new Date(debt.paidAt), "d MMM yyyy") : "Pending");
+    y += INFO_H + 5;
+
+    // ── ITEMS TABLE ────────────────────────────────────────────────────────
+    if (items.length > 0) {
+      infoBox(ML, y, CW, 7.5, "ITEMS TAKEN  —  LINKED SALE");
+      y += 7.5;
+      autoTable(doc, {
+        startY: y, margin: { left: ML, right: MR },
+        head: [["#", "Product / Description", "Qty", "Unit Price (KES)", "Total (KES)"]],
+        body: items.map((it: any, i: number) => [
+          String(i + 1),
+          it.productName,
+          String(it.qty ?? it.quantity ?? 1),
+          Number(it.unitPrice).toLocaleString("en-KE"),
+          Number(it.totalPrice).toLocaleString("en-KE"),
+        ]),
+        headStyles: { fillColor: [35, 80, 22], textColor: WHITE, fontStyle: "bold", fontSize: 7, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 } },
+        bodyStyles: { fontSize: 7, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 }, textColor: DKTXT },
+        alternateRowStyles: { fillColor: LTGREEN },
+        columnStyles: {
+          0: { cellWidth: 8,  halign: "center" },
+          1: { cellWidth: "auto" },
+          2: { cellWidth: 14, halign: "center" },
+          3: { cellWidth: 32, halign: "right"  },
+          4: { cellWidth: 32, halign: "right"  },
+        },
+        tableLineColor: BORD, tableLineWidth: 0.2,
+      });
+      y = (doc as any).lastAutoTable.finalY + 5;
+    }
+
+    // ── PAYMENT HISTORY TABLE ──────────────────────────────────────────────
+    infoBox(ML, y, CW, 7.5, "PAYMENT HISTORY");
+    y += 7.5;
+
+    // Build rows: debt-opened row + each payment with running balance
+    type HistRow = { cells: string[]; isOpened: boolean };
+    const histRows: HistRow[] = [];
+    histRows.push({
+      cells: [
+        format(new Date(debt.createdAt), "d MMM yyyy, HH:mm"),
+        "—",
+        "Debt Opened",
+        `KES ${debt.totalAmount.toLocaleString("en-KE")}`,
+        `KES ${debt.totalAmount.toLocaleString("en-KE")}`,
+      ],
+      isOpened: true,
+    });
+    let running = debt.totalAmount;
+    payments.forEach((p: any) => {
+      running -= p.amount;
+      histRows.push({
+        cells: [
+          format(new Date(p.paidAt), "d MMM yyyy, HH:mm"),
+          p.recordedBy || "—",
+          "Payment Received",
+          `KES ${Number(p.amount).toLocaleString("en-KE")}`,
+          `KES ${Math.max(0, running).toLocaleString("en-KE")}`,
+        ],
+        isOpened: false,
+      });
+    });
+
+    if (histRows.length === 1) {
+      // Just the opened row — show a placeholder row
+      histRows.push({ cells: ["—", "—", "No payments recorded yet", "—", "—"], isOpened: false });
+    }
+
+    autoTable(doc, {
+      startY: y, margin: { left: ML, right: MR },
+      head: [["Date & Time", "Recorded By", "Description", "Amount (KES)", "Running Balance (KES)"]],
+      body: histRows.map(r => r.cells),
+      headStyles: { fillColor: [35, 80, 22], textColor: WHITE, fontStyle: "bold", fontSize: 7, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 } },
+      bodyStyles: { fontSize: 7, cellPadding: { top: 2.8, bottom: 2.8, left: 3, right: 3 }, textColor: DKTXT },
+      alternateRowStyles: { fillColor: LTGREEN },
+      columnStyles: {
+        0: { cellWidth: 36 },
+        1: { cellWidth: 26 },
+        2: { cellWidth: "auto" },
+        3: { cellWidth: 30, halign: "right" },
+        4: { cellWidth: 36, halign: "right" },
+      },
+      didParseCell: (data) => {
+        if (data.section !== "body") return;
+        const row = histRows[data.row.index];
+        if (!row) return;
+        if (row.isOpened) {
+          data.cell.styles.textColor = RED;
+          data.cell.styles.fontStyle = "bold";
+        } else if (data.column.index === 3 && !row.isOpened && row.cells[2] === "Payment Received") {
+          data.cell.styles.textColor = [16, 140, 80];
+          data.cell.styles.fontStyle = "bold";
+        }
+      },
+      tableLineColor: BORD, tableLineWidth: 0.2,
+    });
+    y = (doc as any).lastAutoTable.finalY + 6;
+
+    // ── BALANCE SUMMARY BOX ────────────────────────────────────────────────
+    const BS_H = 26;
+    // Guard: ensure summary box fits on page (leave 20mm for footer)
+    if (y + BS_H > PH - 20) {
+      doc.addPage();
+      y = 15;
+    }
+    doc.setFillColor(...DARK); doc.rect(ML, y, CW, BS_H, "F");
+    doc.setDrawColor(...GREEN); doc.setLineWidth(0.6); doc.rect(ML, y, CW, BS_H, "S");
+    // Green accent bar at top of box
+    doc.setFillColor(...GREEN); doc.rect(ML, y, CW, 2.5, "F");
+
+    const colW3 = CW / 3;
+    // Vertical dividers
+    doc.setDrawColor(55, 55, 55); doc.setLineWidth(0.3);
+    doc.line(ML + colW3,     y + 4, ML + colW3,     y + BS_H - 4);
+    doc.line(ML + colW3 * 2, y + 4, ML + colW3 * 2, y + BS_H - 4);
+
+    const balCols = [
+      { label: "TOTAL DEBT",  value: `KES ${debt.totalAmount.toLocaleString("en-KE")}`,  color: WHITE   },
+      { label: "AMOUNT PAID", value: `KES ${totalPaid.toLocaleString("en-KE")}`,          color: EMERALD },
+      { label: "BALANCE DUE", value: `KES ${debt.balance.toLocaleString("en-KE")}`,       color: debt.balance === 0 ? EMERALD : statusColor },
+    ];
+    balCols.forEach((col, i) => {
+      const cx = ML + colW3 * i + colW3 / 2;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...MGRAY);
+      doc.text(col.label, cx, y + 10, { align: "center" });
+      doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...(col.color as RGB));
+      doc.text(col.value, cx, y + 20, { align: "center" });
+    });
+    y += BS_H + 5;
+
+    // ── FOOTER ─────────────────────────────────────────────────────────────
+    const FY = PH - 10;
+    doc.setFillColor(...DARK); doc.rect(0, FY - 2, W, 12, "F");
+    doc.setFillColor(...GREEN); doc.rect(0, FY - 2, 3, 12, "F");
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
+    doc.setTextColor(...MGRAY);
+    if (phone) doc.text(`CONTACT: ${phone}`, ML + 4, FY + 3.5);
+    doc.setTextColor(...GOLD);
+    doc.text("Generated by GreenLink OS", W / 2, FY + 3.5, { align: "center" });
+    doc.setTextColor(...MGRAY);
+    doc.text("Page 1", W - MR - 4, FY + 3.5, { align: "right" });
+
+    // ── Save ───────────────────────────────────────────────────────────────
+    const safeName = debt.customerName.replace(/[^a-z0-9]/gi, "_");
+    doc.save(`Debt_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
+    toast.success("Statement downloaded!", { id: "debt-pdf" });
+
+  } catch (err) {
+    console.error("Debt PDF error:", err);
+    toast.error("Failed to generate statement", { id: "debt-pdf" });
+  }
+}
+
+function DebtDownloadButton({ debt }: { debt: any }) {
+  const [loading, setLoading] = useState(false);
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
+
+  const handle = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      await downloadDebtPdf(debt.id, shopId);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handle}
+      disabled={loading}
+      title="Download debt statement PDF"
+      className="flex items-center gap-1 h-8 px-3 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors disabled:opacity-50"
+    >
+      {loading ? (
+        <span className="w-3 h-3 rounded-full border border-primary border-t-transparent animate-spin" />
+      ) : (
+        <Download className="h-3 w-3" />
+      )}
+      PDF
+    </button>
   );
 }
 
@@ -804,6 +1158,7 @@ export default function Debts() {
                         {/* Action buttons */}
                         <div className="flex gap-2 mt-3 flex-wrap items-center">
                           {!isPaid && <PaymentDialog debt={debt} />}
+                          <DebtDownloadButton debt={debt} />
                           {debt.customerPhone && !isPaid && (
                             <a
                               href={`https://wa.me/${debt.customerPhone.replace(/\D/g, "")}?text=Hi ${encodeURIComponent(debt.customerName)}, you have an outstanding balance of ${formatKES(debt.balance)} at our shop. Please settle at your earliest convenience. Thank you!`}
