@@ -49,28 +49,6 @@ const plugins: any[] = [
   }),
 ];
 
-if (!isProd) {
-  // Replit-only optional plugins — silently skipped if not installed (e.g. on Vercel)
-  try {
-    plugins.push(
-      await import("@replit/vite-plugin-runtime-error-modal").then(
-        (m) => m.default(),
-      ),
-    );
-  } catch {}
-  if (process.env.REPL_ID !== undefined) {
-    try {
-      plugins.push(
-        await import("@replit/vite-plugin-cartographer").then((m) =>
-          m.cartographer({ root: path.resolve(import.meta.dirname, "..") }),
-        ),
-        await import("@replit/vite-plugin-dev-banner").then((m) =>
-          m.devBanner(),
-        ),
-      );
-    } catch {}
-  }
-}
 
 export default defineConfig({
   base: basePath,
