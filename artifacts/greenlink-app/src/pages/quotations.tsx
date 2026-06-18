@@ -70,151 +70,193 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     const { jsPDF } = await import("jspdf");
     const autoTable = (await import("jspdf-autotable")).default;
 
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W  = doc.internal.pageSize.getWidth();   // 210
-    const H  = doc.internal.pageSize.getHeight();  // 297
-    const ML = 12;
-    const MR = 12;
-    const CW = W - ML - MR;
+    const doc  = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const W    = doc.internal.pageSize.getWidth();
+    const H    = doc.internal.pageSize.getHeight();
+    const ML   = 10;
+    const MR   = 10;
+    const CW   = W - ML - MR;
 
-    // ── helpers ──────────────────────────────────────────────────────────────
-    const LIME: [number,number,number]  = [200, 255, 0];
-    const DARK: [number,number,number]  = [10, 10, 10];
-    const WHITE: [number,number,number] = [255, 255, 255];
+    // ── Brand palette ────────────────────────────────────────────────────────
+    type RGB = [number, number, number];
+    const LIME:  RGB = [200, 255,   0];
+    const DARK:  RGB = [ 10,  10,  10];
+    const WHITE: RGB = [255, 255, 255];
+    const LLIME: RGB = [245, 255, 213];   // very light lime — alternating rows
+    const LGRAY: RGB = [245, 247, 250];   // light gray — total rows
+    const MGRAY: RGB = [120, 130, 148];
+    const DKTXT: RGB = [ 18,  28,  48];
+    const BORD:  RGB = [210, 215, 222];
 
-    // Draws the fixed footer bar on any page (called at end)
-    function drawFooter(pageH: number) {
-      doc.setDrawColor(...LIME);
-      doc.setLineWidth(0.5);
-      doc.line(ML, pageH - 12, W - MR, pageH - 12);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(6.5);
-      doc.setTextColor(160, 160, 160);
-      const validText = quotation.validUntil
-        ? `Valid until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}  ·  Prices subject to availability`
-        : "Valid for 30 days from issue  ·  Prices subject to availability";
-      doc.text(validText, ML, pageH - 7);
+    // ── Helper: box with dark header strip + lime left accent ────────────────
+    function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
+      doc.setDrawColor(...BORD);
+      doc.setLineWidth(0.25);
+      doc.rect(bx, by, bw, bh, "S");
+      const hh = 7.5;
+      doc.setFillColor(...DARK);
+      doc.rect(bx, by, bw, hh, "F");
+      doc.setFillColor(...LIME);
+      doc.rect(bx, by, 2.5, hh, "F");
       doc.setFont("helvetica", "bold");
-      doc.setTextColor(...DARK);
-      doc.text(shop?.name ?? "", W - MR, pageH - 7, { align: "right" });
+      doc.setFontSize(7);
+      doc.setTextColor(...LIME);
+      doc.text(label, bx + 6, by + 5.3);
     }
 
-    // ── PAGE 1 ───────────────────────────────────────────────────────────────
+    // ── Helper: label : value row inside a box ───────────────────────────────
+    function fieldRow(bx: number, by: number, bw: number, label: string, value: string) {
+      const valX = bx + bw * 0.44;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(...MGRAY);
+      doc.text(label, bx + 5, by);
+      doc.setTextColor(...DKTXT);
+      doc.text(value || "—", valX, by);
+    }
 
-    // White canvas
+    // ── Helper: footer dark bar (drawn last on every page) ──────────────────
+    function drawFooter() {
+      doc.setFillColor(...DARK);
+      doc.rect(0, H - 13, W, 13, "F");
+      doc.setFillColor(...LIME);
+      doc.rect(0, H - 13, W, 1, "F");  // lime top strip on footer
+      const cols = [ML, W / 2, W - MR];
+      const align: ("left"|"center"|"right")[] = ["left","center","right"];
+      const heads = ["LOCATION", "CONTACT US", shop?.name ? "FOLLOW US" : ""];
+      const bits: string[] = [
+        shop?.address ?? "",
+        [shop?.ownerWhatsapp, shop?.email].filter(Boolean).join("  /  "),
+        shop?.name ?? "",
+      ];
+      heads.forEach((h, i) => {
+        if (!h && !bits[i]) return;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6);
+        doc.setTextColor(...LIME);
+        doc.text(h, cols[i], H - 8.5, { align: align[i] });
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(185, 192, 200);
+        doc.text(bits[i], cols[i], H - 4.5, { align: align[i] });
+      });
+    }
+
+    // ── Helper: continuation page header (pages 2+) ──────────────────────────
+    function drawContinuationHeader(pg: number, total: number) {
+      doc.setFillColor(...WHITE);
+      doc.rect(0, 0, W, H, "F");
+      doc.setFillColor(...DARK);
+      doc.rect(0, 0, W, 8, "F");
+      doc.setFillColor(...LIME);
+      doc.rect(0, 0, W, 1.5, "F");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6);
+      doc.setTextColor(185, 192, 200);
+      doc.text(`${shop?.name ?? ""}  ·  ${quotation.quoteNumber}  ·  continued`, ML, 5.5);
+      doc.text(`Page ${pg} of ${total}`, W - MR, 5.5, { align: "right" });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PAGE 1 — white canvas
+    // ══════════════════════════════════════════════════════════════════════════
     doc.setFillColor(...WHITE);
     doc.rect(0, 0, W, H, "F");
 
-    // Dark header band — compact 28 mm
-    const HDR = 28;
-    doc.setFillColor(...DARK);
-    doc.rect(0, 0, W, HDR, "F");
-
-    // Lime top stripe 2 mm
-    doc.setFillColor(...LIME);
-    doc.rect(0, 0, W, 2, "F");
-
-    // Shop name — left
+    // ── HEADER AREA (white, 24 mm) ────────────────────────────────────────────
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.setTextColor(...WHITE);
+    doc.setFontSize(16);
+    doc.setTextColor(...DARK);
     doc.text(shop?.name ?? "Our Shop", ML, 13);
 
-    // Shop contact line — left
-    const shopBits: string[] = [];
-    if (shop?.address)       shopBits.push(shop.address);
-    if (shop?.ownerWhatsapp) shopBits.push(shop.ownerWhatsapp);
-    if (shop?.email)         shopBits.push(shop.email);
-    if (shopBits.length) {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(6.5);
-      doc.setTextColor(156, 163, 175);
-      doc.text(shopBits.join("  ·  "), ML, 19);
-    }
-
-    // QUOTATION label — right top
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7);
-    doc.setTextColor(...LIME);
-    doc.text("QUOTATION", W - MR, 10, { align: "right" });
-
-    // Quote number — right
-    doc.setFontSize(14);
-    doc.setTextColor(...WHITE);
-    doc.text(quotation.quoteNumber, W - MR, 18, { align: "right" });
-
-    // Date line — right
+    // Contact / address line
+    const shopBits = [shop?.address, shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
-    doc.setTextColor(156, 163, 175);
-    const dateStr = format(new Date(quotation.createdAt), "dd MMM yyyy");
-    const validStr = quotation.validUntil ? `  Valid: ${format(new Date(quotation.validUntil), "dd MMM yyyy")}` : "";
-    doc.text(`${dateStr}${validStr}`, W - MR, 24, { align: "right" });
+    doc.setTextColor(...MGRAY);
+    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 19.5);
 
-    // Status dot — right
-    const statusPillColors: Record<string, [number,number,number]> = {
+    // Tagline right-aligned
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(...LIME);
+    doc.text("QUALITY  ·  RELIABILITY  ·  GROWTH", W - MR, 19.5, { align: "right" });
+
+    // ── LIME stripe + DARK QUOTATION BANNER ──────────────────────────────────
+    const STRIPE_Y = 24;
+    doc.setFillColor(...LIME);
+    doc.rect(0, STRIPE_Y, W, 2, "F");
+
+    const BANNER_Y = STRIPE_Y + 2;
+    const BANNER_H = 12;
+    doc.setFillColor(...DARK);
+    doc.rect(0, BANNER_Y, W, BANNER_H, "F");
+
+    // Decorative lime rules flanking "QUOTATION"
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(...LIME);
+    const qText  = "  QUOTATION  ";
+    const qTextW = doc.getTextWidth(qText);
+    const qTextX = W / 2 - qTextW / 2;
+    doc.setDrawColor(...LIME);
+    doc.setLineWidth(0.5);
+    doc.line(ML + 4, BANNER_Y + BANNER_H / 2, qTextX, BANNER_Y + BANNER_H / 2);
+    doc.line(qTextX + qTextW, BANNER_Y + BANNER_H / 2, W - MR - 4, BANNER_Y + BANNER_H / 2);
+    doc.text(qText, W / 2, BANNER_Y + BANNER_H - 3.5, { align: "center" });
+
+    let y = BANNER_Y + BANNER_H + 5;
+
+    // ── INFO ROW — two boxes ──────────────────────────────────────────────────
+    const LBW = CW * 0.56;   // left box width
+    const RBW = CW - LBW - 4; // right box width
+    const LBX = ML;
+    const RBX = ML + LBW + 4;
+    const INFO_H = 36;
+
+    // Left: CUSTOMER DETAILS
+    infoBox(LBX, y, LBW, INFO_H, "CUSTOMER DETAILS");
+    let fy = y + 12;
+    const GAP = 5.5;
+    fieldRow(LBX, fy, LBW, "Customer Name",  quotation.customerName);         fy += GAP;
+    fieldRow(LBX, fy, LBW, "Phone / Mobile", quotation.customerPhone ?? "");   fy += GAP;
+    fieldRow(LBX, fy, LBW, "Email",           quotation.customerEmail ?? "");   fy += GAP;
+
+    // Right: QUOTE DETAILS
+    infoBox(RBX, y, RBW, INFO_H, "QUOTE DETAILS");
+    let qy = y + 12;
+    fieldRow(RBX, qy, RBW, "Quotation No.", quotation.quoteNumber);            qy += GAP;
+    fieldRow(RBX, qy, RBW, "Date",          format(new Date(quotation.createdAt), "dd MMM yyyy")); qy += GAP;
+    if (quotation.validUntil) {
+      fieldRow(RBX, qy, RBW, "Valid Until", format(new Date(quotation.validUntil), "dd MMM yyyy")); qy += GAP;
+    }
+    const statusColors: Record<string, RGB> = {
       draft: [100,116,139], sent: [59,130,246], accepted: [34,197,94],
       rejected: [239,68,68], expired: [245,158,11],
     };
-    const sp = statusPillColors[quotation.status] ?? [100,116,139];
-    doc.setFontSize(6);
+    const sc = statusColors[quotation.status] ?? [100,116,139];
     doc.setFont("helvetica", "bold");
-    doc.setTextColor(...sp);
-    doc.text(`● ${STATUS_META[quotation.status].label.toUpperCase()}`, W - MR, H - 7, { align: "right" });
+    doc.setFontSize(6.5);
+    doc.setTextColor(...sc);
+    doc.text(`● ${STATUS_META[quotation.status].label.toUpperCase()}`, RBX + 5, qy);
 
-    // ── Info band — Bill To (left) | Items count (right) — all on one row ──
-    let y = HDR + 6;
+    y += INFO_H + 4;
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(5.5);
-    doc.setTextColor(160, 160, 160);
-    doc.text("BILL TO", ML, y);
-    doc.text(`${quotation.items.length} ITEM${quotation.items.length !== 1 ? "S" : ""}`, W - MR, y, { align: "right" });
-
-    y += 5;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(15, 23, 42);
-    doc.text(quotation.customerName, ML, y);
-
-    const billParts: string[] = [];
-    if (quotation.customerPhone) billParts.push(quotation.customerPhone);
-    if (quotation.customerEmail) billParts.push(quotation.customerEmail);
-    if (billParts.length) {
-      y += 4.5;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7);
-      doc.setTextColor(100, 116, 139);
-      doc.text(billParts.join("  ·  "), ML, y);
-    }
-
-    // Thin rule
-    y += 5;
-    doc.setDrawColor(225, 228, 233);
-    doc.setLineWidth(0.25);
-    doc.line(ML, y, W - MR, y);
-    y += 3;
-
-    // ── Items table ──────────────────────────────────────────────────────────
-    // Rows are ~5 mm each: padding 1.2+1.2 + font 7pt (2.47mm) = ~4.9mm
-    // First page capacity (header only page 1):
-    //   297 - header28 - infoBand~18 - rule3 - tableHeader~7 - footer12 = ~229mm → ~46 rows
-    // Continuation pages (slim 8mm breadcrumb):
-    //   297 - 8 - footer10 = 279mm → ~57 rows per continuation page
-
-    const ROW_PAD = { top: 1.2, bottom: 1.2, left: 3.5, right: 3.5 };
-    const HDR_PAD = { top: 2.5, bottom: 2.5, left: 3.5, right: 3.5 };
+    // ── ITEMS TABLE ───────────────────────────────────────────────────────────
+    // Row height ≈ 4.9 mm  (1.5 top + 1.5 bottom + 7pt font 2.47mm ≈ 5.5mm)
+    // First page usable after header: ~297-26-2-12-5-36-4 = 212mm for table+footer
+    // With footer 13mm + bottom section 60mm → 139mm for table rows = ~28 rows on pg1
+    // Pages 2+: 297-8-13 = 276mm → ~56 rows per continuation page
 
     autoTable(doc, {
       startY: y,
-      margin: { left: ML, right: MR, bottom: 14 },
+      margin: { left: ML, right: MR, bottom: 16 },
       showHead: "firstPage",
-      head: [["#", "Product / Description", "Unit", "Qty", "Unit Price", "Total (KES)"]],
+      head: [["NO.", "DESCRIPTION", "QTY", "UNIT", "UNIT PRICE", "TOTAL (KES)"]],
       body: quotation.items.map((item, i) => [
         String(i + 1),
         item.productName,
-        item.unit || "—",
         item.qty % 1 === 0 ? String(item.qty) : item.qty.toFixed(2),
+        item.unit || "—",
         item.unitPrice.toLocaleString("en-KE"),
         item.total.toLocaleString("en-KE"),
       ]),
@@ -222,128 +264,182 @@ async function downloadPdf(quotation: Quotation, shop: any) {
         fillColor: DARK,
         textColor: LIME,
         fontStyle: "bold",
-        fontSize: 6.5,
-        cellPadding: HDR_PAD,
+        fontSize: 7,
+        cellPadding: { top: 2.5, bottom: 2.5, left: 3.5, right: 3.5 },
+        halign: "center",
       },
       bodyStyles: {
         fontSize: 7,
-        cellPadding: ROW_PAD,
-        textColor: [25, 35, 55],
-        lineColor: [232, 235, 240],
+        cellPadding: { top: 1.5, bottom: 1.5, left: 3.5, right: 3.5 },
+        textColor: DKTXT,
+        lineColor: BORD,
         lineWidth: 0.15,
       },
-      alternateRowStyles: { fillColor: [247, 249, 252] },
+      alternateRowStyles: { fillColor: LLIME },
       columnStyles: {
-        0: { cellWidth: 7,  halign: "center", fontStyle: "bold", textColor: [190,190,190], fontSize: 6 },
-        1: { cellWidth: "auto" },
-        2: { cellWidth: 13, halign: "center", textColor: [120,130,150], fontSize: 6.5 },
-        3: { cellWidth: 10, halign: "right" },
-        4: { cellWidth: 28, halign: "right", textColor: [80,95,115] },
-        5: { cellWidth: 28, halign: "right", fontStyle: "bold", textColor: DARK },
+        0: { cellWidth: 10,   halign: "center", fontStyle: "bold", textColor: MGRAY, fontSize: 6.5 },
+        1: { cellWidth: "auto", halign: "left" },
+        2: { cellWidth: 14,   halign: "center" },
+        3: { cellWidth: 16,   halign: "center", textColor: MGRAY },
+        4: { cellWidth: 28,   halign: "right" },
+        5: { cellWidth: 28,   halign: "right", fontStyle: "bold" },
       },
-      tableLineColor: [215, 220, 228],
-      tableLineWidth: 0.1,
+      tableLineColor: BORD,
+      tableLineWidth: 0.2,
       didDrawCell: (data: any) => {
-        // Lime underline below header
+        // Lime underline beneath header row
         if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
           doc.setDrawColor(...LIME);
-          doc.setLineWidth(0.7);
+          doc.setLineWidth(0.8);
           doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
         }
       },
-      didDrawPage: (_data: any) => {
-        const pg: number = (doc as any).internal.getCurrentPageInfo().pageNumber;
-        const totalPg: number = (doc as any).internal.getNumberOfPages();
-        // Continuation pages: slim lime strip + breadcrumb, NO full header repeat
-        if (pg > 1) {
-          doc.setFillColor(...WHITE);
-          doc.rect(0, 0, W, H, "F");
-          doc.setFillColor(...LIME);
-          doc.rect(0, 0, W, 1.5, "F");
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(6);
-          doc.setTextColor(150, 150, 150);
-          doc.text(
-            `${shop?.name ?? ""}  ·  ${quotation.quoteNumber}  ·  continued`,
-            ML, 6,
-          );
-          doc.text(`Page ${pg} of ${totalPg}`, W - MR, 6, { align: "right" });
-        }
+      didDrawPage: (_: any) => {
+        const pg: number    = (doc as any).internal.getCurrentPageInfo().pageNumber;
+        const total: number = (doc as any).internal.getNumberOfPages();
+        if (pg > 1) drawContinuationHeader(pg, total);
       },
     });
 
     let ty: number = (doc as any).lastAutoTable.finalY + 5;
 
-    // ── Totals block — right-aligned, compact ────────────────────────────────
-    const totW = 75;
-    const totX = W - MR - totW;
+    // If not enough room for the bottom section, push to a new page
+    const BOT_ESTIMATE = 68;
+    if (ty + BOT_ESTIMATE > H - 15) {
+      doc.addPage();
+      doc.setFillColor(...WHITE);
+      doc.rect(0, 0, W, H, "F");
+      const newPg = (doc as any).internal.getNumberOfPages();
+      drawContinuationHeader(newPg, newPg);
+      ty = 12;
+    }
+
+    // ── BOTTOM SECTION ────────────────────────────────────────────────────────
+    const LCW = CW * 0.52;   // left column width  (terms + payment)
+    const RCW = CW - LCW - 4; // right column width (totals)
+    const LCX = ML;
+    const RCX = ML + LCW + 4;
+
+    // ── Left col: TERMS & CONDITIONS ─────────────────────────────────────────
+    const defaultTerms = [
+      "Prices are valid for 30 days from date of quotation.",
+      "Prices are subject to change without prior notice.",
+      "Goods remain property of the shop until full payment received.",
+      "Delivery charges may apply depending on location.",
+    ];
+    const termLines: string[] = quotation.notes
+      ? (doc.splitTextToSize(quotation.notes, LCW - 10) as string[])
+      : defaultTerms;
+    const TERMS_H = Math.max(24, termLines.length * 4.2 + 14);
+
+    infoBox(LCX, ty, LCW, TERMS_H, "TERMS & CONDITIONS");
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6.5);
+    doc.setTextColor(50, 62, 80);
+    termLines.forEach((line, i) => {
+      doc.text(`•  ${line}`, LCX + 5, ty + 12 + i * 4.2);
+    });
+
+    // ── Left col: PAYMENT METHODS ─────────────────────────────────────────────
+    const PAY_Y = ty + TERMS_H + 3;
+    const PAY_H = 16;
+    infoBox(LCX, PAY_Y, LCW, PAY_H, "PAYMENT METHODS");
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(...DKTXT);
+    const payMethods = ["Cash", "M-Pesa", "Bank Transfer"];
+    const payStep    = LCW / (payMethods.length + 1);
+    payMethods.forEach((pm, i) => {
+      const px = LCX + payStep * (i + 1);
+      // Lime dot
+      doc.setFillColor(...LIME);
+      doc.circle(px - 3, PAY_Y + 9.5, 1.5, "F");
+      doc.setTextColor(...DKTXT);
+      doc.text(pm, px - 1, PAY_Y + 9.5 + 0.5);
+    });
+
+    // ── Right col: TOTALS ─────────────────────────────────────────────────────
+    let ry = ty;
+    const ROW_H = 8;
+
+    function totRow(label: string, value: string, highlight = false) {
+      if (highlight) {
+        doc.setFillColor(...DARK);
+        doc.rect(RCX, ry, RCW, ROW_H, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(...LIME);
+        doc.text(label, RCX + 4, ry + 5.5);
+        doc.setTextColor(...WHITE);
+        doc.text(value, RCX + RCW - 4, ry + 5.5, { align: "right" });
+      } else {
+        doc.setFillColor(...LGRAY);
+        doc.rect(RCX, ry, RCW, ROW_H, "F");
+        doc.setDrawColor(...BORD);
+        doc.setLineWidth(0.2);
+        doc.line(RCX, ry + ROW_H, RCX + RCW, ry + ROW_H);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(...MGRAY);
+        doc.text(label, RCX + 4, ry + 5.5);
+        doc.setTextColor(...DKTXT);
+        doc.text(value, RCX + RCW - 4, ry + 5.5, { align: "right" });
+      }
+      ry += ROW_H;
+    }
 
     if (quotation.discountAmount > 0) {
-      // Subtotal row
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7.5);
-      doc.setTextColor(110, 120, 135);
-      doc.text("Subtotal", totX, ty + 4.5);
-      doc.setTextColor(25, 35, 55);
-      doc.text(`KES ${quotation.subtotal.toLocaleString("en-KE")}`, W - MR, ty + 4.5, { align: "right" });
-      ty += 7;
-
-      // Discount row
-      doc.setTextColor(180, 28, 28);
-      doc.text("Discount", totX, ty + 4.5);
-      doc.text(`− KES ${quotation.discountAmount.toLocaleString("en-KE")}`, W - MR, ty + 4.5, { align: "right" });
-      ty += 7;
-
-      // Divider
-      doc.setDrawColor(220, 223, 228);
-      doc.setLineWidth(0.2);
-      doc.line(totX, ty, W - MR, ty);
-      ty += 3;
+      totRow("SUBTOTAL", `KES ${quotation.subtotal.toLocaleString("en-KE")}`);
+      totRow("DISCOUNT", `- KES ${quotation.discountAmount.toLocaleString("en-KE")}`);
     }
+    totRow("TOTAL AMOUNT", `KES ${quotation.total.toLocaleString("en-KE")}`, true);
 
-    // Total pill
-    doc.setFillColor(...DARK);
-    doc.roundedRect(totX, ty, totW, 10, 1.5, 1.5, "F");
+    // Thank you box (lime-tinted)
+    const TY_BOX_Y = ry + 3;
+    const TY_BOX_H = 16;
+    doc.setFillColor(243, 255, 210);
+    doc.rect(RCX, TY_BOX_Y, RCW, TY_BOX_H, "F");
+    doc.setDrawColor(...LIME);
+    doc.setLineWidth(0.4);
+    doc.rect(RCX, TY_BOX_Y, RCW, TY_BOX_H, "S");
+    doc.setFillColor(...LIME);
+    doc.rect(RCX, TY_BOX_Y, 3, TY_BOX_H, "F");
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor(...LIME);
-    doc.text("TOTAL DUE", totX + 4, ty + 6.5);
-    doc.setFontSize(9);
-    doc.setTextColor(...WHITE);
-    doc.text(`KES ${quotation.total.toLocaleString("en-KE")}`, W - MR - 4, ty + 6.5, { align: "right" });
-    ty += 14;
+    doc.setFontSize(8.5);
+    doc.setTextColor(...DARK);
+    doc.text("Thank you for your business!", RCX + RCW / 2 + 2, TY_BOX_Y + 7.5, { align: "center" });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6.5);
+    doc.setTextColor(...MGRAY);
+    doc.text("We appreciate your trust in us.", RCX + RCW / 2 + 2, TY_BOX_Y + 12.5, { align: "center" });
 
-    // ── Notes — compact ──────────────────────────────────────────────────────
-    if (quotation.notes) {
-      const noteLines = doc.splitTextToSize(quotation.notes, CW - 10);
-      const noteH = Math.max(14, noteLines.length * 4.2 + 10);
-      doc.setFillColor(248, 250, 252);
-      doc.roundedRect(ML, ty, CW, noteH, 1.5, 1.5, "F");
-      doc.setFillColor(...LIME);
-      doc.rect(ML, ty, 2.5, noteH, "F");
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(5.5);
-      doc.setTextColor(120, 130, 145);
-      doc.text("NOTES & TERMS", ML + 6, ty + 5.5);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7);
-      doc.setTextColor(50, 60, 75);
-      doc.text(noteLines, ML + 6, ty + 11);
-      ty += noteH + 6;
-    }
+    // ── SIGNATURE LINE ────────────────────────────────────────────────────────
+    const sigY = Math.max(PAY_Y + PAY_H + 8, TY_BOX_Y + TY_BOX_H + 8);
+    doc.setDrawColor(...BORD);
+    doc.setLineWidth(0.3);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(...MGRAY);
+    // Left signature
+    doc.text("Prepared By:", ML, sigY);
+    doc.line(ML + 23, sigY + 0.5, ML + CW * 0.42, sigY + 0.5);
+    doc.setFontSize(6.5);
+    doc.text("Name:", ML, sigY + 5.5);
+    doc.line(ML + 10, sigY + 6, ML + CW * 0.42, sigY + 6);
+    // Right signature
+    const rSigX = W - MR - CW * 0.42;
+    doc.setFontSize(7);
+    doc.text("Received By:", rSigX, sigY);
+    doc.line(rSigX + 23, sigY + 0.5, W - MR, sigY + 0.5);
+    doc.setFontSize(6.5);
+    doc.text("Name:", rSigX, sigY + 5.5);
+    doc.line(rSigX + 10, sigY + 6, W - MR, sigY + 6);
 
-    // ── Footer on every page ─────────────────────────────────────────────────
+    // ── FOOTER on every page ──────────────────────────────────────────────────
     const numPages: number = (doc as any).internal.getNumberOfPages();
     for (let p = 1; p <= numPages; p++) {
       doc.setPage(p);
-      drawFooter(H);
-      // Page n of N — bottom centre (page 1 only, continuation pages already have it in didDrawPage)
-      if (p === 1) {
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(6);
-        doc.setTextColor(190, 190, 190);
-        doc.text(`Page 1 of ${numPages}`, W / 2, H - 4, { align: "center" });
-      }
+      drawFooter();
     }
 
     doc.save(`${quotation.quoteNumber}.pdf`);
