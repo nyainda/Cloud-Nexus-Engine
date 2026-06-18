@@ -369,20 +369,95 @@ async function downloadPdf(quotation: Quotation, shop: any) {
 
     // ── Left col: PAYMENT METHODS ─────────────────────────────────────────────
     const PAY_Y = ty + TERMS_H + 3;
-    const PAY_H = 16;
+    const PAY_H = 36;   // tall enough for icon + label + subtitle
     infoBox(LCX, PAY_Y, LCW, PAY_H, "PAYMENT METHODS");
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(...DKTXT);
-    const payMethods = ["Cash", "M-Pesa", "Bank Transfer"];
-    const payStep    = LCW / (payMethods.length + 1);
+
+    // Content starts below the dark header strip (7.5 mm)
+    const PAY_CONTENT_Y = PAY_Y + 7.5;
+
+    const payMethods = [
+      { label: "Cash",          sub: "On delivery" },
+      { label: "M-Pesa",        sub: "Paybill / Till" },
+      { label: "Bank Transfer", sub: "Account details" },
+    ];
+    const slotW = LCW / payMethods.length;
+
     payMethods.forEach((pm, i) => {
-      const px = LCX + payStep * (i + 1);
-      // Green dot
-      doc.setFillColor(...GREEN);
-      doc.circle(px - 3, PAY_Y + 9.5, 1.5, "F");
+      const cx = LCX + slotW * i + slotW / 2;  // centre of this slot
+      const iconY = PAY_CONTENT_Y + 4;           // top of icon area
+
+      // ── Icon drawn with primitives ──────────────────────────────────────────
+      if (i === 0) {
+        // CASH — banknote rectangle
+        const bx = cx - 7, by = iconY, bw = 14, bh = 8;
+        doc.setFillColor(...GREEN);
+        doc.roundedRect(bx, by, bw, bh, 1.5, 1.5, "F");
+        // inner highlight stripe
+        doc.setFillColor(255, 255, 255, 0.25);
+        doc.setFillColor(90, 160, 90);
+        doc.roundedRect(bx + 2, by + 2, bw - 4, bh - 4, 0.8, 0.8, "F");
+        // KES label
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(5.5);
+        doc.setTextColor(...WHITE);
+        doc.text("KES", cx, by + bh / 2 + 1.8, { align: "center" });
+
+      } else if (i === 1) {
+        // M-PESA — mobile phone silhouette
+        const ph = 10, pw = 6.5;
+        const px2 = cx - pw / 2, py2 = iconY;
+        doc.setFillColor(...GREEN);
+        doc.roundedRect(px2, py2, pw, ph, 1.2, 1.2, "F");
+        // speaker slot
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(cx - 1.5, py2 + 1.2, 3, 0.9, 0.3, 0.3, "F");
+        // screen area
+        doc.setFillColor(90, 160, 90);
+        doc.roundedRect(px2 + 0.8, py2 + 2.8, pw - 1.6, ph - 5.2, 0.5, 0.5, "F");
+        // home button
+        doc.setFillColor(255, 255, 255);
+        doc.circle(cx, py2 + ph - 1.5, 0.9, "F");
+
+      } else {
+        // BANK TRANSFER — building / columns
+        const bw2 = 13, bx2 = cx - bw2 / 2, by2 = iconY;
+        // roof triangle (3 lines forming a triangle)
+        doc.setDrawColor(...GREEN);
+        doc.setLineWidth(0.8);
+        doc.line(cx, by2,        bx2,      by2 + 3.5);  // left slope
+        doc.line(cx, by2,        bx2 + bw2, by2 + 3.5); // right slope
+        doc.line(bx2, by2 + 3.5, bx2 + bw2, by2 + 3.5); // base of roof
+        // columns
+        doc.setFillColor(...GREEN);
+        const colW = 1.8, colH = 4.5, colY = by2 + 3.5;
+        const colGap = (bw2 - colW * 4) / 5;
+        for (let c = 0; c < 4; c++) {
+          doc.rect(bx2 + colGap * (c + 1) + colW * c, colY, colW, colH, "F");
+        }
+        // base step
+        doc.setFillColor(...GREEN);
+        doc.rect(bx2 - 0.5, by2 + 3.5 + colH, bw2 + 1, 1.5, "F");
+      }
+
+      // ── Label ──────────────────────────────────────────────────────────────
+      const labelY = PAY_CONTENT_Y + 4 + 12;   // below icon (icon height ≈ 10-11mm)
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
       doc.setTextColor(...DKTXT);
-      doc.text(pm, px - 1, PAY_Y + 9.5 + 0.5);
+      doc.text(pm.label, cx, labelY, { align: "center" });
+
+      // ── Subtitle ───────────────────────────────────────────────────────────
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(5.5);
+      doc.setTextColor(...MGRAY);
+      doc.text(pm.sub, cx, labelY + 4, { align: "center" });
+
+      // ── Vertical divider between tiles (not after last) ───────────────────
+      if (i < payMethods.length - 1) {
+        doc.setDrawColor(...BORD);
+        doc.setLineWidth(0.2);
+        doc.line(LCX + slotW * (i + 1), PAY_CONTENT_Y + 2, LCX + slotW * (i + 1), PAY_Y + PAY_H - 3);
+      }
     });
 
     // ── Right col: TOTALS ─────────────────────────────────────────────────────
