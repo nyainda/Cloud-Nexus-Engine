@@ -50,21 +50,25 @@ const plugins: any[] = [
 ];
 
 if (!isProd) {
-  // Replit-only plugins — only loaded in dev, never in Vercel builds
-  plugins.push(
-    await import("@replit/vite-plugin-runtime-error-modal").then(
-      (m) => m.default(),
-    ),
-  );
-  if (process.env.REPL_ID !== undefined) {
+  // Replit-only optional plugins — silently skipped if not installed (e.g. on Vercel)
+  try {
     plugins.push(
-      await import("@replit/vite-plugin-cartographer").then((m) =>
-        m.cartographer({ root: path.resolve(import.meta.dirname, "..") }),
-      ),
-      await import("@replit/vite-plugin-dev-banner").then((m) =>
-        m.devBanner(),
+      await import("@replit/vite-plugin-runtime-error-modal").then(
+        (m) => m.default(),
       ),
     );
+  } catch {}
+  if (process.env.REPL_ID !== undefined) {
+    try {
+      plugins.push(
+        await import("@replit/vite-plugin-cartographer").then((m) =>
+          m.cartographer({ root: path.resolve(import.meta.dirname, "..") }),
+        ),
+        await import("@replit/vite-plugin-dev-banner").then((m) =>
+          m.devBanner(),
+        ),
+      );
+    } catch {}
   }
 }
 

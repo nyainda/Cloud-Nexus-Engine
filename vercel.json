@@ -1,5 +1,5 @@
 {
-  "installCommand": "pnpm install --frozen-lockfile",
+  "installCommand": "npm config set registry https://registry.npmjs.org && pnpm config set registry https://registry.npmjs.org && pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter @workspace/greenlink-app build",
   "outputDirectory": "artifacts/greenlink-app/dist/public",
   "rewrites": [
