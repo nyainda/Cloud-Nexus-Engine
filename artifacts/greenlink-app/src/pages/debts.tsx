@@ -309,272 +309,227 @@ function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => voi
   );
 }
 
-// ─── Debt PDF download ─────────────────────────────────────────────────────
+// ─── Debt PDF download — premium dark-header design ────────────────────────
 async function downloadDebtPdf(debtId: string, shopId: string) {
   toast.loading("Generating statement…", { id: "debt-pdf" });
   try {
-    // ── Fetch data ─────────────────────────────────────────────────────────
-    const [shopsResp, debtData] = await Promise.all([
-      fetch("/api/shops"),
+    // ── Fetch data — both use customFetch so base URL is correct in prod ──
+    const [shopsData, debt] = await Promise.all([
+      customFetch<any[]>("/api/shops"),
       customFetch<any>(`/api/debts/${debtId}`),
     ]);
-    const shops: any[] = await shopsResp.json();
-    const debt: any  = debtData;
-    // Try passed shopId, then debt.shopId (most reliable), then first shop
+    const shops: any[] = Array.isArray(shopsData) ? shopsData : [];
     const shop = shops.find((s: any) => s.id === shopId)
-      ?? shops.find((s: any) => s.id === debt.shopId)
+      ?? shops.find((s: any) => s.id === debt?.shopId)
       ?? shops[0]
       ?? { name: "GreenLink", id: shopId };
-    const payments: any[] = debt.payments ?? [];
-    const items: any[]    = debt.items    ?? [];
+    const payments: any[] = debt?.payments ?? [];
+    const items: any[]    = debt?.items    ?? [];
+    const totalPaid = (debt?.totalAmount ?? 0) - (debt?.balance ?? 0);
 
-    // ── jsPDF setup ────────────────────────────────────────────────────────
-    const { jsPDF }  = await import("jspdf");
-    const autoTable  = (await import("jspdf-autotable")).default;
-    const doc        = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W          = doc.internal.pageSize.getWidth();
-    const H          = doc.internal.pageSize.getHeight();
-    const ML = 10, MR = 10;
+    // ── jsPDF setup ───────────────────────────────────────────────────────
+    const { jsPDF } = await import("jspdf");
+    const autoTable = (await import("jspdf-autotable")).default;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+    const ML = 15, MR = 15;
     const CW = W - ML - MR;
 
     type RGB = [number, number, number];
-    const GREEN:   RGB = [ 45, 106,  30];
-    const GOLD:    RGB = [245, 166,  35];
-    const DARK:    RGB = [ 10,  10,  10];
+    const DARK:    RGB = [10,  10,  10];   // #0A0A0A
+    const LIME:    RGB = [200, 255, 0];    // #C8FF00
     const WHITE:   RGB = [255, 255, 255];
-    const LTGREEN: RGB = [238, 248, 236];
-    const LGRAY:   RGB = [245, 247, 250];
+    const OFFWHITE:RGB = [249, 250, 251];
+    const LGRAY:   RGB = [241, 245, 249];
     const MGRAY:   RGB = [120, 130, 148];
-    const DKTXT:   RGB = [ 18,  28,  48];
-    const BORD:    RGB = [210, 215, 222];
-    const RED:     RGB = [190,  30,  30];
-    const ORANGE:  RGB = [200, 100,  20];
-    const EMERALD: RGB = [ 16, 150, 100];
+    const DKTXT:   RGB = [15,  23,  42];
+    const BORD:    RGB = [226, 232, 240];
+    const EMERALD: RGB = [16,  150, 100];
+    const RED:     RGB = [185, 28,  28];
+    const ORANGE:  RGB = [194, 65,  12];
 
     const statusColor: RGB =
-      debt.status === "paid" ? EMERALD :
-      debt.status === "partial" ? ORANGE : RED;
+      debt?.status === "paid"    ? EMERALD :
+      debt?.status === "partial" ? ORANGE  : RED;
 
-    // ── Helpers ────────────────────────────────────────────────────────────
-    function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
-      doc.setDrawColor(...BORD); doc.setLineWidth(0.25);
-      doc.rect(bx, by, bw, bh, "S");
-      const hh = 7.5;
-      doc.setFillColor(...DARK);  doc.rect(bx, by, bw, hh, "F");
-      doc.setFillColor(...GREEN); doc.rect(bx, by, 2.5, hh, "F");
-      doc.setFont("helvetica", "bold"); doc.setFontSize(7);
-      doc.setTextColor(...GOLD);
-      doc.text(label, bx + 6, by + 5.3);
-    }
-
-    function fieldRow(bx: number, by: number, bw: number, label: string, value: string, valueColor?: RGB) {
-      doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-      doc.text(label, bx + 5, by);
-      doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...(valueColor ?? DKTXT));
-      doc.text(value || "—", bx + bw - 5, by, { align: "right", maxWidth: bw - 32 });
-    }
-
-    // Footer drawn on every page (three-column dark bar at bottom)
-    function drawDebtFooter() {
-      doc.setFillColor(...DARK); doc.rect(0, H - 13, W, 13, "F");
-      doc.setFillColor(...GREEN); doc.rect(0, H - 13, W, 1, "F");
-      const cols   = [ML, W / 2, W - MR];
-      const aligns: ("left"|"center"|"right")[] = ["left","center","right"];
-      const heads  = ["LOCATION","CONTACT US","SHOP"];
-      const bits   = [
-        shop?.address ?? "",
-        [shop?.ownerWhatsapp, shop?.email].filter(Boolean).join("  /  "),
-        shop?.name ?? "",
-      ];
-      heads.forEach((h, i) => {
-        doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...GOLD);
-        doc.text(h, cols[i], H - 8.5, { align: aligns[i] });
-        doc.setFont("helvetica", "normal"); doc.setTextColor(185, 192, 200);
-        doc.text(bits[i], cols[i], H - 4.5, { align: aligns[i] });
-      });
-    }
-
-    // Compact continuation header for pages 2+
-    function drawDebtContinuationHeader() {
+    // ── Page 2+ continuation header ───────────────────────────────────────
+    function drawContinuationHeader() {
       doc.setFillColor(...WHITE); doc.rect(0, 0, W, H, "F");
-      doc.setFillColor(...DARK);  doc.rect(0, 0, W, 8, "F");
-      doc.setFillColor(...GREEN); doc.rect(0, 0, W, 1.5, "F");
-      doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(185, 192, 200);
-      const pg    = (doc as any).internal.getCurrentPageInfo().pageNumber;
-      const total = (doc as any).internal.getNumberOfPages();
+      doc.setFillColor(...DARK);  doc.rect(0, 0, W, 9, "F");
+      doc.setFillColor(...LIME);  doc.rect(0, 0, W, 2, "F");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(185, 192, 200);
+      const pg = (doc as any).internal.getCurrentPageInfo().pageNumber;
       doc.text(
-        `${shop?.name ?? ""}  ·  DEBT-${debt.id.slice(0,8).toUpperCase()}  ·  ${debt.customerName}  ·  continued`,
-        ML, 5.5
+        `${shop?.name ?? ""}  ·  DEBT-${(debt?.id ?? "").slice(0,8).toUpperCase()}  ·  ${debt?.customerName ?? ""}  ·  continued`,
+        ML, 6.5
       );
-      doc.text(`Page ${pg} of ${total}`, W - MR, 5.5, { align: "right" });
+      doc.text(`Page ${pg}`, W - MR, 6.5, { align: "right" });
     }
 
-    // ── Logo ───────────────────────────────────────────────────────────────
-    const isGreenlink = !(shop.id ?? "").includes("sunrise") && !(shop.name ?? "").toLowerCase().includes("sunrise");
-    const logoUrl     = isGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
-    let logoBase64 = "", logoNatW = 0, logoNatH = 0;
-    try {
-      const blob    = await fetch(logoUrl).then(r => r.blob());
-      const blobUrl = URL.createObjectURL(blob);
-      await new Promise<void>(res => {
-        const img    = new Image();
-        img.onload   = () => { logoNatW = img.naturalWidth; logoNatH = img.naturalHeight; res(); };
-        img.onerror  = () => res();
-        img.src      = blobUrl;
-      });
-      URL.revokeObjectURL(blobUrl);
-      logoBase64 = await new Promise<string>(res => {
-        const r   = new FileReader();
-        r.onload  = () => res(r.result as string);
-        r.readAsDataURL(blob);
-      });
-    } catch { /* logo optional */ }
+    // ── Footer on every page ──────────────────────────────────────────────
+    function drawFooter() {
+      // Lime rule
+      doc.setDrawColor(...LIME); doc.setLineWidth(0.7);
+      doc.line(ML, H - 14, W - MR, H - 14);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
+      const validText = "This statement is generated for record-keeping purposes only.";
+      doc.text(validText, ML, H - 9);
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...DKTXT);
+      doc.text(shop?.name ?? "", W - MR, H - 9, { align: "right" });
+    }
 
-    // ── PAGE 1 — white canvas ───────────────────────────────────────────────
+    // ── Section label helper ──────────────────────────────────────────────
+    function sectionLabel(sy: number, label: string) {
+      doc.setFillColor(...LIME); doc.rect(ML, sy, 3, 0.8, "F");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...MGRAY);
+      doc.text(label, ML, sy + 5);
+    }
+
+    // ── PAGE 1 ────────────────────────────────────────────────────────────
     doc.setFillColor(...WHITE); doc.rect(0, 0, W, H, "F");
 
-    // Logo right, shop info left (same layout as quotation PDF)
-    const BOX_W = 52, BOX_H = 20;
-    if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
-      const scale = Math.min(BOX_W / logoNatW, BOX_H / logoNatH);
-      const drawW = logoNatW * scale, drawH = logoNatH * scale;
-      doc.addImage(
-        logoBase64, "JPEG",
-        W - MR - BOX_W + (BOX_W - drawW) / 2,
-        3 + (BOX_H - drawH) / 2,
-        drawW, drawH
-      );
-    }
+    // Dark header
+    const HDR_H = 44;
+    doc.setFillColor(...DARK); doc.rect(0, 0, W, HDR_H, "F");
+    // Lime top stripe
+    doc.setFillColor(...LIME); doc.rect(0, 0, W, 2.5, "F");
 
-    doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...GREEN);
-    doc.text(shop?.name ?? "Our Shop", ML, 11);
-    const shopBits = [shop?.address, shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
-    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...MGRAY);
-    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 17);
-    doc.setFont("helvetica", "italic"); doc.setFontSize(6); doc.setTextColor(...GOLD);
-    doc.text("QUALITY  ·  RELIABILITY  ·  GROWTH", ML, 22);
+    // Left: shop name + info
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(...WHITE);
+    doc.text(shop?.name ?? "Our Shop", ML, 16);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(156, 163, 175);
+    let subY = 23;
+    if (shop?.address)       { doc.text(shop.address,       ML, subY); subY += 4.5; }
+    if (shop?.ownerWhatsapp) { doc.text(shop.ownerWhatsapp, ML, subY); subY += 4.5; }
+    if (shop?.email)         { doc.text(shop.email,         ML, subY); }
 
-    // Green stripe + DEBT STATEMENT banner (same pattern as quotation PDF)
-    const STRIPE_Y = 27;
-    doc.setFillColor(...GREEN); doc.rect(0, STRIPE_Y, W, 2, "F");
-    const BANNER_Y = STRIPE_Y + 2, BANNER_H = 12;
-    doc.setFillColor(...DARK); doc.rect(0, BANNER_Y, W, BANNER_H, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(...GOLD);
-    const bText  = "  DEBT STATEMENT  ";
-    const bTextW = doc.getTextWidth(bText);
-    const bTextX = W / 2 - bTextW / 2;
-    doc.setDrawColor(...GOLD); doc.setLineWidth(0.5);
-    doc.line(ML + 4, BANNER_Y + BANNER_H / 2, bTextX, BANNER_Y + BANNER_H / 2);
-    doc.line(bTextX + bTextW, BANNER_Y + BANNER_H / 2, W - MR - 4, BANNER_Y + BANNER_H / 2);
-    doc.text(bText, W / 2, BANNER_Y + BANNER_H - 3.5, { align: "center" });
+    // Right: DEBT STATEMENT label + ref number
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...LIME);
+    doc.text("DEBT STATEMENT", W - MR, 13, { align: "right" });
 
-    // REF + status strip just below the banner
-    const REF_Y = BANNER_Y + BANNER_H;
-    doc.setFillColor(...LGRAY); doc.rect(0, REF_Y, W, 9, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...DKTXT);
-    doc.text(`REF: DEBT-${debt.id.slice(0, 8).toUpperCase()}`, ML, REF_Y + 6);
-    const openedDate = format(new Date(debt.createdAt), "d MMM yyyy");
-    const daysOpen   = differenceInDays(new Date(), new Date(debt.createdAt));
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-    doc.text(
-      `Opened: ${openedDate}  ·  ${daysOpen} day${daysOpen !== 1 ? "s" : ""} outstanding`,
-      W / 2, REF_Y + 6, { align: "center" }
-    );
-    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...statusColor);
-    doc.text(`● ${debt.status.toUpperCase()}`, W - MR, REF_Y + 6, { align: "right" });
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(...WHITE);
+    doc.text(`DEBT-${(debt?.id ?? "").slice(0,8).toUpperCase()}`, W - MR, 23, { align: "right" });
 
-    let y = REF_Y + 9 + 5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(156, 163, 175);
+    const openedDate = format(new Date(debt?.createdAt), "dd MMM yyyy");
+    const daysOpen   = differenceInDays(new Date(), new Date(debt?.createdAt));
+    doc.text(`Opened: ${openedDate}`, W - MR, 30, { align: "right" });
+    doc.text(`${daysOpen} day${daysOpen !== 1 ? "s" : ""} outstanding`, W - MR, 35.5, { align: "right" });
 
-    // ── INFO BOXES ─────────────────────────────────────────────────────────
-    const LBW = CW * 0.52, RBW = CW - LBW - 4;
-    const LBX = ML,        RBX = ML + LBW + 4;
-    const INFO_H = 36;
-    const totalPaid = debt.totalAmount - debt.balance;
+    // Status indicator
+    const statusLabel = debt?.status === "paid" ? "PAID" : debt?.status === "partial" ? "PARTIAL" : "OUTSTANDING";
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...statusColor);
+    doc.text(`● ${statusLabel}`, W - MR, 41, { align: "right" });
 
-    infoBox(LBX, y, LBW, INFO_H, "CUSTOMER DETAILS");
-    let fy = y + 12;
-    fieldRow(LBX, fy, LBW, "Customer Name", debt.customerName); fy += 5.5;
-    fieldRow(LBX, fy, LBW, "Phone Number", debt.customerPhone || "—"); fy += 5.5;
-    if (debt.notes) { fieldRow(LBX, fy, LBW, "Notes", debt.notes); fy += 5.5; }
-    fieldRow(LBX, fy, LBW, "Payments Recorded", `${payments.length} payment${payments.length !== 1 ? "s" : ""}`);
+    // ── Customer + summary cards ──────────────────────────────────────────
+    let y = HDR_H + 10;
 
-    infoBox(RBX, y, RBW, INFO_H, "DEBT SUMMARY");
-    let qy = y + 12;
-    fieldRow(RBX, qy, RBW, "Total Debt Amount", `KES ${debt.totalAmount.toLocaleString("en-KE")}`); qy += 5.5;
-    fieldRow(RBX, qy, RBW, "Total Amount Paid",  `KES ${totalPaid.toLocaleString("en-KE")}`,         EMERALD); qy += 5.5;
-    // balance — bigger & coloured
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-    doc.text("Balance Due", RBX + 5, qy);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...statusColor);
-    doc.text(`KES ${debt.balance.toLocaleString("en-KE")}`, RBX + RBW - 5, qy, { align: "right" }); qy += 7;
-    fieldRow(RBX, qy, RBW, "Settled Date", debt.paidAt ? format(new Date(debt.paidAt), "d MMM yyyy") : "Pending");
-    y += INFO_H + 5;
+    const LBW = (CW - 6) / 2;
+    const RBW = CW - LBW - 6;
+    const LBX = ML, RBX = ML + LBW + 6;
 
-    // ── ITEMS TABLE ────────────────────────────────────────────────────────
+    // Customer card
+    doc.setDrawColor(...BORD); doc.setLineWidth(0.25);
+    doc.rect(LBX, y, LBW, 34, "S");
+    doc.setFillColor(...LIME); doc.rect(LBX, y, 3, 34, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...MGRAY);
+    doc.text("CUSTOMER", LBX + 7, y + 6);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(...DKTXT);
+    doc.text(debt?.customerName ?? "—", LBX + 7, y + 14);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MGRAY);
+    if (debt?.customerPhone) { doc.text(debt.customerPhone, LBX + 7, y + 21); }
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139);
+    doc.text(`${payments.length} payment${payments.length !== 1 ? "s" : ""} recorded`, LBX + 7, y + 29);
+
+    // Summary card
+    doc.setDrawColor(...BORD); doc.rect(RBX, y, RBW, 34, "S");
+    doc.setFillColor(...LIME); doc.rect(RBX, y, 3, 34, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...MGRAY);
+    doc.text("DEBT SUMMARY", RBX + 7, y + 6);
+    // Three figures in the card
+    const summaryRows = [
+      { label: "Total Debt",   value: `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`, color: DKTXT   },
+      { label: "Amount Paid",  value: `KES ${totalPaid.toLocaleString("en-KE")}`,                color: EMERALD },
+      { label: "Balance Due",  value: `KES ${(debt?.balance ?? 0).toLocaleString("en-KE")}`,     color: (debt?.balance ?? 0) === 0 ? EMERALD : statusColor },
+    ];
+    summaryRows.forEach((row, i) => {
+      const ry = y + 14 + i * 6.5;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
+      doc.text(row.label, RBX + 7, ry);
+      doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...(row.color as RGB));
+      doc.text(row.value, RBX + RBW - 5, ry, { align: "right" });
+    });
+
+    y += 34 + 8;
+
+    // Divider
+    doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
+    doc.line(ML, y, W - MR, y);
+    y += 7;
+
+    // ── Items table (if present) ──────────────────────────────────────────
     if (items.length > 0) {
-      infoBox(ML, y, CW, 7.5, "ITEMS TAKEN  —  LINKED SALE");
-      y += 7.5;
+      sectionLabel(y - 5, "ITEMS — LINKED SALE");
       autoTable(doc, {
-        startY: y, margin: { left: ML, right: MR, bottom: 16 },
+        startY: y, margin: { left: ML, right: MR, bottom: 18 },
         showHead: "firstPage",
         head: [["#", "Product / Description", "Qty", "Unit Price (KES)", "Total (KES)"]],
         body: items.map((it: any, i: number) => [
           String(i + 1),
-          it.productName,
+          it.productName ?? it.name ?? "—",
           String(it.qty ?? it.quantity ?? 1),
-          Number(it.unitPrice).toLocaleString("en-KE"),
-          Number(it.totalPrice).toLocaleString("en-KE"),
+          Number(it.unitPrice ?? 0).toLocaleString("en-KE"),
+          Number(it.totalPrice ?? it.total ?? 0).toLocaleString("en-KE"),
         ]),
-        headStyles: { fillColor: DARK, textColor: GOLD, fontStyle: "bold", fontSize: 7,
-          cellPadding: { top: 2.5, bottom: 2.5, left: 3.5, right: 3.5 }, halign: "center" },
-        bodyStyles: { fontSize: 7, cellPadding: { top: 2, bottom: 2, left: 3.5, right: 3.5 },
-          textColor: DKTXT, lineColor: BORD, lineWidth: 0.15 },
-        alternateRowStyles: { fillColor: LTGREEN },
+        headStyles: { fillColor: DARK, textColor: LIME, fontStyle: "bold", fontSize: 7.5,
+          cellPadding: { top: 5, bottom: 5, left: 4, right: 4 } },
+        bodyStyles: { fontSize: 8.5, cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
+          textColor: DKTXT, lineColor: LGRAY, lineWidth: 0.2 },
+        alternateRowStyles: { fillColor: OFFWHITE },
         columnStyles: {
-          0: { cellWidth: 12, halign: "center", fontStyle: "bold", textColor: MGRAY, fontSize: 6.5 },
+          0: { cellWidth: 10, halign: "center", fontStyle: "bold", textColor: MGRAY },
           1: { cellWidth: "auto" },
-          2: { cellWidth: 14, halign: "center" },
-          3: { cellWidth: 30, halign: "right" },
-          4: { cellWidth: 30, halign: "right", fontStyle: "bold" },
+          2: { cellWidth: 14, halign: "right" },
+          3: { cellWidth: 32, halign: "right", textColor: [71, 85, 105] as RGB },
+          4: { cellWidth: 34, halign: "right", fontStyle: "bold" },
         },
         tableLineColor: BORD, tableLineWidth: 0.2,
         didDrawPage: () => {
           const pg = (doc as any).internal.getCurrentPageInfo().pageNumber;
-          if (pg > 1) drawDebtContinuationHeader();
+          if (pg > 1) drawContinuationHeader();
         },
         didDrawCell: (data: any) => {
           if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
-            doc.setDrawColor(...GREEN); doc.setLineWidth(0.8);
+            doc.setDrawColor(...LIME); doc.setLineWidth(1);
             doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
           }
         },
       });
-      y = (doc as any).lastAutoTable.finalY + 5;
+      y = (doc as any).lastAutoTable.finalY + 10;
     }
 
-    // ── PAYMENT HISTORY TABLE ──────────────────────────────────────────────
-    infoBox(ML, y, CW, 7.5, "PAYMENT HISTORY");
-    y += 7.5;
+    // ── Payment history table ─────────────────────────────────────────────
+    sectionLabel(y - 5, "PAYMENT HISTORY");
 
-    // Build rows: debt-opened row + each payment with running balance
     type HistRow = { cells: string[]; isOpened: boolean };
     const histRows: HistRow[] = [];
     histRows.push({
       cells: [
-        format(new Date(debt.createdAt), "d MMM yyyy, HH:mm"),
-        "—",
+        format(new Date(debt?.createdAt), "dd MMM yyyy, HH:mm"),
+        "System",
         "Debt Opened",
-        `KES ${debt.totalAmount.toLocaleString("en-KE")}`,
-        `KES ${debt.totalAmount.toLocaleString("en-KE")}`,
+        `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`,
+        `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`,
       ],
       isOpened: true,
     });
-    let running = debt.totalAmount;
+    let running = debt?.totalAmount ?? 0;
     payments.forEach((p: any) => {
       running -= p.amount;
       histRows.push({
         cells: [
-          format(new Date(p.paidAt), "d MMM yyyy, HH:mm"),
+          format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
           p.recordedBy || "—",
           "Payment Received",
           `KES ${Number(p.amount).toLocaleString("en-KE")}`,
@@ -583,28 +538,26 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         isOpened: false,
       });
     });
-
     if (histRows.length === 1) {
-      // Just the opened row — show a placeholder row
       histRows.push({ cells: ["—", "—", "No payments recorded yet", "—", "—"], isOpened: false });
     }
 
     autoTable(doc, {
-      startY: y, margin: { left: ML, right: MR, bottom: 16 },
+      startY: y, margin: { left: ML, right: MR, bottom: 18 },
       showHead: "firstPage",
-      head: [["Date & Time", "Recorded By", "Description", "Amount (KES)", "Running Balance (KES)"]],
+      head: [["Date & Time", "Recorded By", "Description", "Amount (KES)", "Balance (KES)"]],
       body: histRows.map(r => r.cells),
-      headStyles: { fillColor: DARK, textColor: GOLD, fontStyle: "bold", fontSize: 7,
-        cellPadding: { top: 2.5, bottom: 2.5, left: 3.5, right: 3.5 }, halign: "center" },
-      bodyStyles: { fontSize: 7, cellPadding: { top: 2, bottom: 2, left: 3.5, right: 3.5 },
-        textColor: DKTXT, lineColor: BORD, lineWidth: 0.15 },
-      alternateRowStyles: { fillColor: LTGREEN },
+      headStyles: { fillColor: DARK, textColor: LIME, fontStyle: "bold", fontSize: 7.5,
+        cellPadding: { top: 5, bottom: 5, left: 4, right: 4 } },
+      bodyStyles: { fontSize: 8.5, cellPadding: { top: 5.5, bottom: 5.5, left: 4, right: 4 },
+        textColor: DKTXT, lineColor: LGRAY, lineWidth: 0.2 },
+      alternateRowStyles: { fillColor: OFFWHITE },
       columnStyles: {
-        0: { cellWidth: 36 },
-        1: { cellWidth: 26 },
+        0: { cellWidth: 38 },
+        1: { cellWidth: 28 },
         2: { cellWidth: "auto" },
-        3: { cellWidth: 30, halign: "right" },
-        4: { cellWidth: 36, halign: "right" },
+        3: { cellWidth: 32, halign: "right" },
+        4: { cellWidth: 34, halign: "right" },
       },
       didParseCell: (data: any) => {
         if (data.section !== "body") return;
@@ -614,65 +567,58 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
           data.cell.styles.textColor = RED;
           data.cell.styles.fontStyle = "bold";
         } else if (data.column.index === 3 && row.cells[2] === "Payment Received") {
-          data.cell.styles.textColor = [16, 140, 80];
+          data.cell.styles.textColor = EMERALD;
           data.cell.styles.fontStyle = "bold";
         }
       },
       didDrawPage: () => {
         const pg = (doc as any).internal.getCurrentPageInfo().pageNumber;
-        if (pg > 1) drawDebtContinuationHeader();
+        if (pg > 1) drawContinuationHeader();
       },
       didDrawCell: (data: any) => {
         if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
-          doc.setDrawColor(...GREEN); doc.setLineWidth(0.8);
+          doc.setDrawColor(...LIME); doc.setLineWidth(1);
           doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
         }
       },
       tableLineColor: BORD, tableLineWidth: 0.2,
     });
-    y = (doc as any).lastAutoTable.finalY + 6;
+    y = (doc as any).lastAutoTable.finalY + 10;
 
-    // ── BALANCE SUMMARY BOX ────────────────────────────────────────────────
-    const BS_H = 26;
-    // Ensure the box fits above the footer (13 mm) + safe margin
-    if (y + BS_H > H - 16) {
-      doc.addPage();
-      drawDebtContinuationHeader();
-      y = 14;
-    }
-    doc.setFillColor(...DARK); doc.rect(ML, y, CW, BS_H, "F");
-    doc.setDrawColor(...GREEN); doc.setLineWidth(0.6); doc.rect(ML, y, CW, BS_H, "S");
-    // Green accent bar at top of box
-    doc.setFillColor(...GREEN); doc.rect(ML, y, CW, 2.5, "F");
+    // ── Balance summary pill ───────────────────────────────────────────────
+    const BS_H = 14;
+    if (y + BS_H > H - 20) { doc.addPage(); drawContinuationHeader(); y = 18; }
 
-    const colW3 = CW / 3;
-    // Vertical dividers
-    doc.setDrawColor(55, 55, 55); doc.setLineWidth(0.3);
-    doc.line(ML + colW3,     y + 4, ML + colW3,     y + BS_H - 4);
-    doc.line(ML + colW3 * 2, y + 4, ML + colW3 * 2, y + BS_H - 4);
+    const totW = 200;
+    const totX = ML + (CW - totW) / 2;
+    doc.setFillColor(...DARK); doc.roundedRect(totX, y, totW, BS_H, 2, 2, "F");
 
-    const balCols = [
-      { label: "TOTAL DEBT",  value: `KES ${debt.totalAmount.toLocaleString("en-KE")}`,  color: WHITE   },
-      { label: "AMOUNT PAID", value: `KES ${totalPaid.toLocaleString("en-KE")}`,          color: EMERALD },
-      { label: "BALANCE DUE", value: `KES ${debt.balance.toLocaleString("en-KE")}`,       color: debt.balance === 0 ? EMERALD : statusColor },
+    const colW3 = totW / 3;
+    const summaryFinal = [
+      { label: "TOTAL DEBT",  value: `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`,  color: WHITE   },
+      { label: "AMOUNT PAID", value: `KES ${totalPaid.toLocaleString("en-KE")}`,                  color: EMERALD },
+      { label: "BALANCE DUE", value: `KES ${(debt?.balance ?? 0).toLocaleString("en-KE")}`,       color: (debt?.balance ?? 0) === 0 ? EMERALD : statusColor },
     ];
-    balCols.forEach((col, i) => {
-      const cx = ML + colW3 * i + colW3 / 2;
-      doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...MGRAY);
-      doc.text(col.label, cx, y + 10, { align: "center" });
-      doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...(col.color as RGB));
-      doc.text(col.value, cx, y + 20, { align: "center" });
+    summaryFinal.forEach((col, i) => {
+      const cx = totX + colW3 * i + colW3 / 2;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...(LIME as RGB));
+      doc.text(col.label, cx, y + 5, { align: "center" });
+      doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...(col.color as RGB));
+      doc.text(col.value, cx, y + 11, { align: "center" });
+      // vertical dividers between columns
+      if (i < 2) {
+        doc.setDrawColor(40, 40, 40); doc.setLineWidth(0.3);
+        doc.line(totX + colW3 * (i + 1), y + 3, totX + colW3 * (i + 1), y + BS_H - 3);
+      }
     });
-    // ── FOOTER on every page ───────────────────────────────────────────────
-    const numPages = (doc as any).internal.getNumberOfPages();
-    for (let p = 1; p <= numPages; p++) {
-      doc.setPage(p);
-      drawDebtFooter();
-    }
 
-    // ── Save ───────────────────────────────────────────────────────────────
-    const safeName = debt.customerName.replace(/[^a-z0-9]/gi, "_");
-    doc.save(`Debt_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
+    // ── Draw footer on all pages ──────────────────────────────────────────
+    const numPages = (doc as any).internal.getNumberOfPages();
+    for (let p = 1; p <= numPages; p++) { doc.setPage(p); drawFooter(); }
+
+    // ── Save ─────────────────────────────────────────────────────────────
+    const safeName = (debt?.customerName ?? "customer").replace(/[^a-z0-9]/gi, "_");
+    doc.save(`DebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
     toast.success("Statement downloaded!", { id: "debt-pdf" });
 
   } catch (err) {
