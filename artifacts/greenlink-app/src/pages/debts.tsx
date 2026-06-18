@@ -314,12 +314,12 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
   toast.loading("Generating statement…", { id: "debt-pdf" });
   try {
     // ── Fetch data ─────────────────────────────────────────────────────────
-    const [shopsResp, debtResp] = await Promise.all([
+    const [shopsResp, debtData] = await Promise.all([
       fetch("/api/shops"),
-      customFetch(`/api/debts/${debtId}`),
+      customFetch<any>(`/api/debts/${debtId}`),
     ]);
     const shops: any[] = await shopsResp.json();
-    const debt: any  = await (debtResp as any).json();
+    const debt: any  = debtData;
     const shop       = shops.find((s: any) => s.id === shopId) ?? shops[0] ?? { name: "GreenLink", id: shopId };
     const payments: any[] = debt.payments ?? [];
     const items: any[]    = debt.items    ?? [];

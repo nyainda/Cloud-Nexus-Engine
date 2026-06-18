@@ -330,8 +330,10 @@ async function downloadPdf(quotation: Quotation, shop: any) {
 
     let ty: number = (doc as any).lastAutoTable.finalY + 5;
 
-    // If not enough room for the bottom section, push to a new page
-    const BOT_ESTIMATE = 68;
+    // If not enough room for the bottom section, push to a new page.
+    // Bottom section height: TERMS_H(24) + gap(3) + PAY_H(36) + sig lines(14) = ~77 mm minimum.
+    // Use 85 mm as the safety threshold so the signature lines never clip the footer.
+    const BOT_ESTIMATE = 85;
     if (ty + BOT_ESTIMATE > H - 15) {
       doc.addPage();
       doc.setFillColor(...WHITE);
