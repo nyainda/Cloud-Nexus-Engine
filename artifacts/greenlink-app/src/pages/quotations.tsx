@@ -70,35 +70,34 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     const { jsPDF } = await import("jspdf");
     const autoTable = (await import("jspdf-autotable")).default;
 
-    const doc  = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W    = doc.internal.pageSize.getWidth();
-    const H    = doc.internal.pageSize.getHeight();
-    const ML   = 10;
-    const MR   = 10;
-    const CW   = W - ML - MR;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const W   = doc.internal.pageSize.getWidth();
+    const H   = doc.internal.pageSize.getHeight();
+    const ML  = 12;
+    const MR  = 12;
+    const CW  = W - ML - MR;
 
-    // ── Brand palette ────────────────────────────────────────────────────────
+    // ── Brand palette ─────────────────────────────────────────────────────────
     type RGB = [number, number, number];
-    const GREEN:  RGB = [ 45, 106,  30];  // forest green (brand primary)
-    const GOLD:   RGB = [245, 166,  35];  // amber/gold accent
-    const DARK:   RGB = [ 10,  10,  10];
-    const WHITE:  RGB = [255, 255, 255];
-    const LTGREEN: RGB = [238, 248, 236]; // very light green — alternating rows
-    const LGRAY:  RGB = [245, 247, 250];  // light gray — total rows
-    const MGRAY:  RGB = [120, 130, 148];
-    const DKTXT:  RGB = [ 18,  28,  48];
-    const BORD:   RGB = [210, 215, 222];
+    const DARK:    RGB = [10,  10,  10];
+    const EMERALD: RGB = [16, 185, 129];   // #10B981 — primary accent
+    const DKEMER:  RGB = [5,  150, 105];   // #059669 — darker emerald
+    const WHITE:   RGB = [255, 255, 255];
+    const LGRAY:   RGB = [248, 250, 252];  // very light gray — alternating rows
+    const OFFWHITE:RGB = [241, 245, 249];  // totals rows
+    const MGRAY:   RGB = [100, 116, 139];
+    const DKTXT:   RGB = [15,  23,  42];
+    const BORD:    RGB = [220, 226, 234];
 
-    // ── Fetch shop logo — capture natural dimensions to preserve aspect ratio ─
+    // ── Load shop logo ─────────────────────────────────────────────────────────
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
     const logoUrl = shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
     let logoBase64 = "";
-    let logoNatW  = 0;
-    let logoNatH  = 0;
+    let logoNatW = 0;
+    let logoNatH = 0;
     try {
       const resp = await fetch(logoUrl);
       const blob = await resp.blob();
-      // Measure natural dimensions via HTMLImageElement
       const blobUrl = URL.createObjectURL(blob);
       await new Promise<void>(resolve => {
         const img = new Image();
@@ -107,7 +106,6 @@ async function downloadPdf(quotation: Quotation, shop: any) {
         img.src = blobUrl;
       });
       URL.revokeObjectURL(blobUrl);
-      // Convert to base64
       logoBase64 = await new Promise<string>(resolve => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
@@ -115,7 +113,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       });
     } catch { /* logo optional */ }
 
-    // ── Helper: box with dark header strip + green left accent ───────────────
+    // ── Helper: info box with dark header + emerald left accent ───────────────
     function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
       doc.setDrawColor(...BORD);
       doc.setLineWidth(0.25);
@@ -123,162 +121,156 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       const hh = 7.5;
       doc.setFillColor(...DARK);
       doc.rect(bx, by, bw, hh, "F");
-      doc.setFillColor(...GREEN);
-      doc.rect(bx, by, 2.5, hh, "F");
+      doc.setFillColor(...EMERALD);
+      doc.rect(bx, by, 3, hh, "F");
       doc.setFont("helvetica", "bold");
       doc.setFontSize(7);
-      doc.setTextColor(...GOLD);
-      doc.text(label, bx + 6, by + 5.3);
+      doc.setTextColor(...WHITE);
+      doc.text(label, bx + 7, by + 5.3);
     }
 
-    // ── Helper: label : value row inside a box ───────────────────────────────
+    // ── Helper: label : value row inside a box ────────────────────────────────
     function fieldRow(bx: number, by: number, bw: number, label: string, value: string) {
       const valX = bx + bw * 0.44;
       doc.setFont("helvetica", "normal");
       doc.setFontSize(7);
       doc.setTextColor(...MGRAY);
-      doc.text(label, bx + 5, by);
+      doc.text(label, bx + 6, by);
       doc.setTextColor(...DKTXT);
       doc.text(value || "—", valX, by);
     }
 
-    // ── Helper: footer dark bar (drawn last on every page) ──────────────────
+    // ── Helper: footer ─────────────────────────────────────────────────────────
     function drawFooter() {
       doc.setFillColor(...DARK);
-      doc.rect(0, H - 13, W, 13, "F");
-      doc.setFillColor(...GREEN);
-      doc.rect(0, H - 13, W, 1, "F");  // green top strip on footer
+      doc.rect(0, H - 14, W, 14, "F");
+      doc.setFillColor(...EMERALD);
+      doc.rect(0, H - 14, W, 1.2, "F");
       const cols = [ML, W / 2, W - MR];
       const align: ("left"|"center"|"right")[] = ["left","center","right"];
-      const heads = ["LOCATION", "CONTACT US", shop?.name ? "SHOP" : ""];
+      const heads = ["LOCATION", "CONTACT", shop?.name ? "SHOP" : ""];
       const bits: string[] = [
         shop?.address ?? "",
-        [shop?.ownerWhatsapp, shop?.email].filter(Boolean).join("  /  "),
+        [shop?.ownerWhatsapp, shop?.email].filter(Boolean).join("  ·  "),
         shop?.name ?? "",
       ];
       heads.forEach((h, i) => {
         if (!h && !bits[i]) return;
         doc.setFont("helvetica", "bold");
         doc.setFontSize(6);
-        doc.setTextColor(...GOLD);
-        doc.text(h, cols[i], H - 8.5, { align: align[i] });
+        doc.setTextColor(...EMERALD);
+        doc.text(h, cols[i], H - 9, { align: align[i] });
         doc.setFont("helvetica", "normal");
-        doc.setTextColor(185, 192, 200);
-        doc.text(bits[i], cols[i], H - 4.5, { align: align[i] });
+        doc.setTextColor(180, 188, 200);
+        doc.text(bits[i], cols[i], H - 4.8, { align: align[i] });
       });
     }
 
-    // ── Helper: continuation page header (pages 2+) ──────────────────────────
+    // ── Helper: continuation header (pages 2+) ────────────────────────────────
     function drawContinuationHeader(pg: number, total: number) {
       doc.setFillColor(...WHITE);
       doc.rect(0, 0, W, H, "F");
       doc.setFillColor(...DARK);
-      doc.rect(0, 0, W, 8, "F");
-      doc.setFillColor(...GREEN);
-      doc.rect(0, 0, W, 1.5, "F");
+      doc.rect(0, 0, W, 9, "F");
+      doc.setFillColor(...EMERALD);
+      doc.rect(0, 0, W, 1.8, "F");
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6);
-      doc.setTextColor(185, 192, 200);
-      doc.text(`${shop?.name ?? ""}  ·  ${quotation.quoteNumber}  ·  continued`, ML, 5.5);
-      doc.text(`Page ${pg} of ${total}`, W - MR, 5.5, { align: "right" });
+      doc.setTextColor(180, 188, 200);
+      doc.text(`${shop?.name ?? ""}  ·  ${quotation.quoteNumber}  ·  continued`, ML, 6.5);
+      doc.text(`Page ${pg} of ${total}`, W - MR, 6.5, { align: "right" });
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // PAGE 1 — white canvas
+    // PAGE 1
     // ══════════════════════════════════════════════════════════════════════════
     doc.setFillColor(...WHITE);
     doc.rect(0, 0, W, H, "F");
 
-    // ── HEADER AREA (white, 28 mm) — logo right, shop info left ─────────────
-    // Fit logo inside a 52×20 mm bounding box, preserving aspect ratio
-    const BOX_W = 52;
-    const BOX_H = 20;
+    // ── HEADER — dark band with logo right, shop info + emerald tag left ──────
+    const HDR_H = 32;
+    doc.setFillColor(...DARK);
+    doc.rect(0, 0, W, HDR_H, "F");
+    doc.setFillColor(...EMERALD);
+    doc.rect(0, 0, W, 2.5, "F");
+
+    // Logo — right side of header, max 50×26 bounding box
+    const LOGO_BOX_W = 50, LOGO_BOX_H = 26;
     if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
-      const scale = Math.min(BOX_W / logoNatW, BOX_H / logoNatH);
-      const drawW = logoNatW * scale;
-      const drawH = logoNatH * scale;
-      const logoX = W - MR - BOX_W + (BOX_W - drawW) / 2;  // centre within box
-      const logoY = 3 + (BOX_H - drawH) / 2;
-      doc.addImage(logoBase64, "JPEG", logoX, logoY, drawW, drawH);
+      const scale = Math.min(LOGO_BOX_W / logoNatW, LOGO_BOX_H / logoNatH);
+      const dW = logoNatW * scale;
+      const dH = logoNatH * scale;
+      const lx = W - MR - LOGO_BOX_W + (LOGO_BOX_W - dW) / 2;
+      const ly = 3 + (LOGO_BOX_H - dH) / 2;
+      doc.addImage(logoBase64, "JPEG", lx, ly, dW, dH);
     }
 
+    // Shop name + contact on left
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.setTextColor(...GREEN);
-    doc.text(shop?.name ?? "Our Shop", ML, 11);
+    doc.setFontSize(14);
+    doc.setTextColor(...WHITE);
+    doc.text(shop?.name ?? "Our Shop", ML, 14);
 
     const shopBits = [shop?.address, shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
-    doc.setTextColor(...MGRAY);
-    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 17);
+    doc.setTextColor(160, 170, 185);
+    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 20.5);
 
-    doc.setFont("helvetica", "italic");
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(6);
-    doc.setTextColor(...GOLD);
-    doc.text("QUALITY  ·  RELIABILITY  ·  GROWTH", ML, 22);
+    doc.setTextColor(...EMERALD);
+    doc.text("QUALITY  ·  RELIABILITY  ·  GROWTH", ML, 27);
 
-    // ── GREEN stripe + DARK QUOTATION BANNER ─────────────────────────────────
-    const STRIPE_Y = 27;
-    doc.setFillColor(...GREEN);
-    doc.rect(0, STRIPE_Y, W, 2, "F");
-
-    const BANNER_Y = STRIPE_Y + 2;
-    const BANNER_H = 12;
-    doc.setFillColor(...DARK);
+    // ── QUOTATION BANNER ──────────────────────────────────────────────────────
+    const BANNER_Y = HDR_H;
+    const BANNER_H = 11;
+    doc.setFillColor(22, 28, 40);
     doc.rect(0, BANNER_Y, W, BANNER_H, "F");
 
-    // Decorative gold rules flanking "QUOTATION"
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(...GOLD);
+    doc.setFontSize(14);
+    doc.setTextColor(...WHITE);
     const qText  = "  QUOTATION  ";
     const qTextW = doc.getTextWidth(qText);
     const qTextX = W / 2 - qTextW / 2;
-    doc.setDrawColor(...GOLD);
+    doc.setDrawColor(...EMERALD);
     doc.setLineWidth(0.5);
-    doc.line(ML + 4, BANNER_Y + BANNER_H / 2, qTextX, BANNER_Y + BANNER_H / 2);
-    doc.line(qTextX + qTextW, BANNER_Y + BANNER_H / 2, W - MR - 4, BANNER_Y + BANNER_H / 2);
-    doc.text(qText, W / 2, BANNER_Y + BANNER_H - 3.5, { align: "center" });
+    doc.line(ML + 4, BANNER_Y + BANNER_H / 2, qTextX - 2, BANNER_Y + BANNER_H / 2);
+    doc.line(qTextX + qTextW + 2, BANNER_Y + BANNER_H / 2, W - MR - 4, BANNER_Y + BANNER_H / 2);
+    doc.text(qText, W / 2, BANNER_Y + BANNER_H - 3, { align: "center" });
 
-    let y = BANNER_Y + BANNER_H + 5;
+    let y = BANNER_Y + BANNER_H + 6;
 
-    // ── INFO ROW — two boxes ──────────────────────────────────────────────────
-    const LBW = CW * 0.56;   // left box width
-    const RBW = CW - LBW - 4; // right box width
+    // ── INFO BOXES ────────────────────────────────────────────────────────────
+    const LBW = CW * 0.56;
+    const RBW = CW - LBW - 5;
     const LBX = ML;
-    const RBX = ML + LBW + 4;
-    const INFO_H = 36;
+    const RBX = ML + LBW + 5;
+    const INFO_H = 38;
 
-    // Left: CUSTOMER DETAILS
     infoBox(LBX, y, LBW, INFO_H, "CUSTOMER DETAILS");
-    let fy = y + 12;
-    const GAP = 5.5;
+    let fy = y + 13;
+    const GAP = 5.8;
     fieldRow(LBX, fy, LBW, "Customer Name",  quotation.customerName);         fy += GAP;
     fieldRow(LBX, fy, LBW, "Phone / Mobile", quotation.customerPhone ?? "");   fy += GAP;
-    fieldRow(LBX, fy, LBW, "Email",           quotation.customerEmail ?? "");   fy += GAP;
+    fieldRow(LBX, fy, LBW, "Email",           quotation.customerEmail ?? "");
 
-    // Right: QUOTE DETAILS
     infoBox(RBX, y, RBW, INFO_H, "QUOTE DETAILS");
-    let qy = y + 12;
+    let qy = y + 13;
     fieldRow(RBX, qy, RBW, "Quotation No.", quotation.quoteNumber);            qy += GAP;
     fieldRow(RBX, qy, RBW, "Date",          format(new Date(quotation.createdAt), "dd MMM yyyy")); qy += GAP;
     if (quotation.validUntil) {
-      fieldRow(RBX, qy, RBW, "Valid Until", format(new Date(quotation.validUntil), "dd MMM yyyy")); qy += GAP;
+      fieldRow(RBX, qy, RBW, "Valid Until", format(new Date(quotation.validUntil), "dd MMM yyyy"));
     }
-    y += INFO_H + 4;
+    y += INFO_H + 5;
 
     // ── ITEMS TABLE ───────────────────────────────────────────────────────────
-    // Row height ≈ 4.9 mm  (1.5 top + 1.5 bottom + 7pt font 2.47mm ≈ 5.5mm)
-    // First page usable after header: ~297-26-2-12-5-36-4 = 212mm for table+footer
-    // With footer 13mm + bottom section 60mm → 139mm for table rows = ~28 rows on pg1
-    // Pages 2+: 297-8-13 = 276mm → ~56 rows per continuation page
-
     autoTable(doc, {
       startY: y,
-      margin: { left: ML, right: MR, bottom: 16 },
+      margin: { left: ML, right: MR, bottom: 17 },
       showHead: "firstPage",
-      head: [["NO.", "DESCRIPTION", "QTY", "UNIT", "UNIT PRICE", "TOTAL (KES)"]],
+      head: [["#", "DESCRIPTION", "QTY", "UNIT", "UNIT PRICE", "TOTAL (KES)"]],
       body: quotation.items.map((item, i) => [
         String(i + 1),
         item.productName,
@@ -289,35 +281,34 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       ]),
       headStyles: {
         fillColor: DARK,
-        textColor: GOLD,
+        textColor: WHITE,
         fontStyle: "bold",
         fontSize: 7,
-        cellPadding: { top: 2.5, bottom: 2.5, left: 3.5, right: 3.5 },
+        cellPadding: { top: 3, bottom: 3, left: 3.5, right: 3.5 },
         halign: "center",
       },
       bodyStyles: {
-        fontSize: 7,
-        cellPadding: { top: 1.5, bottom: 1.5, left: 3.5, right: 3.5 },
+        fontSize: 7.5,
+        cellPadding: { top: 2, bottom: 2, left: 3.5, right: 3.5 },
         textColor: DKTXT,
         lineColor: BORD,
         lineWidth: 0.15,
       },
-      alternateRowStyles: { fillColor: LTGREEN },
+      alternateRowStyles: { fillColor: LGRAY },
       columnStyles: {
         0: { cellWidth: 10,   halign: "center", fontStyle: "bold", textColor: MGRAY, fontSize: 6.5 },
         1: { cellWidth: "auto", halign: "left" },
         2: { cellWidth: 14,   halign: "center" },
         3: { cellWidth: 16,   halign: "center", textColor: MGRAY },
         4: { cellWidth: 28,   halign: "right" },
-        5: { cellWidth: 28,   halign: "right", fontStyle: "bold" },
+        5: { cellWidth: 30,   halign: "right", fontStyle: "bold" },
       },
       tableLineColor: BORD,
       tableLineWidth: 0.2,
       didDrawCell: (data: any) => {
-        // Green underline beneath header row
         if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
-          doc.setDrawColor(...GREEN);
-          doc.setLineWidth(0.8);
+          doc.setDrawColor(...EMERALD);
+          doc.setLineWidth(1);
           doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
         }
       },
@@ -328,28 +319,25 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       },
     });
 
-    let ty: number = (doc as any).lastAutoTable.finalY + 5;
+    let ty: number = (doc as any).lastAutoTable.finalY + 6;
 
-    // If not enough room for the bottom section, push to a new page.
-    // Bottom section height: TERMS_H(24) + gap(3) + PAY_H(36) + sig lines(14) = ~77 mm minimum.
-    // Use 85 mm as the safety threshold so the signature lines never clip the footer.
     const BOT_ESTIMATE = 85;
-    if (ty + BOT_ESTIMATE > H - 15) {
+    if (ty + BOT_ESTIMATE > H - 16) {
       doc.addPage();
       doc.setFillColor(...WHITE);
       doc.rect(0, 0, W, H, "F");
       const newPg = (doc as any).internal.getNumberOfPages();
       drawContinuationHeader(newPg, newPg);
-      ty = 12;
+      ty = 14;
     }
 
     // ── BOTTOM SECTION ────────────────────────────────────────────────────────
-    const LCW = CW * 0.52;   // left column width  (terms + payment)
-    const RCW = CW - LCW - 4; // right column width (totals)
+    const LCW = CW * 0.52;
+    const RCW = CW - LCW - 5;
     const LCX = ML;
-    const RCX = ML + LCW + 4;
+    const RCX = ML + LCW + 5;
 
-    // ── Left col: TERMS & CONDITIONS ─────────────────────────────────────────
+    // Terms & Conditions
     const defaultTerms = [
       "Prices are valid for 30 days from date of quotation.",
       "Prices are subject to change without prior notice.",
@@ -357,104 +345,79 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       "Delivery charges may apply depending on location.",
     ];
     const termLines: string[] = quotation.notes
-      ? (doc.splitTextToSize(quotation.notes, LCW - 10) as string[])
+      ? (doc.splitTextToSize(quotation.notes, LCW - 12) as string[])
       : defaultTerms;
-    const TERMS_H = Math.max(24, termLines.length * 4.2 + 14);
+    const TERMS_H = Math.max(26, termLines.length * 4.5 + 14);
 
     infoBox(LCX, ty, LCW, TERMS_H, "TERMS & CONDITIONS");
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
-    doc.setTextColor(50, 62, 80);
+    doc.setTextColor(60, 72, 90);
     termLines.forEach((line, i) => {
-      doc.text(`•  ${line}`, LCX + 5, ty + 12 + i * 4.2);
+      doc.text(`•  ${line}`, LCX + 6, ty + 13 + i * 4.5);
     });
 
-    // ── Left col: PAYMENT METHODS ─────────────────────────────────────────────
-    const PAY_Y = ty + TERMS_H + 3;
-    const PAY_H = 36;   // tall enough for icon + label + subtitle
+    // Payment Methods
+    const PAY_Y = ty + TERMS_H + 4;
+    const PAY_H = 38;
     infoBox(LCX, PAY_Y, LCW, PAY_H, "PAYMENT METHODS");
-
-    // Content starts below the dark header strip (7.5 mm)
-    const PAY_CONTENT_Y = PAY_Y + 7.5;
-
+    const PAY_CONTENT_Y = PAY_Y + 8;
     const payMethods = [
       { label: "Cash",          sub: "On delivery" },
       { label: "M-Pesa",        sub: "Paybill / Till" },
       { label: "Bank Transfer", sub: "Account details" },
     ];
     const slotW = LCW / payMethods.length;
-
     payMethods.forEach((pm, i) => {
-      const cx = LCX + slotW * i + slotW / 2;  // centre of this slot
-      const iconY = PAY_CONTENT_Y + 4;           // top of icon area
+      const cx = LCX + slotW * i + slotW / 2;
+      const iconY = PAY_CONTENT_Y + 4;
 
-      // ── Icon drawn with primitives ──────────────────────────────────────────
       if (i === 0) {
-        // CASH — banknote rectangle
         const bx = cx - 7, by = iconY, bw = 14, bh = 8;
-        doc.setFillColor(...GREEN);
+        doc.setFillColor(...DKEMER);
         doc.roundedRect(bx, by, bw, bh, 1.5, 1.5, "F");
-        // inner highlight stripe
-        doc.setFillColor(255, 255, 255, 0.25);
-        doc.setFillColor(90, 160, 90);
+        doc.setFillColor(...EMERALD);
         doc.roundedRect(bx + 2, by + 2, bw - 4, bh - 4, 0.8, 0.8, "F");
-        // KES label
         doc.setFont("helvetica", "bold");
         doc.setFontSize(5.5);
         doc.setTextColor(...WHITE);
         doc.text("KES", cx, by + bh / 2 + 1.8, { align: "center" });
-
       } else if (i === 1) {
-        // M-PESA — mobile phone silhouette
         const ph = 10, pw = 6.5;
         const px2 = cx - pw / 2, py2 = iconY;
-        doc.setFillColor(...GREEN);
+        doc.setFillColor(...DKEMER);
         doc.roundedRect(px2, py2, pw, ph, 1.2, 1.2, "F");
-        // speaker slot
-        doc.setFillColor(255, 255, 255);
+        doc.setFillColor(...WHITE);
         doc.roundedRect(cx - 1.5, py2 + 1.2, 3, 0.9, 0.3, 0.3, "F");
-        // screen area
-        doc.setFillColor(90, 160, 90);
+        doc.setFillColor(...EMERALD);
         doc.roundedRect(px2 + 0.8, py2 + 2.8, pw - 1.6, ph - 5.2, 0.5, 0.5, "F");
-        // home button
-        doc.setFillColor(255, 255, 255);
+        doc.setFillColor(...WHITE);
         doc.circle(cx, py2 + ph - 1.5, 0.9, "F");
-
       } else {
-        // BANK TRANSFER — building / columns
         const bw2 = 13, bx2 = cx - bw2 / 2, by2 = iconY;
-        // roof triangle (3 lines forming a triangle)
-        doc.setDrawColor(...GREEN);
+        doc.setDrawColor(...DKEMER);
         doc.setLineWidth(0.8);
-        doc.line(cx, by2,        bx2,      by2 + 3.5);  // left slope
-        doc.line(cx, by2,        bx2 + bw2, by2 + 3.5); // right slope
-        doc.line(bx2, by2 + 3.5, bx2 + bw2, by2 + 3.5); // base of roof
-        // columns
-        doc.setFillColor(...GREEN);
+        doc.line(cx, by2, bx2, by2 + 3.5);
+        doc.line(cx, by2, bx2 + bw2, by2 + 3.5);
+        doc.line(bx2, by2 + 3.5, bx2 + bw2, by2 + 3.5);
+        doc.setFillColor(...DKEMER);
         const colW = 1.8, colH = 4.5, colY = by2 + 3.5;
         const colGap = (bw2 - colW * 4) / 5;
         for (let c = 0; c < 4; c++) {
           doc.rect(bx2 + colGap * (c + 1) + colW * c, colY, colW, colH, "F");
         }
-        // base step
-        doc.setFillColor(...GREEN);
         doc.rect(bx2 - 0.5, by2 + 3.5 + colH, bw2 + 1, 1.5, "F");
       }
 
-      // ── Label ──────────────────────────────────────────────────────────────
-      const labelY = PAY_CONTENT_Y + 4 + 12;   // below icon (icon height ≈ 10-11mm)
+      const labelY = PAY_CONTENT_Y + 4 + 12;
       doc.setFont("helvetica", "bold");
       doc.setFontSize(6.5);
       doc.setTextColor(...DKTXT);
       doc.text(pm.label, cx, labelY, { align: "center" });
-
-      // ── Subtitle ───────────────────────────────────────────────────────────
       doc.setFont("helvetica", "normal");
       doc.setFontSize(5.5);
       doc.setTextColor(...MGRAY);
       doc.text(pm.sub, cx, labelY + 4, { align: "center" });
-
-      // ── Vertical divider between tiles (not after last) ───────────────────
       if (i < payMethods.length - 1) {
         doc.setDrawColor(...BORD);
         doc.setLineWidth(0.2);
@@ -462,22 +425,24 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       }
     });
 
-    // ── Right col: TOTALS ─────────────────────────────────────────────────────
+    // Totals (right column)
     let ry = ty;
-    const ROW_H = 8;
+    const ROW_H = 8.5;
 
     function totRow(label: string, value: string, highlight = false) {
       if (highlight) {
         doc.setFillColor(...DARK);
-        doc.rect(RCX, ry, RCW, ROW_H, "F");
+        doc.rect(RCX, ry, RCW, ROW_H + 1, "F");
+        doc.setFillColor(...EMERALD);
+        doc.rect(RCX, ry, 3.5, ROW_H + 1, "F");
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(8);
-        doc.setTextColor(...GOLD);
-        doc.text(label, RCX + 4, ry + 5.5);
+        doc.setFontSize(8.5);
+        doc.setTextColor(...EMERALD);
+        doc.text(label, RCX + 7, ry + 6.2);
         doc.setTextColor(...WHITE);
-        doc.text(value, RCX + RCW - 4, ry + 5.5, { align: "right" });
+        doc.text(value, RCX + RCW - 4, ry + 6.2, { align: "right" });
       } else {
-        doc.setFillColor(...LGRAY);
+        doc.setFillColor(...OFFWHITE);
         doc.rect(RCX, ry, RCW, ROW_H, "F");
         doc.setDrawColor(...BORD);
         doc.setLineWidth(0.2);
@@ -485,61 +450,59 @@ async function downloadPdf(quotation: Quotation, shop: any) {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7.5);
         doc.setTextColor(...MGRAY);
-        doc.text(label, RCX + 4, ry + 5.5);
+        doc.text(label, RCX + 4, ry + 5.8);
         doc.setTextColor(...DKTXT);
-        doc.text(value, RCX + RCW - 4, ry + 5.5, { align: "right" });
+        doc.text(value, RCX + RCW - 4, ry + 5.8, { align: "right" });
       }
-      ry += ROW_H;
+      ry += highlight ? ROW_H + 1 : ROW_H;
     }
 
     if (quotation.discountAmount > 0) {
       totRow("SUBTOTAL", `KES ${quotation.subtotal.toLocaleString("en-KE")}`);
-      totRow("DISCOUNT", `- KES ${quotation.discountAmount.toLocaleString("en-KE")}`);
+      totRow("DISCOUNT", `− KES ${quotation.discountAmount.toLocaleString("en-KE")}`);
     }
     totRow("TOTAL AMOUNT", `KES ${quotation.total.toLocaleString("en-KE")}`, true);
 
-    // Thank you box (light green tint)
-    const TY_BOX_Y = ry + 3;
-    const TY_BOX_H = 16;
-    doc.setFillColor(235, 248, 235);
+    // Thank you box
+    const TY_BOX_Y = ry + 4;
+    const TY_BOX_H = 18;
+    doc.setFillColor(236, 253, 245);
     doc.rect(RCX, TY_BOX_Y, RCW, TY_BOX_H, "F");
-    doc.setDrawColor(...GREEN);
+    doc.setDrawColor(...EMERALD);
     doc.setLineWidth(0.4);
     doc.rect(RCX, TY_BOX_Y, RCW, TY_BOX_H, "S");
-    doc.setFillColor(...GREEN);
-    doc.rect(RCX, TY_BOX_Y, 3, TY_BOX_H, "F");
+    doc.setFillColor(...EMERALD);
+    doc.rect(RCX, TY_BOX_Y, 3.5, TY_BOX_H, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.5);
     doc.setTextColor(...DARK);
-    doc.text("Thank you for your business!", RCX + RCW / 2 + 2, TY_BOX_Y + 7.5, { align: "center" });
+    doc.text("Thank you for your business!", RCX + RCW / 2 + 2, TY_BOX_Y + 8.5, { align: "center" });
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
     doc.setTextColor(...MGRAY);
-    doc.text("We appreciate your trust in us.", RCX + RCW / 2 + 2, TY_BOX_Y + 12.5, { align: "center" });
+    doc.text("We appreciate your trust in us.", RCX + RCW / 2 + 2, TY_BOX_Y + 13.5, { align: "center" });
 
-    // ── SIGNATURE LINE ────────────────────────────────────────────────────────
-    const sigY = Math.max(PAY_Y + PAY_H + 8, TY_BOX_Y + TY_BOX_H + 8);
+    // Signature lines
+    const sigY = Math.max(PAY_Y + PAY_H + 9, TY_BOX_Y + TY_BOX_H + 9);
     doc.setDrawColor(...BORD);
     doc.setLineWidth(0.3);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
     doc.setTextColor(...MGRAY);
-    // Left signature
     doc.text("Prepared By:", ML, sigY);
-    doc.line(ML + 23, sigY + 0.5, ML + CW * 0.42, sigY + 0.5);
+    doc.line(ML + 24, sigY + 0.5, ML + CW * 0.42, sigY + 0.5);
     doc.setFontSize(6.5);
-    doc.text("Name:", ML, sigY + 5.5);
-    doc.line(ML + 10, sigY + 6, ML + CW * 0.42, sigY + 6);
-    // Right signature
+    doc.text("Name:", ML, sigY + 6);
+    doc.line(ML + 11, sigY + 6.5, ML + CW * 0.42, sigY + 6.5);
     const rSigX = W - MR - CW * 0.42;
     doc.setFontSize(7);
     doc.text("Received By:", rSigX, sigY);
-    doc.line(rSigX + 23, sigY + 0.5, W - MR, sigY + 0.5);
+    doc.line(rSigX + 24, sigY + 0.5, W - MR, sigY + 0.5);
     doc.setFontSize(6.5);
-    doc.text("Name:", rSigX, sigY + 5.5);
-    doc.line(rSigX + 10, sigY + 6, W - MR, sigY + 6);
+    doc.text("Name:", rSigX, sigY + 6);
+    doc.line(rSigX + 11, sigY + 6.5, W - MR, sigY + 6.5);
 
-    // ── FOOTER on every page ──────────────────────────────────────────────────
+    // Footer on every page
     const numPages: number = (doc as any).internal.getNumberOfPages();
     for (let p = 1; p <= numPages; p++) {
       doc.setPage(p);
