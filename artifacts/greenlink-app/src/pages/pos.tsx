@@ -3,6 +3,7 @@ import { useListProducts, useCreateSale, getListProductsQueryKey, getListDebtsQu
 import { recordMutationResult } from "@/lib/product-version-guard";
 import { logInventory, newMutationId } from "@/lib/inventory-logger";
 import { enqueueMutation } from "@/lib/offline-queue";
+import { useOfflineSyncCtx } from "@/lib/offline-context";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import {
   Search, Plus, Minus, Trash2, ShoppingCart,
   AlertTriangle, PackageX, Package, CreditCard, Banknote, X,
   ChevronRight, TrendingUp, Scale, User2, Phone, ChevronDown, ArrowUpDown,
-  ReceiptText, RotateCcw, ChevronUp, Ban, LayoutGrid, LayoutList,
+  ReceiptText, RotateCcw, ChevronUp, Ban, LayoutGrid, LayoutList, WifiOff, RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -752,6 +753,7 @@ export default function POS() {
   const role = localStorage.getItem("greenlink_role") || "cashier";
   const isOwner = role === "owner";
   const qc = useQueryClient();
+  const { pendingCount, isOnline: offlineIsOnline, syncing: offlineSyncing, refreshCount: refreshOfflineCount } = useOfflineSyncCtx();
 
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 100);
@@ -979,6 +981,8 @@ export default function POS() {
     if (!navigator.onLine) {
       await enqueueMutation("sale", shopId, salePayload);
       logInventory({ stage: "queued_offline", mutationId, source: "pos", timestamp: ts(), extra: { saleType } });
+      // Refresh badge count immediately so the cashier sees the updated number
+      await refreshOfflineCount();
       submittingRef.current = false;
       return;
     }
@@ -1087,6 +1091,32 @@ export default function POS() {
               <ReceiptText className="h-3.5 w-3.5" />
               <span className="hidden sm:block">Sales</span>
             </button>
+            {/* Offline queue badge — shows when sales are queued waiting to sync */}
+            {(!offlineIsOnline || offlineSyncing || pendingCount > 0) && (
+              <div className={cn(
+                "shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors",
+                offlineSyncing
+                  ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
+                  : !offlineIsOnline && pendingCount > 0
+                  ? "bg-destructive/10 border-destructive/20 text-destructive"
+                  : !offlineIsOnline
+                  ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                  : "bg-orange-500/10 border-orange-500/20 text-orange-400"
+              )}>
+                {offlineSyncing ? (
+                  <RefreshCw className="h-2.5 w-2.5 animate-spin" />
+                ) : (
+                  <WifiOff className="h-2.5 w-2.5" />
+                )}
+                <span>
+                  {offlineSyncing
+                    ? `Syncing ${pendingCount}`
+                    : pendingCount > 0
+                    ? `${pendingCount} queued`
+                    : "Offline"}
+                </span>
+              </div>
+            )}
             {/* Live sync indicator */}
             <div className="shrink-0 flex items-center gap-1.5 pr-0.5" title={isStale ? "Reconnecting…" : isRefetching ? "Syncing…" : "Live"}>
               <span className={cn(
@@ -1301,13 +1331,40 @@ export default function POS() {
         onClick={() => setShowCartMobile(true)}
         aria-hidden={cartCount === 0 || showCartMobile}
       >
-          <ShoppingCart className="h-5 w-5" />
+        <ShoppingCart className="h-5 w-5" />
+        <div className="text-left">
+          <p className="text-[10px] font-bold leading-none text-primary-foreground/80">{cartCount} items</p>
+          <p className="text-sm font-bold font-mono leading-tight">{formatKES(total)}</p>
+        </div>
+        <ChevronRight className="h-4 w-4 text-primary-foreground/60" />
+      </button>
+
+      {/* Mobile: Offline queue badge FAB — shown when offline with queued sales */}
+      {pendingCount > 0 && !showCartMobile && (
+        <div className={cn(
+          "lg:hidden fixed bottom-[4.5rem] left-4 z-40 rounded-2xl h-14 px-4 flex items-center gap-2 border",
+          "transition-colors duration-300",
+          offlineSyncing
+            ? "bg-blue-500/20 border-blue-500/30 text-blue-300"
+            : !offlineIsOnline
+            ? "bg-destructive/20 border-destructive/30 text-destructive"
+            : "bg-orange-500/20 border-orange-500/30 text-orange-300"
+        )}>
+          {offlineSyncing ? (
+            <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+          ) : (
+            <WifiOff className="h-4 w-4 shrink-0" />
+          )}
           <div className="text-left">
-            <p className="text-[10px] font-bold leading-none text-primary-foreground/80">{cartCount} items</p>
-            <p className="text-sm font-bold font-mono leading-tight">{formatKES(total)}</p>
+            <p className="text-[10px] font-bold leading-none opacity-70">
+              {offlineSyncing ? "Syncing" : !offlineIsOnline ? "Offline" : "Pending"}
+            </p>
+            <p className="text-sm font-bold font-mono leading-tight">
+              {pendingCount} {pendingCount === 1 ? "sale" : "sales"}
+            </p>
           </div>
-          <ChevronRight className="h-4 w-4 text-primary-foreground/60" />
-        </button>
+        </div>
+      )}
 
       {/* Mobile: Cart overlay — plain div, no Radix Dialog, no CSS transforms */}
       {showCartMobile && (

@@ -1,6 +1,7 @@
 import { Link, useRoute, useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import { OfflineBanner } from "@/components/offline-banner";
+import { OfflineSyncProvider } from "@/lib/offline-context";
 import {
   ShoppingCart, Package, Users, Bell, BarChart3,
   ScanLine, Settings, LogOut, LayoutDashboard, Receipt,
@@ -408,13 +409,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Offline banner — shows when device loses connectivity */}
-        <OfflineBanner shopId={shopId} />
+        {/* Single OfflineSync instance shared by the banner and POS badge */}
+        <OfflineSyncProvider shopId={shopId}>
+          {/* Offline banner — shows when device loses connectivity */}
+          <OfflineBanner />
 
-        {/* Page content */}
-        <main className="flex-1 overflow-y-auto min-h-0" style={{ WebkitTransform: 'translateZ(0)', transform: 'translateZ(0)' }}>
-          {children}
-        </main>
+          {/* Page content */}
+          <main className="flex-1 overflow-y-auto min-h-0" style={{ WebkitTransform: 'translateZ(0)', transform: 'translateZ(0)' }}>
+            {children}
+          </main>
+        </OfflineSyncProvider>
 
         {/* Mobile Bottom Nav */}
         <MobileBottomNav isOwner={isOwner} unreadCount={unreadCount} />

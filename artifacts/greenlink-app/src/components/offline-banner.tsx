@@ -1,24 +1,28 @@
 /**
- * OfflineBanner — sticky top bar shown when the device is offline or when
+ * OfflineBanner — sticky bar shown when the device is offline or when
  * there are queued mutations waiting to sync.
  *
+ * Consumes OfflineSyncContext (provided by Layout) — no direct useOfflineSync
+ * call here so the sync loop runs exactly once across the whole app.
+ *
  * States:
- *  • Offline + pending  → red bar with count and "will sync on reconnect"
- *  • Offline, no pending → amber bar "You're offline — read-only mode"
- *  • Online + syncing   → blue pulsing bar "Syncing X transactions…"
- *  • Online + pending   → orange bar with Retry button (failed mutations)
+ *  • Offline + pending  → red bar with count
+ *  • Offline, no pending → amber bar "read-only mode"
+ *  • Online + syncing   → blue pulsing bar
+ *  • Online + failed    → orange bar with Retry button
  *  • Online, no pending → nothing rendered
  */
 
 import { WifiOff, RefreshCw, CloudUpload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { retryFailedMutations } from "@/lib/offline-queue";
-import { useOfflineSync } from "@/lib/use-offline-sync";
+import { useOfflineSyncCtx } from "@/lib/offline-context";
 
-export function OfflineBanner({ shopId }: { shopId: string }) {
-  const { isOnline, pendingCount, syncing, syncNow, refreshCount } = useOfflineSync(shopId);
+export function OfflineBanner() {
+  const { isOnline, pendingCount, syncing, syncNow, refreshCount } = useOfflineSyncCtx();
 
   const handleRetry = async () => {
+    const shopId = localStorage.getItem("greenlink_shopId") || "";
     if (!shopId) return;
     await retryFailedMutations(shopId);
     await refreshCount();
