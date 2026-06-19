@@ -7,12 +7,16 @@ on:
 
 jobs:
   typecheck-and-deploy:
-    name: Typecheck & Deploy CF Worker
+    name: Typecheck, Build & Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read Node version from .nvmrc
+        id: nvmrc
+        run: echo "node_version=$(cat .nvmrc)" >> $GITHUB_OUTPUT
 
       - uses: pnpm/action-setup@v4
         with:
@@ -20,14 +24,20 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ steps.nvmrc.outputs.node_version }}
           cache: pnpm
 
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
+      - name: Typecheck shared libs
         run: pnpm run typecheck:libs
+
+      - name: Build frontend (validates Vite + all deps work)
+        run: pnpm --filter @workspace/greenlink-app build
+        env:
+          NODE_ENV: production
+          VITE_API_BASE_URL: https://greenlink-pos-api.bruce42oyugi.workers.dev
 
       - name: Deploy Cloudflare Worker
         run: pnpm --filter @workspace/api-server run deploy
