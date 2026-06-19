@@ -215,6 +215,79 @@ async function archiveOldSessions(db: D1Database): Promise<void> {
   ).bind(now, cutoff).run();
 }
 
+// ── Monthly data pruning — keeps D1 under the free 5 GB limit indefinitely ──
+// Strategy:
+//   • Sales + sale_items + debts + debt_payments → NEVER deleted (financial records)
+//   • audit_log          → keep 365 days  (compliance window)
+//   • notifications      → keep 180 days read, 365 days unread
+//   • inventory_movements→ keep 2 years
+//   • price_history      → keep 2 years
+//   • scan_sessions      → hard-delete archived ones after 90 days
+//   • quotations         → delete rejected/expired after 180 days
+//   • push_subscriptions → delete stale endpoints after 365 days
+async function pruneOldData(db: D1Database): Promise<Record<string, number>> {
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const ago = (days: number) => new Date(now - days * day).toISOString();
+
+  const results: Record<string, number> = {};
+
+  const steps: Array<{ name: string; sql: string; params: string[] }> = [
+    {
+      name: "audit_log",
+      sql: "DELETE FROM audit_log WHERE created_at < ?",
+      params: [ago(365)],
+    },
+    {
+      name: "notifications_read",
+      sql: "DELETE FROM notifications WHERE is_read = 1 AND created_at < ?",
+      params: [ago(180)],
+    },
+    {
+      name: "notifications_old",
+      sql: "DELETE FROM notifications WHERE created_at < ?",
+      params: [ago(365)],
+    },
+    {
+      name: "inventory_movements",
+      sql: "DELETE FROM inventory_movements WHERE created_at < ?",
+      params: [ago(730)],
+    },
+    {
+      name: "price_history",
+      sql: "DELETE FROM price_history WHERE changed_at < ? AND changed_at != ''",
+      params: [ago(730)],
+    },
+    {
+      name: "scan_sessions",
+      sql: "DELETE FROM scan_sessions WHERE archived_at IS NOT NULL AND created_at < ?",
+      params: [ago(90)],
+    },
+    {
+      name: "quotations_expired",
+      sql: "DELETE FROM quotations WHERE status IN ('rejected','expired') AND created_at < ?",
+      params: [ago(180)],
+    },
+    {
+      name: "push_subscriptions",
+      sql: "DELETE FROM push_subscriptions WHERE created_at < ?",
+      params: [ago(365)],
+    },
+  ];
+
+  for (const step of steps) {
+    try {
+      const r = await db.prepare(step.sql).bind(...step.params).run();
+      results[step.name] = r.meta?.changes ?? 0;
+    } catch (err) {
+      console.error(`[prune] ${step.name} failed:`, err);
+      results[step.name] = -1;
+    }
+  }
+
+  return results;
+}
+
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // CORS is intentionally open (*) — the Worker is called from Replit dev proxy,
@@ -254,5 +327,11 @@ export default {
   fetch: app.fetch.bind(app),
   async scheduled(_ctrl: ScheduledController, env: Env, _ctx: ExecutionContext) {
     try { await archiveOldSessions(env.DB); } catch (err) { console.error("[cron] archive:", err); }
+    try {
+      const pruned = await pruneOldData(env.DB);
+      console.log("[cron] prune complete:", JSON.stringify(pruned));
+    } catch (err) {
+      console.error("[cron] prune failed:", err);
+    }
   },
 };
