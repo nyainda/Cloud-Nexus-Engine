@@ -1,8 +1,8 @@
 {
-  "nodeVersion": "22.x",
-  "installCommand": "npm config set registry https://registry.npmjs.org && pnpm config set registry https://registry.npmjs.org && pnpm install --frozen-lockfile",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter @workspace/greenlink-app build",
-  "outputDirectory": "artifacts/greenlink-app/dist/public",
+  "outputDirectory": "artifacts/greenlink-app/dist",
   "rewrites": [
     {
       "source": "/(.*)",
