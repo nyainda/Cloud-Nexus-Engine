@@ -17,10 +17,10 @@
     "@workspace/db": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "catalog:",
-    "hono": "^4.7.11"
+    "hono": "^4.12.26"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250522.0",
+    "@cloudflare/workers-types": "^4.20260617.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "catalog:",
     "tsx": "catalog:",

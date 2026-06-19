@@ -509,7 +509,11 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       drawFooter();
     }
 
-    doc.save(`${quotation.quoteNumber}.pdf`);
+    const custSlug = (quotation.customerName?.trim() || "")
+      .replace(/[^a-z0-9]/gi, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    doc.save(custSlug ? `${custSlug}_${quotation.quoteNumber}.pdf` : `${quotation.quoteNumber}.pdf`);
     toast.success("PDF downloaded!", { id: "pdf" });
   } catch (err) {
     console.error(err);
