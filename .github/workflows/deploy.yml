@@ -5,35 +5,51 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true   # if you push twice quickly, kills the stale run
+
 jobs:
   typecheck-and-deploy:
     name: Typecheck, Build & Deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    permissions:
+      contents: read           # least-privilege — only read repo, nothing else
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Read Node version from .nvmrc
         id: nvmrc
-        run: echo "node_version=$(cat .nvmrc)" >> $GITHUB_OUTPUT
+        run: echo "node_version=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"   # quoted — prevents word-split on weird nvmrc values
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+        # no `version:` key — reads packageManager from package.json (your pnpm@10.26.1)
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ steps.nvmrc.outputs.node_version }}
           cache: pnpm
 
-      - name: Install dependencies (frozen lockfile)
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # ── Cache Wrangler's build artifacts between runs ─────────────────────
+      - name: Cache Wrangler output
+        uses: actions/cache@v4
+        with:
+          path: |
+            artifacts/api-server/.wrangler
+            artifacts/greenlink-app/dist
+          key: wrangler-${{ runner.os }}-${{ hashFiles('artifacts/api-server/src/**', 'pnpm-lock.yaml') }}
+          restore-keys: wrangler-${{ runner.os }}-
 
       - name: Typecheck shared libs
         run: pnpm run typecheck:libs
 
-      - name: Build frontend (validates Vite + all deps work)
+      - name: Build frontend
         run: pnpm --filter @workspace/greenlink-app build
         env:
           NODE_ENV: production
@@ -44,3 +60,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # ── Notify on failure only — no noise on success ──────────────────────
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "::error::Deploy failed on commit ${{ github.sha }} by ${{ github.actor }}"
+          echo "Check logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
