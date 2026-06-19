@@ -32,12 +32,10 @@ import { toast } from "sonner";
 /** Returns a human-readable error string from any thrown value. */
 function extractErrorMsg(err: unknown): string {
   if (err && typeof err === "object") {
-    // ApiError from customFetch — has .message from the server response body
     if ("message" in err && typeof (err as any).message === "string") {
       const msg = (err as any).message as string;
       if (msg && msg !== "[object Object]") return msg;
     }
-    // Network-level failure (no response at all)
     if ("name" in err && (err as any).name === "TypeError") {
       return "No connection — will retry on reconnect";
     }
@@ -45,7 +43,20 @@ function extractErrorMsg(err: unknown): string {
   return "Sync failed — will retry";
 }
 
-async function processMutation(m: QueuedMutation): Promise<{ ok: boolean; errorMsg?: string }> {
+/** Categorise a thrown error so syncNow can decide how to handle it. */
+function classifyError(err: unknown): "network" | "auth" | "permanent" {
+  if (!err || typeof err !== "object") return "permanent";
+  const e = err as any;
+  // TypeError = Failed to fetch / network unreachable — CF down or device lost connection
+  if (e.name === "TypeError" || !navigator.onLine) return "network";
+  // 401 / 403 = session token expired while the device was offline
+  if (e.status === 401 || e.status === 403) return "auth";
+  return "permanent";
+}
+
+async function processMutation(
+  m: QueuedMutation,
+): Promise<{ ok: boolean; errorMsg?: string; kind?: "network" | "auth" | "permanent" }> {
   await incrementAttempts(m.id);
   const payload = JSON.parse(m.payload);
   try {
@@ -67,9 +78,18 @@ async function processMutation(m: QueuedMutation): Promise<{ ok: boolean; errorM
     await deleteMutation(m.id);
     return { ok: true };
   } catch (err) {
+    const kind = classifyError(err);
+
+    if (kind === "network") {
+      // CF is down or we lost connection mid-sync — leave as pending so it
+      // auto-retries on the next reconnect without any manual intervention.
+      return { ok: false, kind: "network", errorMsg: "No connection" };
+    }
+
+    // Auth or permanent error — mark failed so the user sees it in Settings
     const errorMsg = extractErrorMsg(err);
     await markMutationFailed(m.id, errorMsg);
-    return { ok: false, errorMsg };
+    return { ok: false, kind, errorMsg };
   }
 }
 
@@ -99,11 +119,27 @@ export function useOfflineSync(shopId: string) {
     let ok = 0;
     let fail = 0;
     const failReasons: string[] = [];
+    let stoppedEarly = false;
 
     for (const m of pending) {
       const result = await processMutation(m);
+
       if (result.ok) {
         ok++;
+      } else if (result.kind === "network") {
+        // CF is down or we went offline mid-sync — stop immediately.
+        // Remaining mutations stay pending and will retry on next reconnect.
+        stoppedEarly = true;
+        break;
+      } else if (result.kind === "auth") {
+        // Token expired while offline — no point trying the rest of the queue.
+        // All will fail with the same 401 until the user re-logs in.
+        toast.error(
+          "Session expired — please sign in again and your offline transactions will sync automatically",
+          { duration: 10_000 },
+        );
+        stoppedEarly = true;
+        break;
       } else {
         fail++;
         if (result.errorMsg && !failReasons.includes(result.errorMsg)) {
@@ -126,10 +162,9 @@ export function useOfflineSync(shopId: string) {
       qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
 
       // ── Conflict detection ──────────────────────────────────────────────────
-      // Re-fetch the product list from the server (not just invalidate) so we
-      // can inspect the authoritative stock levels immediately after sync.
-      // If any product has negative stock, two devices sold the same units
-      // while one was offline — warn the owner to reconcile manually.
+      // Re-fetch the product list from the server so we can inspect authoritative
+      // stock levels. If any product has negative stock, two devices sold the
+      // same units while one was offline — warn the owner to reconcile manually.
       try {
         const opts = getListProductsQueryOptions({ shopId, limit: 3000 });
         const freshData = await qc.fetchQuery(opts) as { products?: any[] } | undefined;
@@ -153,7 +188,7 @@ export function useOfflineSync(shopId: string) {
       }
     }
 
-    if (fail > 0) {
+    if (fail > 0 && !stoppedEarly) {
       const reason = failReasons.length > 0 ? ` (${failReasons[0]})` : "";
       toast.error(
         `${fail} ${fail === 1 ? "transaction" : "transactions"} failed to sync${reason} — check Settings › Offline Sync`,
@@ -164,6 +199,7 @@ export function useOfflineSync(shopId: string) {
     await refreshCount();
   }, [shopId, qc, refreshCount]);
 
+  // ── Sync on reconnect ─────────────────────────────────────────────────────
   useEffect(() => {
     const onOnline = () => {
       setIsOnline(true);
@@ -178,6 +214,17 @@ export function useOfflineSync(shopId: string) {
       window.removeEventListener("offline", onOffline);
     };
   }, [syncNow]);
+
+  // ── Sync on mount if already online ──────────────────────────────────────
+  // The "online" event only fires on a reconnect transition. If the app opens
+  // while the device is already online and there are queued mutations from a
+  // previous offline session, nothing would trigger a sync without this.
+  const mountSyncedRef = useRef(false);
+  useEffect(() => {
+    if (mountSyncedRef.current || !shopId) return;
+    mountSyncedRef.current = true;
+    if (navigator.onLine) syncNow();
+  }, [shopId, syncNow]);
 
   useEffect(() => {
     refreshCount();
