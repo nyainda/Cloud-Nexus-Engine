@@ -15,7 +15,7 @@ import {
   LogOut, Store, Shield, Truck, FileText, Plus, Edit2, Trash2,
   KeyRound, Eye, EyeOff, Bot, CheckCircle2, ChevronRight,
   Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone, X, MessageCircle, ScanLine,
-  WifiOff, Wifi, RefreshCw, CloudUpload, ShoppingCart, Package, Banknote,
+  WifiOff, Wifi, RefreshCw, CloudUpload, ShoppingCart, Package, Banknote, HardDrive, TrendingUp, CreditCard, Bell,
 } from "lucide-react";
 import {
   getPendingMutations, getFailedMutations, retryFailedMutations, clearAllMutations,
@@ -27,7 +27,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
 
-type Section = "shop" | "security" | "ai" | "suppliers" | "audit" | "offline";
+type Section = "shop" | "security" | "ai" | "suppliers" | "audit" | "offline" | "backup";
 
 const NAV: { id: Section; label: string; icon: React.ElementType; ownerOnly?: boolean }[] = [
   { id: "shop",      label: "Shop Details",   icon: Store },
@@ -36,6 +36,7 @@ const NAV: { id: Section; label: string; icon: React.ElementType; ownerOnly?: bo
   { id: "ai",        label: "AI Integration", icon: Bot,       ownerOnly: true },
   { id: "suppliers", label: "Suppliers",      icon: Truck,     ownerOnly: true },
   { id: "audit",     label: "Audit Log",      icon: FileText,  ownerOnly: true },
+  { id: "backup",    label: "Data Backup",    icon: HardDrive, ownerOnly: true },
 ];
 
 // ─── Offline sync section ─────────────────────────────────────────────────────
@@ -964,6 +965,147 @@ function SupplierFormDialog({
   );
 }
 
+// ─── Data Backup section ──────────────────────────────────────────────────────
+function BackupSection({ shopId }: { shopId: string }) {
+  const [downloading, setDownloading] = useState(false);
+  const [lastBackup, setLastBackup] = useState<string | null>(() =>
+    localStorage.getItem(`greenlink_last_backup_${shopId}`)
+  );
+
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const token = localStorage.getItem("greenlink_token") || "";
+      const baseUrl = (window as any).__API_BASE_URL__ || "";
+      const res = await fetch(`${baseUrl}/api/admin/export?shopId=${encodeURIComponent(shopId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      const blob = await res.blob();
+      const filename = res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1]
+        ?? `greenlink-backup-${shopId}-${new Date().toISOString().slice(0, 10)}.json`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      const now = new Date().toISOString();
+      setLastBackup(now);
+      localStorage.setItem(`greenlink_last_backup_${shopId}`, now);
+      toast.success("Backup downloaded");
+    } catch (err: any) {
+      toast.error(err?.message ?? "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const dataItems = [
+    { icon: TrendingUp,  label: "Sales",         desc: "Every transaction — kept forever" },
+    { icon: CreditCard,  label: "Debts",          desc: "Full customer debt ledger — kept forever" },
+    { icon: Package,     label: "Products",        desc: "Current stock snapshot" },
+    { icon: Bell,        label: "Analytics",       desc: "Built from sales data — always complete" },
+  ];
+
+  const prunedItems = [
+    { label: "Audit log",            retention: "1 year" },
+    { label: "Inventory movements",  retention: "2 years" },
+    { label: "Price history",        retention: "2 years" },
+    { label: "Old notifications",    retention: "6 months" },
+    { label: "Scan sessions",        retention: "90 days" },
+  ];
+
+  return (
+    <div className="max-w-xl space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold font-display text-foreground">Data Backup</h2>
+        <p className="text-sm text-muted-foreground mt-0.5">Download your financial records and understand what is kept</p>
+      </div>
+
+      {/* Download card */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="bg-gradient-to-r from-primary/10 to-primary/5 border-b border-border/60 px-6 py-5 flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-primary/15 border border-primary/20 flex items-center justify-center shrink-0">
+            <HardDrive className="h-7 w-7 text-primary" />
+          </div>
+          <div>
+            <p className="text-base font-bold text-foreground">Full Data Export</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Sales, debts, products — as a JSON file</p>
+          </div>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {dataItems.map(({ icon: Icon, label, desc }) => (
+              <div key={label} className="flex items-start gap-3 rounded-xl bg-muted/30 border border-border/40 px-4 py-3">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 mt-0.5">
+                  <Icon className="h-3.5 w-3.5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-foreground">{label}</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">{desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {lastBackup && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+              Last backup: {format(new Date(lastBackup), "MMM d, yyyy 'at' HH:mm")}
+            </div>
+          )}
+
+          <button
+            onClick={download}
+            disabled={downloading}
+            className="w-full flex items-center justify-center gap-2.5 px-5 py-3.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 active:scale-[0.98] transition-all disabled:opacity-60 shadow-sm shadow-primary/20"
+          >
+            {downloading ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            {downloading ? "Preparing download…" : "Download Backup"}
+          </button>
+
+          <p className="text-[11px] text-muted-foreground text-center leading-relaxed">
+            Cloudflare D1 also keeps 30 days of automatic point-in-time backups on their end.
+            Save this file monthly to an external location for your own copy.
+          </p>
+        </div>
+      </div>
+
+      {/* Auto-pruned table */}
+      <div className="rounded-2xl border border-border bg-card overflow-hidden">
+        <div className="px-5 py-4 border-b border-border/50">
+          <p className="text-sm font-bold text-foreground">Auto-cleaned logs (monthly CRON)</p>
+          <p className="text-xs text-muted-foreground mt-0.5">These grow over time — old records are removed automatically to keep the database free</p>
+        </div>
+        <div className="divide-y divide-border/30">
+          {prunedItems.map(({ label, retention }) => (
+            <div key={label} className="flex items-center justify-between px-5 py-3.5">
+              <p className="text-sm text-foreground">{label}</p>
+              <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-muted/60 text-muted-foreground border border-border/40">
+                {retention}
+              </span>
+            </div>
+          ))}
+          <div className="flex items-center justify-between px-5 py-3.5 bg-green-500/5">
+            <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+              Sales, debts &amp; payments
+            </p>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-green-500/15 text-green-500 border border-green-500/20">
+              Never deleted
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function Settings() {
   const [, setLocation] = useLocation();
@@ -1423,6 +1565,11 @@ export default function Settings() {
               )}
             </div>
           </div>
+        )}
+
+        {/* ── DATA BACKUP ──────────────────────────────────────── */}
+        {activeSection === "backup" && isOwner && (
+          <BackupSection shopId={shopId} />
         )}
       </div>
     </div>

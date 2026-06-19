@@ -18,6 +18,7 @@ import storageRouter from "./storage";
 import transfersRouter from "./transfers";
 import pushRouter from "./push";
 import quotationsRouter from "./quotations";
+import adminRouter from "./admin";
 
 const router = new Hono<AppEnv>();
 
@@ -39,4 +40,5 @@ router.route("/", storageRouter);
 router.route("/", transfersRouter);
 router.route("/", pushRouter);
 router.route("/", quotationsRouter);
+router.route("/", adminRouter);
 export default router;
