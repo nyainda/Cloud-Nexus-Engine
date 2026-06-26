@@ -584,10 +584,40 @@ interface ProductSearchResult {
   summary: { totalQty: number; totalRevenue: number; totalProfit: number; salesCount: number } | null;
 }
 
-function ProductSearchSection({ shopId, dateRange }: { shopId: string; dateRange: { from: string; to: string } }) {
+type PsQuickRange = "this_month" | "last_month" | "last_3_months" | "this_year" | "custom";
+
+function getPsDateRange(r: PsQuickRange): { from: string; to: string } {
+  const today = new Date();
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  if (r === "this_month") {
+    return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), to: fmt(today) };
+  }
+  if (r === "last_month") {
+    const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const last  = new Date(today.getFullYear(), today.getMonth(), 0);
+    return { from: fmt(first), to: fmt(last) };
+  }
+  if (r === "last_3_months") {
+    const from = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+    return { from: fmt(from), to: fmt(today) };
+  }
+  // this_year
+  return { from: fmt(new Date(today.getFullYear(), 0, 1)), to: fmt(today) };
+}
+
+function fmtQty(n: number) { return n % 1 === 0 ? String(n) : n.toFixed(2); }
+
+function ProductSearchSection({ shopId }: { shopId: string }) {
   const [inputValue, setInputValue] = useState("");
-  const [query, setQuery] = useState("");
+  const [query, setQuery]           = useState("");
+  const [psRange, setPsRange]       = useState<PsQuickRange>("this_month");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo,   setCustomTo]   = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dateRange = psRange === "custom" && customFrom && customTo
+    ? { from: customFrom, to: customTo }
+    : getPsDateRange(psRange);
 
   const handleInput = (v: string) => {
     setInputValue(v);
@@ -597,133 +627,248 @@ function ProductSearchSection({ shopId, dateRange }: { shopId: string; dateRange
 
   const { data, isLoading, isFetching } = useQuery<ProductSearchResult>({
     queryKey: ["product-search", shopId, query, dateRange.from, dateRange.to],
-    queryFn: async () =>
+    queryFn:  () =>
       customFetch(
         `/api/reports/product-search?shopId=${encodeURIComponent(shopId)}&q=${encodeURIComponent(query)}&from=${dateRange.from}&to=${dateRange.to}`,
       ) as Promise<ProductSearchResult>,
-    enabled: !!shopId && query.length >= 2,
+    enabled:   !!shopId && query.length >= 2,
     staleTime: 60_000,
   });
 
-  const variants = data?.variants ?? [];
-  const summary  = data?.summary ?? null;
-  const noResults = query.length >= 2 && !isLoading && !isFetching && variants.length === 0;
-  const showTotal = variants.length > 1 && summary;
+  const variants   = data?.variants ?? [];
+  const summary    = data?.summary  ?? null;
+  const noResults  = query.length >= 2 && !isLoading && !isFetching && variants.length === 0;
+  const showTotal  = variants.length > 1 && summary !== null;
+  const periodLabel = psRange === "custom" && customFrom && customTo
+    ? `${customFrom} – ${customTo}`
+    : psRange === "this_month"   ? "This Month"
+    : psRange === "last_month"   ? "Last Month"
+    : psRange === "last_3_months"? "Last 3 Months"
+    : "This Year";
+
+  const handleShare = () => {
+    if (!summary || variants.length === 0) return;
+    const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
+    const lines = [
+      `📦 *${query.toUpperCase()} — Sales Report*`,
+      `🏪 ${shopName}`,
+      `📅 ${periodLabel}`,
+      ``,
+      ...variants.map(v =>
+        `• ${v.productName}\n  Qty: ${fmtQty(v.totalQty)} | Revenue: ${formatKES(v.totalRevenue)} | Cost: ${formatKES(v.totalRevenue - v.totalProfit)}`
+      ),
+    ];
+    if (variants.length > 1) {
+      lines.push(
+        ``,
+        `*TOTAL (${variants.length} variants)*`,
+        `Qty: ${fmtQty(summary.totalQty)}`,
+        `Revenue: ${formatKES(summary.totalRevenue)}`,
+        `Cost of Goods: ${formatKES(summary.totalRevenue - summary.totalProfit)}`,
+        `Profit: ${formatKES(summary.totalProfit)}`,
+      );
+    }
+    navigator.clipboard.writeText(lines.join("\n")).then(() => {
+      const btn = document.getElementById("ps-share-btn");
+      if (btn) { btn.textContent = "Copied!"; setTimeout(() => { btn.textContent = "Copy / Share"; }, 2000); }
+    });
+  };
+
+  const QUICK: { label: string; value: PsQuickRange }[] = [
+    { label: "This Month",    value: "this_month" },
+    { label: "Last Month",    value: "last_month" },
+    { label: "Last 3 Months", value: "last_3_months" },
+    { label: "This Year",     value: "this_year" },
+    { label: "Custom",        value: "custom" },
+  ];
 
   return (
-    <Card className="shadow-none">
+    <Card className="shadow-none border-primary/10">
       <CardHeader className="pb-3 pt-4 px-4">
-        <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-          <Search className="h-3.5 w-3.5 text-primary" />
-          Product Sales Search
-        </CardTitle>
-        <p className="text-[11px] text-muted-foreground mt-0.5">
-          Search any product to see how much was sold in the selected period — variants (500ml, 1L…) each show as their own row with a combined total.
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+              <Search className="h-3.5 w-3.5 text-primary" />
+              Product Sales Lookup
+            </CardTitle>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Search any product — variants (500ml, 1L…) show individually with a combined total. Useful for supplier payments.
+            </p>
+          </div>
+          {variants.length > 0 && (
+            <button
+              id="ps-share-btn"
+              onClick={handleShare}
+              className="shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 transition-colors flex items-center gap-1"
+            >
+              <Share2 className="h-3 w-3" />
+              Copy / Share
+            </button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="px-4 pb-4 space-y-3">
+
+        {/* Period pills */}
+        <div className="flex flex-wrap gap-1.5">
+          {QUICK.map(q => (
+            <button
+              key={q.value}
+              onClick={() => setPsRange(q.value)}
+              className={cn(
+                "px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors",
+                psRange === q.value
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-muted border-border text-muted-foreground hover:border-primary/40",
+              )}
+            >
+              {q.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Custom date range inputs */}
+        {psRange === "custom" && (
+          <div className="flex items-center gap-2">
+            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+              className="flex-1 h-8 px-2 rounded-lg border border-border bg-muted text-xs focus:outline-none focus:border-primary/60" />
+            <span className="text-muted-foreground text-xs">–</span>
+            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+              className="flex-1 h-8 px-2 rounded-lg border border-border bg-muted text-xs focus:outline-none focus:border-primary/60" />
+          </div>
+        )}
+
         {/* Search input */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           <input
             type="text"
             value={inputValue}
-            onChange={(e) => handleInput(e.target.value)}
-            placeholder="e.g. Roundup, Dithane, urea…"
-            className="w-full h-9 pl-8 pr-8 rounded-lg border border-border bg-muted text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60 transition-colors"
+            onChange={e => handleInput(e.target.value)}
+            placeholder="Type product name, e.g. Roundup, Dithane, urea…"
+            className="w-full h-10 pl-8 pr-8 rounded-lg border border-border bg-muted text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors"
           />
           {inputValue && (
-            <button
-              onClick={() => { setInputValue(""); setQuery(""); }}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
+            <button onClick={() => { setInputValue(""); setQuery(""); }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
               <X className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
 
-        {/* Loading skeleton */}
+        {/* Loading */}
         {(isLoading || isFetching) && query.length >= 2 && (
           <div className="space-y-2">
-            {[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}
+            {[1,2,3].map(i => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
           </div>
         )}
 
         {/* No results */}
         {noResults && (
-          <div className="flex flex-col items-center gap-1.5 py-6 text-muted-foreground">
-            <SearchX className="h-7 w-7 text-muted-foreground/30" />
-            <p className="text-xs font-medium">No sales found for &ldquo;{query}&rdquo;</p>
-            <p className="text-[11px] text-muted-foreground/50">Try a different name or expand the date range</p>
+          <div className="flex flex-col items-center gap-1.5 py-8 text-muted-foreground">
+            <SearchX className="h-8 w-8 text-muted-foreground/20" />
+            <p className="text-xs font-semibold">No sales found for &ldquo;{query}&rdquo;</p>
+            <p className="text-[11px] text-muted-foreground/50">Try a shorter name or a wider date range</p>
           </div>
         )}
 
-        {/* Results table */}
+        {/* Results */}
         {!isLoading && !isFetching && variants.length > 0 && (
-          <div className="rounded-xl border border-border overflow-hidden">
-            {/* Header */}
-            <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 px-3 py-2 bg-muted/60 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-              <span>Product</span>
-              <span className="text-right">Qty</span>
-              <span className="text-right">Revenue</span>
-              <span className="text-right">Profit</span>
-              <span className="text-right">Margin</span>
+          <>
+            {/* Period label */}
+            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
+              Results for &ldquo;{query}&rdquo; · {periodLabel}
+            </p>
+
+            <div className="rounded-xl border border-border overflow-hidden">
+              {/* Column header */}
+              <div className="grid grid-cols-[1fr_52px_90px_90px_90px_52px] gap-x-2 px-3 py-2 bg-muted/60 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                <span>Product / Variant</span>
+                <span className="text-right">Qty</span>
+                <span className="text-right">Revenue</span>
+                <span className="text-right">Cost</span>
+                <span className="text-right">Profit</span>
+                <span className="text-right">Txns</span>
+              </div>
+
+              {/* Variant rows */}
+              {variants.map(v => {
+                const cost   = v.totalRevenue - v.totalProfit;
+                const margin = v.totalRevenue > 0 ? (v.totalProfit / v.totalRevenue) * 100 : 0;
+                return (
+                  <div key={v.productId}
+                    className="grid grid-cols-[1fr_52px_90px_90px_90px_52px] gap-x-2 px-3 py-3 border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold leading-tight truncate">{v.productName}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10px] text-muted-foreground/60">{v.category}</span>
+                        <span className={cn(
+                          "text-[9px] font-bold px-1 py-0.5 rounded",
+                          margin >= 20 ? "bg-emerald-500/10 text-emerald-400"
+                            : margin >= 10 ? "bg-amber-500/10 text-amber-400"
+                            : "bg-destructive/10 text-destructive"
+                        )}>{margin.toFixed(0)}%</span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-mono font-semibold text-right self-center tabular-nums">{fmtQty(v.totalQty)}</span>
+                    <span className="text-xs font-mono text-right self-center tabular-nums">{formatKES(v.totalRevenue)}</span>
+                    <span className="text-xs font-mono text-right self-center tabular-nums text-muted-foreground">{formatKES(cost)}</span>
+                    <span className={cn("text-xs font-mono text-right self-center tabular-nums", v.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                      {formatKES(v.totalProfit)}
+                    </span>
+                    <span className="text-xs text-right self-center text-muted-foreground tabular-nums">{v.salesCount}</span>
+                  </div>
+                );
+              })}
+
+              {/* Combined total — shown when >1 variant */}
+              {showTotal && summary && (() => {
+                const totalCost   = summary.totalRevenue - summary.totalProfit;
+                const totalMargin = summary.totalRevenue > 0 ? (summary.totalProfit / summary.totalRevenue) * 100 : 0;
+                return (
+                  <div className="grid grid-cols-[1fr_52px_90px_90px_90px_52px] gap-x-2 px-3 py-3 bg-primary/5 border-t-2 border-primary/20">
+                    <div>
+                      <p className="text-xs font-extrabold text-primary leading-tight">TOTAL</p>
+                      <p className="text-[10px] text-muted-foreground">{variants.length} variants · {summary.salesCount} txns</p>
+                    </div>
+                    <span className="text-xs font-extrabold font-mono text-right self-center tabular-nums text-primary">{fmtQty(summary.totalQty)}</span>
+                    <span className="text-xs font-extrabold font-mono text-right self-center tabular-nums text-primary">{formatKES(summary.totalRevenue)}</span>
+                    <span className="text-xs font-extrabold font-mono text-right self-center tabular-nums text-muted-foreground">{formatKES(totalCost)}</span>
+                    <span className={cn("text-xs font-extrabold font-mono text-right self-center tabular-nums", summary.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                      {formatKES(summary.totalProfit)}
+                    </span>
+                    <span className="text-xs font-extrabold text-right self-center text-primary tabular-nums">{summary.salesCount}</span>
+                  </div>
+                );
+              })()}
             </div>
 
-            {/* Variant rows */}
-            {variants.map((v) => {
-              const margin = v.totalRevenue > 0 ? (v.totalProfit / v.totalRevenue) * 100 : 0;
-              return (
-                <div
-                  key={v.productId}
-                  className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 px-3 py-2.5 border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold truncate">{v.productName}</p>
-                    <p className="text-[10px] text-muted-foreground">{v.category} · {v.salesCount} {v.salesCount === 1 ? "txn" : "txns"}</p>
-                  </div>
-                  <span className="text-xs font-mono text-right self-center tabular-nums">{v.totalQty % 1 === 0 ? v.totalQty : v.totalQty.toFixed(2)}</span>
-                  <span className="text-xs font-mono text-right self-center tabular-nums">{formatKES(v.totalRevenue)}</span>
-                  <span className={cn("text-xs font-mono text-right self-center tabular-nums", v.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
-                    {formatKES(v.totalProfit)}
-                  </span>
-                  <span className={cn("text-[10px] font-bold text-right self-center", margin >= 20 ? "text-emerald-400" : margin >= 10 ? "text-amber-400" : "text-destructive")}>
-                    {margin.toFixed(0)}%
-                  </span>
+            {/* Summary cards */}
+            {summary && (
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                <div className="rounded-xl bg-muted/60 border border-border px-3 py-2.5">
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Total Revenue</p>
+                  <p className="text-base font-extrabold font-mono tabular-nums mt-0.5">{formatKES(summary.totalRevenue)}</p>
                 </div>
-              );
-            })}
-
-            {/* Combined total row — only shown when >1 variant */}
-            {showTotal && (() => {
-              const totalMargin = summary.totalRevenue > 0 ? (summary.totalProfit / summary.totalRevenue) * 100 : 0;
-              return (
-                <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 px-3 py-2.5 bg-primary/5 border-t border-primary/20">
-                  <div>
-                    <p className="text-xs font-bold text-primary">Combined Total</p>
-                    <p className="text-[10px] text-muted-foreground">{variants.length} variants · {summary.salesCount} {summary.salesCount === 1 ? "txn" : "txns"}</p>
-                  </div>
-                  <span className="text-xs font-bold font-mono text-right self-center tabular-nums text-primary">
-                    {summary.totalQty % 1 === 0 ? summary.totalQty : summary.totalQty.toFixed(2)}
-                  </span>
-                  <span className="text-xs font-bold font-mono text-right self-center tabular-nums text-primary">{formatKES(summary.totalRevenue)}</span>
-                  <span className={cn("text-xs font-bold font-mono text-right self-center tabular-nums", summary.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
-                    {formatKES(summary.totalProfit)}
-                  </span>
-                  <span className={cn("text-[10px] font-bold text-right self-center", totalMargin >= 20 ? "text-emerald-400" : totalMargin >= 10 ? "text-amber-400" : "text-destructive")}>
-                    {totalMargin.toFixed(0)}%
-                  </span>
+                <div className="rounded-xl bg-muted/60 border border-border px-3 py-2.5">
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Cost of Goods</p>
+                  <p className="text-base font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(summary.totalRevenue - summary.totalProfit)}</p>
                 </div>
-              );
-            })()}
-          </div>
+                <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 px-3 py-2.5">
+                  <p className="text-[10px] text-emerald-400 font-medium uppercase tracking-wide">Profit</p>
+                  <p className="text-base font-extrabold font-mono tabular-nums mt-0.5 text-emerald-400">{formatKES(summary.totalProfit)}</p>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
-        {/* Prompt when nothing typed yet */}
+        {/* Empty prompt */}
         {query.length < 2 && !isLoading && (
-          <p className="text-center text-[11px] text-muted-foreground/40 py-3">
-            Type at least 2 characters to search
-          </p>
+          <div className="flex flex-col items-center gap-1 py-5 text-muted-foreground/40">
+            <Search className="h-6 w-6" />
+            <p className="text-xs">Type a product name to see its sales</p>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -1535,7 +1680,7 @@ export default function Reports() {
           </CardContent>
         </Card>
 
-        <ProductSearchSection shopId={shopId} dateRange={dateRange} />
+        <ProductSearchSection shopId={shopId} />
 
         {/* Voided Sales (today only) */}
         {isToday && voidedSales && voidedSales.length > 0 && (
