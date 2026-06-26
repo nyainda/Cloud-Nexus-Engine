@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   useGetDashboard, useGetReportRange, useGetTopProducts,
@@ -15,7 +15,7 @@ import {
   Package, TrendingDown, Percent, BarChart2, Trophy, Flame,
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
   ClipboardCheck, X, Share2, CheckCheck, Wallet, ReceiptText, Ban,
-  Download, Calendar, ChevronDown, ChevronUp, FileText,
+  Download, Calendar, ChevronDown, ChevronUp, FileText, Search, SearchX,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
@@ -563,6 +563,168 @@ function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, change
         {isLoading
           ? <Skeleton className="h-3 w-16 mt-2" />
           : sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Product Sales Search ─────────────────────────────────────────────────────
+interface ProductVariant {
+  productId: string;
+  productName: string;
+  category: string;
+  totalQty: number;
+  totalRevenue: number;
+  totalProfit: number;
+  salesCount: number;
+}
+interface ProductSearchResult {
+  query: string;
+  variants: ProductVariant[];
+  summary: { totalQty: number; totalRevenue: number; totalProfit: number; salesCount: number } | null;
+}
+
+function ProductSearchSection({ shopId, dateRange }: { shopId: string; dateRange: { from: string; to: string } }) {
+  const [inputValue, setInputValue] = useState("");
+  const [query, setQuery] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleInput = (v: string) => {
+    setInputValue(v);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setQuery(v.trim()), 400);
+  };
+
+  const { data, isLoading, isFetching } = useQuery<ProductSearchResult>({
+    queryKey: ["product-search", shopId, query, dateRange.from, dateRange.to],
+    queryFn: async () =>
+      customFetch(
+        `/api/reports/product-search?shopId=${encodeURIComponent(shopId)}&q=${encodeURIComponent(query)}&from=${dateRange.from}&to=${dateRange.to}`,
+      ) as Promise<ProductSearchResult>,
+    enabled: !!shopId && query.length >= 2,
+    staleTime: 60_000,
+  });
+
+  const variants = data?.variants ?? [];
+  const summary  = data?.summary ?? null;
+  const noResults = query.length >= 2 && !isLoading && !isFetching && variants.length === 0;
+  const showTotal = variants.length > 1 && summary;
+
+  return (
+    <Card className="shadow-none">
+      <CardHeader className="pb-3 pt-4 px-4">
+        <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+          <Search className="h-3.5 w-3.5 text-primary" />
+          Product Sales Search
+        </CardTitle>
+        <p className="text-[11px] text-muted-foreground mt-0.5">
+          Search any product to see how much was sold in the selected period — variants (500ml, 1L…) each show as their own row with a combined total.
+        </p>
+      </CardHeader>
+      <CardContent className="px-4 pb-4 space-y-3">
+        {/* Search input */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          <input
+            type="text"
+            value={inputValue}
+            onChange={(e) => handleInput(e.target.value)}
+            placeholder="e.g. Roundup, Dithane, urea…"
+            className="w-full h-9 pl-8 pr-8 rounded-lg border border-border bg-muted text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60 transition-colors"
+          />
+          {inputValue && (
+            <button
+              onClick={() => { setInputValue(""); setQuery(""); }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Loading skeleton */}
+        {(isLoading || isFetching) && query.length >= 2 && (
+          <div className="space-y-2">
+            {[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}
+          </div>
+        )}
+
+        {/* No results */}
+        {noResults && (
+          <div className="flex flex-col items-center gap-1.5 py-6 text-muted-foreground">
+            <SearchX className="h-7 w-7 text-muted-foreground/30" />
+            <p className="text-xs font-medium">No sales found for &ldquo;{query}&rdquo;</p>
+            <p className="text-[11px] text-muted-foreground/50">Try a different name or expand the date range</p>
+          </div>
+        )}
+
+        {/* Results table */}
+        {!isLoading && !isFetching && variants.length > 0 && (
+          <div className="rounded-xl border border-border overflow-hidden">
+            {/* Header */}
+            <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 px-3 py-2 bg-muted/60 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+              <span>Product</span>
+              <span className="text-right">Qty</span>
+              <span className="text-right">Revenue</span>
+              <span className="text-right">Profit</span>
+              <span className="text-right">Margin</span>
+            </div>
+
+            {/* Variant rows */}
+            {variants.map((v) => {
+              const margin = v.totalRevenue > 0 ? (v.totalProfit / v.totalRevenue) * 100 : 0;
+              return (
+                <div
+                  key={v.productId}
+                  className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 px-3 py-2.5 border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold truncate">{v.productName}</p>
+                    <p className="text-[10px] text-muted-foreground">{v.category} · {v.salesCount} {v.salesCount === 1 ? "txn" : "txns"}</p>
+                  </div>
+                  <span className="text-xs font-mono text-right self-center tabular-nums">{v.totalQty % 1 === 0 ? v.totalQty : v.totalQty.toFixed(2)}</span>
+                  <span className="text-xs font-mono text-right self-center tabular-nums">{formatKES(v.totalRevenue)}</span>
+                  <span className={cn("text-xs font-mono text-right self-center tabular-nums", v.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                    {formatKES(v.totalProfit)}
+                  </span>
+                  <span className={cn("text-[10px] font-bold text-right self-center", margin >= 20 ? "text-emerald-400" : margin >= 10 ? "text-amber-400" : "text-destructive")}>
+                    {margin.toFixed(0)}%
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Combined total row — only shown when >1 variant */}
+            {showTotal && (() => {
+              const totalMargin = summary.totalRevenue > 0 ? (summary.totalProfit / summary.totalRevenue) * 100 : 0;
+              return (
+                <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 px-3 py-2.5 bg-primary/5 border-t border-primary/20">
+                  <div>
+                    <p className="text-xs font-bold text-primary">Combined Total</p>
+                    <p className="text-[10px] text-muted-foreground">{variants.length} variants · {summary.salesCount} {summary.salesCount === 1 ? "txn" : "txns"}</p>
+                  </div>
+                  <span className="text-xs font-bold font-mono text-right self-center tabular-nums text-primary">
+                    {summary.totalQty % 1 === 0 ? summary.totalQty : summary.totalQty.toFixed(2)}
+                  </span>
+                  <span className="text-xs font-bold font-mono text-right self-center tabular-nums text-primary">{formatKES(summary.totalRevenue)}</span>
+                  <span className={cn("text-xs font-bold font-mono text-right self-center tabular-nums", summary.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                    {formatKES(summary.totalProfit)}
+                  </span>
+                  <span className={cn("text-[10px] font-bold text-right self-center", totalMargin >= 20 ? "text-emerald-400" : totalMargin >= 10 ? "text-amber-400" : "text-destructive")}>
+                    {totalMargin.toFixed(0)}%
+                  </span>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Prompt when nothing typed yet */}
+        {query.length < 2 && !isLoading && (
+          <p className="text-center text-[11px] text-muted-foreground/40 py-3">
+            Type at least 2 characters to search
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -1372,6 +1534,8 @@ export default function Reports() {
             })()}
           </CardContent>
         </Card>
+
+        <ProductSearchSection shopId={shopId} dateRange={dateRange} />
 
         {/* Voided Sales (today only) */}
         {isToday && voidedSales && voidedSales.length > 0 && (
