@@ -780,9 +780,94 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
               Results for &ldquo;{query}&rdquo; · {periodLabel}
             </p>
 
-            <div className="rounded-xl border border-border overflow-hidden">
+            {/* ── MOBILE: card per variant ── */}
+            <div className="sm:hidden space-y-2">
+              {variants.map(v => {
+                const cost   = v.totalRevenue - v.totalProfit;
+                const margin = v.totalRevenue > 0 ? (v.totalProfit / v.totalRevenue) * 100 : 0;
+                return (
+                  <div key={v.productId} className="rounded-xl border border-border bg-muted/20 p-3 space-y-2">
+                    {/* Name + badges */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold leading-snug">{v.productName}</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{v.category} · {v.salesCount} {v.salesCount === 1 ? "txn" : "txns"}</p>
+                      </div>
+                      <span className={cn(
+                        "shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md",
+                        margin >= 20 ? "bg-emerald-500/10 text-emerald-400"
+                          : margin >= 10 ? "bg-amber-500/10 text-amber-400"
+                          : "bg-destructive/10 text-destructive"
+                      )}>{margin.toFixed(0)}% margin</span>
+                    </div>
+                    {/* 2×2 metric grid */}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div className="rounded-lg bg-muted/60 px-2.5 py-2">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Qty Sold</p>
+                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5">{fmtQty(v.totalQty)}</p>
+                      </div>
+                      <div className="rounded-lg bg-muted/60 px-2.5 py-2">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Revenue</p>
+                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5">{formatKES(v.totalRevenue)}</p>
+                      </div>
+                      <div className="rounded-lg bg-muted/60 px-2.5 py-2">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Cost</p>
+                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(cost)}</p>
+                      </div>
+                      <div className={cn("rounded-lg px-2.5 py-2", v.totalProfit >= 0 ? "bg-emerald-500/5" : "bg-destructive/5")}>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Profit</p>
+                        <p className={cn("text-sm font-extrabold font-mono tabular-nums mt-0.5", v.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>{formatKES(v.totalProfit)}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Mobile combined total */}
+              {showTotal && summary && (() => {
+                const totalCost   = summary.totalRevenue - summary.totalProfit;
+                const totalMargin = summary.totalRevenue > 0 ? (summary.totalProfit / summary.totalRevenue) * 100 : 0;
+                return (
+                  <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-extrabold text-primary">COMBINED TOTAL</p>
+                        <p className="text-[11px] text-muted-foreground">{variants.length} variants · {summary.salesCount} txns</p>
+                      </div>
+                      <span className={cn(
+                        "shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md",
+                        totalMargin >= 20 ? "bg-emerald-500/10 text-emerald-400"
+                          : totalMargin >= 10 ? "bg-amber-500/10 text-amber-400"
+                          : "bg-destructive/10 text-destructive"
+                      )}>{totalMargin.toFixed(0)}% margin</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div className="rounded-lg bg-primary/10 px-2.5 py-2">
+                        <p className="text-[10px] text-primary/70 uppercase tracking-wide font-medium">Total Qty</p>
+                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-primary">{fmtQty(summary.totalQty)}</p>
+                      </div>
+                      <div className="rounded-lg bg-primary/10 px-2.5 py-2">
+                        <p className="text-[10px] text-primary/70 uppercase tracking-wide font-medium">Revenue</p>
+                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-primary">{formatKES(summary.totalRevenue)}</p>
+                      </div>
+                      <div className="rounded-lg bg-primary/10 px-2.5 py-2">
+                        <p className="text-[10px] text-primary/70 uppercase tracking-wide font-medium">Cost</p>
+                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(totalCost)}</p>
+                      </div>
+                      <div className="rounded-lg bg-emerald-500/5 px-2.5 py-2">
+                        <p className="text-[10px] text-emerald-400/70 uppercase tracking-wide font-medium">Profit</p>
+                        <p className={cn("text-sm font-extrabold font-mono tabular-nums mt-0.5", summary.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>{formatKES(summary.totalProfit)}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* ── TABLET / DESKTOP: full table ── */}
+            <div className="hidden sm:block rounded-xl border border-border overflow-hidden">
               {/* Column header */}
-              <div className="grid grid-cols-[1fr_52px_90px_90px_90px_52px] gap-x-2 px-3 py-2 bg-muted/60 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+              <div className="grid grid-cols-[1fr_56px_100px_100px_100px_48px] gap-x-3 px-4 py-2.5 bg-muted/60 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                 <span>Product / Variant</span>
                 <span className="text-right">Qty</span>
                 <span className="text-right">Revenue</span>
@@ -791,15 +876,14 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                 <span className="text-right">Txns</span>
               </div>
 
-              {/* Variant rows */}
               {variants.map(v => {
                 const cost   = v.totalRevenue - v.totalProfit;
                 const margin = v.totalRevenue > 0 ? (v.totalProfit / v.totalRevenue) * 100 : 0;
                 return (
                   <div key={v.productId}
-                    className="grid grid-cols-[1fr_52px_90px_90px_90px_52px] gap-x-2 px-3 py-3 border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors">
+                    className="grid grid-cols-[1fr_56px_100px_100px_100px_48px] gap-x-3 px-4 py-3 border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors">
                     <div className="min-w-0">
-                      <p className="text-xs font-semibold leading-tight truncate">{v.productName}</p>
+                      <p className="text-sm font-semibold leading-tight truncate">{v.productName}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[10px] text-muted-foreground/60">{v.category}</span>
                         <span className={cn(
@@ -810,53 +894,53 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                         )}>{margin.toFixed(0)}%</span>
                       </div>
                     </div>
-                    <span className="text-xs font-mono font-semibold text-right self-center tabular-nums">{fmtQty(v.totalQty)}</span>
-                    <span className="text-xs font-mono text-right self-center tabular-nums">{formatKES(v.totalRevenue)}</span>
-                    <span className="text-xs font-mono text-right self-center tabular-nums text-muted-foreground">{formatKES(cost)}</span>
-                    <span className={cn("text-xs font-mono text-right self-center tabular-nums", v.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                    <span className="text-sm font-mono font-semibold text-right self-center tabular-nums">{fmtQty(v.totalQty)}</span>
+                    <span className="text-sm font-mono text-right self-center tabular-nums">{formatKES(v.totalRevenue)}</span>
+                    <span className="text-sm font-mono text-right self-center tabular-nums text-muted-foreground">{formatKES(cost)}</span>
+                    <span className={cn("text-sm font-mono text-right self-center tabular-nums", v.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
                       {formatKES(v.totalProfit)}
                     </span>
-                    <span className="text-xs text-right self-center text-muted-foreground tabular-nums">{v.salesCount}</span>
+                    <span className="text-sm text-right self-center text-muted-foreground tabular-nums">{v.salesCount}</span>
                   </div>
                 );
               })}
 
-              {/* Combined total — shown when >1 variant */}
+              {/* Combined total row */}
               {showTotal && summary && (() => {
                 const totalCost   = summary.totalRevenue - summary.totalProfit;
                 const totalMargin = summary.totalRevenue > 0 ? (summary.totalProfit / summary.totalRevenue) * 100 : 0;
                 return (
-                  <div className="grid grid-cols-[1fr_52px_90px_90px_90px_52px] gap-x-2 px-3 py-3 bg-primary/5 border-t-2 border-primary/20">
+                  <div className="grid grid-cols-[1fr_56px_100px_100px_100px_48px] gap-x-3 px-4 py-3 bg-primary/5 border-t-2 border-primary/20">
                     <div>
-                      <p className="text-xs font-extrabold text-primary leading-tight">TOTAL</p>
-                      <p className="text-[10px] text-muted-foreground">{variants.length} variants · {summary.salesCount} txns</p>
+                      <p className="text-sm font-extrabold text-primary leading-tight">TOTAL</p>
+                      <p className="text-[10px] text-muted-foreground">{variants.length} variants · {summary.salesCount} txns · {totalMargin.toFixed(0)}% margin</p>
                     </div>
-                    <span className="text-xs font-extrabold font-mono text-right self-center tabular-nums text-primary">{fmtQty(summary.totalQty)}</span>
-                    <span className="text-xs font-extrabold font-mono text-right self-center tabular-nums text-primary">{formatKES(summary.totalRevenue)}</span>
-                    <span className="text-xs font-extrabold font-mono text-right self-center tabular-nums text-muted-foreground">{formatKES(totalCost)}</span>
-                    <span className={cn("text-xs font-extrabold font-mono text-right self-center tabular-nums", summary.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                    <span className="text-sm font-extrabold font-mono text-right self-center tabular-nums text-primary">{fmtQty(summary.totalQty)}</span>
+                    <span className="text-sm font-extrabold font-mono text-right self-center tabular-nums text-primary">{formatKES(summary.totalRevenue)}</span>
+                    <span className="text-sm font-extrabold font-mono text-right self-center tabular-nums text-muted-foreground">{formatKES(totalCost)}</span>
+                    <span className={cn("text-sm font-extrabold font-mono text-right self-center tabular-nums", summary.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
                       {formatKES(summary.totalProfit)}
                     </span>
-                    <span className="text-xs font-extrabold text-right self-center text-primary tabular-nums">{summary.salesCount}</span>
+                    <span className="text-sm font-extrabold text-right self-center text-primary tabular-nums">{summary.salesCount}</span>
                   </div>
                 );
               })()}
             </div>
 
-            {/* Summary cards */}
+            {/* Summary cards — always shown below */}
             {summary && (
-              <div className="grid grid-cols-3 gap-2 pt-1">
-                <div className="rounded-xl bg-muted/60 border border-border px-3 py-2.5">
+              <div className="grid grid-cols-1 xs:grid-cols-3 sm:grid-cols-3 gap-2 pt-1">
+                <div className="rounded-xl bg-muted/60 border border-border px-3 py-3">
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Total Revenue</p>
-                  <p className="text-base font-extrabold font-mono tabular-nums mt-0.5">{formatKES(summary.totalRevenue)}</p>
+                  <p className="text-lg font-extrabold font-mono tabular-nums mt-0.5">{formatKES(summary.totalRevenue)}</p>
                 </div>
-                <div className="rounded-xl bg-muted/60 border border-border px-3 py-2.5">
+                <div className="rounded-xl bg-muted/60 border border-border px-3 py-3">
                   <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Cost of Goods</p>
-                  <p className="text-base font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(summary.totalRevenue - summary.totalProfit)}</p>
+                  <p className="text-lg font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(summary.totalRevenue - summary.totalProfit)}</p>
                 </div>
-                <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 px-3 py-2.5">
+                <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 px-3 py-3">
                   <p className="text-[10px] text-emerald-400 font-medium uppercase tracking-wide">Profit</p>
-                  <p className="text-base font-extrabold font-mono tabular-nums mt-0.5 text-emerald-400">{formatKES(summary.totalProfit)}</p>
+                  <p className="text-lg font-extrabold font-mono tabular-nums mt-0.5 text-emerald-400">{formatKES(summary.totalProfit)}</p>
                 </div>
               </div>
             )}
