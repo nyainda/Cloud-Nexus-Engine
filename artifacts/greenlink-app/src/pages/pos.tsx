@@ -341,8 +341,10 @@ interface CartPanelProps {
   updateQty: (id: string, delta: number) => void;
   removeFromCart: (id: string) => void;
   updatePrice: (id: string, price: number) => void;
-  handleCheckout: (type: "cash" | "debt") => void;
+  handleCheckout: (type: "cash" | "debt", method?: "cash" | "bank") => void;
   setQtyDirect: (id: string, qty: number) => void;
+  paymentMethod: "cash" | "bank";
+  setPaymentMethod: (v: "cash" | "bank") => void;
 }
 
 const CartPanel = memo(function CartPanel({
@@ -350,6 +352,7 @@ const CartPanel = memo(function CartPanel({
   createSalePending, subtotal, total, totalProfit, cartCount,
   setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
   setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout, setQtyDirect,
+  paymentMethod, setPaymentMethod,
 }: CartPanelProps) {
   return (
     <div className="flex flex-col h-full bg-card">
@@ -1056,6 +1059,7 @@ export default function POS() {
     subtotal, total, totalProfit, cartCount,
     setDiscount, setDebtCustomerName, setDebtCustomerPhone, setCart,
     setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout, setQtyDirect,
+    paymentMethod, setPaymentMethod,
   };
 
   return (
