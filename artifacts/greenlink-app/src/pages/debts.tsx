@@ -855,9 +855,7 @@ export default function Debts() {
     { query: { enabled: !!shopId, refetchInterval: 5_000, refetchIntervalInBackground: true } }
   );
 
-  const handleDeleted = () => {
-    setExpandedDebtId(null);
-  };
+  const handleDeleted = () => setExpandedDebtId(null);
 
   const stats = useMemo(() => {
     const debts = allDebts || [];
@@ -891,7 +889,6 @@ export default function Debts() {
     return list;
   }, [allDebts, tab, debouncedSearch]);
 
-  // Group filtered debts by customer name
   const grouped = useMemo((): CustomerGroup[] => {
     const map = new Map<string, any[]>();
     for (const debt of filtered) {
@@ -913,186 +910,195 @@ export default function Debts() {
   }, [filtered]);
 
   const TABS: { value: DebtTab; label: string; count: number; color?: string }[] = [
-    { value: "unpaid", label: "Unpaid", count: (allDebts || []).filter(d => d.status === "unpaid").length, color: "text-destructive" },
-    { value: "partial", label: "Partial", count: (allDebts || []).filter(d => d.status === "partial").length, color: "text-orange-400" },
-    { value: "overdue", label: "Overdue 30d+", count: stats.overdueCount, color: "text-red-500" },
-    { value: "paid", label: "Paid", count: (allDebts || []).filter(d => d.status === "paid").length, color: "text-emerald-400" },
-    { value: "all", label: "All", count: stats.totalDebts },
+    { value: "unpaid",  label: "Unpaid",     count: (allDebts || []).filter(d => d.status === "unpaid").length,  color: "text-destructive" },
+    { value: "partial", label: "Partial",    count: (allDebts || []).filter(d => d.status === "partial").length, color: "text-orange-400" },
+    { value: "overdue", label: "Overdue 30d+", count: stats.overdueCount,                                        color: "text-red-500" },
+    { value: "paid",    label: "Paid",       count: (allDebts || []).filter(d => d.status === "paid").length,    color: "text-emerald-400" },
+    { value: "all",     label: "All",        count: stats.totalDebts },
   ];
 
   return (
-    <div className="flex flex-col bg-background">
-      {/* Header */}
-      <div className="sticky top-0 z-20 px-4 py-3 border-b border-border bg-card space-y-3">
-        <div className="flex items-center justify-between">
+    <div className="flex flex-col bg-background min-h-screen">
+
+      {/* ── Compact sticky header: title · search · tabs ─────────────── */}
+      <div className="sticky top-0 z-20 bg-card/98 backdrop-blur-sm border-b border-border">
+        {/* Title row */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-2">
           <div>
-            <h1 className="text-lg font-bold font-display">Customer Debts</h1>
-            <p className="text-xs text-muted-foreground">{grouped.length} customer{grouped.length !== 1 ? "s" : ""} · {stats.activeCount} open debt{stats.activeCount !== 1 ? "s" : ""}</p>
+            <h1 className="text-xl font-bold font-display tracking-tight">Customer Debts</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {grouped.length} customer{grouped.length !== 1 ? "s" : ""} · {stats.activeCount} open
+            </p>
           </div>
           {stats.overdueWithPhone.length > 0 && (
             <button
               onClick={() => setBulkRemindOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#25D366]/10 border border-[#25D366]/30 text-[#25D366] text-xs font-semibold hover:bg-[#25D366]/20 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#25D366]/10 border border-[#25D366]/25 text-[#25D366] text-xs font-semibold hover:bg-[#25D366]/20 transition-colors"
             >
               <Send className="h-3.5 w-3.5" />
-              Remind All
-              <span className="bg-[#25D366]/20 text-[#25D366] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+              Remind
+              <span className="bg-[#25D366]/20 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
                 {stats.overdueWithPhone.length}
               </span>
             </button>
           )}
         </div>
 
-        {/* Bulk WhatsApp remind dialog */}
-        {bulkRemindOpen && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setBulkRemindOpen(false)}>
-            <div className="absolute inset-0 bg-black/60" />
-            <div
-              className="relative bg-card border border-border rounded-2xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-xl"
-              onClick={e => e.stopPropagation()}
-            >
-              {/* Dialog header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                <div>
-                  <p className="font-bold text-sm text-foreground flex items-center gap-2">
-                    <MessageCircle className="h-4 w-4 text-[#25D366]" />
-                    WhatsApp Reminders
-                  </p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">
-                    {stats.overdueWithPhone.length} overdue customer{stats.overdueWithPhone.length !== 1 ? "s" : ""} with phone numbers
-                  </p>
-                </div>
-                <button onClick={() => setBulkRemindOpen(false)} className="text-muted-foreground/50 hover:text-foreground p-1">
-                  <ChevronDown className="h-5 w-5" />
-                </button>
-              </div>
-
-              {/* Customer list */}
-              <div className="overflow-y-auto flex-1 p-3 space-y-2">
-                {stats.overdueWithPhone.map((debt: any) => {
-                  const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
-                  const msg = `Hi ${debt.customerName}, you have an outstanding balance of ${formatKES(debt.balance)} at our shop (${daysAgo} days overdue). Please settle at your earliest convenience. Thank you!`;
-                  const waUrl = `https://wa.me/${debt.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(msg)}`;
-                  return (
-                    <a
-                      key={debt.id}
-                      href={waUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-muted/40 hover:bg-[#25D366]/10 border border-border/50 hover:border-[#25D366]/30 transition-colors"
-                    >
-                      <div className="w-9 h-9 rounded-full bg-destructive/15 flex items-center justify-center shrink-0 text-sm font-bold text-destructive">
-                        {debt.customerName.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{debt.customerName}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          <span className="font-mono font-bold text-destructive">{formatKES(debt.balance)}</span>
-                          {" · "}{daysAgo}d overdue
-                        </p>
-                      </div>
-                      <MessageCircle className="h-4 w-4 text-[#25D366] shrink-0" />
-                    </a>
-                  );
-                })}
-              </div>
-
-              <div className="px-4 py-3 border-t border-border">
-                <p className="text-[10px] text-muted-foreground/50 text-center">
-                  Tap a customer to open WhatsApp with a pre-filled message
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Summary cards */}
-        <div className="grid grid-cols-3 gap-2">
-          <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-3 text-center">
-            <p className="text-base font-bold font-mono text-destructive leading-tight">
-              {formatKES(stats.outstanding)}
-            </p>
-            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide mt-0.5 flex items-center justify-center gap-1">
-              <TrendingDown className="h-3 w-3" />Outstanding
-            </p>
-          </div>
-          <div className="bg-muted/40 border border-border/50 rounded-xl p-3 text-center">
-            <p className="text-base font-bold font-mono text-foreground leading-tight">{stats.activeCount}</p>
-            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide mt-0.5 flex items-center justify-center gap-1">
-              <Users className="h-3 w-3" />Customers
-            </p>
-          </div>
-          <div className={cn(
-            "border rounded-xl p-3 text-center",
-            stats.overdueCount > 0
-              ? "bg-red-500/10 border-red-500/20"
-              : "bg-muted/40 border-border/50"
-          )}>
-            <p className={cn(
-              "text-base font-bold font-mono leading-tight",
-              stats.overdueCount > 0 ? "text-red-400" : "text-muted-foreground"
-            )}>
-              {stats.overdueCount}
-            </p>
-            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide mt-0.5 flex items-center justify-center gap-1">
-              <Clock className="h-3 w-3" />Overdue
-            </p>
-          </div>
-        </div>
-
         {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-          <Input
-            placeholder="Search by name or phone…"
-            className="pl-9 h-10 text-sm bg-muted/40 border-border/60 rounded-xl"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+        <div className="px-4 pb-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="Search by name or phone…"
+              className="pl-9 h-10 text-sm bg-muted/40 border-border/60 rounded-xl"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
         </div>
 
-        {/* Status tabs */}
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
+        {/* Tabs */}
+        <div className="flex gap-1.5 px-4 pb-3 overflow-x-auto scrollbar-hide">
           {TABS.map(t => (
             <button
               key={t.value}
               onClick={() => setTab(t.value)}
               className={cn(
-                "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all",
+                "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap",
                 tab === t.value
                   ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  : "bg-muted/60 text-muted-foreground hover:text-foreground"
               )}
             >
               {t.label}
-              <span className={cn(
-                "text-[10px] font-bold",
-                tab === t.value ? "text-primary-foreground/70" : (t.color || "text-muted-foreground/50")
-              )}>
-                {t.count}
-              </span>
+              {t.count > 0 && (
+                <span className={cn(
+                  "text-[10px] font-bold tabular-nums",
+                  tab === t.value ? "text-primary-foreground/70" : (t.color ?? "text-muted-foreground/60")
+                )}>
+                  {t.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Customer list */}
-      <div className="p-3 space-y-2">
+      {/* ── Bulk WhatsApp remind dialog ──────────────────────────────── */}
+      {bulkRemindOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setBulkRemindOpen(false)}>
+          <div className="absolute inset-0 bg-black/60" />
+          <div
+            className="relative bg-card border border-border rounded-2xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <div>
+                <p className="font-bold text-sm text-foreground flex items-center gap-2">
+                  <MessageCircle className="h-4 w-4 text-[#25D366]" />
+                  WhatsApp Reminders
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {stats.overdueWithPhone.length} overdue customer{stats.overdueWithPhone.length !== 1 ? "s" : ""} with phone numbers
+                </p>
+              </div>
+              <button onClick={() => setBulkRemindOpen(false)} className="text-muted-foreground/50 hover:text-foreground p-1">
+                <ChevronDown className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-3 space-y-2">
+              {stats.overdueWithPhone.map((debt: any) => {
+                const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
+                const msg = `Hi ${debt.customerName}, you have an outstanding balance of ${formatKES(debt.balance)} at our shop (${daysAgo} days overdue). Please settle at your earliest convenience. Thank you!`;
+                const waUrl = `https://wa.me/${debt.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(msg)}`;
+                return (
+                  <a key={debt.id} href={waUrl} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-muted/40 hover:bg-[#25D366]/10 border border-border/50 hover:border-[#25D366]/30 transition-colors"
+                  >
+                    <div className="w-9 h-9 rounded-full bg-destructive/15 flex items-center justify-center shrink-0 text-sm font-bold text-destructive">
+                      {debt.customerName.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-foreground truncate">{debt.customerName}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        <span className="font-mono font-bold text-destructive">{formatKES(debt.balance)}</span>
+                        {" · "}{daysAgo}d overdue
+                      </p>
+                    </div>
+                    <MessageCircle className="h-4 w-4 text-[#25D366] shrink-0" />
+                  </a>
+                );
+              })}
+            </div>
+            <div className="px-4 py-3 border-t border-border">
+              <p className="text-[10px] text-muted-foreground/50 text-center">
+                Tap a customer to open WhatsApp with a pre-filled message
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Stats banner (scrolls with content) ─────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 px-4 pt-4 pb-2">
+        <div className="rounded-2xl bg-destructive/10 border border-destructive/20 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-destructive/60 mb-2 flex items-center gap-1">
+            <TrendingDown className="h-3 w-3" />Outstanding
+          </p>
+          <p className="text-xl font-bold font-mono text-destructive leading-none">
+            {formatKES(stats.outstanding)}
+          </p>
+          <p className="text-[11px] text-muted-foreground/60 mt-2">
+            {stats.activeCount} active debt{stats.activeCount !== 1 ? "s" : ""}
+          </p>
+        </div>
+        <div className={cn(
+          "rounded-2xl border p-4",
+          stats.overdueCount > 0 ? "bg-orange-500/10 border-orange-500/20" : "bg-muted/30 border-border/40"
+        )}>
+          <p className={cn(
+            "text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1",
+            stats.overdueCount > 0 ? "text-orange-500/60" : "text-muted-foreground/50"
+          )}>
+            <Clock className="h-3 w-3" />Overdue 30d+
+          </p>
+          <p className={cn(
+            "text-xl font-bold font-mono leading-none",
+            stats.overdueCount > 0 ? "text-orange-400" : "text-muted-foreground/40"
+          )}>
+            {stats.overdueCount}
+          </p>
+          <p className="text-[11px] text-muted-foreground/60 mt-2">
+            {stats.overdueCount > 0 ? "need reminders" : "all on track"}
+          </p>
+        </div>
+      </div>
+
+      {/* ── Customer list ────────────────────────────────────────────── */}
+      <div className="px-4 pt-2 pb-8 space-y-3">
         {isLoading ? (
           Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="rounded-2xl border border-border bg-card p-4 animate-pulse">
-              <div className="flex items-center gap-3">
+              <div className="flex items-start gap-3">
                 <div className="w-11 h-11 rounded-2xl bg-muted/60 shrink-0" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-4 w-32 bg-muted/60 rounded-full" />
-                  <div className="h-3 w-20 bg-muted/40 rounded-full" />
+                <div className="flex-1 space-y-2 pt-1">
+                  <div className="h-4 w-36 bg-muted/60 rounded-full" />
+                  <div className="h-3 w-24 bg-muted/40 rounded-full" />
                 </div>
-                <div className="h-6 w-20 bg-muted/50 rounded-xl" />
+                <div className="space-y-2 shrink-0">
+                  <div className="h-5 w-24 bg-muted/50 rounded" />
+                  <div className="h-8 w-28 bg-muted/40 rounded-xl" />
+                </div>
+              </div>
+              <div className="mt-4 h-1.5 bg-muted/40 rounded-full" />
+              <div className="mt-3 flex gap-2">
+                <div className="h-8 w-24 bg-muted/30 rounded-xl" />
+                <div className="h-8 w-20 bg-muted/20 rounded-xl ml-auto" />
               </div>
             </div>
           ))
         ) : grouped.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-52 gap-3 text-muted-foreground">
+          <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
             <CheckCircle2 className="h-12 w-12 text-emerald-500/20" />
             <p className="text-sm font-semibold">
               {tab === "paid" ? "No paid debts yet" : "All clear!"}
@@ -1107,188 +1113,232 @@ export default function Debts() {
             const paidPct = group.totalAmount > 0
               ? Math.round(((group.totalAmount - group.totalBalance) / group.totalAmount) * 100)
               : 0;
+
             const avatarColor =
-              group.worstStatus === "paid" ? "bg-emerald-500/15 text-emerald-400" :
-              group.isOverdue ? "bg-red-500/15 text-red-400" :
+              group.worstStatus === "paid"    ? "bg-emerald-500/15 text-emerald-400" :
+              group.isOverdue                 ? "bg-red-500/15 text-red-400" :
               group.worstStatus === "partial" ? "bg-orange-500/15 text-orange-400" :
-              "bg-destructive/15 text-destructive";
+                                                "bg-destructive/15 text-destructive";
             const balanceColor =
-              group.worstStatus === "paid" ? "text-emerald-400" :
-              group.isOverdue ? "text-red-400" :
+              group.worstStatus === "paid"    ? "text-emerald-400" :
+              group.isOverdue                 ? "text-red-400" :
               group.worstStatus === "partial" ? "text-orange-400" :
-              "text-destructive";
+                                                "text-destructive";
             const barColor =
-              group.worstStatus === "paid" ? "bg-emerald-400" :
-              group.isOverdue ? "bg-red-400" :
+              group.worstStatus === "paid"    ? "bg-emerald-400" :
+              group.isOverdue                 ? "bg-red-400" :
               group.worstStatus === "partial" ? "bg-orange-400" :
-              "bg-primary";
+                                                "bg-primary";
+
+            const waMsg = `Hi ${group.customerName}, you have an outstanding balance of ${formatKES(group.totalBalance)} at our shop. Please settle at your earliest convenience. Thank you!`;
+            const waUrl = `https://wa.me/${group.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(waMsg)}`;
 
             return (
-              <div key={group.key} className={cn(
-                "rounded-2xl border bg-card overflow-hidden transition-all",
-                group.isOverdue ? "border-red-500/40" : "border-border"
-              )}>
-                {/* ── Customer summary row ── */}
+              <div
+                key={group.key}
+                className={cn(
+                  "rounded-2xl border bg-card overflow-hidden transition-all",
+                  group.isOverdue ? "border-red-500/30" : "border-border/70"
+                )}
+              >
+                {/* ── Card body ── */}
                 <div className="p-4">
+                  {/* Top row: avatar · name/phone · balance + pay button */}
                   <div className="flex items-start gap-3">
+
                     {/* Avatar */}
-                    <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 text-base font-bold", avatarColor)}>
+                    <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center text-base font-bold shrink-0 mt-0.5", avatarColor)}>
                       {group.customerName.charAt(0).toUpperCase()}
                     </div>
 
-                    {/* Info */}
+                    {/* Name, phone, badges */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-sm text-foreground">{group.customerName}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-sm text-foreground leading-snug">{group.customerName}</span>
                         {group.isOverdue && (
-                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">Overdue</span>
+                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 leading-none">
+                            Overdue
+                          </span>
                         )}
                         {group.debts.length > 1 && (
-                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                            {group.debts.length} transactions
+                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground/60 leading-none">
+                            {group.debts.length} debts
                           </span>
                         )}
                       </div>
-
                       {group.customerPhone && (
-                        <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-0.5">
-                          <Phone className="h-3 w-3" />{group.customerPhone}
+                        <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-1">
+                          <Phone className="h-2.5 w-2.5 shrink-0" />{group.customerPhone}
                         </p>
                       )}
+                    </div>
 
-                      {/* Progress bar */}
-                      <div className="mt-2 space-y-1">
-                        <div className="flex justify-between items-center">
-                          <span className="text-[11px] text-muted-foreground/60">
-                            {group.worstStatus === "paid" ? "Fully paid" : `${paidPct}% paid`}
+                    {/* Balance + pay button (right side) */}
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      {group.worstStatus === "paid" ? (
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                            <BadgeCheck className="h-3.5 w-3.5" />Paid
                           </span>
-                          <span className={cn("text-sm font-bold font-mono", balanceColor)}>
-                            {group.worstStatus === "paid"
-                              ? formatKES(group.totalAmount)
-                              : `${formatKES(group.totalBalance)} owed`}
+                          <span className="text-base font-bold font-mono text-emerald-400">
+                            {formatKES(group.totalAmount)}
                           </span>
                         </div>
-                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div className={cn("h-full rounded-full transition-all", barColor)} style={{ width: `${paidPct}%` }} />
-                        </div>
-                        <p className="text-[10px] text-muted-foreground/40 font-mono">
-                          Total credit: {formatKES(group.totalAmount)}
-                        </p>
-                      </div>
+                      ) : (
+                        <>
+                          <div className="text-right">
+                            <p className={cn("text-lg font-bold font-mono leading-none", balanceColor)}>
+                              {formatKES(group.totalBalance)}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground/50 mt-0.5">owed</p>
+                          </div>
+                          {/* Primary CTA: pay button for single-debt customers */}
+                          {group.activeDebts.length === 1 && (
+                            <PaymentDialog debt={group.activeDebts[0]} />
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
 
-                  {/* Actions row */}
-                  <div className="flex gap-2 mt-3 flex-wrap items-center">
-                    {/* Pay button — only if single active debt for simplicity */}
-                    {group.activeDebts.length === 1 && group.worstStatus !== "paid" && (
-                      <PaymentDialog debt={group.activeDebts[0]} />
-                    )}
-                    {group.customerPhone && group.worstStatus !== "paid" && (
-                      <a
-                        href={`https://wa.me/${group.customerPhone.replace(/\D/g, "")}?text=Hi ${encodeURIComponent(group.customerName)}, you have an outstanding balance of ${formatKES(group.totalBalance)} at our shop. Please settle at your earliest convenience. Thank you!`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl border border-[#25D366]/30 text-[#25D366] bg-[#25D366]/5 hover:bg-[#25D366]/15 text-xs font-semibold transition-colors">
-                          <MessageCircle className="w-3.5 h-3.5" />WhatsApp
-                        </button>
-                      </a>
-                    )}
+                  {/* Progress bar */}
+                  {group.worstStatus !== "paid" && group.totalAmount > 0 && (
+                    <div className="mt-3.5">
+                      <div className="h-1.5 bg-muted/60 rounded-full overflow-hidden">
+                        <div
+                          className={cn("h-full rounded-full transition-all", barColor)}
+                          style={{ width: `${paidPct}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between mt-1">
+                        <span className="text-[10px] text-muted-foreground/50">
+                          {paidPct > 0 ? `${paidPct}% paid` : "Nothing paid yet"}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground/40 font-mono">
+                          of {formatKES(group.totalAmount)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Footer action bar ── */}
+                <div className="flex items-center gap-2 px-4 pb-4 flex-wrap">
+                  {/* WhatsApp */}
+                  {group.customerPhone && group.worstStatus !== "paid" && (
+                    <a href={waUrl} target="_blank" rel="noopener noreferrer">
+                      <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl border border-[#25D366]/30 text-[#25D366] bg-[#25D366]/5 hover:bg-[#25D366]/15 text-xs font-semibold transition-colors">
+                        <MessageCircle className="w-3.5 h-3.5" />WhatsApp
+                      </button>
+                    </a>
+                  )}
+                  {/* Multi-debt pay prompt */}
+                  {group.activeDebts.length > 1 && group.worstStatus !== "paid" && (
                     <button
-                      onClick={() => {
-                        setExpandedCustomer(isExpanded ? null : group.key);
-                        setExpandedDebtId(null);
-                      }}
-                      className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-muted/60 hover:bg-muted text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors ml-auto"
+                      onClick={() => { setExpandedCustomer(isExpanded ? null : group.key); setExpandedDebtId(null); }}
+                      className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors"
                     >
-                      {isExpanded ? "Hide" : `${group.debts.length} debt${group.debts.length !== 1 ? "s" : ""}`}
-                      {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      <Wallet className="h-3.5 w-3.5" />
+                      Pay ({group.activeDebts.length} debts)
                     </button>
-                  </div>
+                  )}
+                  {/* View / close expand */}
+                  <button
+                    onClick={() => { setExpandedCustomer(isExpanded ? null : group.key); setExpandedDebtId(null); }}
+                    className={cn(
+                      "ml-auto flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-semibold transition-colors",
+                      isExpanded
+                        ? "bg-muted text-foreground"
+                        : "bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+                    )}
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    {isExpanded ? "Close" : `${group.debts.length} debt${group.debts.length !== 1 ? "s" : ""}`}
+                    {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </button>
                 </div>
 
                 {/* ── Expanded: individual debts ── */}
                 {isExpanded && (
-                  <div className="border-t border-border/40 divide-y divide-border/30 bg-muted/10">
-                    {group.debts.map((debt, di) => {
+                  <div className="border-t border-border/40 divide-y divide-border/20 bg-background/60">
+                    {group.debts.map(debt => {
                       const isPaid = debt.status === "paid";
                       const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
-                      const isOverdue = !isPaid && daysAgo > 30;
+                      const isOverdueDebt = !isPaid && daysAgo > 30;
                       const debtPaidPct = debt.totalAmount > 0
                         ? Math.round(((debt.totalAmount - debt.balance) / debt.totalAmount) * 100)
                         : 0;
                       const items: { productName: string; quantity: number; unitPrice: number; totalPrice: number }[] = (debt as any).items || [];
 
                       return (
-                        <div key={debt.id}>
-                          <div className="px-4 py-3">
-                            {/* Debt header */}
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                <span className={cn(
-                                  "text-[9px] font-bold uppercase px-1.5 py-0.5 rounded",
-                                  isPaid ? "bg-emerald-500/15 text-emerald-400" :
-                                  isOverdue ? "bg-red-500/15 text-red-400" :
-                                  debt.status === "partial" ? "bg-orange-500/15 text-orange-400" :
-                                  "bg-destructive/15 text-destructive"
-                                )}>
-                                  {isOverdue ? `${daysAgo}d overdue` : debt.status}
-                                </span>
-                                <span className="text-[10px] text-muted-foreground/50 flex items-center gap-1">
-                                  <CalendarClock className="h-2.5 w-2.5" />
-                                  {format(new Date(debt.createdAt), "d MMM yyyy")}
-                                </span>
-                              </div>
+                        <div key={debt.id} className="px-4 py-3">
+                          {/* Debt row header */}
+                          <div className="flex items-start justify-between gap-3 mb-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className={cn(
-                                "text-sm font-bold font-mono",
-                                isPaid ? "text-emerald-400" : isOverdue ? "text-red-400" : "text-foreground"
+                                "text-[9px] font-bold uppercase px-1.5 py-0.5 rounded leading-none",
+                                isPaid          ? "bg-emerald-500/15 text-emerald-400" :
+                                isOverdueDebt   ? "bg-red-500/15 text-red-400" :
+                                debt.status === "partial" ? "bg-orange-500/15 text-orange-400" :
+                                                  "bg-destructive/15 text-destructive"
                               )}>
-                                {isPaid ? formatKES(debt.totalAmount) : `${formatKES(debt.balance)} left`}
+                                {isOverdueDebt ? `${daysAgo}d overdue` : debt.status}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground/50 flex items-center gap-1">
+                                <CalendarClock className="h-2.5 w-2.5" />
+                                {format(new Date(debt.createdAt), "d MMM yyyy")}
                               </span>
                             </div>
+                            <span className={cn(
+                              "text-sm font-bold font-mono shrink-0",
+                              isPaid ? "text-emerald-400" : isOverdueDebt ? "text-red-400" : "text-foreground"
+                            )}>
+                              {isPaid ? formatKES(debt.totalAmount) : `${formatKES(debt.balance)} left`}
+                            </span>
+                          </div>
 
-                            {/* Mini progress */}
-                            <div className="h-1 bg-muted rounded-full overflow-hidden mb-2">
+                          {/* Mini progress */}
+                          {!isPaid && (
+                            <div className="h-1 bg-muted rounded-full overflow-hidden mb-2.5">
                               <div className={cn(
                                 "h-full rounded-full",
-                                isPaid ? "bg-emerald-400" : isOverdue ? "bg-red-400" : debt.status === "partial" ? "bg-orange-400" : "bg-primary"
+                                isOverdueDebt ? "bg-red-400" : debt.status === "partial" ? "bg-orange-400" : "bg-primary"
                               )} style={{ width: `${debtPaidPct}%` }} />
                             </div>
+                          )}
 
-                            {/* Items preview */}
-                            {items.length > 0 && (
-                              <div className="rounded-lg border border-border/20 bg-background/40 overflow-hidden mb-2">
-                                {items.slice(0, 2).map((item, i) => (
-                                  <div key={i} className={cn("flex items-center gap-2 px-2.5 py-1.5", i > 0 && "border-t border-border/20")}>
-                                    <Package className="h-3 w-3 text-primary/50 shrink-0" />
-                                    <span className="flex-1 text-[11px] text-foreground/70 truncate">{item.productName}</span>
-                                    <span className="text-[10px] text-muted-foreground/50 font-mono shrink-0">×{item.quantity}</span>
-                                    <span className="text-[11px] font-bold font-mono text-foreground/60 shrink-0">{formatKES(item.totalPrice)}</span>
-                                  </div>
-                                ))}
-                                {items.length > 2 && (
-                                  <div className="px-2.5 py-1 border-t border-border/20 text-[10px] text-muted-foreground/40 text-center">
-                                    +{items.length - 2} more
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Per-debt actions */}
-                            <div className="flex gap-2 flex-wrap items-center">
-                              {!isPaid && <PaymentDialog debt={debt} />}
-                              <DebtDownloadButton debt={debt} />
-                              <button
-                                onClick={() => setExpandedDebtId(expandedDebtId === debt.id ? null : debt.id)}
-                                className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-muted/60 hover:bg-muted text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
-                              >
-                                <History className="h-3 w-3" />
-                                {expandedDebtId === debt.id ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                              </button>
-                              {isOwner && !isPaid && <MarkPaidButton debt={debt} />}
-                              {isOwner && <DeleteDebtDialog debt={debt} onDeleted={handleDeleted} />}
+                          {/* Items preview */}
+                          {items.length > 0 && (
+                            <div className="rounded-xl border border-border/20 bg-background/50 overflow-hidden mb-2.5">
+                              {items.slice(0, 2).map((item, i) => (
+                                <div key={i} className={cn("flex items-center gap-2 px-3 py-2", i > 0 && "border-t border-border/20")}>
+                                  <Package className="h-3 w-3 text-primary/40 shrink-0" />
+                                  <span className="flex-1 text-[11px] text-foreground/70 truncate">{item.productName}</span>
+                                  <span className="text-[10px] text-muted-foreground/40 font-mono shrink-0">×{item.quantity}</span>
+                                  <span className="text-[11px] font-bold font-mono text-foreground/60 shrink-0">{formatKES(item.totalPrice)}</span>
+                                </div>
+                              ))}
+                              {items.length > 2 && (
+                                <div className="px-3 py-1.5 border-t border-border/20 text-[10px] text-muted-foreground/40 text-center">
+                                  +{items.length - 2} more item{items.length - 2 !== 1 ? "s" : ""}
+                                </div>
+                              )}
                             </div>
+                          )}
+
+                          {/* Per-debt actions */}
+                          <div className="flex gap-2 flex-wrap items-center">
+                            {!isPaid && <PaymentDialog debt={debt} />}
+                            <DebtDownloadButton debt={debt} />
+                            <button
+                              onClick={() => setExpandedDebtId(expandedDebtId === debt.id ? null : debt.id)}
+                              className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-muted/60 hover:bg-muted text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              <History className="h-3 w-3" />
+                              {expandedDebtId === debt.id ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                            </button>
+                            {isOwner && !isPaid && <MarkPaidButton debt={debt} />}
+                            {isOwner && <DeleteDebtDialog debt={debt} onDeleted={handleDeleted} />}
                           </div>
 
                           {/* Payment history panel */}
