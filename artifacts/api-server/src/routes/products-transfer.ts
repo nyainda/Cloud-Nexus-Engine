@@ -91,9 +91,17 @@ productsTransferRouter.post("/products/:productId/transfer", requireAuth, async 
     .set({ stockQty: sql`${products.stockQty} - ${body.qty}`, updatedAt: now })
     .where(eq(products.id, productId));
 
+  // Also sync pricing/unit from source so the receiving shop has up-to-date cost data
   await db
     .update(products)
-    .set({ stockQty: sql`${products.stockQty} + ${body.qty}`, updatedAt: now })
+    .set({
+      stockQty: sql`${products.stockQty} + ${body.qty}`,
+      purchasePrice: sourceProduct.purchasePrice ?? null,
+      sellingPrice: sourceProduct.sellingPrice ?? null,
+      profitMargin: sourceProduct.profitMargin ?? null,
+      unit: sourceProduct.unit ?? "unit",
+      updatedAt: now,
+    })
     .where(eq(products.id, targetProduct!.id));
 
   // Re-read committed quantities (used for inventory movement log and API response)

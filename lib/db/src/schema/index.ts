@@ -110,6 +110,9 @@ export const sales = sqliteTable("sales", {
   saleType: text("sale_type", { enum: ["cash", "debt"] })
     .notNull()
     .default("cash"),
+  paymentMethod: text("payment_method", { enum: ["cash", "bank"] })
+    .notNull()
+    .default("cash"),
   servedBy: text("served_by"),
   syncStatus: text("sync_status").notNull().default("synced"),
   isDeleted: integer("is_deleted", { mode: "boolean" }).notNull().default(false),

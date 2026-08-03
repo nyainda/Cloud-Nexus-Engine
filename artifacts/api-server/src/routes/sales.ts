@@ -87,6 +87,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   const body = await c.req.json<{
     shopId: string;
     saleType: "cash" | "debt";
+    paymentMethod?: "cash" | "bank";
     servedBy?: string;
     discount?: number;
     discountOverrideBy?: string;
@@ -166,6 +167,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     totalProfit: totalProfit > 0 ? totalProfit : null,
     discount,
     saleType: body.saleType,
+    paymentMethod: body.saleType === "debt" ? "cash" : (body.paymentMethod ?? "cash"),
     servedBy: body.servedBy ?? null,
     syncStatus: "synced",
     isDeleted: false,

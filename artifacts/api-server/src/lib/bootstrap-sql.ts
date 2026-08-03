@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS sales (
   total_profit REAL,
   discount REAL NOT NULL DEFAULT 0,
   sale_type TEXT NOT NULL DEFAULT 'cash',
+  payment_method TEXT NOT NULL DEFAULT 'cash',
   served_by TEXT,
   sync_status TEXT NOT NULL DEFAULT 'synced',
   is_deleted INTEGER NOT NULL DEFAULT 0,

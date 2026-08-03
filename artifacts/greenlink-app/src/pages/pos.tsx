@@ -15,6 +15,7 @@ import {
   AlertTriangle, PackageX, Package, CreditCard, Banknote, X,
   ChevronRight, TrendingUp, Scale, User2, Phone, ChevronDown, ArrowUpDown,
   ReceiptText, RotateCcw, ChevronUp, Ban, LayoutGrid, LayoutList, WifiOff, RefreshCw,
+  Landmark,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -533,12 +534,40 @@ const CartPanel = memo(function CartPanel({
             </div>
           </div>
 
+          {/* Payment method toggle — only relevant for non-debt sales */}
+          <div className="px-4 pb-2 bg-card">
+            <div className="flex rounded-xl bg-muted/40 p-0.5 gap-0.5">
+              <button
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-bold transition-colors",
+                  paymentMethod === "cash"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => setPaymentMethod("cash")}
+              >
+                <Banknote className="h-3.5 w-3.5" />Cash
+              </button>
+              <button
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-bold transition-colors",
+                  paymentMethod === "bank"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => setPaymentMethod("bank")}
+              >
+                <Landmark className="h-3.5 w-3.5" />Bank / M-Pesa
+              </button>
+            </div>
+          </div>
           <div className="px-4 pb-4 grid grid-cols-2 gap-2 bg-card">
             <Button variant="outline" className="h-12 font-bold text-sm border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={createSalePending} onClick={() => handleCheckout("debt")}>
               <CreditCard className="h-4 w-4 mr-1.5" />Debt Sale
             </Button>
-            <Button className="h-12 font-bold text-sm bg-primary text-primary-foreground" disabled={createSalePending} onClick={() => handleCheckout("cash")}>
-              <Banknote className="h-4 w-4 mr-1.5" />Cash Sale
+            <Button className="h-12 font-bold text-sm bg-primary text-primary-foreground" disabled={createSalePending} onClick={() => handleCheckout("cash", paymentMethod)}>
+              {paymentMethod === "bank" ? <Landmark className="h-4 w-4 mr-1.5" /> : <Banknote className="h-4 w-4 mr-1.5" />}
+              {paymentMethod === "bank" ? "Bank Sale" : "Cash Sale"}
             </Button>
           </div>
         </div>
@@ -663,10 +692,16 @@ function RecentSalesDrawer({ shopId, userName, onClose }: { shopId: string; user
                     {isVoided ? <Ban className="h-4 w-4" /> : num}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-bold text-foreground">{formatKES(sale.totalAmount)}</span>
                       {isVoided && <span className="text-[10px] font-bold text-muted-foreground bg-muted px-1.5 py-0.5 rounded">VOIDED</span>}
                       {isDebt && !isVoided && <span className="text-[10px] font-bold text-destructive bg-destructive/10 px-1.5 py-0.5 rounded">DEBT</span>}
+                      {!isDebt && !isVoided && sale.paymentMethod === "bank" && (
+                        <span className="text-[10px] font-bold text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">BANK</span>
+                      )}
+                      {!isDebt && !isVoided && (!sale.paymentMethod || sale.paymentMethod === "cash") && (
+                        <span className="text-[10px] font-bold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded">CASH</span>
+                      )}
                     </div>
                     <p className="text-[11px] text-muted-foreground/60 truncate">
                       {time} · by {sale.servedBy ?? "staff"}
@@ -816,6 +851,7 @@ export default function POS() {
   const [showCartMobile, setShowCartMobile] = useState(false);
   const [debtCustomerName, setDebtCustomerName] = useState("");
   const [debtCustomerPhone, setDebtCustomerPhone] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "bank">("cash");
   const createSale = useCreateSale();
   // Guard against double-tapping the checkout button — cleared in onSettled / onError / offline path
   const submittingRef = useRef(false);
@@ -928,7 +964,7 @@ export default function POS() {
   }, 0), [cart]);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
-  const handleCheckout = useCallback(async (saleType: "cash" | "debt") => {
+  const handleCheckout = useCallback(async (saleType: "cash" | "debt", method?: "cash" | "bank") => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     if (cart.length === 0) { submittingRef.current = false; toast.error("Cart is empty"); return; }
@@ -937,6 +973,7 @@ export default function POS() {
     const discountSnapshot = discount;
     const debtName = debtCustomerName;
     const debtPhone = debtCustomerPhone;
+    const chosenMethod = saleType === "debt" ? "cash" : (method ?? paymentMethod);
     const mutationId = newMutationId();
     const ts = () => new Date().toISOString();
 
@@ -964,12 +1001,14 @@ export default function POS() {
 
     setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setShowCartMobile(false);
     // Show confirmation immediately — don't wait for the network
-    toast.success(saleType === "cash" ? "✓ Cash sale complete!" : "✓ Debt recorded!");
+    const successMsg = saleType === "debt" ? "✓ Debt recorded!" : chosenMethod === "bank" ? "✓ Bank payment complete!" : "✓ Cash sale complete!";
+    toast.success(successMsg);
 
-    logInventory({ stage: "mutation_started", mutationId, source: "pos", timestamp: ts(), extra: { saleType } });
+    logInventory({ stage: "mutation_started", mutationId, source: "pos", timestamp: ts(), extra: { saleType, paymentMethod: chosenMethod } });
 
     const salePayload = {
       shopId, saleType,
+      paymentMethod: chosenMethod,
       discount: discountSnapshot,
       items: cartSnapshot.map(i => ({ productId: i.product.id, qty: i.qty, unitPrice: i.unitPrice })),
       servedBy: userName,
