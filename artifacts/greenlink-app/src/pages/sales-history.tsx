@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { format, addDays, subDays, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
 
+
 function fmt(n: number | null | undefined) {
   if (n == null) return "—";
   return "KES " + Number(n).toLocaleString("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 0 });

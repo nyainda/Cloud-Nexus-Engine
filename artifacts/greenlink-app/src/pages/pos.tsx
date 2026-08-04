@@ -15,8 +15,9 @@ import {
   AlertTriangle, PackageX, Package, CreditCard, Banknote, X,
   ChevronRight, TrendingUp, Scale, User2, Phone, ChevronDown, ArrowUpDown,
   ReceiptText, RotateCcw, ChevronUp, Ban, LayoutGrid, LayoutList, WifiOff, RefreshCw,
-  Landmark,
+  Landmark, Printer, CheckCircle2,
 } from "lucide-react";
+import { printSaleReceipt } from "@/lib/print-receipt";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { cn } from "@/lib/utils";
@@ -258,6 +259,93 @@ function QuickAddSheet({
   );
 }
 
+// ─── Sale Complete Overlay ───────────────────────────────────────────────────
+function SaleCompleteOverlay({ sale, onDismiss }: { sale: any; onDismiss: () => void }) {
+  const [countdown, setCountdown] = useState(8);
+  useEffect(() => {
+    const t = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) { clearInterval(t); onDismiss(); return 0; }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [onDismiss]);
+
+  const isDebt = sale.saleType === "debt";
+  const payLabel = isDebt ? "Credit / Debt"
+    : sale.paymentMethod === "bank" ? "M-Pesa / Bank"
+    : "Cash";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 sm:p-6">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onDismiss} />
+      <div className="relative bg-card rounded-2xl border border-border shadow-2xl w-full max-w-sm overflow-hidden">
+        {/* Accent bar */}
+        <div className="h-1.5 bg-gradient-to-r from-emerald-500 to-primary" />
+        <div className="p-6 space-y-5">
+          {/* Icon + title */}
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold leading-tight">Sale Complete!</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">{payLabel}</p>
+            </div>
+          </div>
+
+          {/* Amount card */}
+          <div className="bg-muted/40 rounded-2xl p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 mb-1">Total</p>
+            <p className="text-3xl font-bold font-mono text-primary">{formatKES(sale.totalAmount)}</p>
+            {isDebt && sale.debtCustomerName && (
+              <p className="text-sm text-amber-400 font-semibold mt-2 flex items-center gap-1.5">
+                <CreditCard className="h-3.5 w-3.5" />{sale.debtCustomerName}
+              </p>
+            )}
+            {sale.discount > 0 && (
+              <p className="text-xs text-muted-foreground/50 mt-1">incl. {formatKES(sale.discount)} discount</p>
+            )}
+            <p className="text-[10px] text-muted-foreground/40 mt-2 font-mono">
+              #{(sale.id || "").slice(0, 8).toUpperCase()}
+            </p>
+          </div>
+
+          {/* Items summary */}
+          {sale.items?.length > 0 && (
+            <div className="text-xs text-muted-foreground space-y-0.5 max-h-24 overflow-y-auto">
+              {sale.items.map((it: any, i: number) => (
+                <div key={i} className="flex justify-between">
+                  <span className="truncate mr-2">{it.productName} × {it.qty}</span>
+                  <span className="font-mono shrink-0">{formatKES(it.totalPrice)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => printSaleReceipt(sale)}
+              className="flex-1 flex items-center justify-center gap-2 h-11 rounded-xl border border-border bg-muted/40 hover:bg-muted text-sm font-semibold transition-colors"
+            >
+              <Printer className="h-4 w-4" />
+              Print Receipt
+            </button>
+            <button
+              onClick={onDismiss}
+              className="flex-1 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-colors"
+            >
+              New Sale ({countdown}s)
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── CartPanel — plain divs, no Radix ScrollArea ───────────────────────────────
 interface CartPanelProps {
   cart: CartItem[];
@@ -284,6 +372,8 @@ interface CartPanelProps {
   setPaymentMethod: (v: "cash" | "bank") => void;
   selectedCustomerBalance: number | null;
   setSelectedCustomerBalance: (v: number | null) => void;
+  autoPrint: boolean;
+  onAutoPrintChange: (v: boolean) => void;
 }
 
 const CartPanel = memo(function CartPanel({
@@ -293,6 +383,7 @@ const CartPanel = memo(function CartPanel({
   setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout, setQtyDirect,
   paymentMethod, setPaymentMethod,
   selectedCustomerBalance, setSelectedCustomerBalance,
+  autoPrint, onAutoPrintChange,
 }: CartPanelProps) {
   return (
     <div className="flex flex-col h-full bg-card">
@@ -510,6 +601,27 @@ const CartPanel = memo(function CartPanel({
               </button>
             </div>
           </div>
+          {/* Auto-print toggle */}
+          <div className="flex items-center justify-between px-4 pb-2 bg-card">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <Printer className="h-3.5 w-3.5" />
+              <span className="text-xs">Auto-print receipt</span>
+            </div>
+            <button
+              onClick={() => onAutoPrintChange(!autoPrint)}
+              className={cn(
+                "relative w-9 h-5 rounded-full transition-colors shrink-0",
+                autoPrint ? "bg-primary" : "bg-muted border border-border"
+              )}
+              title={autoPrint ? "Auto-print on — tap to disable" : "Auto-print off — tap to enable"}
+            >
+              <div className={cn(
+                "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-150",
+                autoPrint ? "left-[18px]" : "left-0.5"
+              )} />
+            </button>
+          </div>
+
           <div className="px-4 pb-4 grid grid-cols-2 gap-2 bg-card">
             <Button variant="outline" className="h-12 font-bold text-sm border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={createSalePending} onClick={() => handleCheckout("debt")}>
               <CreditCard className="h-4 w-4 mr-1.5" />Debt Sale
