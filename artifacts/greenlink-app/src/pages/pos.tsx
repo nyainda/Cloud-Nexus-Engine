@@ -26,6 +26,11 @@ function isWeighedUnit(unit: string): boolean {
   return WEIGHT_UNITS.has((unit || "").trim().toLowerCase());
 }
 
+// sessionStorage key used to persist an in-progress cart across navigation.
+// A different key ("greenlink_pending_cart") is used for the quotation handoff
+// so the two flows never collide.
+const CART_DRAFT_KEY = "greenlink_cart_draft";
+
 interface CartItem {
   product: any;
   qty: number;
@@ -211,7 +216,7 @@ function QuickAddSheet({
                 ref={qtyInputRef}
                 type="number" min={qtyMin} step={qtyStep} max={product.stockQty}
                 value={qty}
-                onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= qtyMin) setQty(v); }}
+                onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= qtyMin) setQty(Math.min(v, product.stockQty)); }}
                 onFocus={e => e.target.select()}
                 className="flex-1 h-14 text-center text-3xl font-bold font-mono bg-muted border border-border rounded-xl focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
               />
@@ -862,47 +867,96 @@ export default function POS() {
   const [quickAddProduct, setQuickAddProduct] = useState<any | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
-  // ── Load pending cart from quotation "Convert to Sale" ──
+  // ── Persist cart draft to sessionStorage on every change ─────────────────────
+  // Lets the cashier navigate to Debts / Stock / etc. and come back to find
+  // their cart exactly as they left it. The draft is cleared after a successful
+  // checkout or when the cart is manually emptied.
   useEffect(() => {
-    const raw = sessionStorage.getItem("greenlink_pending_cart");
-    if (!raw) return;
-    const products = productsData?.products;
-    if (!products?.length) return; // wait until products loaded
+    if (cart.length === 0 && discount === 0 && !debtCustomerName) {
+      sessionStorage.removeItem(CART_DRAFT_KEY);
+      return;
+    }
     try {
-      const pending = JSON.parse(raw);
-      const cartItems: CartItem[] = [];
-      for (const item of pending.items ?? []) {
-        const product = products.find((p: any) => p.id === item.productId);
-        if (product) {
-          cartItems.push({ product, qty: item.qty, unitPrice: item.unitPrice });
-        } else {
-          // Product not found by ID — create a minimal stub so nothing is silently lost
-          cartItems.push({
-            product: {
-              id: item.productId || `stub-${Math.random()}`,
-              canonicalName: item.productName,
-              normalizedName: item.productName,
-              sellingPrice: item.unitPrice,
-              purchasePrice: 0,
-              stockQty: 9999,
-              unit: item.unit || "unit",
-              category: "",
-              sku: "",
-              isActive: true,
-            },
-            qty: item.qty,
-            unitPrice: item.unitPrice,
-          });
+      sessionStorage.setItem(CART_DRAFT_KEY, JSON.stringify({
+        items: cart.map(i => ({ productId: i.product.id, qty: i.qty, unitPrice: i.unitPrice })),
+        discount,
+        debtCustomerName,
+        debtCustomerPhone,
+      }));
+    } catch {}
+  }, [cart, discount, debtCustomerName, debtCustomerPhone]);
+
+  // ── Restore cart on mount (quotation handoff takes priority over draft) ───────
+  useEffect(() => {
+    const products = productsData?.products;
+    if (!products?.length) return; // wait until products are loaded
+
+    // 1. Quotation "Convert to Sale" handoff — highest priority
+    const quotationRaw = sessionStorage.getItem("greenlink_pending_cart");
+    if (quotationRaw) {
+      try {
+        const pending = JSON.parse(quotationRaw);
+        const cartItems: CartItem[] = [];
+        for (const item of pending.items ?? []) {
+          const product = products.find((p: any) => p.id === item.productId);
+          if (product) {
+            cartItems.push({ product, qty: item.qty, unitPrice: item.unitPrice });
+          } else {
+            // Product not found by ID — create a minimal stub so nothing is silently lost
+            cartItems.push({
+              product: {
+                id: item.productId || `stub-${Math.random()}`,
+                canonicalName: item.productName,
+                normalizedName: item.productName,
+                sellingPrice: item.unitPrice,
+                purchasePrice: 0,
+                stockQty: 9999,
+                unit: item.unit || "unit",
+                category: "",
+                sku: "",
+                isActive: true,
+              },
+              qty: item.qty,
+              unitPrice: item.unitPrice,
+            });
+          }
         }
+        if (cartItems.length > 0) {
+          setCart(cartItems);
+          if (pending.discount > 0) setDiscount(pending.discount);
+          if (pending.customerName) setDebtCustomerName(pending.customerName);
+          toast.success(`${pending.fromQuote ?? "Quote"} loaded into cart (${cartItems.length} item${cartItems.length !== 1 ? "s" : ""})`);
+        }
+      } catch {}
+      sessionStorage.removeItem("greenlink_pending_cart");
+      return; // don't also restore a draft when a quotation was present
+    }
+
+    // 2. Draft cart — restore when the cashier navigated away and came back
+    const draftRaw = sessionStorage.getItem(CART_DRAFT_KEY);
+    if (!draftRaw) return;
+    try {
+      const draft = JSON.parse(draftRaw);
+      if (!draft.items?.length) return;
+      const cartItems: CartItem[] = [];
+      for (const item of draft.items) {
+        const product = products.find((p: any) => p.id === item.productId);
+        if (!product) continue; // product deleted — skip silently
+        // Use the live product record (fresh stock/price) but keep the qty and
+        // the price the cashier had already set.
+        const maxQty = product.stockQty;
+        if (maxQty <= 0) continue; // now out of stock — skip
+        const restoredQty = Math.min(item.qty, maxQty);
+        cartItems.push({ product, qty: restoredQty, unitPrice: item.unitPrice });
       }
       if (cartItems.length > 0) {
         setCart(cartItems);
-        if (pending.discount > 0) setDiscount(pending.discount);
-        if (pending.customerName) setDebtCustomerName(pending.customerName);
-        toast.success(`${pending.fromQuote ?? "Quote"} loaded into cart (${cartItems.length} item${cartItems.length !== 1 ? "s" : ""})`);
+        if (draft.discount > 0) setDiscount(draft.discount);
+        if (draft.debtCustomerName) setDebtCustomerName(draft.debtCustomerName);
+        if (draft.debtCustomerPhone) setDebtCustomerPhone(draft.debtCustomerPhone);
+        toast.success(`Cart restored (${cartItems.length} item${cartItems.length !== 1 ? "s" : ""})`);
       }
     } catch {}
-    sessionStorage.removeItem("greenlink_pending_cart");
   }, [productsData]);
 
   // Lock body scroll when mobile cart is open
@@ -928,7 +982,8 @@ export default function POS() {
             : i
         );
       }
-      return [...prev, { product, qty, unitPrice: price }];
+      // Clamp qty to available stock for new cart lines
+      return [...prev, { product, qty: Math.min(qty, product.stockQty), unitPrice: price }];
     });
     toast.success(`${product.canonicalName} added`);
   };
@@ -972,6 +1027,13 @@ export default function POS() {
     submittingRef.current = true;
     if (cart.length === 0) { submittingRef.current = false; toast.error("Cart is empty"); return; }
     if (saleType === "debt" && !debtCustomerName.trim()) { submittingRef.current = false; toast.error("Enter customer name for debt sale"); return; }
+    // Block checkout if any item has no price — prevents silent KES 0 sales
+    const zeroPriceItems = cart.filter(i => !i.unitPrice || i.unitPrice <= 0 || !isFinite(i.unitPrice));
+    if (zeroPriceItems.length > 0) {
+      submittingRef.current = false;
+      toast.error(`Set a price for: ${zeroPriceItems.map(i => i.product.canonicalName).join(", ")}`);
+      return;
+    }
     const cartSnapshot = [...cart];
     const discountSnapshot = discount;
     const debtName = debtCustomerName;
@@ -1009,11 +1071,20 @@ export default function POS() {
 
     logInventory({ stage: "mutation_started", mutationId, source: "pos", timestamp: ts(), extra: { saleType, paymentMethod: chosenMethod } });
 
+    // Clamp discount: never negative, never exceeds subtotal
+    const rawSubtotal = cartSnapshot.reduce((s, i) => s + i.qty * i.unitPrice, 0);
+    const safeDiscount = Math.min(Math.max(0, discountSnapshot), rawSubtotal);
+
     const salePayload = {
       shopId, saleType,
       paymentMethod: chosenMethod,
-      discount: discountSnapshot,
-      items: cartSnapshot.map(i => ({ productId: i.product.id, qty: i.qty, unitPrice: i.unitPrice })),
+      discount: safeDiscount,
+      // Guard unit price: NaN / Infinity would corrupt the sale record on the server
+      items: cartSnapshot.map(i => ({
+        productId: i.product.id,
+        qty: i.qty,
+        unitPrice: isFinite(i.unitPrice) && i.unitPrice > 0 ? i.unitPrice : 0,
+      })),
       servedBy: userName,
       debtCustomerName: saleType === "debt" ? debtName : undefined,
       debtCustomerPhone: saleType === "debt" ? debtPhone : undefined,
@@ -1021,11 +1092,21 @@ export default function POS() {
 
     // If offline, queue the sale and return — sync will fire on reconnect
     if (!navigator.onLine) {
-      await enqueueMutation("sale", shopId, salePayload);
-      logInventory({ stage: "queued_offline", mutationId, source: "pos", timestamp: ts(), extra: { saleType } });
-      // Refresh badge count immediately so the cashier sees the updated number
-      await refreshOfflineCount();
-      submittingRef.current = false;
+      try {
+        await enqueueMutation("sale", shopId, salePayload);
+        logInventory({ stage: "queued_offline", mutationId, source: "pos", timestamp: ts(), extra: { saleType } });
+        await refreshOfflineCount();
+      } catch (enqueueErr) {
+        // IndexedDB write failed — roll back the optimistic stock decrement and
+        // restore the cart so the cashier can retry. Without this the stock would
+        // appear decremented even though nothing was queued.
+        productsSnapshot.forEach(([key, data]) => qc.setQueryData(key, data));
+        setCart(cartSnapshot); setDiscount(discountSnapshot);
+        logInventory({ stage: "offline_enqueue_failed", mutationId, source: "pos", timestamp: ts(), extra: { error: String(enqueueErr) } });
+        toast.error("Could not save offline sale — please retry");
+      } finally {
+        submittingRef.current = false;
+      }
       return;
     }
 

@@ -21,6 +21,7 @@ export type MutationStage =
   | "pending_removed"
   | "version_compared"
   | "queued_offline"
+  | "offline_enqueue_failed"
   | "cache_seeded"
   | "cache_saved";
 
