@@ -918,6 +918,17 @@ export default function POS() {
   // Guard against double-tapping the checkout button — cleared in onSettled / onError / offline path
   const submittingRef = useRef(false);
 
+  // Receipt overlay — set to the completed sale object after a successful checkout
+  const [completedSale, setCompletedSale] = useState<any | null>(null);
+  const AUTO_PRINT_KEY = "greenlink_auto_print";
+  const [autoPrint, setAutoPrint] = useState(() => localStorage.getItem(AUTO_PRINT_KEY) === "true");
+  const autoPrintRef = useRef(autoPrint);
+  useEffect(() => { autoPrintRef.current = autoPrint; }, [autoPrint]);
+  const handleAutoPrintChange = useCallback((v: boolean) => {
+    setAutoPrint(v);
+    localStorage.setItem(AUTO_PRINT_KEY, String(v));
+  }, []);
+
   const [quickAddProduct, setQuickAddProduct] = useState<any | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
@@ -1186,6 +1197,30 @@ export default function POS() {
     createSale.mutate(
       { data: salePayload },
       {
+        onSuccess: (data: any) => {
+          // Build a receipt-ready sale object by merging API response with cart snapshot
+          const snapshotTotal = rawSubtotal - safeDiscount;
+          const saleForReceipt = {
+            ...(data ?? {}),
+            id: data?.id ?? data?.saleId ?? "",
+            createdAt: data?.createdAt ?? new Date().toISOString(),
+            saleType,
+            paymentMethod: chosenMethod,
+            totalAmount: data?.totalAmount ?? snapshotTotal,
+            discount: safeDiscount,
+            debtCustomerName: saleType === "debt" ? debtName : undefined,
+            servedBy: userName,
+            items: cartSnapshot.map(i => ({
+              productId: i.product.id,
+              productName: i.product.canonicalName,
+              qty: i.qty,
+              unitPrice: i.unitPrice,
+              totalPrice: i.qty * i.unitPrice,
+            })),
+          };
+          setCompletedSale(saleForReceipt);
+          if (autoPrintRef.current) printSaleReceipt(saleForReceipt);
+        },
         onError: (err: any) => {
           submittingRef.current = false;
           // Rollback all product cache entries to pre-sale state
@@ -1215,6 +1250,7 @@ export default function POS() {
     setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout, setQtyDirect,
     paymentMethod, setPaymentMethod,
     selectedCustomerBalance, setSelectedCustomerBalance,
+    autoPrint, onAutoPrintChange: handleAutoPrintChange,
   };
 
   return (
@@ -1592,6 +1628,14 @@ export default function POS() {
           shopId={shopId}
           userName={userName}
           onClose={() => setShowRecentSales(false)}
+        />
+      )}
+
+      {/* Sale Complete overlay — shown after a successful checkout */}
+      {completedSale && (
+        <SaleCompleteOverlay
+          sale={completedSale}
+          onDismiss={() => setCompletedSale(null)}
         />
       )}
     </div>
