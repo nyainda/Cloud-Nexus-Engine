@@ -1125,7 +1125,7 @@ function AddDebtDialog({ shopId, onAdded }: { shopId: string; onAdded: () => voi
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
       >
         <UserPlus className="h-3.5 w-3.5" />
-        Add Debt
+        New Debt
       </button>
 
       <Dialog open={open} onOpenChange={(o) => { if (!o) { setOpen(false); reset(); } }}>
@@ -1349,23 +1349,27 @@ export default function Debts() {
   ];
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full overflow-hidden">
 
-      {/* ── Compact sticky header: title · search · tabs ─────────────── */}
-      <div className="sticky top-0 z-20 bg-card/98 backdrop-blur-sm border-b border-border">
-        {/* Title row */}
-        <div className="flex items-center justify-between px-4 pt-3 pb-2">
+      {/* ── Left panel ──────────────────────────────────────────────── */}
+      <div className={cn(
+        "flex flex-col min-w-0 overflow-hidden transition-all duration-200",
+        selectedDebt ? "hidden lg:flex lg:flex-1" : "flex-1"
+      )}>
+
+      {/* Sticky header */}
+      <div className="shrink-0 border-b border-border bg-card/98 backdrop-blur-sm">
+        {/* Title + actions */}
+        <div className="flex items-center justify-between px-4 pt-4 pb-3 gap-3">
           <div>
-            <h1 className="text-xl font-bold font-display tracking-tight">Customer Debts</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {grouped.length} customer{grouped.length !== 1 ? "s" : ""} · {stats.activeCount} open
-            </p>
+            <h1 className="text-lg font-bold font-display tracking-tight">Manage Debts</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">Track customer debts and payments</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {stats.overdueWithPhone.length > 0 && (
               <button
                 onClick={() => setBulkRemindOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#25D366]/10 border border-[#25D366]/25 text-[#25D366] text-xs font-semibold hover:bg-[#25D366]/20 transition-colors"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#25D366]/10 border border-[#25D366]/25 text-[#25D366] text-xs font-semibold hover:bg-[#25D366]/20 transition-colors"
               >
                 <Send className="h-3.5 w-3.5" />
                 Remind
@@ -1378,29 +1382,29 @@ export default function Debts() {
           </div>
         </div>
 
-        {/* Search */}
-        <div className="px-4 pb-2">
-          <div className="relative">
+        {/* Search + filter row */}
+        <div className="px-4 pb-2 flex gap-2">
+          <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
-              placeholder="Search by name or phone…"
-              className="pl-9 h-10 text-sm bg-muted/40 border-border/60 rounded-xl"
+              placeholder="Search by customer name or phone…"
+              className="pl-9 h-9 text-sm bg-muted/40 border-border/60 rounded-xl"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
         </div>
 
-        {/* Tabs */}
+        {/* Status tabs */}
         <div className="flex gap-1.5 px-4 pb-3 overflow-x-auto scrollbar-hide">
           {TABS.map(t => (
             <button
               key={t.value}
-              onClick={() => setTab(t.value)}
+              onClick={() => { setTab(t.value); setSelectedDebt(null); }}
               className={cn(
                 "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap",
                 tab === t.value
-                  ? "bg-primary text-primary-foreground"
+                  ? "bg-primary text-primary-foreground shadow-sm"
                   : "bg-muted/60 text-muted-foreground hover:text-foreground"
               )}
             >
@@ -1408,7 +1412,7 @@ export default function Debts() {
               {t.count > 0 && (
                 <span className={cn(
                   "text-[10px] font-bold tabular-nums",
-                  tab === t.value ? "text-primary-foreground/70" : (t.color ?? "text-muted-foreground/60")
+                  tab === t.value ? "text-primary-foreground/70" : "text-muted-foreground/60"
                 )}>
                   {t.count}
                 </span>
@@ -1416,9 +1420,199 @@ export default function Debts() {
             </button>
           ))}
         </div>
+      </div>{/* end sticky header */}
+
+      {/* ── Stats cards ──────────────────────────────────────────────── */}
+      <div className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-2.5 px-4 py-3 border-b border-border/60">
+        {STAT_CARDS.map(({ label, value, sub, Icon, iconBg, iconColor, valueCss }) => (
+          <div key={label} className="flex items-center gap-3 rounded-xl bg-card border border-border/50 px-3 py-2.5">
+            <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", iconBg)}>
+              <Icon className={cn("h-4 w-4", iconColor)} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground truncate">{label}</p>
+              <p className={cn("text-sm font-bold font-mono leading-tight truncate", valueCss)}>{value}</p>
+              <p className="text-[10px] text-muted-foreground/50 truncate">{sub}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* ── Bulk WhatsApp remind dialog ──────────────────────────────── */}
+      {/* ── Table area ───────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto">
+
+        {/* Column headers — hidden on mobile */}
+        {!isLoading && filtered.length > 0 && (
+          <div className="hidden sm:grid grid-cols-[auto_1fr_110px_100px_110px_32px] items-center px-4 py-2 border-b border-border/50 bg-muted/20 sticky top-0 z-10">
+            <div className="w-9 mr-3" />
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Customer</div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-right pr-4">Total Amount</div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-right pr-4">Balance</div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</div>
+            <div />
+          </div>
+        )}
+
+        {/* Loading skeletons */}
+        {isLoading ? (
+          <div className="divide-y divide-border/40">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-3.5 animate-pulse">
+                <div className="w-9 h-9 rounded-xl bg-muted/60 shrink-0" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3.5 w-32 bg-muted/60 rounded-full" />
+                  <div className="h-2.5 w-24 bg-muted/40 rounded-full" />
+                </div>
+                <div className="hidden sm:block h-3.5 w-20 bg-muted/40 rounded-full" />
+                <div className="h-3.5 w-16 bg-muted/50 rounded-full" />
+                <div className="hidden sm:block h-6 w-16 bg-muted/30 rounded-full" />
+              </div>
+            ))}
+          </div>
+
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
+            <CheckCircle2 className="h-12 w-12 text-emerald-500/20" />
+            <p className="text-sm font-semibold">
+              {tab === "paid" ? "No paid debts yet" : "All clear!"}
+            </p>
+            <p className="text-xs opacity-50 text-center px-8">
+              {search ? `No results for "${search}"` : `No ${tab !== "all" ? tab + " " : ""}debts found.`}
+            </p>
+          </div>
+
+        ) : (
+          <div className="divide-y divide-border/40">
+            {filtered.map((debt: any) => {
+              const isPaid    = debt.status === "paid";
+              const isPartial = debt.status === "partial";
+              const daysAgo   = differenceInDays(new Date(), new Date(debt.createdAt));
+              const isOverdue = !isPaid && daysAgo > 30;
+              const isSelected = selectedDebt?.id === debt.id;
+
+              const avatarBg =
+                isPaid    ? "bg-emerald-500/15 text-emerald-400" :
+                isOverdue ? "bg-red-500/15 text-red-400" :
+                isPartial ? "bg-orange-500/15 text-orange-400" :
+                            "bg-destructive/15 text-destructive";
+
+              const balanceCss =
+                isPaid    ? "text-emerald-400" :
+                isOverdue ? "text-red-400" :
+                isPartial ? "text-orange-400" :
+                            "text-destructive";
+
+              const statusBadge =
+                isPaid    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" :
+                isOverdue ? "bg-red-500/15 text-red-400 border-red-500/25" :
+                isPartial ? "bg-orange-500/15 text-orange-400 border-orange-500/25" :
+                            "bg-destructive/15 text-destructive border-destructive/25";
+
+              const statusLabel =
+                isOverdue ? "Overdue" :
+                isPaid    ? "Paid" :
+                isPartial ? "Partial" :
+                            "Unpaid";
+
+              const initials = debt.customerName
+                .split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
+
+              const totalPaid = (debt.totalAmount ?? 0) - (debt.balance ?? 0);
+
+              return (
+                <div
+                  key={debt.id}
+                  onClick={() => setSelectedDebt(isSelected ? null : debt)}
+                  className={cn(
+                    "group cursor-pointer transition-colors",
+                    "flex sm:grid sm:grid-cols-[auto_1fr_110px_100px_110px_32px] items-center gap-3 px-4 py-3",
+                    isSelected
+                      ? "bg-primary/8 border-l-2 border-l-primary"
+                      : "hover:bg-muted/30 border-l-2 border-l-transparent"
+                  )}
+                >
+                  {/* Avatar */}
+                  <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0", avatarBg)}>
+                    {initials}
+                  </div>
+
+                  {/* Name + phone */}
+                  <div className="flex-1 sm:flex-none min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate leading-snug">{toTitleCase(debt.customerName)}</p>
+                    {debt.customerPhone ? (
+                      <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-0.5">
+                        <Phone className="h-2.5 w-2.5 shrink-0" />{debt.customerPhone}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground/30 mt-0.5 italic">No phone</p>
+                    )}
+                  </div>
+
+                  {/* Total amount — hidden on mobile */}
+                  <div className="hidden sm:block text-right pr-4">
+                    <p className="text-sm font-semibold font-mono text-foreground">{formatKES(debt.totalAmount)}</p>
+                    <p className="text-[10px] text-muted-foreground/50">Paid: {formatKES(totalPaid)}</p>
+                  </div>
+
+                  {/* Balance */}
+                  <div className="text-right pr-4 shrink-0">
+                    <p className={cn("text-sm font-bold font-mono", balanceCss)}>{formatKES(debt.balance)}</p>
+                  </div>
+
+                  {/* Status badge */}
+                  <div className="hidden sm:flex items-center">
+                    <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusBadge)}>
+                      {statusLabel}
+                    </span>
+                  </div>
+
+                  {/* Arrow */}
+                  <div className="hidden sm:flex items-center justify-center">
+                    <ChevronRight className={cn("h-4 w-4 transition-colors", isSelected ? "text-primary" : "text-muted-foreground/30 group-hover:text-muted-foreground")} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Row count */}
+        {!isLoading && filtered.length > 0 && (
+          <p className="text-[11px] text-muted-foreground/40 text-center py-4">
+            Showing {filtered.length} record{filtered.length !== 1 ? "s" : ""}
+          </p>
+        )}
+      </div>
+
+      </div>{/* end left panel */}
+
+      {/* ── Right: detail panel (desktop) ────────────────────────────── */}
+      {selectedDebt && (
+        <div className="hidden lg:flex flex-col w-[420px] xl:w-[460px] shrink-0 border-l border-border">
+          <DebtDetailPanel
+            debt={selectedDebt}
+            isOwner={isOwner}
+            onClose={() => setSelectedDebt(null)}
+          />
+        </div>
+      )}
+
+      {/* ── Mobile: full-screen overlay panel ────────────────────────── */}
+      {selectedDebt && (
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedDebt(null)} />
+          <div className="relative bg-card rounded-t-2xl flex flex-col shadow-2xl" style={{ maxHeight: "92dvh" }}>
+            <div className="w-10 h-1 bg-muted-foreground/20 rounded-full mx-auto mt-2.5 mb-1 shrink-0" />
+            <DebtDetailPanel
+              debt={selectedDebt}
+              isOwner={isOwner}
+              onClose={() => setSelectedDebt(null)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk WhatsApp remind dialog ───────────────────────────────── */}
       {bulkRemindOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" onClick={() => setBulkRemindOpen(false)}>
           <div className="absolute inset-0 bg-black/60" />
@@ -1437,7 +1631,7 @@ export default function Debts() {
                 </p>
               </div>
               <button onClick={() => setBulkRemindOpen(false)} className="text-muted-foreground/50 hover:text-foreground p-1">
-                <ChevronDown className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
             <div className="overflow-y-auto flex-1 p-3 space-y-2">
@@ -1473,320 +1667,6 @@ export default function Debts() {
         </div>
       )}
 
-      {/* ── Stats banner (scrolls with content) ─────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 px-4 pt-4 pb-2">
-        <div className="rounded-2xl bg-destructive/10 border border-destructive/20 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-destructive/60 mb-2 flex items-center gap-1">
-            <TrendingDown className="h-3 w-3" />Outstanding
-          </p>
-          <p className="text-xl font-bold font-mono text-destructive leading-none">
-            {formatKES(stats.outstanding)}
-          </p>
-          <p className="text-[11px] text-muted-foreground/60 mt-2">
-            {stats.activeCount} active debt{stats.activeCount !== 1 ? "s" : ""}
-          </p>
-        </div>
-        <div className={cn(
-          "rounded-2xl border p-4",
-          stats.overdueCount > 0 ? "bg-orange-500/10 border-orange-500/20" : "bg-muted/30 border-border/40"
-        )}>
-          <p className={cn(
-            "text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1",
-            stats.overdueCount > 0 ? "text-orange-500/60" : "text-muted-foreground/50"
-          )}>
-            <Clock className="h-3 w-3" />Overdue 30d+
-          </p>
-          <p className={cn(
-            "text-xl font-bold font-mono leading-none",
-            stats.overdueCount > 0 ? "text-orange-400" : "text-muted-foreground/40"
-          )}>
-            {stats.overdueCount}
-          </p>
-          <p className="text-[11px] text-muted-foreground/60 mt-2">
-            {stats.overdueCount > 0 ? "need reminders" : "all on track"}
-          </p>
-        </div>
-      </div>
-
-      {/* ── Customer list ────────────────────────────────────────────── */}
-      <div className="px-4 pt-2 pb-8 space-y-3">
-        {isLoading ? (
-          Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-2xl border border-border bg-card p-4 animate-pulse">
-              <div className="flex items-start gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-muted/60 shrink-0" />
-                <div className="flex-1 space-y-2 pt-1">
-                  <div className="h-4 w-36 bg-muted/60 rounded-full" />
-                  <div className="h-3 w-24 bg-muted/40 rounded-full" />
-                </div>
-                <div className="space-y-2 shrink-0">
-                  <div className="h-5 w-24 bg-muted/50 rounded" />
-                  <div className="h-8 w-28 bg-muted/40 rounded-xl" />
-                </div>
-              </div>
-              <div className="mt-4 h-1.5 bg-muted/40 rounded-full" />
-              <div className="mt-3 flex gap-2">
-                <div className="h-8 w-24 bg-muted/30 rounded-xl" />
-                <div className="h-8 w-20 bg-muted/20 rounded-xl ml-auto" />
-              </div>
-            </div>
-          ))
-        ) : grouped.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
-            <CheckCircle2 className="h-12 w-12 text-emerald-500/20" />
-            <p className="text-sm font-semibold">
-              {tab === "paid" ? "No paid debts yet" : "All clear!"}
-            </p>
-            <p className="text-xs opacity-50 text-center">
-              {search ? `No results for "${search}"` : `No ${tab !== "all" ? tab : ""} debts found.`}
-            </p>
-          </div>
-        ) : (
-          grouped.map(group => {
-            const isExpanded = expandedCustomer === group.key;
-            const paidPct = group.totalAmount > 0
-              ? Math.round(((group.totalAmount - group.totalBalance) / group.totalAmount) * 100)
-              : 0;
-
-            const avatarColor =
-              group.worstStatus === "paid"    ? "bg-emerald-500/15 text-emerald-400" :
-              group.isOverdue                 ? "bg-red-500/15 text-red-400" :
-              group.worstStatus === "partial" ? "bg-orange-500/15 text-orange-400" :
-                                                "bg-destructive/15 text-destructive";
-            const balanceColor =
-              group.worstStatus === "paid"    ? "text-emerald-400" :
-              group.isOverdue                 ? "text-red-400" :
-              group.worstStatus === "partial" ? "text-orange-400" :
-                                                "text-destructive";
-            const barColor =
-              group.worstStatus === "paid"    ? "bg-emerald-400" :
-              group.isOverdue                 ? "bg-red-400" :
-              group.worstStatus === "partial" ? "bg-orange-400" :
-                                                "bg-primary";
-
-            const waMsg = `Hi ${group.customerName}, you have an outstanding balance of ${formatKES(group.totalBalance)} at our shop. Please settle at your earliest convenience. Thank you!`;
-            const waUrl = `https://wa.me/${group.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(waMsg)}`;
-
-            return (
-              <div
-                key={group.key}
-                className={cn(
-                  "rounded-2xl border bg-card overflow-hidden transition-all",
-                  group.isOverdue ? "border-red-500/30" : "border-border/70"
-                )}
-              >
-                {/* ── Card body ── */}
-                <div className="p-4">
-                  {/* Top row: avatar · name/phone · balance + pay button */}
-                  <div className="flex items-start gap-3">
-
-                    {/* Avatar */}
-                    <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center text-base font-bold shrink-0 mt-0.5", avatarColor)}>
-                      {group.customerName.charAt(0).toUpperCase()}
-                    </div>
-
-                    {/* Name, phone, badges */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-sm text-foreground leading-snug">{group.customerName}</span>
-                        {group.isOverdue && (
-                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 leading-none">
-                            Overdue
-                          </span>
-                        )}
-                        {group.debts.length > 1 && (
-                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground/60 leading-none">
-                            {group.debts.length} debts
-                          </span>
-                        )}
-                      </div>
-                      {group.customerPhone && (
-                        <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-1">
-                          <Phone className="h-2.5 w-2.5 shrink-0" />{group.customerPhone}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Balance + pay button (right side) */}
-                    <div className="flex flex-col items-end gap-2 shrink-0">
-                      {group.worstStatus === "paid" ? (
-                        <div className="flex flex-col items-end gap-1">
-                          <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
-                            <BadgeCheck className="h-3.5 w-3.5" />Paid
-                          </span>
-                          <span className="text-base font-bold font-mono text-emerald-400">
-                            {formatKES(group.totalAmount)}
-                          </span>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="text-right">
-                            <p className={cn("text-lg font-bold font-mono leading-none", balanceColor)}>
-                              {formatKES(group.totalBalance)}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground/50 mt-0.5">owed</p>
-                          </div>
-                          {/* Primary CTA: pay button for single-debt customers */}
-                          {group.activeDebts.length === 1 && (
-                            <PaymentDialog debt={group.activeDebts[0]} />
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Progress bar */}
-                  {group.worstStatus !== "paid" && group.totalAmount > 0 && (
-                    <div className="mt-3.5">
-                      <div className="h-1.5 bg-muted/60 rounded-full overflow-hidden">
-                        <div
-                          className={cn("h-full rounded-full transition-all", barColor)}
-                          style={{ width: `${paidPct}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between mt-1">
-                        <span className="text-[10px] text-muted-foreground/50">
-                          {paidPct > 0 ? `${paidPct}% paid` : "Nothing paid yet"}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground/40 font-mono">
-                          of {formatKES(group.totalAmount)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* ── Footer action bar ── */}
-                <div className="flex items-center gap-2 px-4 pb-4 flex-wrap">
-                  {/* WhatsApp */}
-                  {group.customerPhone && group.worstStatus !== "paid" && (
-                    <a href={waUrl} target="_blank" rel="noopener noreferrer">
-                      <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl border border-[#25D366]/30 text-[#25D366] bg-[#25D366]/5 hover:bg-[#25D366]/15 text-xs font-semibold transition-colors">
-                        <MessageCircle className="w-3.5 h-3.5" />WhatsApp
-                      </button>
-                    </a>
-                  )}
-                  {/* Multi-debt pay prompt */}
-                  {group.activeDebts.length > 1 && group.worstStatus !== "paid" && (
-                    <button
-                      onClick={() => { setExpandedCustomer(isExpanded ? null : group.key); setExpandedDebtId(null); }}
-                      className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors"
-                    >
-                      <Wallet className="h-3.5 w-3.5" />
-                      Pay ({group.activeDebts.length} debts)
-                    </button>
-                  )}
-                  {/* View / close expand */}
-                  <button
-                    onClick={() => { setExpandedCustomer(isExpanded ? null : group.key); setExpandedDebtId(null); }}
-                    className={cn(
-                      "ml-auto flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-semibold transition-colors",
-                      isExpanded
-                        ? "bg-muted text-foreground"
-                        : "bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
-                    )}
-                  >
-                    <History className="h-3.5 w-3.5" />
-                    {isExpanded ? "Close" : `${group.debts.length} debt${group.debts.length !== 1 ? "s" : ""}`}
-                    {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                  </button>
-                </div>
-
-                {/* ── Expanded: individual debts ── */}
-                {isExpanded && (
-                  <div className="border-t border-border/40 divide-y divide-border/20 bg-background/60">
-                    {group.debts.map(debt => {
-                      const isPaid = debt.status === "paid";
-                      const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
-                      const isOverdueDebt = !isPaid && daysAgo > 30;
-                      const debtPaidPct = debt.totalAmount > 0
-                        ? Math.round(((debt.totalAmount - debt.balance) / debt.totalAmount) * 100)
-                        : 0;
-                      const items: { productName: string; quantity: number; unitPrice: number; totalPrice: number }[] = (debt as any).items || [];
-
-                      return (
-                        <div key={debt.id} className="px-4 py-3">
-                          {/* Debt row header */}
-                          <div className="flex items-start justify-between gap-3 mb-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className={cn(
-                                "text-[9px] font-bold uppercase px-1.5 py-0.5 rounded leading-none",
-                                isPaid          ? "bg-emerald-500/15 text-emerald-400" :
-                                isOverdueDebt   ? "bg-red-500/15 text-red-400" :
-                                debt.status === "partial" ? "bg-orange-500/15 text-orange-400" :
-                                                  "bg-destructive/15 text-destructive"
-                              )}>
-                                {isOverdueDebt ? `${daysAgo}d overdue` : debt.status}
-                              </span>
-                              <span className="text-[10px] text-muted-foreground/50 flex items-center gap-1">
-                                <CalendarClock className="h-2.5 w-2.5" />
-                                {format(new Date(debt.createdAt), "d MMM yyyy")}
-                              </span>
-                            </div>
-                            <span className={cn(
-                              "text-sm font-bold font-mono shrink-0",
-                              isPaid ? "text-emerald-400" : isOverdueDebt ? "text-red-400" : "text-foreground"
-                            )}>
-                              {isPaid ? formatKES(debt.totalAmount) : `${formatKES(debt.balance)} left`}
-                            </span>
-                          </div>
-
-                          {/* Mini progress */}
-                          {!isPaid && (
-                            <div className="h-1 bg-muted rounded-full overflow-hidden mb-2.5">
-                              <div className={cn(
-                                "h-full rounded-full",
-                                isOverdueDebt ? "bg-red-400" : debt.status === "partial" ? "bg-orange-400" : "bg-primary"
-                              )} style={{ width: `${debtPaidPct}%` }} />
-                            </div>
-                          )}
-
-                          {/* Items preview */}
-                          {items.length > 0 && (
-                            <div className="rounded-xl border border-border/20 bg-background/50 overflow-hidden mb-2.5">
-                              {items.slice(0, 2).map((item, i) => (
-                                <div key={i} className={cn("flex items-center gap-2 px-3 py-2", i > 0 && "border-t border-border/20")}>
-                                  <Package className="h-3 w-3 text-primary/40 shrink-0" />
-                                  <span className="flex-1 text-[11px] text-foreground/70 truncate">{item.productName}</span>
-                                  <span className="text-[10px] text-muted-foreground/40 font-mono shrink-0">×{item.quantity}</span>
-                                  <span className="text-[11px] font-bold font-mono text-foreground/60 shrink-0">{formatKES(item.totalPrice)}</span>
-                                </div>
-                              ))}
-                              {items.length > 2 && (
-                                <div className="px-3 py-1.5 border-t border-border/20 text-[10px] text-muted-foreground/40 text-center">
-                                  +{items.length - 2} more item{items.length - 2 !== 1 ? "s" : ""}
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Per-debt actions */}
-                          <div className="flex gap-2 flex-wrap items-center">
-                            {!isPaid && <PaymentDialog debt={debt} />}
-                            <DebtDownloadButton debt={debt} />
-                            <button
-                              onClick={() => setExpandedDebtId(expandedDebtId === debt.id ? null : debt.id)}
-                              className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-muted/60 hover:bg-muted text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                              <History className="h-3 w-3" />
-                              {expandedDebtId === debt.id ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                            </button>
-                            {isOwner && !isPaid && <MarkPaidButton debt={debt} />}
-                            {isOwner && <DeleteDebtDialog debt={debt} onDeleted={handleDeleted} />}
-                          </div>
-
-                          {/* Payment history panel */}
-                          {expandedDebtId === debt.id && <DebtHistoryPanel debtId={debt.id} />}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
     </div>
   );
 }
