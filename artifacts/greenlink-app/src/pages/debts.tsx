@@ -1285,6 +1285,54 @@ export default function Debts() {
     return [...list].sort((a: any, b: any) => b.balance - a.balance);
   }, [allDebts, tab, debouncedSearch]);
 
+  const grouped = useMemo(() => {
+    const map = new Map<string, {
+      key: string;
+      customerName: string;
+      customerPhone: string;
+      debts: any[];
+      activeDebts: any[];
+      totalAmount: number;
+      totalBalance: number;
+      worstStatus: "unpaid" | "partial" | "paid";
+      isOverdue: boolean;
+    }>();
+
+    for (const debt of filtered) {
+      const key = debt.customerName?.toLowerCase().trim() || "unknown";
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          customerName: debt.customerName || "Unknown",
+          customerPhone: debt.customerPhone || "",
+          debts: [],
+          activeDebts: [],
+          totalAmount: 0,
+          totalBalance: 0,
+          worstStatus: "paid",
+          isOverdue: false,
+        });
+      }
+      const g = map.get(key)!;
+      g.debts.push(debt);
+      g.totalAmount += debt.totalAmount || 0;
+      g.totalBalance += debt.balance || 0;
+      if (debt.status !== "paid") {
+        g.activeDebts.push(debt);
+        const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
+        if (daysAgo > 30) g.isOverdue = true;
+      }
+      const statusRank = { unpaid: 2, partial: 1, paid: 0 } as Record<string, number>;
+      if ((statusRank[debt.status] ?? 0) > (statusRank[g.worstStatus] ?? 0)) {
+        g.worstStatus = debt.status as "unpaid" | "partial" | "paid";
+      }
+      // prefer a phone number if not set yet
+      if (!g.customerPhone && debt.customerPhone) g.customerPhone = debt.customerPhone;
+    }
+
+    return Array.from(map.values());
+  }, [filtered]);
+
   const TABS: { value: DebtTab; label: string; count: number }[] = [
     { value: "unpaid",  label: "Unpaid",       count: stats.unpaidCount  },
     { value: "partial", label: "Partial",      count: stats.partialCount },
