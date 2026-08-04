@@ -867,13 +867,23 @@ export default function POS() {
   const [quickAddProduct, setQuickAddProduct] = useState<any | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
+  // True once the restore effect has completed its first run (or confirmed no
+  // draft exists). The save effect must not remove the draft key before this
+  // flag is set — otherwise an empty initial cart would delete the saved draft
+  // before the restore effect gets a chance to read it.
+  const draftRestoredRef = useRef(false);
+
   // ── Persist cart draft to sessionStorage on every change ─────────────────────
   // Lets the cashier navigate to Debts / Stock / etc. and come back to find
   // their cart exactly as they left it. The draft is cleared after a successful
   // checkout or when the cart is manually emptied.
   useEffect(() => {
     if (cart.length === 0 && discount === 0 && !debtCustomerName) {
-      sessionStorage.removeItem(CART_DRAFT_KEY);
+      // Only remove the draft once we know restore has already run — otherwise
+      // the empty initial state would wipe a perfectly good saved draft.
+      if (draftRestoredRef.current) {
+        sessionStorage.removeItem(CART_DRAFT_KEY);
+      }
       return;
     }
     try {
@@ -929,15 +939,23 @@ export default function POS() {
         }
       } catch {}
       sessionStorage.removeItem("greenlink_pending_cart");
+      draftRestoredRef.current = true;
       return; // don't also restore a draft when a quotation was present
     }
 
     // 2. Draft cart — restore when the cashier navigated away and came back
     const draftRaw = sessionStorage.getItem(CART_DRAFT_KEY);
-    if (!draftRaw) return;
+    if (!draftRaw) {
+      // No draft to restore — safe for the save effect to clear from here on.
+      draftRestoredRef.current = true;
+      return;
+    }
     try {
       const draft = JSON.parse(draftRaw);
-      if (!draft.items?.length) return;
+      if (!draft.items?.length) {
+        draftRestoredRef.current = true;
+        return;
+      }
       const cartItems: CartItem[] = [];
       for (const item of draft.items) {
         const product = products.find((p: any) => p.id === item.productId);
@@ -957,6 +975,7 @@ export default function POS() {
         toast.success(`Cart restored (${cartItems.length} item${cartItems.length !== 1 ? "s" : ""})`);
       }
     } catch {}
+    draftRestoredRef.current = true;
   }, [productsData]);
 
   // Lock body scroll when mobile cart is open
