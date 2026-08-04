@@ -889,18 +889,18 @@ function DebtDetailPanel({
             ) : (
               <div className="space-y-2">
                 <div className="rounded-xl border border-border overflow-hidden">
-                  <div className="grid grid-cols-[1fr_36px_76px_76px] bg-muted/50 border-b border-border">
+                  <div className="grid grid-cols-[1fr_32px_minmax(90px,auto)_minmax(90px,auto)] bg-muted/50 border-b border-border">
                     <div className="px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Product</div>
-                    <div className="px-2 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground text-right">Qty</div>
+                    <div className="px-1 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground text-right">Qty</div>
                     <div className="px-2 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground text-right">Unit</div>
                     <div className="px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground text-right">Total</div>
                   </div>
                   {items.map((item: any, i: number) => (
-                    <div key={i} className={cn("grid grid-cols-[1fr_36px_76px_76px] items-center", i > 0 && "border-t border-border/50")}>
+                    <div key={i} className={cn("grid grid-cols-[1fr_32px_minmax(90px,auto)_minmax(90px,auto)] items-center", i > 0 && "border-t border-border/50")}>
                       <div className="px-3 py-2.5 text-xs font-medium truncate">{item.productName}</div>
-                      <div className="px-2 py-2.5 text-xs text-right text-muted-foreground">{item.qty ?? item.quantity}</div>
-                      <div className="px-2 py-2.5 text-xs text-right text-muted-foreground font-mono">{formatKES(item.unitPrice)}</div>
-                      <div className="px-3 py-2.5 text-xs text-right font-bold font-mono text-primary">{formatKES(item.totalPrice ?? item.total)}</div>
+                      <div className="px-1 py-2.5 text-xs text-right text-muted-foreground">{item.qty ?? item.quantity}</div>
+                      <div className="px-2 py-2.5 text-xs text-right text-muted-foreground font-mono whitespace-nowrap">{formatKES(item.unitPrice)}</div>
+                      <div className="px-3 py-2.5 text-xs text-right font-bold font-mono text-primary whitespace-nowrap">{formatKES(item.totalPrice ?? item.total)}</div>
                     </div>
                   ))}
                 </div>
