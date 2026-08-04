@@ -1062,6 +1062,8 @@ export default function Reports() {
   const debtSales = (reportRange as any)?.debtSales ?? dashboard?.debtSales ?? 0;
   const debtRatio = revenue > 0 ? (debtSales / revenue * 100) : 0;
   const cashCollected = (reportRange as any)?.cashCollected ?? (dashboard as any)?.cashCollectedToday ?? 0;
+  const bankSales: number = (reportRange as any)?.bankSales ?? (dashboard as any)?.bankSales ?? 0;
+  const cashOnlySales: number = (reportRange as any)?.cashOnlySales ?? (dashboard as any)?.cashOnlySales ?? 0;
 
   const revChangePct = prevReport?.totalRevenue && prevReport.totalRevenue > 0
     ? ((revenue - prevReport.totalRevenue) / prevReport.totalRevenue) * 100 : null;
@@ -1187,6 +1189,55 @@ export default function Reports() {
             isLoading={statsLoading}
           />
         </div>
+
+        {/* Payment Method Breakdown */}
+        {(bankSales > 0 || cashOnlySales > 0) && (
+          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border/50">
+              <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Payment Methods</p>
+            </div>
+            <div className="grid grid-cols-2 divide-x divide-border">
+              <div className="px-4 py-3 text-center">
+                <div className="flex items-center justify-center gap-1.5 mb-1">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Cash</p>
+                </div>
+                <p className="text-base font-bold font-mono text-foreground">
+                  {statsLoading ? "—" : formatKES(cashOnlySales)}
+                </p>
+                {(cashOnlySales + bankSales) > 0 && (
+                  <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                    {(((cashOnlySales) / (cashOnlySales + bankSales)) * 100).toFixed(0)}% of sales
+                  </p>
+                )}
+              </div>
+              <div className="px-4 py-3 text-center">
+                <div className="flex items-center justify-center gap-1.5 mb-1">
+                  <div className="w-2 h-2 rounded-full bg-blue-500" />
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">M-Pesa / Bank</p>
+                </div>
+                <p className="text-base font-bold font-mono text-foreground">
+                  {statsLoading ? "—" : formatKES(bankSales)}
+                </p>
+                {(cashOnlySales + bankSales) > 0 && (
+                  <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                    {((bankSales / (cashOnlySales + bankSales)) * 100).toFixed(0)}% of sales
+                  </p>
+                )}
+              </div>
+            </div>
+            {(cashOnlySales + bankSales) > 0 && (
+              <div className="px-4 pb-3">
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 rounded-full"
+                    style={{ width: `${(cashOnlySales / (cashOnlySales + bankSales)) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Month-over-Month Comparison */}
         {prevReport && (

@@ -546,6 +546,7 @@ function SaleRow({ sale, isOwner, onVoidRequest }: { sale: any; isOwner: boolean
   const [localReturns, setLocalReturns] = useState<any[]>([]);
   const time = format(new Date(sale.createdAt), "HH:mm");
   const isDebt = sale.saleType === "debt";
+  const isBank = !isDebt && sale.paymentMethod === "bank";
 
   const handleReturnSuccess = (_totalRefund: number, returnRecord: any) => {
     setLocalReturns(prev => [...prev, returnRecord]);
@@ -556,17 +557,29 @@ function SaleRow({ sale, isOwner, onVoidRequest }: { sale: any; isOwner: boolean
       <button onClick={() => setExpanded(e => !e)} className="w-full text-left">
         <CardContent className="p-3 flex items-center gap-3">
           <div className={cn("w-9 h-9 rounded-lg border flex items-center justify-center shrink-0",
-            isDebt ? "border-amber-300 dark:border-amber-800" : "border-emerald-300 dark:border-emerald-800")}>
+            isDebt
+              ? "border-amber-300 dark:border-amber-800"
+              : isBank
+                ? "border-blue-300 dark:border-blue-800"
+                : "border-emerald-300 dark:border-emerald-800"
+          )}>
             {isDebt
               ? <CreditCard className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-              : <Banknote className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
+              : isBank
+                ? <CreditCard className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                : <Banknote className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
           </div>
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <Badge className={cn("text-[10px] h-4 px-1.5 border-0",
-                isDebt ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400")}>
-                {isDebt ? "Debt" : "Cash"}
+                isDebt
+                  ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
+                  : isBank
+                    ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400"
+                    : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+              )}>
+                {isDebt ? "Debt" : isBank ? "M-Pesa" : "Cash"}
               </Badge>
               <span className="text-xs text-muted-foreground flex items-center gap-1">
                 <Clock className="h-3 w-3" />{time}
@@ -625,7 +638,7 @@ export default function SalesHistory() {
 
   const [date, setDate] = useState(new Date());
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"all" | "cash" | "debt">("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "cash" | "bank" | "debt">("all");
   const [voidTarget, setVoidTarget] = useState<any | null>(null);
   const dateStr = format(date, "yyyy-MM-dd");
 
@@ -649,11 +662,17 @@ export default function SalesHistory() {
     }
   }, [salesData, qc]);
 
-  // Prefetch adjacent day so navigation is instant
+  // Prefetch both adjacent days so navigation is instant
   useEffect(() => {
     const yesterday = format(subDays(date, 1), "yyyy-MM-dd");
+    const tomorrow = format(addDays(date, 1), "yyyy-MM-dd");
     qc.prefetchQuery({
       queryKey: getListSalesQueryKey({ shopId, date: yesterday, limit: 100 }),
+      staleTime: 60_000,
+    });
+    if (!isToday(addDays(date, 1))) return; // don't prefetch future beyond tomorrow
+    qc.prefetchQuery({
+      queryKey: getListSalesQueryKey({ shopId, date: tomorrow, limit: 100 }),
       staleTime: 60_000,
     });
   }, [dateStr, shopId, qc]);
@@ -661,13 +680,16 @@ export default function SalesHistory() {
   const list = (salesData || []) as any[];
   const totalRevenue = list.reduce((a, s) => a + (s.totalAmount ?? 0), 0);
   const totalProfit = list.reduce((a, s) => a + (s.totalProfit ?? 0), 0);
-  const cashCount = list.filter(s => s.saleType === "cash").length;
+  const cashCount = list.filter(s => s.saleType === "cash" && s.paymentMethod !== "bank").length;
+  const bankCount = list.filter(s => s.saleType === "cash" && s.paymentMethod === "bank").length;
   const debtCount = list.filter(s => s.saleType === "debt").length;
   const todayFlag = isToday(date);
 
   const filtered = useMemo(() => {
     let result = list;
-    if (typeFilter !== "all") result = result.filter(s => s.saleType === typeFilter);
+    if (typeFilter === "cash") result = result.filter(s => s.saleType === "cash" && s.paymentMethod !== "bank");
+    else if (typeFilter === "bank") result = result.filter(s => s.saleType === "cash" && s.paymentMethod === "bank");
+    else if (typeFilter === "debt") result = result.filter(s => s.saleType === "debt");
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       result = result.filter(s =>
@@ -734,7 +756,7 @@ export default function SalesHistory() {
             )}
           </div>
           <div className="flex items-center rounded-xl border border-border overflow-hidden shrink-0">
-            {(["all", "cash", "debt"] as const).map(t => (
+            {(["all", "cash", "bank", "debt"] as const).map(t => (
               <button
                 key={t}
                 onClick={() => setTypeFilter(t)}
@@ -745,7 +767,7 @@ export default function SalesHistory() {
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
                 )}
               >
-                {t}
+                {t === "bank" ? "M-Pesa" : t}
               </button>
             ))}
           </div>
@@ -755,7 +777,7 @@ export default function SalesHistory() {
         <div className="flex items-center gap-0 rounded-xl border border-border overflow-hidden divide-x divide-border">
           <div className="flex-1 px-3 py-2 text-center">
             <p className="text-base font-bold font-mono leading-tight">{list.length}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">{cashCount}c · {debtCount}d</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{cashCount}c · {bankCount}m · {debtCount}d</p>
           </div>
           <div className="flex-1 px-3 py-2 text-center">
             <p className="text-base font-bold font-mono leading-tight">

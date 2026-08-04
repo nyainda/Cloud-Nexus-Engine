@@ -4,10 +4,7 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, inventoryMovements, notifications, saleReturns, auditLog } from "@workspace/db/schema";
-import { kvGet, kvSet, kvDel, CK, CACHE_TTL } from "../lib/cache";
-
-// Sales list cache TTL — 60s. Busted on every sale write/void/return.
-const SALES_CACHE_TTL = 60;
+import { kvDel, CK } from "../lib/cache";
 
 const salesRouter = new Hono<AppEnv>();
 
@@ -18,16 +15,6 @@ salesRouter.get("/sales", requireAuth, async (c) => {
   const limit = parseInt(c.req.query("limit") ?? "50");
   const offset = parseInt(c.req.query("offset") ?? "0");
   const includeVoided = c.req.query("includeVoided") === "true";
-
-  // Cache key — only cache the default (no voided, offset 0, limit 100)
-  const cacheKey = shopId && !includeVoided && offset === 0
-    ? `c:sales:${shopId}:${date}:${limit}`
-    : null;
-
-  if (cacheKey) {
-    const cached = await kvGet<object[]>(c.env.SESSIONS, cacheKey);
-    if (cached) return c.json(cached);
-  }
 
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
@@ -74,10 +61,6 @@ salesRouter.get("/sales", requireAuth, async (c) => {
       itemsBySaleId[item.saleId]!.push(item);
     }
     result = rows.map(r => ({ ...r, items: itemsBySaleId[r.id] ?? [] }));
-  }
-
-  if (cacheKey) {
-    await kvSet(c.env.SESSIONS, cacheKey, result, SALES_CACHE_TTL);
   }
 
   return c.json(result);
@@ -242,14 +225,12 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     });
   }
 
-  // Bust products + today's dashboard + sales list cache
+  // Bust products + today's dashboard cache
   const today = new Date().toISOString().slice(0, 10);
   await kvDel(
     c.env.SESSIONS,
     CK.products(body.shopId),
     CK.dashboard(body.shopId, today),
-    `c:sales:${body.shopId}:${today}:100`,
-    `c:sales:${body.shopId}:${today}:50`,
   );
 
   const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
@@ -341,13 +322,10 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
   });
 
   const today = new Date().toISOString().slice(0, 10);
-  const saleDate = sale.createdAt.slice(0, 10);
   await kvDel(
     c.env.SESSIONS,
     CK.products(sale.shopId),
     CK.dashboard(sale.shopId, today),
-    `c:sales:${sale.shopId}:${saleDate}:100`,
-    `c:sales:${sale.shopId}:${saleDate}:50`,
   );
   return c.body(null, 204);
 });

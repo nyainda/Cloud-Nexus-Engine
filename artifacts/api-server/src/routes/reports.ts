@@ -64,6 +64,8 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const totalProfit = daySales.reduce((s, sale) => s + (sale.totalProfit ?? 0), 0);
   const cashSales = daySales.filter((s) => s.saleType === "cash").reduce((sum, s) => sum + s.totalAmount, 0);
   const debtSales = daySales.filter((s) => s.saleType === "debt").reduce((sum, s) => sum + s.totalAmount, 0);
+  const bankSales = daySales.filter((s) => s.saleType === "cash" && (s as any).paymentMethod === "bank").reduce((sum, s) => sum + s.totalAmount, 0);
+  const cashOnlySales = cashSales - bankSales;
 
   const lowStockCount = lowStockRow?.count ?? 0;
   const outOfStockCount = outOfStockRow?.count ?? 0;
@@ -102,6 +104,8 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     salesCount: daySales.length,
     marginPct: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
     cashSales,
+    cashOnlySales,
+    bankSales,
     debtSales,
     cashCollectedToday,
     topProducts,
