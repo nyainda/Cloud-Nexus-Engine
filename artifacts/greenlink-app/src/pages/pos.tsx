@@ -843,202 +843,6 @@ function RecentSalesDrawer({ shopId, userName, onClose }: { shopId: string; user
   );
 }
 
-// ─── Recent Sales Side Panel (desktop, always visible) ───────────────────────
-function RecentSalesSidePanel({ shopId, userName }: { shopId: string; userName: string }) {
-  const qc = useQueryClient();
-  const today = new Date().toISOString().slice(0, 10);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [voidingId, setVoidingId] = useState<string | null>(null);
-  const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [localVoided, setLocalVoided] = useState<Set<string>>(new Set());
-
-  const { data: salesData, isLoading, refetch } = useQuery({
-    queryKey: ["recent-sales", shopId, today],
-    queryFn: () => customFetch<any[]>(`/api/sales?shopId=${encodeURIComponent(shopId)}&date=${today}&includeVoided=true&limit=50`),
-    enabled: !!shopId,
-    staleTime: 0,
-    refetchInterval: 30_000,
-  });
-
-  const { data: expandedItems } = useQuery({
-    queryKey: ["sale-detail", expandedId],
-    queryFn: async () => {
-      const data = await customFetch<any>(`/api/sales/${expandedId}`);
-      return (data.items ?? []) as any[];
-    },
-    enabled: !!expandedId,
-  });
-
-  const handleVoid = async (saleId: string) => {
-    setVoidingId(saleId);
-    try {
-      await customFetch(`/api/sales/${saleId}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: "Voided at POS", performedBy: userName }),
-      });
-      setLocalVoided(prev => new Set([...prev, saleId]));
-      setConfirmId(null);
-      toast.success("Sale voided — stock restored");
-      refetch();
-      qc.invalidateQueries({ queryKey: ["recent-sales"] });
-      qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
-      qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
-    } catch (err: any) {
-      toast.error(err?.message || "Could not void sale");
-    } finally {
-      setVoidingId(null);
-    }
-  };
-
-  const salesList = salesData ?? [];
-  const activeCount = salesList.filter((s: any) => !s.isDeleted && !localVoided.has(s.id)).length;
-  const todayTotal = salesList
-    .filter((s: any) => !s.isDeleted && !localVoided.has(s.id))
-    .reduce((sum: number, s: any) => sum + (s.totalAmount || 0), 0);
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2.5 border-b border-border shrink-0 bg-card">
-        <div>
-          <div className="flex items-center gap-1.5">
-            <ReceiptText className="h-3.5 w-3.5 text-primary" />
-            <span className="text-xs font-bold text-foreground">Today's Sales</span>
-          </div>
-          <p className="text-[10px] text-muted-foreground/60 mt-0.5 font-mono">
-            {activeCount} {activeCount === 1 ? "sale" : "sales"} · {formatKES(todayTotal)}
-          </p>
-        </div>
-        <button
-          onClick={() => refetch()}
-          className="w-7 h-7 rounded-lg bg-muted/60 flex items-center justify-center text-muted-foreground hover:text-primary transition-colors"
-          title="Refresh"
-        >
-          <RotateCcw className="h-3 w-3" />
-        </button>
-      </div>
-
-      {/* Sales list */}
-      <div className="flex-1 overflow-y-auto bg-background/40">
-        {isLoading ? (
-          <div className="p-2 space-y-1.5">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="rounded-lg bg-muted/30 h-12 animate-pulse" />
-            ))}
-          </div>
-        ) : salesList.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2 px-4">
-            <ReceiptText className="w-8 h-8 text-muted-foreground/15" />
-            <p className="text-xs font-medium text-center">No sales yet today</p>
-            <p className="text-[10px] text-muted-foreground/50 text-center">Completed sales will appear here</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-border/50">
-            {salesList.map((sale: any, idx: number) => {
-              const isVoided = sale.isDeleted || localVoided.has(sale.id);
-              const isExpanded = expandedId === sale.id;
-              const isDebt = sale.saleType === "debt";
-              const time = new Date(sale.createdAt).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" });
-              const num = salesList.length - idx;
-
-              return (
-                <div key={sale.id} className={cn("transition-all", isVoided ? "opacity-40" : "")}>
-                  <button
-                    className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-muted/30 transition-colors"
-                    onClick={() => setExpandedId(isExpanded ? null : sale.id)}
-                  >
-                    {/* Badge */}
-                    <div className={cn(
-                      "w-6 h-6 rounded-md flex items-center justify-center shrink-0 text-[9px] font-bold mt-0.5",
-                      isVoided ? "bg-muted text-muted-foreground" :
-                      isDebt ? "bg-amber-500/15 text-amber-400" : "bg-primary/15 text-primary"
-                    )}>
-                      {isVoided ? <Ban className="h-2.5 w-2.5" /> : num}
-                    </div>
-
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-xs font-bold text-foreground font-mono">{formatKES(sale.totalAmount)}</span>
-                        <span className={cn(
-                          "text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0",
-                          isVoided ? "bg-muted text-muted-foreground" :
-                          isDebt ? "bg-amber-500/15 text-amber-400" :
-                          sale.paymentMethod === "bank" ? "bg-blue-500/15 text-blue-400" :
-                          "bg-emerald-500/15 text-emerald-400"
-                        )}>
-                          {isVoided ? "VOID" : isDebt ? "DEBT" : sale.paymentMethod === "bank" ? "BANK" : "CASH"}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground/60 truncate mt-0.5">
-                        {time}
-                        {isDebt && sale.debtCustomerName ? ` · ${sale.debtCustomerName}` : ""}
-                      </p>
-                    </div>
-
-                    {isExpanded
-                      ? <ChevronUp className="h-3 w-3 text-muted-foreground/30 shrink-0 mt-1" />
-                      : <ChevronDown className="h-3 w-3 text-muted-foreground/30 shrink-0 mt-1" />
-                    }
-                  </button>
-
-                  {/* Expanded items */}
-                  {isExpanded && (
-                    <div className="bg-muted/20 border-t border-border/30">
-                      {expandedItems ? (
-                        <div>
-                          <div className="divide-y divide-border/20">
-                            {expandedItems.map((item: any) => (
-                              <div key={item.id ?? item.productId} className="flex items-center justify-between px-3 py-1.5 text-[10px]">
-                                <span className="text-foreground/70 flex-1 min-w-0 truncate">{item.productName}</span>
-                                <span className="text-muted-foreground font-mono shrink-0 ml-2">×{item.qty}</span>
-                                <span className="font-bold font-mono text-foreground ml-2 shrink-0">{formatKES(item.totalPrice)}</span>
-                              </div>
-                            ))}
-                          </div>
-                          {!isVoided && (
-                            <div className="px-3 py-2">
-                              {confirmId === sale.id ? (
-                                <div className="flex gap-1.5">
-                                  <button
-                                    onClick={() => setConfirmId(null)}
-                                    className="flex-1 h-7 rounded-lg bg-muted text-muted-foreground text-[10px] font-semibold"
-                                  >Cancel</button>
-                                  <button
-                                    onClick={() => handleVoid(sale.id)}
-                                    disabled={voidingId === sale.id}
-                                    className="flex-1 h-7 rounded-lg bg-destructive text-destructive-foreground text-[10px] font-bold disabled:opacity-50"
-                                  >{voidingId === sale.id ? "…" : "Void"}</button>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => setConfirmId(sale.id)}
-                                  className="w-full h-7 rounded-lg border border-destructive/30 text-destructive text-[10px] font-bold hover:bg-destructive/10 flex items-center justify-center gap-1 transition-colors"
-                                >
-                                  <Ban className="h-3 w-3" /> Void Sale
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="px-3 py-2.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                          <RotateCcw className="h-2.5 w-2.5 animate-spin" /> Loading…
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export default function POS() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const userName = localStorage.getItem("greenlink_userName") || "";
@@ -1051,7 +855,9 @@ export default function POS() {
   const debouncedSearch = useDebounce(search, 100);
   const [stockFilter, setStockFilter] = useState<StockFilter>("in_stock");
   const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("newest");
-  const [viewMode, setViewMode] = useState<"cards" | "table">("table");
+  const [viewMode, setViewMode] = useState<"cards" | "table">(() =>
+    (localStorage.getItem("pos_view_mode") as "cards" | "table") || "cards"
+  );
   const [showRecentSales, setShowRecentSales] = useState(false);
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
@@ -1510,10 +1316,10 @@ export default function POS() {
             >
               {viewMode === "cards" ? <LayoutList className="h-3.5 w-3.5" /> : <LayoutGrid className="h-3.5 w-3.5" />}
             </button>
-            {/* Recent Sales button — hidden on lg+ (panel always visible) */}
+            {/* Recent Sales button */}
             <button
               onClick={() => setShowRecentSales(true)}
-              className="lg:hidden shrink-0 flex items-center gap-1.5 px-2.5 h-8 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/70 border border-border/40 transition-colors"
+              className="shrink-0 flex items-center gap-1.5 px-2.5 h-8 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/70 border border-border/40 transition-colors"
               title="Today's sales history"
             >
               <ReceiptText className="h-3.5 w-3.5" />
@@ -1739,14 +1545,14 @@ export default function POS() {
         </div>
       </div>
 
-      {/* Desktop Cart — always visible */}
-      <div className="hidden lg:flex flex-col shrink-0 w-[300px] xl:w-[320px] border-l border-border overflow-hidden">
-        <CartPanel {...cartPanelProps} />
-      </div>
-
-      {/* Desktop Recent Sales Panel — always visible on lg+ */}
-      <div className="hidden lg:flex flex-col shrink-0 w-[220px] xl:w-[240px] border-l border-border overflow-hidden">
-        <RecentSalesSidePanel shopId={shopId} userName={userName} />
+      {/* Desktop Cart — hidden until first item added, then slides in */}
+      <div className={cn(
+        "hidden lg:flex flex-col shrink-0 border-border overflow-hidden transition-[width,opacity] duration-300 ease-out",
+        cart.length > 0
+          ? "w-[340px] xl:w-[380px] border-l opacity-100"
+          : "w-0 opacity-0"
+      )}>
+        {cart.length > 0 && <CartPanel {...cartPanelProps} />}
       </div>
 
       {/* Mobile: Cart FAB — always in DOM, opacity-toggled to avoid mount repaints on Android */}
