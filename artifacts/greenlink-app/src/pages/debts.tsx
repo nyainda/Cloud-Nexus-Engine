@@ -517,7 +517,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
           textColor: SLATE, lineColor: BORD, lineWidth: 0.2 },
         alternateRowStyles: { fillColor: LGRAY },
         columnStyles: {
-          0: { cellWidth: 10, halign: "center", fontStyle: "bold", textColor: MGRAY },
+          0: { cellWidth: 14, halign: "center", fontStyle: "bold", textColor: MGRAY },
           1: { cellWidth: "auto" },
           2: { cellWidth: 14, halign: "right" },
           3: { cellWidth: 36, halign: "right", textColor: MGRAY },
