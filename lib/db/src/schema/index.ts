@@ -250,6 +250,23 @@ export const suppliers = sqliteTable("suppliers", {
 export type Supplier = typeof suppliers.$inferSelect;
 export type InsertSupplier = typeof suppliers.$inferInsert;
 
+// ─── customers ───────────────────────────────────────────────────────────────
+export const customers = sqliteTable("customers", {
+  id: pk(),
+  shopId: text("shop_id")
+    .notNull()
+    .references(() => shops.id),
+  name: text("name").notNull(),
+  phone: text("phone").notNull().default(""),
+  email: text("email"),
+  notes: text("notes"),
+  creditLimit: real("credit_limit"),
+  createdAt: createdAt(),
+});
+
+export type Customer = typeof customers.$inferSelect;
+export type InsertCustomer = typeof customers.$inferInsert;
+
 // ─── stock transfers ─────────────────────────────────────────────────────────
 export const stockTransfers = sqliteTable("stock_transfers", {
   id: pk(),

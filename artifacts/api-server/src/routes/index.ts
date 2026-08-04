@@ -19,6 +19,7 @@ import transfersRouter from "./transfers";
 import pushRouter from "./push";
 import quotationsRouter from "./quotations";
 import adminRouter from "./admin";
+import crmRouter from "./crm";
 
 const router = new Hono<AppEnv>();
 
@@ -41,4 +42,5 @@ router.route("/", transfersRouter);
 router.route("/", pushRouter);
 router.route("/", quotationsRouter);
 router.route("/", adminRouter);
+router.route("/", crmRouter);
 export default router;

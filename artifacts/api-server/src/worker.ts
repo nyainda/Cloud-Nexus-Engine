@@ -135,6 +135,19 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     )`,
     "CREATE INDEX IF NOT EXISTS idx_quotations_shop_date ON quotations(shop_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_quotations_shop_status ON quotations(shop_id, status)",
+    // Customer accounts (CRM)
+    `CREATE TABLE IF NOT EXISTS customers (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      email TEXT,
+      notes TEXT,
+      credit_limit REAL,
+      created_at TEXT NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_customers_shop ON customers(shop_id)",
+    "CREATE INDEX IF NOT EXISTS idx_customers_shop_name ON customers(shop_id, name)",
   ];
   for (const m of MIGRATIONS) {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }

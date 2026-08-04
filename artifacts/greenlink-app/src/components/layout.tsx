@@ -6,7 +6,7 @@ import {
   ShoppingCart, Package, Users, Bell, BarChart3,
   ScanLine, Settings, LogOut, LayoutDashboard, Receipt,
   Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
-  MoreHorizontal, X, Truck, ArrowLeftRight, FileText,
+  MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser,
 } from "lucide-react";
 import { useListNotifications, useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -172,6 +172,7 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
               </button>
             </div>
             <div className="p-3 grid grid-cols-2 gap-2">
+              <MoreSheetItem href="/customers" icon={BookUser} label="Customers" />
               <MoreSheetItem href="/returns" icon={RotateCcw} label="Process Return" />
               <MoreSheetItem href="/transfers" icon={ArrowLeftRight} label="Transfers" />
               <MoreSheetItem href="/quotations" icon={FileText} label="Quotations" />
@@ -305,6 +306,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto overflow-x-hidden">
           <SidebarNavItem href="/pos" icon={ShoppingCart} label="Point of Sale" collapsed={collapsed} />
           <SidebarNavItem href="/stock" icon={Package} label="Inventory" collapsed={collapsed} />
+          <SidebarNavItem href="/customers" icon={BookUser} label="Customers" collapsed={collapsed} />
           <SidebarNavItem href="/debts" icon={Users} label="Customer Debts" collapsed={collapsed} />
           <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} collapsed={collapsed} />
 
