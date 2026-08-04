@@ -707,9 +707,12 @@ export default function Customers() {
                 key={customer.registered ? customer.id! : `u-${customer.name}`}
                 className="rounded-2xl border border-border/70 bg-card overflow-hidden"
               >
-                <button
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelectedCustomer(customer)}
-                  className="w-full flex items-center gap-3 p-4 hover:bg-muted/30 transition-colors text-left"
+                  onKeyDown={e => e.key === "Enter" && setSelectedCustomer(customer)}
+                  className="w-full flex items-center gap-3 p-4 hover:bg-muted/30 transition-colors cursor-pointer"
                 >
                   {/* Avatar */}
                   <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center text-base font-bold shrink-0", avatarColor)}>
@@ -742,7 +745,7 @@ export default function Customers() {
                     )}
                   </div>
 
-                  {/* Right: balance + arrow */}
+                  {/* Right: action buttons + arrow */}
                   <div className="flex items-center gap-2 shrink-0">
                     {isOwner && customer.registered && customer.id && (
                       <div onClick={e => e.stopPropagation()} className="flex items-center gap-1">
@@ -761,7 +764,7 @@ export default function Customers() {
                     )}
                     <ChevronRight className="h-4 w-4 text-muted-foreground/40" />
                   </div>
-                </button>
+                </div>
               </div>
             );
           })
