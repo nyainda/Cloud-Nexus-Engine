@@ -1051,9 +1051,7 @@ export default function POS() {
   const debouncedSearch = useDebounce(search, 100);
   const [stockFilter, setStockFilter] = useState<StockFilter>("in_stock");
   const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("newest");
-  const [viewMode, setViewMode] = useState<"cards" | "table">(() =>
-    (localStorage.getItem("pos_view_mode") as "cards" | "table") || "table"
-  );
+  const [viewMode, setViewMode] = useState<"cards" | "table">("table");
   const [showRecentSales, setShowRecentSales] = useState(false);
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
@@ -1512,10 +1510,10 @@ export default function POS() {
             >
               {viewMode === "cards" ? <LayoutList className="h-3.5 w-3.5" /> : <LayoutGrid className="h-3.5 w-3.5" />}
             </button>
-            {/* Recent Sales button — hidden on xl+ (panel always visible) */}
+            {/* Recent Sales button — hidden on lg+ (panel always visible) */}
             <button
               onClick={() => setShowRecentSales(true)}
-              className="xl:hidden shrink-0 flex items-center gap-1.5 px-2.5 h-8 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/70 border border-border/40 transition-colors"
+              className="lg:hidden shrink-0 flex items-center gap-1.5 px-2.5 h-8 rounded-full bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/70 border border-border/40 transition-colors"
               title="Today's sales history"
             >
               <ReceiptText className="h-3.5 w-3.5" />
@@ -1746,8 +1744,8 @@ export default function POS() {
         <CartPanel {...cartPanelProps} />
       </div>
 
-      {/* Desktop Recent Sales Panel — always visible on xl+ */}
-      <div className="hidden xl:flex flex-col shrink-0 w-[240px] 2xl:w-[260px] border-l border-border overflow-hidden">
+      {/* Desktop Recent Sales Panel — always visible on lg+ */}
+      <div className="hidden lg:flex flex-col shrink-0 w-[220px] xl:w-[240px] border-l border-border overflow-hidden">
         <RecentSalesSidePanel shopId={shopId} userName={userName} />
       </div>
 
