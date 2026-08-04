@@ -385,7 +385,12 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
 
     // ── Shared page chrome ─────────────────────────────────────────────────
     function drawHeader(isFirst: boolean) {
-      doc.setFillColor(...WHITE); doc.rect(0, 0, W, H, "F");
+      // Page 1 needs an explicit white fill; continuation pages are already
+      // white in jsPDF — painting the full page on page 2+ is unnecessary and
+      // leaves fill state dirty which causes autotable rows to render black.
+      if (isFirst) {
+        doc.setFillColor(...WHITE); doc.rect(0, 0, W, H, "F");
+      }
       // Top green stripe
       doc.setFillColor(...GREEN); doc.rect(0, 0, W, 3, "F");
 
@@ -426,6 +431,15 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
         doc.line(ML, 12, W - MR, 12);
       }
+
+      // Reset graphics state so autotable inherits clean defaults, not our
+      // custom fill/stroke colors. Without this, row fills on page 2+ go black.
+      doc.setFillColor(...WHITE);
+      doc.setTextColor(0, 0, 0);
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.2);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
     }
 
     function drawFooter() {

@@ -168,8 +168,9 @@ async function downloadPdf(quotation: Quotation, shop: any) {
 
     // ── Helper: continuation header (pages 2+) ────────────────────────────────
     function drawContinuationHeader(pg: number, total: number) {
-      doc.setFillColor(...WHITE);
-      doc.rect(0, 0, W, H, "F");
+      // Do NOT fill the entire page white here — pages are already white in
+      // jsPDF, and doing so in didDrawPage leaves fill state dirty (set to DARK/
+      // EMERALD at the end) which makes autotable body rows render black on page 2+.
       doc.setFillColor(...DARK);
       doc.rect(0, 0, W, 9, "F");
       doc.setFillColor(...EMERALD);
@@ -179,6 +180,13 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       doc.setTextColor(180, 188, 200);
       doc.text(`${shop?.name ?? ""}  ·  ${quotation.quoteNumber}  ·  continued`, ML, 6.5);
       doc.text(`Page ${pg} of ${total}`, W - MR, 6.5, { align: "right" });
+      // Reset graphics state so autotable inherits clean defaults after this hook
+      doc.setFillColor(...WHITE);
+      doc.setTextColor(0, 0, 0);
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.2);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
