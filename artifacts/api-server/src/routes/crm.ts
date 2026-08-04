@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -261,6 +261,56 @@ crmRouter.get("/crm/:id", requireAuth, async (c) => {
   });
 });
 
+// ── Rename unregistered customer (debt-name only, no customer record) ─────────
+// MUST be registered before /crm/:id so "rename" isn't captured as an :id param
+crmRouter.patch("/crm/rename", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const body = await c.req.json<{
+    shopId: string;
+    oldName: string;
+    newName: string;
+    phone?: string;
+  }>();
+
+  if (!body.shopId || !body.oldName || !body.newName) {
+    return c.json({ error: "shopId, oldName, and newName are required" }, 400);
+  }
+
+  const newName = body.newName.trim();
+  const shopId = body.shopId;
+
+  // Update all debts matching the old name
+  const result = await db
+    .update(debts)
+    .set({
+      customerName: newName,
+      ...(body.phone !== undefined ? { customerPhone: body.phone.trim() } : {}),
+    })
+    .where(
+      and(
+        eq(debts.shopId, shopId),
+        sql`LOWER(TRIM(${debts.customerName})) = LOWER(TRIM(${body.oldName}))`
+      )
+    )
+    .run();
+
+  // Also update a registered customer record if one exists with that name
+  const existingReg = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.shopId, shopId))
+    .all()
+    .then(rows => rows.find(r => r.name.toLowerCase().trim() === body.oldName.toLowerCase().trim()) ?? null);
+
+  if (existingReg) {
+    const patch: Record<string, unknown> = { name: newName };
+    if (body.phone !== undefined) patch.phone = body.phone.trim();
+    await db.update(customers).set(patch).where(eq(customers.id, existingReg.id)).run();
+  }
+
+  return c.json({ updated: result.changes ?? 0, registeredUpdated: !!existingReg });
+});
+
 // ── Update customer ───────────────────────────────────────────────────────────
 crmRouter.patch("/crm/:id", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
@@ -290,8 +340,25 @@ crmRouter.patch("/crm/:id", requireAuth, async (c) => {
   if ("notes" in body) patch.notes = body.notes?.trim() || null;
   if ("creditLimit" in body) patch.creditLimit = body.creditLimit ?? null;
 
+  const nameChanged = body.name !== undefined && body.name.trim() !== existing.name;
+
   if (Object.keys(patch).length > 0) {
     await db.update(customers).set(patch).where(eq(customers.id, id)).run();
+  }
+
+  // Cascade name change to all debt records for this shop
+  if (nameChanged && body.name) {
+    const newName = body.name.trim();
+    await db
+      .update(debts)
+      .set({ customerName: newName })
+      .where(
+        and(
+          eq(debts.shopId, shopId),
+          sql`LOWER(TRIM(${debts.customerName})) = LOWER(TRIM(${existing.name}))`
+        )
+      )
+      .run();
   }
 
   const updated = await db

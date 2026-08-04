@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { customFetch } from "@workspace/api-client-react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -10,9 +10,9 @@ import {
 import { formatKES } from "@/lib/format";
 import {
   Search, UserPlus, Phone, Mail, FileText, Wallet, ChevronRight,
-  BadgeCheck, AlertTriangle, Users, TrendingDown, Edit3, Trash2,
-  ArrowLeft, CheckCircle2, Clock, CreditCard, MessageCircle, X,
-  Save, Star,
+  BadgeCheck, Users, TrendingDown, Edit3, Trash2,
+  ArrowLeft, CheckCircle2, Clock, CreditCard, MessageCircle,
+  Save, Star, AlertCircle, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, differenceInDays } from "date-fns";
@@ -42,8 +42,25 @@ interface CustomerProfile {
   stats: { totalBalance: number; totalOwed: number; totalPaid: number; debtCount: number; activeCount: number };
 }
 
-// ─── Query keys ──────────────────────────────────────────────────────────────
-const crmKey = (shopId: string, q?: string) => ["/api/crm", shopId, q ?? ""];
+// ─── Avatar helper ────────────────────────────────────────────────────────────
+const AVATAR_COLORS = [
+  "bg-violet-500/20 text-violet-400",
+  "bg-cyan-500/20 text-cyan-400",
+  "bg-amber-500/20 text-amber-400",
+  "bg-rose-500/20 text-rose-400",
+  "bg-emerald-500/20 text-emerald-400",
+  "bg-sky-500/20 text-sky-400",
+  "bg-fuchsia-500/20 text-fuchsia-400",
+  "bg-orange-500/20 text-orange-400",
+];
+function avatarColor(name: string, hasBalance: boolean) {
+  if (hasBalance) return "bg-destructive/20 text-destructive";
+  const idx = name.charCodeAt(0) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[idx];
+}
+
+// ─── Query keys ───────────────────────────────────────────────────────────────
+const crmKey = (shopId: string) => ["/api/crm", shopId];
 const profileKey = (shopId: string, name: string) => ["/api/crm/profile", shopId, name];
 
 // ─── Add/Edit customer dialog ─────────────────────────────────────────────────
@@ -54,12 +71,15 @@ function CustomerFormDialog({
   initial,
 }: {
   open: boolean;
-  onClose: () => void;
+  onClose: (updated?: Partial<CustomerEntry>) => void;
   shopId: string;
   initial?: CustomerEntry | null;
 }) {
   const qc = useQueryClient();
-  const isEdit = !!initial?.id;
+  const isEdit = !!initial;
+  const isRegistered = initial?.registered ?? false;
+  // Unregistered = known only from debts, no customer record
+  const isUnregistered = isEdit && !isRegistered;
 
   const [name, setName] = useState(initial?.name ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
@@ -70,7 +90,6 @@ function CustomerFormDialog({
   );
   const [saving, setSaving] = useState(false);
 
-  // Reset fields when dialog opens
   React.useEffect(() => {
     if (open) {
       setName(initial?.name ?? "");
@@ -85,7 +104,19 @@ function CustomerFormDialog({
     if (!name.trim()) { toast.error("Customer name is required"); return; }
     setSaving(true);
     try {
-      if (isEdit && initial?.id) {
+      if (isUnregistered) {
+        // Rename all debt records (+ register if name changed)
+        await customFetch("/api/crm/rename", {
+          method: "PATCH",
+          body: JSON.stringify({
+            shopId,
+            oldName: initial!.name,
+            newName: name.trim(),
+            phone: phone.trim(),
+          }),
+        });
+        toast.success("Customer updated across all debts");
+      } else if (isRegistered && initial?.id) {
         await customFetch(`/api/crm/${initial.id}?shopId=${shopId}`, {
           method: "PATCH",
           body: JSON.stringify({
@@ -98,6 +129,7 @@ function CustomerFormDialog({
         });
         toast.success("Customer updated");
       } else {
+        // New customer
         await customFetch("/api/crm", {
           method: "POST",
           body: JSON.stringify({
@@ -111,8 +143,9 @@ function CustomerFormDialog({
         });
         toast.success(`${name.trim()} added`);
       }
-      qc.invalidateQueries({ queryKey: ["/api/crm", shopId] });
-      onClose();
+      qc.invalidateQueries({ queryKey: crmKey(shopId) });
+      if (initial?.name) qc.invalidateQueries({ queryKey: profileKey(shopId, initial.name) });
+      onClose({ name: name.trim(), phone: phone.trim() });
     } catch {
       toast.error("Failed to save — please retry");
     } finally {
@@ -120,14 +153,21 @@ function CustomerFormDialog({
     }
   };
 
+  const title = !isEdit ? "New Customer" : isUnregistered ? "Edit Customer" : "Edit Profile";
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UserPlus className="h-4 w-4 text-primary" />
-            {isEdit ? "Edit Customer" : "New Customer"}
+            {title}
           </DialogTitle>
+          {isUnregistered && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Renaming will update all debt records linked to this customer.
+            </p>
+          )}
         </DialogHeader>
 
         <div className="space-y-4">
@@ -139,36 +179,40 @@ function CustomerFormDialog({
             <Label className="text-xs font-bold uppercase tracking-wider">Phone</Label>
             <Input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+254 712 345 678" type="tel" />
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-bold uppercase tracking-wider">Email</Label>
-            <Input value={email} onChange={e => setEmail(e.target.value)} placeholder="john@example.com" type="email" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-bold uppercase tracking-wider">Credit Limit (KES)</Label>
-            <Input value={creditLimit} onChange={e => setCreditLimit(e.target.value)} placeholder="e.g. 5000" type="number" min={0} />
-            <p className="text-[10px] text-muted-foreground">Max credit allowed — leave blank for no limit</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-bold uppercase tracking-wider">Notes</Label>
-            <textarea
-              className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-              rows={3}
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              placeholder="Any notes about this customer…"
-            />
-          </div>
+          {!isUnregistered && (
+            <>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase tracking-wider">Email</Label>
+                <Input value={email} onChange={e => setEmail(e.target.value)} placeholder="john@example.com" type="email" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase tracking-wider">Credit Limit (KES)</Label>
+                <Input value={creditLimit} onChange={e => setCreditLimit(e.target.value)} placeholder="e.g. 5000" type="number" min={0} />
+                <p className="text-[10px] text-muted-foreground">Leave blank for no limit</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase tracking-wider">Notes</Label>
+                <textarea
+                  className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+                  rows={3}
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="Any notes about this customer…"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="ghost" onClick={() => onClose()} disabled={saving}>Cancel</Button>
           <Button onClick={handleSave} disabled={!name.trim() || saving} className="gap-2">
             {saving ? (
               <span className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
             ) : (
               <Save className="h-3.5 w-3.5" />
             )}
-            {isEdit ? "Save Changes" : "Add Customer"}
+            {!isEdit ? "Add Customer" : "Save Changes"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -177,7 +221,15 @@ function CustomerFormDialog({
 }
 
 // ─── Delete confirm dialog ────────────────────────────────────────────────────
-function DeleteDialog({ customer, shopId, onDeleted }: { customer: CustomerEntry; shopId: string; onDeleted: () => void }) {
+function DeleteDialog({
+  customer,
+  shopId,
+  onDeleted,
+}: {
+  customer: CustomerEntry;
+  shopId: string;
+  onDeleted: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const qc = useQueryClient();
@@ -187,7 +239,7 @@ function DeleteDialog({ customer, shopId, onDeleted }: { customer: CustomerEntry
     setLoading(true);
     try {
       await customFetch(`/api/crm/${customer.id}?shopId=${shopId}`, { method: "DELETE" });
-      qc.invalidateQueries({ queryKey: ["/api/crm", shopId] });
+      qc.invalidateQueries({ queryKey: crmKey(shopId) });
       toast.success(`${customer.name} removed`);
       setOpen(false);
       onDeleted();
@@ -202,19 +254,21 @@ function DeleteDialog({ customer, shopId, onDeleted }: { customer: CustomerEntry
     <>
       <button
         onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive text-xs font-semibold transition-colors"
+        className="flex items-center justify-center w-7 h-7 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors"
+        title="Remove customer"
       >
-        <Trash2 className="h-3.5 w-3.5" />
+        <Trash2 className="h-3 w-3" />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-xs">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-destructive">
-              <Trash2 className="h-4 w-4" />Remove Customer
+              <Trash2 className="h-4 w-4" />Remove Profile
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Remove <span className="font-semibold text-foreground">{customer.name}</span>'s profile? Their debt records will not be deleted.
+            Remove <span className="font-semibold text-foreground">{customer.name}</span>'s profile?
+            Their debt records will remain — only the registered profile is deleted.
           </p>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={loading}>Cancel</Button>
@@ -228,9 +282,9 @@ function DeleteDialog({ customer, shopId, onDeleted }: { customer: CustomerEntry
   );
 }
 
-// ─── Customer profile view ───────────────────────────────────────────────────
+// ─── Customer profile view ────────────────────────────────────────────────────
 function CustomerProfileView({
-  customer,
+  customer: initialCustomer,
   shopId,
   onBack,
   onEdit,
@@ -240,6 +294,9 @@ function CustomerProfileView({
   onBack: () => void;
   onEdit: () => void;
 }) {
+  // Use local state so edits reflect immediately in header
+  const [customer, setCustomer] = useState(initialCustomer);
+
   const { data: profile, isLoading } = useQuery<CustomerProfile>({
     queryKey: profileKey(shopId, customer.name),
     queryFn: () =>
@@ -251,6 +308,7 @@ function CustomerProfileView({
 
   const qc = useQueryClient();
   const [registering, setRegistering] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const handleRegister = async () => {
     setRegistering(true);
@@ -261,13 +319,11 @@ function CustomerProfileView({
           shopId,
           name: customer.name,
           phone: customer.phone,
-          email: null,
-          notes: null,
-          creditLimit: null,
+          email: null, notes: null, creditLimit: null,
         }),
       });
-      toast.success("Customer profile saved");
-      qc.invalidateQueries({ queryKey: ["/api/crm", shopId] });
+      toast.success("Profile saved");
+      qc.invalidateQueries({ queryKey: crmKey(shopId) });
       qc.invalidateQueries({ queryKey: profileKey(shopId, customer.name) });
     } catch {
       toast.error("Failed to save profile");
@@ -294,18 +350,18 @@ function CustomerProfileView({
         <div className="flex items-center gap-3 px-4 py-3">
           <button
             onClick={onBack}
-            className="flex items-center justify-center w-8 h-8 rounded-xl bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className="flex items-center justify-center w-8 h-8 rounded-xl bg-muted/60 hover:bg-muted transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="font-bold text-base text-foreground truncate">{customer.name}</h1>
+            <h1 className="font-bold text-base truncate">{customer.name}</h1>
             <p className="text-xs text-muted-foreground">
-              {customer.registered ? "Registered customer" : "Discovered from debts"}
+              {customer.registered ? "Registered profile" : "From debt records only"}
             </p>
           </div>
           <button
-            onClick={onEdit}
+            onClick={() => setEditOpen(true)}
             className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-muted/60 hover:bg-muted text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
           >
             <Edit3 className="h-3.5 w-3.5" />
@@ -314,108 +370,115 @@ function CustomerProfileView({
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
-        {/* Profile card */}
-        <div className="rounded-2xl border border-border bg-card p-4">
-          <div className="flex items-start gap-4">
-            {/* Avatar */}
-            <div className={cn(
-              "w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-bold shrink-0",
-              customer.totalBalance > 0 ? "bg-destructive/15 text-destructive" : "bg-emerald-500/15 text-emerald-400"
-            )}>
-              {customer.name.charAt(0).toUpperCase()}
+      <div className="p-4 space-y-4 pb-10">
+        {/* Hero card */}
+        <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          {/* Top accent bar */}
+          <div className={cn(
+            "h-1.5",
+            customer.totalBalance > 0 ? "bg-destructive" : "bg-primary"
+          )} />
+          <div className="p-4">
+            <div className="flex items-start gap-4">
+              <div className={cn(
+                "w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold shrink-0",
+                avatarColor(customer.name, customer.totalBalance > 0)
+              )}>
+                {customer.name.charAt(0).toUpperCase()}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="font-bold text-lg">{customer.name}</h2>
+                  {customer.registered && <Star className="h-3.5 w-3.5 text-primary fill-primary" />}
+                  {!customer.registered && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                      Unregistered
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-1 mt-1.5">
+                  {(reg?.phone || customer.phone) && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+                      <Phone className="h-3.5 w-3.5 shrink-0" />
+                      {reg?.phone || customer.phone}
+                    </p>
+                  )}
+                  {reg?.email && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+                      <Mail className="h-3.5 w-3.5 shrink-0" />
+                      {reg.email}
+                    </p>
+                  )}
+                  {reg?.creditLimit != null && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+                      <CreditCard className="h-3.5 w-3.5 shrink-0" />
+                      Limit: <span className="font-mono font-semibold text-foreground ml-1">{formatKES(reg.creditLimit)}</span>
+                    </p>
+                  )}
+                </div>
+                {reg?.notes && (
+                  <div className="mt-2 bg-muted/40 rounded-xl px-3 py-2">
+                    <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                      <FileText className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                      {reg.notes}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <h2 className="font-bold text-lg text-foreground">{customer.name}</h2>
-                {customer.registered && (
-                  <Star className="h-3.5 w-3.5 text-primary fill-primary" />
-                )}
-              </div>
-
-              <div className="space-y-1 mt-1.5">
-                {(reg?.phone || customer.phone) && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-                    <Phone className="h-3.5 w-3.5 shrink-0" />
-                    {reg?.phone || customer.phone}
-                  </p>
-                )}
-                {reg?.email && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-                    <Mail className="h-3.5 w-3.5 shrink-0" />
-                    {reg.email}
-                  </p>
-                )}
-                {reg?.creditLimit != null && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-                    <CreditCard className="h-3.5 w-3.5 shrink-0" />
-                    Credit limit: <span className="font-mono font-semibold text-foreground">{formatKES(reg.creditLimit)}</span>
-                  </p>
-                )}
-              </div>
-
-              {reg?.notes && (
-                <div className="mt-2 bg-muted/40 rounded-xl px-3 py-2">
-                  <p className="text-xs text-muted-foreground flex items-start gap-1.5">
-                    <FileText className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                    {reg.notes}
-                  </p>
-                </div>
+            {/* Action buttons */}
+            <div className="flex gap-2 mt-4 flex-wrap">
+              {!customer.registered && (
+                <button
+                  onClick={handleRegister}
+                  disabled={registering}
+                  className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors disabled:opacity-50"
+                >
+                  <Star className="h-3.5 w-3.5" />
+                  {registering ? "Saving…" : "Save Profile"}
+                </button>
+              )}
+              {(reg?.phone || customer.phone) && customer.totalBalance > 0 && (
+                <a href={waUrl} target="_blank" rel="noopener noreferrer">
+                  <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl border border-[#25D366]/30 text-[#25D366] bg-[#25D366]/5 hover:bg-[#25D366]/15 text-xs font-semibold transition-colors">
+                    <MessageCircle className="w-3.5 h-3.5" />WhatsApp Reminder
+                  </button>
+                </a>
               )}
             </div>
           </div>
-
-          {/* Actions */}
-          <div className="flex gap-2 mt-4 flex-wrap">
-            {!customer.registered ? (
-              <button
-                onClick={handleRegister}
-                disabled={registering}
-                className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors disabled:opacity-50"
-              >
-                <Star className="h-3.5 w-3.5" />
-                {registering ? "Saving…" : "Save Profile"}
-              </button>
-            ) : null}
-            {(reg?.phone || customer.phone) && customer.totalBalance > 0 && (
-              <a href={waUrl} target="_blank" rel="noopener noreferrer">
-                <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl border border-[#25D366]/30 text-[#25D366] bg-[#25D366]/5 hover:bg-[#25D366]/15 text-xs font-semibold transition-colors">
-                  <MessageCircle className="w-3.5 h-3.5" />WhatsApp
-                </button>
-              </a>
-            )}
-          </div>
         </div>
 
-        {/* Stats row */}
+        {/* Stats */}
         {!isLoading && stats && (
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded-2xl bg-destructive/10 border border-destructive/20 p-3 text-center">
-              <p className="text-base font-bold font-mono text-destructive leading-none">
+              <p className="text-sm font-bold font-mono text-destructive leading-none">
                 {formatKES(stats.totalBalance)}
               </p>
-              <p className="text-[10px] text-muted-foreground/60 mt-1">Outstanding</p>
+              <p className="text-[10px] text-muted-foreground/60 mt-1.5">Outstanding</p>
             </div>
             <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-center">
-              <p className="text-base font-bold font-mono text-emerald-400 leading-none">
+              <p className="text-sm font-bold font-mono text-emerald-400 leading-none">
                 {formatKES(stats.totalPaid)}
               </p>
-              <p className="text-[10px] text-muted-foreground/60 mt-1">Total Paid</p>
+              <p className="text-[10px] text-muted-foreground/60 mt-1.5">Total Paid</p>
             </div>
             <div className="rounded-2xl bg-muted/40 border border-border/50 p-3 text-center">
-              <p className="text-base font-bold font-mono text-foreground leading-none">
+              <p className="text-sm font-bold font-mono text-foreground leading-none">
                 {stats.debtCount}
               </p>
-              <p className="text-[10px] text-muted-foreground/60 mt-1">Transactions</p>
+              <p className="text-[10px] text-muted-foreground/60 mt-1.5">Transactions</p>
             </div>
           </div>
         )}
 
         {/* Debt history */}
         <div>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground/50 mb-3">
-            Debt History
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-3 flex items-center gap-1.5">
+            <Clock className="h-3 w-3" />Debt History
           </h3>
 
           {isLoading ? (
@@ -444,7 +507,8 @@ function CustomerProfileView({
                     key={debt.id}
                     className={cn(
                       "rounded-2xl border bg-card p-3.5",
-                      isOverdue ? "border-red-500/30" : "border-border/70"
+                      isOverdue ? "border-red-500/30" :
+                      isPaid ? "border-emerald-500/20" : "border-border/70"
                     )}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -475,9 +539,7 @@ function CustomerProfileView({
                         )}
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-sm font-bold font-mono text-foreground">
-                          {formatKES(debt.totalAmount)}
-                        </p>
+                        <p className="text-sm font-bold font-mono">{formatKES(debt.totalAmount)}</p>
                         <p className="text-[10px] text-muted-foreground/50">total</p>
                       </div>
                     </div>
@@ -493,9 +555,7 @@ function CustomerProfileView({
                             style={{ width: `${paidPct}%` }}
                           />
                         </div>
-                        <p className="text-[10px] text-muted-foreground/40 mt-1">
-                          {paidPct}% paid
-                        </p>
+                        <p className="text-[10px] text-muted-foreground/40 mt-1">{paidPct}% paid</p>
                       </div>
                     )}
                   </div>
@@ -505,6 +565,120 @@ function CustomerProfileView({
           )}
         </div>
       </div>
+
+      {/* Edit dialog from profile */}
+      <CustomerFormDialog
+        open={editOpen}
+        onClose={(updated) => {
+          setEditOpen(false);
+          if (updated?.name) setCustomer(c => ({ ...c, ...updated }));
+        }}
+        shopId={shopId}
+        initial={customer}
+      />
+    </div>
+  );
+}
+
+// ─── Customer card ────────────────────────────────────────────────────────────
+function CustomerCard({
+  customer,
+  isOwner,
+  shopId,
+  onClick,
+  onEdit,
+}: {
+  customer: CustomerEntry;
+  isOwner: boolean;
+  shopId: string;
+  onClick: () => void;
+  onEdit: () => void;
+}) {
+  const hasBalance = customer.totalBalance > 0;
+  const ac = avatarColor(customer.name, hasBalance);
+
+  return (
+    <div className="rounded-2xl border border-border/60 bg-card overflow-hidden group hover:border-border transition-colors">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={e => e.key === "Enter" && onClick()}
+        className="w-full flex items-center gap-3 px-4 py-3.5 cursor-pointer"
+      >
+        {/* Avatar */}
+        <div className={cn(
+          "w-11 h-11 rounded-xl flex items-center justify-center text-base font-bold shrink-0 transition-transform group-hover:scale-105",
+          ac
+        )}>
+          {customer.name.charAt(0).toUpperCase()}
+        </div>
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-sm truncate">{customer.name}</span>
+            {customer.registered && (
+              <Star className="h-2.5 w-2.5 text-primary fill-primary shrink-0" />
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground/60 mt-0.5 truncate">
+            {customer.phone || customer.email || (
+              <span className="italic">No contact info</span>
+            )}
+          </p>
+          {customer.activeCount > 0 && (
+            <p className={cn(
+              "text-[11px] font-semibold font-mono mt-0.5",
+              hasBalance ? "text-destructive" : "text-emerald-400"
+            )}>
+              {hasBalance ? `${formatKES(customer.totalBalance)} owed` : "All settled"}
+              {customer.debtCount > 0 && (
+                <span className="text-muted-foreground/40 font-normal ml-1">
+                  · {customer.debtCount} debt{customer.debtCount !== 1 ? "s" : ""}
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+
+        {/* Right actions */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isOwner && (
+            <div onClick={e => e.stopPropagation()} className="flex items-center gap-1">
+              <button
+                onClick={onEdit}
+                className="flex items-center justify-center w-7 h-7 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                title="Edit customer"
+              >
+                <Edit3 className="h-3 w-3" />
+              </button>
+              {customer.registered && customer.id && (
+                <DeleteDialog
+                  customer={customer}
+                  shopId={shopId}
+                  onDeleted={() => {}}
+                />
+              )}
+            </div>
+          )}
+          <ChevronRight className="h-4 w-4 text-muted-foreground/30" />
+        </div>
+      </div>
+
+      {/* Balance bar for customers with debt */}
+      {hasBalance && (
+        <div className="h-0.5 bg-destructive/30 mx-4 mb-3 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-destructive/70 rounded-full"
+            style={{
+              width: customer.totalOwed > 0
+                ? `${Math.round((customer.totalBalance / customer.totalOwed) * 100)}%`
+                : "100%"
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -521,13 +695,11 @@ export default function Customers() {
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<CustomerEntry | null>(null);
 
-  const qc = useQueryClient();
-
   const { data: allCustomers = [], isLoading } = useQuery<CustomerEntry[]>({
-    queryKey: ["/api/crm", shopId, ""],
+    queryKey: crmKey(shopId),
     queryFn: () => customFetch<CustomerEntry[]>(`/api/crm?shopId=${encodeURIComponent(shopId)}`),
     enabled: !!shopId,
-    refetchInterval: 10_000,
+    refetchInterval: 15_000,
   });
 
   const stats = useMemo(() => {
@@ -574,18 +746,18 @@ export default function Customers() {
   return (
     <div className="flex flex-col min-h-screen bg-background">
 
-      {/* ── Sticky header ─────────────────────────────────────────────── */}
-      <div className="sticky top-0 z-20 bg-card/98 backdrop-blur-sm border-b border-border">
+      {/* ── Sticky header ──────────────────────────────────────────── */}
+      <div className="sticky top-0 z-20 bg-card/95 backdrop-blur-md border-b border-border/80">
         <div className="flex items-center justify-between px-4 pt-3 pb-2">
           <div>
-            <h1 className="text-xl font-bold font-display tracking-tight">Customers</h1>
+            <h1 className="text-xl font-bold tracking-tight">Customers</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {stats.total} customer{stats.total !== 1 ? "s" : ""} · {stats.registered} registered
+              {stats.total} total · {stats.registered} registered · {stats.withBalance} with debt
             </p>
           </div>
           <button
             onClick={() => setAddOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors"
           >
             <UserPlus className="h-3.5 w-3.5" />
             Add
@@ -595,13 +767,21 @@ export default function Customers() {
         {/* Search */}
         <div className="px-4 pb-2">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
             <Input
               placeholder="Search by name, phone or email…"
-              className="pl-9 h-10 text-sm bg-muted/40 border-border/60 rounded-xl"
+              className="pl-9 h-9 text-sm bg-muted/40 border-border/40 rounded-xl"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -621,7 +801,7 @@ export default function Customers() {
               {f.label}
               <span className={cn(
                 "text-[10px] font-bold tabular-nums",
-                filter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/60"
+                filter === f.value ? "text-primary-foreground/70" : "text-muted-foreground/50"
               )}>
                 {f.count}
               </span>
@@ -630,51 +810,57 @@ export default function Customers() {
         </div>
       </div>
 
-      {/* ── Stats banner ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 px-4 pt-4 pb-2">
-        <div className="rounded-2xl bg-muted/40 border border-border/50 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-2 flex items-center gap-1">
-            <Users className="h-3 w-3" />Customers
-          </p>
-          <p className="text-xl font-bold font-mono text-foreground leading-none">{stats.total}</p>
-          <p className="text-[11px] text-muted-foreground/60 mt-2">
-            {stats.registered} with profile
+      {/* ── Stats banner ──────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 px-4 pt-4 pb-1">
+        {/* Customers card */}
+        <div className="rounded-2xl bg-muted/30 border border-border/40 p-4 relative overflow-hidden">
+          <div className="absolute top-3 right-3 opacity-10">
+            <Users className="h-8 w-8" />
+          </div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 mb-2">Customers</p>
+          <p className="text-2xl font-bold font-mono">{stats.total}</p>
+          <p className="text-[11px] text-muted-foreground/50 mt-1">
+            {stats.registered} registered
           </p>
         </div>
+
+        {/* Outstanding card */}
         <div className={cn(
-          "rounded-2xl border p-4",
-          stats.outstanding > 0 ? "bg-destructive/10 border-destructive/20" : "bg-muted/30 border-border/40"
+          "rounded-2xl border p-4 relative overflow-hidden",
+          stats.outstanding > 0
+            ? "bg-destructive/10 border-destructive/20"
+            : "bg-muted/30 border-border/40"
         )}>
+          <div className="absolute top-3 right-3 opacity-10">
+            <TrendingDown className="h-8 w-8" />
+          </div>
           <p className={cn(
-            "text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1",
-            stats.outstanding > 0 ? "text-destructive/60" : "text-muted-foreground/50"
-          )}>
-            <TrendingDown className="h-3 w-3" />Outstanding
-          </p>
+            "text-[10px] font-bold uppercase tracking-widest mb-2",
+            stats.outstanding > 0 ? "text-destructive/70" : "text-muted-foreground/60"
+          )}>Outstanding</p>
           <p className={cn(
-            "text-xl font-bold font-mono leading-none",
+            "text-2xl font-bold font-mono",
             stats.outstanding > 0 ? "text-destructive" : "text-muted-foreground/40"
           )}>
             {formatKES(stats.outstanding)}
           </p>
-          <p className="text-[11px] text-muted-foreground/60 mt-2">
+          <p className="text-[11px] text-muted-foreground/50 mt-1">
             {stats.withBalance} owe balance
           </p>
         </div>
       </div>
 
-      {/* ── Customer list ────────────────────────────────────────────── */}
-      <div className="px-4 pt-2 pb-8 space-y-2.5">
+      {/* ── Customer list ─────────────────────────────────────────── */}
+      <div className="px-4 pt-3 pb-8 space-y-2">
         {isLoading ? (
           Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="rounded-2xl border border-border bg-card p-4 animate-pulse">
+            <div key={i} className="rounded-2xl border border-border/40 bg-card p-4 animate-pulse">
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-muted/60 shrink-0" />
+                <div className="w-11 h-11 rounded-xl bg-muted/60 shrink-0" />
                 <div className="flex-1 space-y-2">
-                  <div className="h-4 w-36 bg-muted/60 rounded-full" />
-                  <div className="h-3 w-24 bg-muted/40 rounded-full" />
+                  <div className="h-3.5 w-36 bg-muted/60 rounded-full" />
+                  <div className="h-2.5 w-24 bg-muted/40 rounded-full" />
                 </div>
-                <div className="w-5 h-5 bg-muted/40 rounded-full" />
               </div>
             </div>
           ))
@@ -694,94 +880,68 @@ export default function Customers() {
             )}
           </div>
         ) : (
-          filtered.map(customer => {
-            const hasBalance = customer.totalBalance > 0;
-            const avatarColor = hasBalance
-              ? "bg-destructive/15 text-destructive"
-              : customer.registered
-              ? "bg-primary/15 text-primary"
-              : "bg-muted/60 text-muted-foreground";
+          <>
+            {/* Section: with debt */}
+            {filtered.some(c => c.activeCount > 0) && (
+              <>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/40 pt-1 flex items-center gap-1.5">
+                  <AlertCircle className="h-3 w-3" />With Active Debt
+                </p>
+                {filtered
+                  .filter(c => c.activeCount > 0)
+                  .map(customer => (
+                    <CustomerCard
+                      key={customer.id ?? `u-${customer.name}`}
+                      customer={customer}
+                      isOwner={isOwner}
+                      shopId={shopId}
+                      onClick={() => setSelectedCustomer(customer)}
+                      onEdit={() => setEditTarget(customer)}
+                    />
+                  ))}
+              </>
+            )}
 
-            return (
-              <div
-                key={customer.registered ? customer.id! : `u-${customer.name}`}
-                className="rounded-2xl border border-border/70 bg-card overflow-hidden"
-              >
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setSelectedCustomer(customer)}
-                  onKeyDown={e => e.key === "Enter" && setSelectedCustomer(customer)}
-                  className="w-full flex items-center gap-3 p-4 hover:bg-muted/30 transition-colors cursor-pointer"
-                >
-                  {/* Avatar */}
-                  <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center text-base font-bold shrink-0", avatarColor)}>
-                    {customer.name.charAt(0).toUpperCase()}
-                  </div>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-sm text-foreground truncate">{customer.name}</span>
-                      {customer.registered && (
-                        <Star className="h-3 w-3 text-primary fill-primary shrink-0" />
-                      )}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground/60 mt-0.5 truncate">
-                      {customer.phone || (customer.email ?? "No contact info")}
-                    </p>
-                    {customer.activeCount > 0 && (
-                      <p className={cn(
-                        "text-[11px] font-semibold font-mono mt-0.5",
-                        hasBalance ? "text-destructive" : "text-muted-foreground"
-                      )}>
-                        {hasBalance ? `${formatKES(customer.totalBalance)} owed` : "All settled"}
-                        {customer.debtCount > 0 && (
-                          <span className="text-muted-foreground/40 font-normal ml-1">
-                            · {customer.debtCount} debt{customer.debtCount !== 1 ? "s" : ""}
-                          </span>
-                        )}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Right: action buttons + arrow */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    {isOwner && customer.registered && customer.id && (
-                      <div onClick={e => e.stopPropagation()} className="flex items-center gap-1">
-                        <button
-                          onClick={() => setEditTarget(customer)}
-                          className="flex items-center justify-center w-7 h-7 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          <Edit3 className="h-3 w-3" />
-                        </button>
-                        <DeleteDialog
-                          customer={customer}
-                          shopId={shopId}
-                          onDeleted={() => {}}
-                        />
-                      </div>
-                    )}
-                    <ChevronRight className="h-4 w-4 text-muted-foreground/40" />
-                  </div>
-                </div>
-              </div>
-            );
-          })
+            {/* Section: all settled */}
+            {filtered.some(c => c.activeCount === 0) && (
+              <>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/40 pt-2 flex items-center gap-1.5">
+                  <BadgeCheck className="h-3 w-3" />All Settled / No Debt
+                </p>
+                {filtered
+                  .filter(c => c.activeCount === 0)
+                  .map(customer => (
+                    <CustomerCard
+                      key={customer.id ?? `u-${customer.name}`}
+                      customer={customer}
+                      isOwner={isOwner}
+                      shopId={shopId}
+                      onClick={() => setSelectedCustomer(customer)}
+                      onEdit={() => setEditTarget(customer)}
+                    />
+                  ))}
+              </>
+            )}
+          </>
         )}
       </div>
 
-      {/* ── Add customer dialog ──────────────────────────────────────── */}
+      {/* ── Add customer dialog ───────────────────────────────────── */}
       <CustomerFormDialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
         shopId={shopId}
       />
 
-      {/* ── Edit customer dialog ─────────────────────────────────────── */}
+      {/* ── Edit customer dialog ──────────────────────────────────── */}
       <CustomerFormDialog
         open={!!editTarget}
-        onClose={() => { setEditTarget(null); if (selectedCustomer) setSelectedCustomer(prev => prev ? { ...prev, ...editTarget! } : null); }}
+        onClose={(updated) => {
+          setEditTarget(null);
+          if (updated && selectedCustomer) {
+            setSelectedCustomer(prev => prev ? { ...prev, ...updated } : null);
+          }
+        }}
         shopId={shopId}
         initial={editTarget}
       />
