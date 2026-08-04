@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatKES } from "@/lib/format";
+import { formatKES, formatQty } from "@/lib/format";
 import {
   Search, Plus, Minus, Package, Edit2, AlertTriangle, ArrowUpRight,
   PackageX, Copy, TrendingUp, Scale, Wheat,
@@ -257,6 +257,17 @@ function RestockDialog({ product }: { product: any }) {
   const [purchasePrice, setPurchasePrice] = useState(product.purchasePrice?.toString() || "");
   const [sellingPrice, setSellingPrice] = useState(product.sellingPrice?.toString() || "");
   const [submitting, setSubmitting] = useState(false);
+
+  // Sync prices from the latest product data every time the dialog opens.
+  // Without this, editing a price via the Edit dialog and then opening Restock
+  // would show the stale price from the initial component mount.
+  useEffect(() => {
+    if (open) {
+      setPurchasePrice(product.purchasePrice?.toString() || "");
+      setSellingPrice(product.sellingPrice?.toString() || "");
+      setQty(0);
+    }
+  }, [open, product.purchasePrice, product.sellingPrice]);
   const restockMutation = useRestockProduct();
   const qc = useQueryClient();
 
@@ -347,7 +358,7 @@ function RestockDialog({ product }: { product: any }) {
           <div className="flex justify-between items-center">
             <div>
               <p className="text-xs text-muted-foreground uppercase tracking-wide">Current Stock</p>
-              <p className="text-2xl font-bold font-mono">{product.stockQty}<span className="text-muted-foreground text-sm font-normal ml-1">{product.unit || "units"}</span></p>
+              <p className="text-2xl font-bold font-mono">{formatQty(product.stockQty)}<span className="text-muted-foreground text-sm font-normal ml-1">{product.unit || "units"}</span></p>
             </div>
             {product.alertQty && (
               <div className="text-right">
@@ -417,8 +428,8 @@ function RestockDialog({ product }: { product: any }) {
             {Number(qty) < 0 && (
               <p className={cn("text-xs font-medium", product.stockQty + Number(qty) < 0 ? "text-destructive" : "text-orange-400")}>
                 {product.stockQty + Number(qty) < 0
-                  ? `Cannot remove more than current stock (${product.stockQty} ${product.unit || "units"})`
-                  : `Stock will drop to ${product.stockQty + Number(qty)} ${product.unit || "units"}`}
+                  ? `Cannot remove more than current stock (${formatQty(product.stockQty)} ${product.unit || "units"})`
+                  : `Stock will drop to ${formatQty(product.stockQty + Number(qty))} ${product.unit || "units"}`}
               </p>
             )}
           </div>
@@ -491,6 +502,13 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     if (sellPrice) patch.sellingPrice = parseFloat(sellPrice);
     if (alertQty) patch.alertQty = parseFloat(alertQty);
     if (expiryDate) patch.expiryDate = expiryDate;
+
+    // When switching from measured (decimal) to normal (whole units), any
+    // fractional stock qty becomes invalid — round it down to the nearest
+    // whole unit so the product can no longer show values like 1.5.
+    if (productType === "normal" && product.productType === "measured" && !Number.isInteger(product.stockQty)) {
+      patch.stockQty = Math.floor(product.stockQty);
+    }
 
     // Cancel in-flight fetches so they don't race and overwrite our optimistic update
     await qc.cancelQueries({ queryKey: getListProductsQueryKey() });
@@ -1600,7 +1618,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
                           "text-sm font-bold font-mono tabular-nums",
                           isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-muted-foreground"
                         )}>
-                          {p.stockQty}
+                          {formatQty(p.stockQty)}
                         </span>
                         <span className="text-[9px] text-muted-foreground/50 ml-0.5">{p.unit || "u"}</span>
                       </div>
@@ -1635,7 +1653,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
                       {/* New total */}
                       <div className="text-center">
                         {newTotal !== null ? (
-                          <span className="text-sm font-bold font-mono text-primary tabular-nums">{newTotal}</span>
+                          <span className="text-sm font-bold font-mono text-primary tabular-nums">{formatQty(newTotal!)}</span>
                         ) : (
                           <span className="text-muted-foreground/30 text-sm">—</span>
                         )}
@@ -1829,7 +1847,7 @@ export default function Stock() {
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div>
             <h1 className="text-lg font-bold text-foreground">Inventory</h1>
-            <p className="text-xs text-muted-foreground">{counts.all.toLocaleString()} products · {counts.totalItems.toLocaleString()} units</p>
+            <p className="text-xs text-muted-foreground">{counts.all.toLocaleString()} products · {parseFloat(counts.totalItems.toFixed(3)).toLocaleString()} units</p>
           </div>
           <div className="flex gap-1.5 flex-wrap">
             <BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} />
@@ -2064,7 +2082,7 @@ export default function Stock() {
                       <div className="text-center shrink-0 min-w-[40px]">
                         <p className={cn("text-lg font-bold font-mono leading-none",
                           isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-primary"
-                        )}>{p.stockQty}</p>
+                        )}>{formatQty(p.stockQty)}</p>
                         <p className="text-[9px] text-muted-foreground/60 mt-0.5 uppercase tracking-wide truncate max-w-[44px]">{p.unit || "u"}</p>
                       </div>
 

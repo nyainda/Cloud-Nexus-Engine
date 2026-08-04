@@ -1,5 +1,5 @@
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions, getListProductsQueryKey } from "@workspace/api-client-react";
@@ -10,6 +10,19 @@ import type { ReactNode, ErrorInfo } from "react";
 import { useGetSession } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getCachedSession, setCachedSession } from "@/lib/session-cache";
+
+// ── Global auth-expiry handler ─────────────────────────────────────────────────
+// Called whenever ANY query or mutation returns a 401/403. Clears credentials
+// and hard-navigates to /login so the user re-authenticates automatically
+// instead of seeing a wall of "failed" toasts.
+function handleAuthExpiry() {
+  localStorage.removeItem("greenlink_token");
+  setCachedSession(null);
+  // Only redirect when not already on the login page to avoid loops.
+  if (!window.location.pathname.startsWith("/login")) {
+    window.location.replace("/login");
+  }
+}
 
 // Login and POS are EAGERLY imported — they are the two critical first screens
 import Login from "@/pages/login";
@@ -31,6 +44,21 @@ const Quotations = lazy(() => import("@/pages/quotations"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
 const queryClient = new QueryClient({
+  // ── Global 401/403 interceptor ───────────────────────────────────────────
+  // Any query or mutation that returns an auth error automatically clears
+  // credentials and sends the user back to /login. This handles the case
+  // where the 24 h KV session expires while the app is open (e.g. overnight)
+  // so the user is re-authenticated without having to manually log out.
+  queryCache: new QueryCache({
+    onError: (error: any) => {
+      if (error?.status === 401 || error?.status === 403) handleAuthExpiry();
+    },
+  }),
+  mutationCache: new MutationCache({
+    onError: (error: any) => {
+      if (error?.status === 401 || error?.status === 403) handleAuthExpiry();
+    },
+  }),
   defaultOptions: {
     queries: {
       retry: 1,
@@ -254,6 +282,10 @@ function AuthGuard({ children }: { children: ReactNode }) {
       } else if (session) {
         // Fresh session from server — update the localStorage cache and render.
         setCachedSession(session);
+        // Reset redirect flag so a future session expiry can redirect again.
+        // Without this reset, once the flag fires once it stays true for the
+        // component's lifetime, silently swallowing subsequent expirations.
+        redirectedRef.current = false;
         if (!ready) setReady(true);
 
         // Fallback seed: if there was no cached session on mount we couldn't
