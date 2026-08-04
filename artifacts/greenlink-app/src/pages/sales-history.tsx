@@ -16,7 +16,7 @@ import {
   Receipt, ChevronDown, ChevronUp, Trash2, Calendar,
   ChevronLeft, ChevronRight, CreditCard,
   TrendingUp, ShoppingBag, Banknote, Clock, User, Package,
-  RotateCcw, Minus, Plus, CheckCircle2, Search, X,
+  RotateCcw, Minus, Plus, CheckCircle2, Search, X, Printer,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, addDays, subDays, isToday } from "date-fns";
@@ -298,6 +298,160 @@ function ReturnDialog({
 }
 
 // ─── Sale Detail — reads items directly from embedded sale object (no fetch) ──
+// ─── Sale Receipt / Invoice ───────────────────────────────────────────────────
+async function printSaleReceipt(sale: any) {
+  const shopName = localStorage.getItem("greenlink_shopName") || "GreenLink";
+  const items = (sale.items || []) as any[];
+  const isDebt = sale.saleType === "debt";
+  const isBank = !isDebt && sale.paymentMethod === "bank";
+  const payLabel = isDebt ? "Credit / Debt" : isBank ? "M-Pesa / Bank" : "Cash";
+  const payColor = isDebt ? "#d97706" : isBank ? "#2563eb" : "#059669";
+  const saleDate = format(new Date(sale.createdAt), "d MMM yyyy");
+  const saleTime = format(new Date(sale.createdAt), "h:mm a");
+  const refNum = sale.id.slice(0, 8).toUpperCase();
+
+  const itemRows = items.map((it: any, i: number) => `
+    <tr class="${i % 2 === 1 ? "alt" : ""}">
+      <td class="name">${it.productName ?? "—"}</td>
+      <td class="num">${it.qty}</td>
+      <td class="num">KES ${Number(it.unitPrice ?? 0).toLocaleString("en-KE")}</td>
+      <td class="num bold">KES ${Number(it.totalPrice ?? 0).toLocaleString("en-KE")}</td>
+    </tr>`).join("");
+
+  const discountRow = sale.discount > 0
+    ? `<div class="total-row"><span class="label muted">Discount</span><span class="value red">- KES ${Number(sale.discount).toLocaleString("en-KE")}</span></div>`
+    : "";
+
+  const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Receipt ${refNum} — ${shopName}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; background: #fff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page { max-width: 560px; margin: 0 auto; padding: 40px 32px 48px; }
+
+  /* Header */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 20px; border-bottom: 2px solid #e2e8f0; }
+  .shop-name { font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px; }
+  .shop-sub { font-size: 11px; color: #64748b; margin-top: 3px; }
+  .doc-meta { text-align: right; }
+  .doc-type { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #059669; }
+  .doc-ref { font-size: 18px; font-weight: 800; color: #0f172a; margin-top: 2px; }
+  .doc-date { font-size: 11px; color: #64748b; margin-top: 3px; }
+
+  /* Info strip */
+  .info-strip { display: flex; gap: 24px; padding: 16px 0; border-bottom: 1px solid #e2e8f0; }
+  .info-item { }
+  .info-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-bottom: 3px; }
+  .info-value { font-size: 12px; font-weight: 600; color: #0f172a; }
+  .pay-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; background: ${payColor}18; color: ${payColor}; border: 1px solid ${payColor}40; }
+
+  /* Items table */
+  .items-section { margin: 24px 0 0; }
+  .section-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #059669; margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead tr { background: #1e293b; color: #fff; }
+  thead th { padding: 9px 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  th.name, td.name { text-align: left; }
+  th.num, td.num { text-align: right; }
+  td { padding: 9px 10px; font-size: 12px; color: #0f172a; border-bottom: 1px solid #f1f5f9; }
+  tr.alt td { background: #f8fafc; }
+  td.bold { font-weight: 700; color: #059669; }
+
+  /* Totals */
+  .totals { margin-top: 16px; border-top: 2px solid #e2e8f0; padding-top: 12px; }
+  .total-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; }
+  .total-row.grand { border-top: 1.5px solid #cbd5e1; margin-top: 8px; padding-top: 10px; }
+  .label { font-size: 12px; color: #64748b; }
+  .value { font-size: 12px; font-weight: 600; color: #0f172a; }
+  .label.muted { color: #94a3b8; font-size: 11px; }
+  .value.red { color: #dc2626; }
+  .grand .label { font-size: 15px; font-weight: 800; color: #0f172a; }
+  .grand .value { font-size: 17px; font-weight: 800; color: #059669; font-family: "Courier New", monospace; }
+
+  /* Customer block for debt */
+  .customer-block { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 14px; margin: 16px 0 0; }
+  .customer-block .lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #d97706; margin-bottom: 4px; }
+  .customer-block .val { font-size: 13px; font-weight: 700; color: #0f172a; }
+
+  /* Footer */
+  .footer { margin-top: 36px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 20px; }
+  .footer .thanks { font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+  .footer .sub { font-size: 11px; color: #94a3b8; }
+  .footer .brand { font-size: 10px; font-weight: 700; color: #059669; margin-top: 12px; letter-spacing: 0.5px; }
+
+  @media print {
+    body { background: #fff; }
+    .page { padding: 24px 24px 32px; }
+    @page { margin: 8mm; size: A5; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div>
+      <div class="shop-name">${shopName}</div>
+      <div class="shop-sub">Official Receipt</div>
+    </div>
+    <div class="doc-meta">
+      <div class="doc-type">Receipt</div>
+      <div class="doc-ref">#${refNum}</div>
+      <div class="doc-date">${saleDate} &nbsp;·&nbsp; ${saleTime}</div>
+    </div>
+  </div>
+
+  <div class="info-strip">
+    <div class="info-item">
+      <div class="info-label">Payment</div>
+      <div class="info-value"><span class="pay-badge">${payLabel}</span></div>
+    </div>
+    ${sale.servedBy ? `<div class="info-item"><div class="info-label">Served by</div><div class="info-value">${sale.servedBy}</div></div>` : ""}
+    <div class="info-item" style="margin-left:auto; text-align:right">
+      <div class="info-label">Total Amount</div>
+      <div class="info-value" style="font-size:17px;color:#059669;font-weight:800">KES ${Number(sale.totalAmount ?? 0).toLocaleString("en-KE")}</div>
+    </div>
+  </div>
+
+  ${isDebt && sale.debtCustomerName ? `<div class="customer-block"><div class="lbl">Credit Customer</div><div class="val">${sale.debtCustomerName}</div></div>` : ""}
+
+  <div class="items-section">
+    <div class="section-title">Items Purchased</div>
+    <table>
+      <thead><tr>
+        <th class="name">Item</th>
+        <th class="num">Qty</th>
+        <th class="num">Unit Price</th>
+        <th class="num">Total</th>
+      </tr></thead>
+      <tbody>${itemRows || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">No items</td></tr>'}</tbody>
+    </table>
+  </div>
+
+  <div class="totals">
+    ${discountRow}
+    <div class="total-row grand">
+      <span class="label">Total</span>
+      <span class="value" style="font-size:17px;font-weight:800;color:#059669">KES ${Number(sale.totalAmount ?? 0).toLocaleString("en-KE")}</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="thanks">Thank you for your business!</div>
+    <div class="sub">Keep this receipt as proof of purchase.</div>
+    <div class="brand">${shopName.toUpperCase()} &nbsp;·&nbsp; Powered by GreenLink OS</div>
+  </div>
+</div>
+<script>window.onload = () => { window.print(); };</script>
+</body></html>`;
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  if (win) win.addEventListener("afterprint", () => URL.revokeObjectURL(url));
+}
+
 function SaleDetail({
   sale,
   isOwner,
@@ -430,7 +584,15 @@ function SaleDetail({
           {sale.servedBy && <p>Served by <span className="font-medium text-foreground">{sale.servedBy}</span></p>}
           <p className="font-mono text-muted-foreground/60">{sale.id.slice(0, 8).toUpperCase()}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => printSaleReceipt(sale)}
+            className="text-xs h-8 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+          >
+            <Printer className="h-3 w-3 mr-1" />Receipt
+          </Button>
           {!sale.isDeleted && items.length > 0 && (
             <Button
               variant="outline"

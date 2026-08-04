@@ -102,51 +102,50 @@ function CustomerFormDialog({
 
   const handleSave = async () => {
     if (!name.trim()) { toast.error("Customer name is required"); return; }
+    const trimmed = {
+      name: name.trim(), phone: phone.trim(),
+      email: email.trim() || null, notes: notes.trim() || null,
+      creditLimit: creditLimit ? Number(creditLimit) : null,
+    };
+
+    // Optimistic update for edits — close dialog instantly
+    let snapshot: any[] | undefined;
+    if (isEdit && isRegistered && initial?.id) {
+      snapshot = qc.getQueryData<any[]>(crmKey(shopId));
+      qc.setQueryData(crmKey(shopId), (old: any[] = []) =>
+        old.map(c => c.id === initial.id ? { ...c, ...trimmed } : c)
+      );
+    }
+    onClose({ name: trimmed.name, phone: trimmed.phone });
     setSaving(true);
     try {
       if (isUnregistered) {
-        // Rename all debt records (+ register if name changed)
         await customFetch("/api/crm/rename", {
           method: "PATCH",
-          body: JSON.stringify({
-            shopId,
-            oldName: initial!.name,
-            newName: name.trim(),
-            phone: phone.trim(),
-          }),
+          body: JSON.stringify({ shopId, oldName: initial!.name, newName: trimmed.name, phone: trimmed.phone }),
         });
         toast.success("Customer updated across all debts");
       } else if (isRegistered && initial?.id) {
         await customFetch(`/api/crm/${initial.id}?shopId=${shopId}`, {
           method: "PATCH",
-          body: JSON.stringify({
-            name: name.trim(),
-            phone: phone.trim(),
-            email: email.trim() || null,
-            notes: notes.trim() || null,
-            creditLimit: creditLimit ? Number(creditLimit) : null,
-          }),
+          body: JSON.stringify(trimmed),
         });
         toast.success("Customer updated");
       } else {
-        // New customer
+        // New: optimistic add with a temp id, then server confirms
+        const tempEntry: any = { ...trimmed, id: `tmp-${Date.now()}`, registered: true, totalBalance: 0, totalOwed: 0, debtCount: 0, activeCount: 0, lastActivity: null, createdAt: new Date().toISOString() };
+        qc.setQueryData(crmKey(shopId), (old: any[] = []) => [tempEntry, ...old]);
         await customFetch("/api/crm", {
           method: "POST",
-          body: JSON.stringify({
-            shopId,
-            name: name.trim(),
-            phone: phone.trim(),
-            email: email.trim() || null,
-            notes: notes.trim() || null,
-            creditLimit: creditLimit ? Number(creditLimit) : null,
-          }),
+          body: JSON.stringify({ shopId, ...trimmed }),
         });
-        toast.success(`${name.trim()} added`);
+        toast.success(`${trimmed.name} added`);
       }
       qc.invalidateQueries({ queryKey: crmKey(shopId) });
       if (initial?.name) qc.invalidateQueries({ queryKey: profileKey(shopId, initial.name) });
-      onClose({ name: name.trim(), phone: phone.trim() });
     } catch {
+      if (snapshot) qc.setQueryData(crmKey(shopId), snapshot);
+      else qc.invalidateQueries({ queryKey: crmKey(shopId) }); // revert temp add
       toast.error("Failed to save — please retry");
     } finally {
       setSaving(false);
@@ -236,15 +235,19 @@ function DeleteDialog({
 
   const handleDelete = async () => {
     if (!customer.id) return;
+    // Optimistic: remove instantly, close dialog, call back
+    const snapshot = qc.getQueryData<any[]>(crmKey(shopId));
+    qc.setQueryData(crmKey(shopId), (old: any[] = []) => old.filter(c => c.id !== customer.id));
+    toast.success(`${customer.name} removed`);
+    setOpen(false);
+    onDeleted();
     setLoading(true);
     try {
       await customFetch(`/api/crm/${customer.id}?shopId=${shopId}`, { method: "DELETE" });
       qc.invalidateQueries({ queryKey: crmKey(shopId) });
-      toast.success(`${customer.name} removed`);
-      setOpen(false);
-      onDeleted();
     } catch {
-      toast.error("Failed to delete");
+      qc.setQueryData(crmKey(shopId), snapshot); // rollback
+      toast.error("Failed to delete — restored");
     } finally {
       setLoading(false);
     }
