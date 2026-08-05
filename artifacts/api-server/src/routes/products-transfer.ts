@@ -56,6 +56,9 @@ productsTransferRouter.post("/products/:productId/transfer", requireAuth, async 
   if (!targetProduct) {
     // Create product in target shop with 0 stock — we'll update it below
     const newId = crypto.randomUUID();
+    // Prices are intentionally NOT copied — the receiving shop must set
+    // their own buying/selling prices. Copying the sender's prices would
+    // silently apply wrong margins for a different market/supplier.
     await db.insert(products).values({
       id: newId,
       shopId: body.targetShopId,
@@ -64,9 +67,9 @@ productsTransferRouter.post("/products/:productId/transfer", requireAuth, async 
       sku: sourceProduct.sku ?? null,
       category: sourceProduct.category ?? null,
       unit: sourceProduct.unit ?? "unit",
-      purchasePrice: sourceProduct.purchasePrice ?? null,
-      sellingPrice: sourceProduct.sellingPrice ?? null,
-      profitMargin: sourceProduct.profitMargin ?? null,
+      purchasePrice: null,
+      sellingPrice: null,
+      profitMargin: null,
       stockQty: 0,
       alertQty: sourceProduct.alertQty ?? 5,
       size: sourceProduct.size ?? null,
