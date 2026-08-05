@@ -56,9 +56,10 @@ productsTransferRouter.post("/products/:productId/transfer", requireAuth, async 
   if (!targetProduct) {
     // Create product in target shop with 0 stock — we'll update it below
     const newId = crypto.randomUUID();
-    // Prices are intentionally NOT copied — the receiving shop must set
-    // their own buying/selling prices. Copying the sender's prices would
-    // silently apply wrong margins for a different market/supplier.
+    // Copy the sender's current prices — they just bought this stock from
+    // the supplier so their prices are the most up-to-date reference.
+    // The receiving shop can adjust selling price afterwards if their
+    // market demands a different margin.
     await db.insert(products).values({
       id: newId,
       shopId: body.targetShopId,
@@ -67,9 +68,9 @@ productsTransferRouter.post("/products/:productId/transfer", requireAuth, async 
       sku: sourceProduct.sku ?? null,
       category: sourceProduct.category ?? null,
       unit: sourceProduct.unit ?? "unit",
-      purchasePrice: null,
-      sellingPrice: null,
-      profitMargin: null,
+      purchasePrice: sourceProduct.purchasePrice ?? null,
+      sellingPrice: sourceProduct.sellingPrice ?? null,
+      profitMargin: sourceProduct.profitMargin ?? null,
       stockQty: 0,
       alertQty: sourceProduct.alertQty ?? 5,
       size: sourceProduct.size ?? null,
@@ -90,9 +91,13 @@ productsTransferRouter.post("/products/:productId/transfer", requireAuth, async 
   // to whatever the DB currently holds, rather than overwriting with a
   // pre-read value that may be stale if another request ran concurrently.
   //
-  // IMPORTANT: only stockQty is touched — prices and unit are intentionally
-  // NOT synced. Each shop manages its own selling/buying prices independently.
-  // A transfer is a physical stock move, not a price agreement.
+  // Prices ARE synced from sender to receiver because the sender holds the
+  // most current supplier pricing — they just bought this stock. If the
+  // supplier raised prices and the sender updated their records, the transfer
+  // carries that updated cost and selling price to the receiving shop so they
+  // never unknowingly sell stock at an outdated (possibly loss-making) price.
+  // The receiving shop can adjust their selling price afterwards if their
+  // local market demands a different margin.
 
   await db
     .update(products)
@@ -106,6 +111,10 @@ productsTransferRouter.post("/products/:productId/transfer", requireAuth, async 
     .update(products)
     .set({
       stockQty: sql`${products.stockQty} + ${body.qty}`,
+      purchasePrice: sourceProduct.purchasePrice ?? null,
+      sellingPrice: sourceProduct.sellingPrice ?? null,
+      profitMargin: sourceProduct.profitMargin ?? null,
+      unit: sourceProduct.unit ?? "unit",
       updatedAt: now,
     })
     .where(eq(products.id, targetProduct!.id));
