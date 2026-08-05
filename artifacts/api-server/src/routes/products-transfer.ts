@@ -86,34 +86,23 @@ productsTransferRouter.post("/products/:productId/transfer", requireAuth, async 
   // Avoids the read-modify-write race: each UPDATE applies its own ±delta
   // to whatever the DB currently holds, rather than overwriting with a
   // pre-read value that may be stale if another request ran concurrently.
-  // Determine the authoritative price: prefer source (sender initiates the transfer)
-  // and sync it to BOTH sides so both shops always have matching pricing.
-  const authPrice = sourceProduct.purchasePrice ?? null;
-  const authSelling = sourceProduct.sellingPrice ?? null;
-  const authMargin = sourceProduct.profitMargin ?? null;
-  const authUnit = sourceProduct.unit ?? "unit";
+  //
+  // IMPORTANT: only stockQty is touched — prices and unit are intentionally
+  // NOT synced. Each shop manages its own selling/buying prices independently.
+  // A transfer is a physical stock move, not a price agreement.
 
   await db
     .update(products)
     .set({
       stockQty: sql`${products.stockQty} - ${body.qty}`,
-      purchasePrice: authPrice,
-      sellingPrice: authSelling,
-      profitMargin: authMargin,
-      unit: authUnit,
       updatedAt: now,
     })
     .where(eq(products.id, productId));
 
-  // Sync pricing/unit from source to receiving shop so both shops stay price-consistent
   await db
     .update(products)
     .set({
       stockQty: sql`${products.stockQty} + ${body.qty}`,
-      purchasePrice: authPrice,
-      sellingPrice: authSelling,
-      profitMargin: authMargin,
-      unit: authUnit,
       updatedAt: now,
     })
     .where(eq(products.id, targetProduct!.id));
