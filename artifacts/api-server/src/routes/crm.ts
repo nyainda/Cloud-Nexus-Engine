@@ -40,6 +40,9 @@ crmRouter.get("/crm", requireAuth, async (c) => {
     debtCount: number;
     activeCount: number;
     lastActivity: string;
+    latestDebtAmount: number;
+    latestDebtBalance: number;
+    latestDebtStatus: string;
   };
   const debtMap = new Map<string, DebtStats>();
   for (const d of debtRows) {
@@ -54,13 +57,21 @@ crmRouter.get("/crm", requireAuth, async (c) => {
         debtCount: 1,
         activeCount: d.status !== "paid" ? 1 : 0,
         lastActivity: d.createdAt,
+        latestDebtAmount: d.totalAmount || 0,
+        latestDebtBalance: d.balance || 0,
+        latestDebtStatus: d.status,
       });
     } else {
       ex.totalBalance += d.balance || 0;
       ex.totalOwed += d.totalAmount || 0;
       ex.debtCount++;
       if (d.status !== "paid") ex.activeCount++;
-      if (d.createdAt > ex.lastActivity) ex.lastActivity = d.createdAt;
+      if (d.createdAt > ex.lastActivity) {
+        ex.lastActivity = d.createdAt;
+        ex.latestDebtAmount = d.totalAmount || 0;
+        ex.latestDebtBalance = d.balance || 0;
+        ex.latestDebtStatus = d.status;
+      }
     }
   }
 
@@ -77,6 +88,9 @@ crmRouter.get("/crm", requireAuth, async (c) => {
     debtCount: number;
     activeCount: number;
     lastActivity: string | null;
+    latestDebtAmount: number | null;
+    latestDebtBalance: number | null;
+    latestDebtStatus: string | null;
     createdAt: string;
   };
 
@@ -100,6 +114,9 @@ crmRouter.get("/crm", requireAuth, async (c) => {
       debtCount: stats?.debtCount ?? 0,
       activeCount: stats?.activeCount ?? 0,
       lastActivity: stats?.lastActivity ?? r.createdAt,
+      latestDebtAmount: stats?.latestDebtAmount ?? null,
+      latestDebtBalance: stats?.latestDebtBalance ?? null,
+      latestDebtStatus: stats?.latestDebtStatus ?? null,
       createdAt: r.createdAt,
     });
   }
@@ -119,6 +136,9 @@ crmRouter.get("/crm", requireAuth, async (c) => {
       debtCount: stats.debtCount,
       activeCount: stats.activeCount,
       lastActivity: stats.lastActivity,
+      latestDebtAmount: stats.latestDebtAmount,
+      latestDebtBalance: stats.latestDebtBalance,
+      latestDebtStatus: stats.latestDebtStatus,
       createdAt: stats.lastActivity,
     });
   }
@@ -158,9 +178,9 @@ crmRouter.get("/crm/profile", requireAuth, async (c) => {
     (r) => r.name.toLowerCase().trim() === name.toLowerCase().trim()
   ) ?? null;
 
-  const matchedDebts = allDebts.filter(
-    (d) => d.customerName.toLowerCase().trim() === name.toLowerCase().trim()
-  );
+  const matchedDebts = allDebts
+    .filter((d) => d.customerName.toLowerCase().trim() === name.toLowerCase().trim())
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const totalBalance = matchedDebts.reduce((s, d) => s + (d.balance || 0), 0);
   const totalOwed = matchedDebts.reduce((s, d) => s + (d.totalAmount || 0), 0);

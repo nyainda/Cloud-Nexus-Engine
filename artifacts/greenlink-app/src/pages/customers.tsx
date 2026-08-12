@@ -32,6 +32,9 @@ interface CustomerEntry {
   debtCount: number;
   activeCount: number;
   lastActivity: string | null;
+  latestDebtAmount: number | null;
+  latestDebtBalance: number | null;
+  latestDebtStatus: string | null;
   createdAt: string;
 }
 
@@ -811,9 +814,14 @@ export default function Customers() {
                           <Star className="h-2.5 w-2.5 text-primary fill-primary shrink-0" />
                         )}
                       </div>
-                      <p className="text-[11px] text-muted-foreground/60 truncate">
+                       <p className="text-[11px] text-muted-foreground/60 truncate">
                         {customer.phone || customer.email || <span className="italic">No contact</span>}
                       </p>
+                       {customer.latestDebtAmount != null && customer.lastActivity && (
+                         <p className="text-[10px] text-blue-500 dark:text-blue-400 truncate">
+                           Latest debt: {formatKES(customer.latestDebtAmount)} · {format(new Date(customer.lastActivity), "d MMM")}
+                         </p>
+                       )}
                     </div>
                   </div>
 

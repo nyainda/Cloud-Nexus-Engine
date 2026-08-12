@@ -419,7 +419,9 @@ function SaleDetail({
           <Separator />
           <div className="px-4 py-2.5 flex items-center gap-2">
             <CreditCard className="h-3.5 w-3.5 text-blue-400" />
-            <span className="text-xs text-blue-400 font-semibold">Debt Sale</span>
+            <span className="text-xs text-blue-400 font-semibold">
+              Debt Sale{sale.debtCustomerName ? ` · ${sale.debtCustomerName}` : ""}
+            </span>
             <span className="text-[10px] text-muted-foreground">· balance auto-credited on return</span>
           </div>
         </>
@@ -599,6 +601,11 @@ function SaleRow({ sale, isOwner, onVoidRequest }: { sale: any; isOwner: boolean
                 </span>
               )}
             </div>
+          {isDebt && sale.debtCustomerName && (
+            <p className="text-[11px] text-blue-500 dark:text-blue-400 font-semibold mt-0.5 truncate">
+              Customer: {sale.debtCustomerName}
+            </p>
+          )}
             {sale.discount > 0 && (
               <p className="text-xs text-muted-foreground mt-0.5">Discount {fmt(sale.discount)}</p>
             )}
@@ -703,6 +710,7 @@ export default function SalesHistory() {
       const q = search.trim().toLowerCase();
       result = result.filter(s =>
         (s.servedBy || "").toLowerCase().includes(q) ||
+        (s.debtCustomerName || "").toLowerCase().includes(q) ||
         String(s.totalAmount ?? "").includes(q) ||
         (s.items ?? []).some((it: any) => it.productName?.toLowerCase().includes(q))
       );
@@ -755,7 +763,7 @@ export default function SalesHistory() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search by cashier, amount or product…"
+               placeholder="Search by cashier, customer, amount or product…"
               className="w-full h-9 pl-9 pr-8 text-sm bg-muted/30 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all"
             />
             {search && (
