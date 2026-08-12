@@ -39,7 +39,8 @@ salesRouter.get("/sales", requireAuth, async (c) => {
   let result: any[] = rows;
   if (rows.length > 0) {
     const saleIds = rows.map(r => r.id);
-    const allItems = await db
+    const [allItems, linkedDebts] = await Promise.all([
+      db
       .select({
         saleId: saleItems.saleId,
         productId: saleItems.productId,
@@ -52,7 +53,17 @@ salesRouter.get("/sales", requireAuth, async (c) => {
       })
       .from(saleItems)
       .where(inArray(saleItems.saleId, saleIds))
-      .all();
+      .all(),
+      db
+        .select({
+          saleId: debts.saleId,
+          customerName: debts.customerName,
+          customerPhone: debts.customerPhone,
+        })
+        .from(debts)
+        .where(inArray(debts.saleId, saleIds))
+        .all(),
+    ]);
 
     const itemsBySaleId: Record<string, any[]> = {};
     for (const item of allItems) {
@@ -60,7 +71,27 @@ salesRouter.get("/sales", requireAuth, async (c) => {
       if (!itemsBySaleId[item.saleId]) itemsBySaleId[item.saleId] = [];
       itemsBySaleId[item.saleId]!.push(item);
     }
-    result = rows.map(r => ({ ...r, items: itemsBySaleId[r.id] ?? [] }));
+    const debtBySaleId: Record<string, {
+      customerName: string;
+      customerPhone: string;
+    }> = {};
+    for (const debt of linkedDebts) {
+      if (!debt.saleId) continue;
+      debtBySaleId[debt.saleId] = {
+        customerName: debt.customerName,
+        customerPhone: debt.customerPhone,
+      };
+    }
+    result = rows.map(r => ({
+      ...r,
+      items: itemsBySaleId[r.id] ?? [],
+      ...(debtBySaleId[r.id]
+        ? {
+            debtCustomerName: debtBySaleId[r.id]!.customerName,
+            debtCustomerPhone: debtBySaleId[r.id]!.customerPhone,
+          }
+        : {}),
+    }));
   }
 
   return c.json(result);
@@ -230,6 +261,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   await kvDel(
     c.env.SESSIONS,
     CK.products(body.shopId),
+    CK.debts(body.shopId),
     CK.dashboard(body.shopId, today),
   );
 
