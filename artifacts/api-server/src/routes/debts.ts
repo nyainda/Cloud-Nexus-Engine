@@ -4,7 +4,7 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { debts, debtPayments, notifications, saleItems } from "@workspace/db/schema";
-import { kvGet, kvSet, kvDel, CK, CACHE_TTL } from "../lib/cache";
+import { kvDel, CK } from "../lib/cache";
 
 const debtsRouter = new Hono<AppEnv>();
 
@@ -44,12 +44,6 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
   const shopId = c.req.query("shopId");
   const status = c.req.query("status");
   const q = c.req.query("q");
-
-  // Cache the full unfiltered list per shop — status/search filters are applied in-memory below
-  if (shopId && !status && !q) {
-    const cached = await kvGet<object[]>(c.env.SESSIONS, CK.debts(shopId));
-    if (cached) return c.json(cached);
-  }
 
   let rows = await db
     .select()
@@ -105,11 +99,6 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
     ...r,
     items: r.saleId ? (itemsByHuman[r.saleId] ?? []) : [],
   }));
-
-  // Write the unfiltered full list to KV so subsequent reads are instant
-  if (shopId && !status && !q) {
-    await kvSet(c.env.SESSIONS, CK.debts(shopId), result, CACHE_TTL.debts);
-  }
 
   return c.json(result);
 });
