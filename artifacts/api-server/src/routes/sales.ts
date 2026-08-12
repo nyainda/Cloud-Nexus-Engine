@@ -115,6 +115,14 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     debtCustomerPhone?: string;
   }>();
 
+  // A debt sale without a customer cannot be reconciled later: it would appear
+  // in sales history but never be discoverable in the debt ledger or CRM.
+  // Reject it before writing the sale so those two records cannot drift apart.
+  const debtCustomerName = body.debtCustomerName?.trim();
+  if (body.saleType === "debt" && !debtCustomerName) {
+    return c.json({ error: "Customer name is required for debt sales" }, 400);
+  }
+
   const db = createDb(c.env.DB);
   const now = new Date().toISOString();
   const saleId = crypto.randomUUID();
@@ -238,14 +246,14 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     }
   }
 
-  if (body.saleType === "debt" && body.debtCustomerName) {
+  if (body.saleType === "debt" && debtCustomerName) {
     const debtId = crypto.randomUUID();
     await db.insert(debts).values({
       id: debtId,
       shopId: body.shopId,
       saleId,
-      customerName: body.debtCustomerName,
-      customerPhone: body.debtCustomerPhone ?? "",
+      customerName: debtCustomerName,
+      customerPhone: body.debtCustomerPhone?.trim() ?? "",
       totalAmount,
       amountPaid: 0,
       balance: totalAmount,

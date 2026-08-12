@@ -1232,7 +1232,12 @@ export default function POS() {
         onSettled: () => {
           submittingRef.current = false;
           // Invalidate only after mutation is committed — avoids stale-refetch race
-          if (saleType === "debt") qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
+          if (saleType === "debt") {
+            qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
+            // CRM powers both the Customers page and customer profile/debt views.
+            // Keep it fresh when a debt is created from POS.
+            qc.invalidateQueries({ queryKey: ["/api/crm"] });
+          }
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
           logInventory({ stage: "invalidate_triggered", mutationId, source: "pos", timestamp: new Date().toISOString(), extra: { pending_removed: true } });
