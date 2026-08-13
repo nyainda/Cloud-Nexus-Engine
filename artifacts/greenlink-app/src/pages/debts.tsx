@@ -772,6 +772,41 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     });
 
     let y = (doc as any).lastAutoTable.finalY + 10;
+
+    // ── Itemized products across every debt record ─────────────────────────
+    // The customer statement covers multiple debt records, so include the
+    // actual products taken rather than only the item count in the summary.
+    const itemRows = details.flatMap((d: any) =>
+      (d.items || []).map((item: any) => [
+        `#${String(d.id).slice(0, 8).toUpperCase()}`,
+        item.productName ?? item.name ?? "—",
+        String(item.qty ?? item.quantity ?? 1),
+        money(item.unitPrice),
+        money(item.totalPrice ?? item.total),
+      ]),
+    );
+    if (itemRows.length > 0) {
+      doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
+      doc.text("ITEMS TAKEN — ALL DEBT RECORDS", ML, y);
+      y += 5;
+      autoTable(doc, {
+        startY: y, margin: { left: ML, right: MR },
+        head: [["Debt Ref", "Product / Description", "Qty", "Unit Price", "Total"]],
+        body: itemRows,
+        headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
+        bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: {
+          0: { cellWidth: 25 },
+          1: { cellWidth: "auto" },
+          2: { cellWidth: 18, halign: "right" },
+          3: { cellWidth: 32, halign: "right" },
+          4: { cellWidth: 32, halign: "right", fontStyle: "bold" },
+        },
+      });
+      y = (doc as any).lastAutoTable.finalY + 10;
+    }
+
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
     doc.text("PAYMENT HISTORY", ML, y); y += 5;
     const paymentRows = details.flatMap((d: any) => (d.payments || []).map((p: any) => [
