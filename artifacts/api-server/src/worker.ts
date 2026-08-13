@@ -28,6 +28,9 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   }
 
   const MIGRATIONS = [
+    // Durable marker table: unlike the module-level bootstrapped flag, this
+    // coordinates one-time work across all Cloudflare Worker isolates.
+    "CREATE TABLE IF NOT EXISTS app_migrations (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
     "ALTER TABLE scan_sessions ADD COLUMN image_url TEXT",
     "ALTER TABLE scan_sessions ADD COLUMN r2_key TEXT",
     "ALTER TABLE scan_sessions ADD COLUMN archived_at TEXT",
@@ -78,10 +81,6 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       content='products',
       content_rowid='rowid'
     )`,
-    // Populate FTS from existing products
-    `INSERT OR IGNORE INTO products_fts(rowid, id, shop_id, normalized_name, canonical_name, sku, category)
-     SELECT rowid, id, shop_id, normalized_name, canonical_name, COALESCE(sku,''), COALESCE(category,'')
-     FROM products WHERE is_active = 1`,
     // Keep FTS in sync on insert
     `CREATE TRIGGER IF NOT EXISTS products_fts_insert AFTER INSERT ON products BEGIN
        INSERT INTO products_fts(rowid, id, shop_id, normalized_name, canonical_name, sku, category)
@@ -154,6 +153,25 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   ];
   for (const m of MIGRATIONS) {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }
+  }
+
+  // FTS backfill is intentionally claimed through D1, not a module-level
+  // boolean. Cloudflare may run many isolates against the same database, and
+  // each isolate must not repeat the full products scan.
+  try {
+    const claim = await db
+      .prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind("products_fts_v1", new Date().toISOString())
+      .run();
+    if (Number(claim.meta?.changes ?? 0) > 0) {
+      await db.prepare(
+        `INSERT OR IGNORE INTO products_fts(rowid, id, shop_id, normalized_name, canonical_name, sku, category)
+         SELECT rowid, id, shop_id, normalized_name, canonical_name, COALESCE(sku,''), COALESCE(category,'')
+         FROM products WHERE is_active = 1`,
+      ).run();
+    }
+  } catch (err) {
+    console.error("[boot] FTS backfill failed:", err);
   }
 
   // ── Fix old quotations schema (has extra NOT NULL columns: type, customer_address, updated_at)

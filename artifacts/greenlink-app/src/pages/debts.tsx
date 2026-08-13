@@ -22,6 +22,18 @@ import { useDebounce } from "@/hooks/use-debounce";
 import { format, formatDistanceToNow, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
 
+function debtProductSummary(items: any[] | undefined): string {
+  const labels = (items ?? [])
+    .map((item) => {
+      const name = item?.productName ?? item?.name;
+      if (!name) return "";
+      const qty = item?.qty ?? item?.quantity;
+      return qty !== undefined && qty !== null ? `${name} × ${qty}` : String(name);
+    })
+    .filter(Boolean);
+  return labels.length > 0 ? labels.join(", ") : "Unlinked debt";
+}
+
 function PaymentDialog({ debt }: { debt: any }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -368,6 +380,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       ?? { name: "GreenLink", id: shopId };
     const payments: any[] = debt?.payments ?? [];
     const items: any[]    = debt?.items    ?? [];
+    const productSummary = debtProductSummary(items);
     const totalPaid = (debt?.totalAmount ?? 0) - (debt?.balance ?? 0);
     const openedDate = format(new Date(debt?.createdAt), "dd MMM yyyy");
     const daysOpen   = differenceInDays(new Date(), new Date(debt?.createdAt));
@@ -589,7 +602,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     type HistRow = { cells: string[]; isOpened: boolean };
     const histRows: HistRow[] = [];
     histRows.push({
-      cells: [format(new Date(debt?.createdAt), "dd MMM yyyy, HH:mm"), "System", "Debt Opened",
+      cells: [format(new Date(debt?.createdAt), "dd MMM yyyy, HH:mm"), "System", productSummary, "Debt Opened",
         `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`,
         `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`],
       isOpened: true,
@@ -599,20 +612,21 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       running -= p.amount;
       const isReversal = p.paymentType === "reversal" || Number(p.amount) < 0;
       histRows.push({
-        cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", isReversal ? "Payment Reversed" : "Payment Received",
+        cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", productSummary,
+          `${isReversal ? "Payment Reversed" : "Payment Received"}${p.note ? ` · ${p.note}` : ""}`,
           `${isReversal ? "+" : ""}KES ${Math.abs(Number(p.amount)).toLocaleString("en-KE")}`,
           `KES ${Math.max(0, running).toLocaleString("en-KE")}`],
         isOpened: false,
       });
     }
     if (histRows.length === 1) {
-      histRows.push({ cells: ["—", "—", "No payments recorded yet", "—", "—"], isOpened: false });
+      histRows.push({ cells: ["—", "—", productSummary, "No payments recorded yet", "—", "—"], isOpened: false });
     }
 
     autoTable(doc, {
       startY: y, margin: { left: ML, right: MR, bottom: 16 },
       showHead: "firstPage",
-      head: [["Date & Time", "Recorded By", "Description", "Amount (KES)", "Balance (KES)"]],
+      head: [["Date & Time", "Recorded By", "Product", "Entry", "Amount (KES)", "Balance (KES)"]],
       body: histRows.map(r => r.cells),
       headStyles: { fillColor: SLATE, textColor: WHITE, fontStyle: "bold", fontSize: 7.5,
         cellPadding: { top: 4, bottom: 4, left: 4, right: 4 } },
@@ -620,24 +634,25 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         textColor: SLATE, lineColor: BORD, lineWidth: 0.2 },
       alternateRowStyles: { fillColor: LGRAY },
       columnStyles: {
-        0: { cellWidth: 38 },
-        1: { cellWidth: 28 },
-        2: { cellWidth: "auto" },
-        3: { cellWidth: 34, halign: "right" },
-        4: { cellWidth: 36, halign: "right", fontStyle: "bold" },
+        0: { cellWidth: 31 },
+        1: { cellWidth: 24 },
+        2: { cellWidth: 34 },
+        3: { cellWidth: "auto" },
+        4: { cellWidth: 32, halign: "right" },
+        5: { cellWidth: 32, halign: "right", fontStyle: "bold" },
       },
       didParseCell: (data: any) => {
         if (data.section !== "body") return;
         const row = histRows[data.row.index];
         if (!row) return;
         if (row.isOpened) { data.cell.styles.textColor = [100, 116, 139]; data.cell.styles.fontStyle = "italic"; }
-        else if (data.column.index === 3) {
+        else if (data.column.index === 4) {
           const payment = payments[data.row.index - 1];
           const isReversal = payment?.paymentType === "reversal" || Number(payment?.amount) < 0;
           data.cell.styles.textColor = isReversal ? RED : GREEN;
           data.cell.styles.fontStyle = "bold";
         }
-        else if (data.column.index === 4) { data.cell.styles.textColor = isPaid ? GREEN : statusColor; }
+        else if (data.column.index === 5) { data.cell.styles.textColor = isPaid ? GREEN : statusColor; }
       },
       didDrawPage: (data: any) => { if (data.pageNumber > 1) drawHeader(false); },
       tableLineColor: BORD, tableLineWidth: 0.2,
@@ -762,7 +777,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       body: details.map((d: any) => [
         `#${String(d.id).slice(0, 8).toUpperCase()}`,
         format(new Date(d.createdAt), "dd MMM yyyy"),
-        d.notes || (d.items?.length ? `${d.items.length} item${d.items.length === 1 ? "" : "s"}` : "Debt record"),
+        d.notes ? `${debtProductSummary(d.items)} · ${d.notes}` : debtProductSummary(d.items),
         money(d.totalAmount), money(d.amountPaid), money(d.balance),
       ]),
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
@@ -812,18 +827,19 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const paymentRows = details.flatMap((d: any) => (d.payments || []).map((p: any) => [
       format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
       `#${String(d.id).slice(0, 8).toUpperCase()}`,
-      p.paymentType === "reversal" ? "Payment reversed" : "Payment received",
+      debtProductSummary(d.items),
+      `${p.paymentType === "reversal" ? "Payment reversed" : "Payment received"}${p.note ? ` · ${p.note}` : ""}`,
       p.recordedBy || "—",
       money(Math.abs(Number(p.amount))),
     ]));
     autoTable(doc, {
       startY: y, margin: { left: ML, right: MR },
-      head: [["Date & Time", "Debt Ref", "Entry", "Recorded By", "Amount"]],
-      body: paymentRows.length ? paymentRows : [["—", "—", "No payments recorded", "—", "—"]],
+      head: [["Date & Time", "Debt Ref", "Product", "Entry", "Recorded By", "Amount"]],
+      body: paymentRows.length ? paymentRows : [["—", "—", "—", "No payments recorded", "—", "—"]],
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
       bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
       alternateRowStyles: { fillColor: [248, 250, 252] },
-      columnStyles: { 0: { cellWidth: 37 }, 1: { cellWidth: 25 }, 2: { cellWidth: "auto" }, 3: { cellWidth: 30 }, 4: { cellWidth: 31, halign: "right", fontStyle: "bold" } },
+      columnStyles: { 0: { cellWidth: 31 }, 1: { cellWidth: 22 }, 2: { cellWidth: 34 }, 3: { cellWidth: "auto" }, 4: { cellWidth: 27 }, 5: { cellWidth: 28, halign: "right", fontStyle: "bold" } },
     });
     y = (doc as any).lastAutoTable.finalY + 8;
     if (y > H - 45) { doc.addPage(); y = 22; }
@@ -1179,6 +1195,10 @@ function DebtDetailPanel({
                       <p className="text-[10px] text-muted-foreground mt-0.5">
                         {format(new Date(p.paidAt), "d MMM yyyy, HH:mm")}
                         {p.note ? ` · ${p.note}` : ""}
+                      </p>
+                      <p className="text-[10px] text-primary/70 mt-1 flex items-start gap-1">
+                        <Package className="h-2.5 w-2.5 mt-0.5 shrink-0" />
+                        <span className="truncate">Product: {debtProductSummary(items)}</span>
                       </p>
                     </div>
                     <div className="text-right shrink-0">
