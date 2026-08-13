@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey, getListSalesQueryKey, customFetch } from "@workspace/api-client-react";
+import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey, getListSalesQueryKey, getGetDebtQueryKey, customFetch } from "@workspace/api-client-react";
 import { enqueueMutation } from "@/lib/offline-queue";
 import { useQueryClient } from "@tanstack/react-query";
 import { CustomerAutocomplete, toTitleCase, type SelectedCustomer } from "@/components/customer-autocomplete";
@@ -207,10 +207,16 @@ function MarkPaidButton({ debt }: { debt: any }) {
     );
     toast.success(`${debt.customerName} marked as paid`);
     try {
-      await customFetch(`/api/debts/${debt.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "paid" }),
+      await customFetch(`/api/debts/${debt.id}/payments`, {
+        method: "POST",
+        body: JSON.stringify({
+          amount: debt.balance,
+          recordedBy: localStorage.getItem("greenlink_userName") || undefined,
+          note: "Marked paid",
+        }),
       });
+      qc.invalidateQueries({ queryKey: exactKey });
+      qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
     } catch {
       qc.setQueryData(exactKey, snapshot);
       toast.error("Failed to mark paid — please retry");
@@ -228,6 +234,39 @@ function MarkPaidButton({ debt }: { debt: any }) {
     >
       <BadgeCheck className="h-3.5 w-3.5" />
       {loading ? "…" : "Mark Paid"}
+    </button>
+  );
+}
+
+function ReversePaymentButton({ debtId, payment, onDone }: { debtId: string; payment: any; onDone: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const reverse = async () => {
+    if (loading) return;
+    const reason = window.prompt("Why is this payment being reversed?", "Payment recorded by mistake");
+    if (reason === null) return;
+    setLoading(true);
+    try {
+      await customFetch(`/api/debts/${debtId}/payments/${payment.id}/reverse`, {
+        method: "POST",
+        body: JSON.stringify({ reason: reason.trim() || "Payment correction" }),
+      });
+      toast.success("Payment reversed — the balance has been restored");
+      onDone();
+    } catch (error: any) {
+      toast.error(error?.message || "Could not reverse this payment");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={reverse}
+      disabled={loading}
+      className="text-[10px] font-semibold text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+      title="Create a correction entry without deleting history"
+    >
+      {loading ? "Reversing…" : "Undo"}
     </button>
   );
 }
@@ -558,9 +597,10 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     let running = debt?.totalAmount ?? 0;
     for (const p of payments) {
       running -= p.amount;
+      const isReversal = p.paymentType === "reversal" || Number(p.amount) < 0;
       histRows.push({
-        cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", "Payment Received",
-          `KES ${Number(p.amount).toLocaleString("en-KE")}`,
+        cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", isReversal ? "Payment Reversed" : "Payment Received",
+          `${isReversal ? "+" : ""}KES ${Math.abs(Number(p.amount)).toLocaleString("en-KE")}`,
           `KES ${Math.max(0, running).toLocaleString("en-KE")}`],
         isOpened: false,
       });
@@ -591,7 +631,12 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         const row = histRows[data.row.index];
         if (!row) return;
         if (row.isOpened) { data.cell.styles.textColor = [100, 116, 139]; data.cell.styles.fontStyle = "italic"; }
-        else if (data.column.index === 3) { data.cell.styles.textColor = GREEN; data.cell.styles.fontStyle = "bold"; }
+        else if (data.column.index === 3) {
+          const payment = payments[data.row.index - 1];
+          const isReversal = payment?.paymentType === "reversal" || Number(payment?.amount) < 0;
+          data.cell.styles.textColor = isReversal ? RED : GREEN;
+          data.cell.styles.fontStyle = "bold";
+        }
         else if (data.column.index === 4) { data.cell.styles.textColor = isPaid ? GREEN : statusColor; }
       },
       didDrawPage: (data: any) => { if (data.pageNumber > 1) drawHeader(false); },
@@ -671,6 +716,209 @@ function DebtDownloadButton({ debt }: { debt: any }) {
   );
 }
 
+async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
+  toast.loading("Generating customer statement…", { id: "customer-debt-pdf" });
+  try {
+    const [shopsData, ...details] = await Promise.all([
+      customFetch<any[]>("/api/shops"),
+      ...group.debts.map((d: any) => customFetch<any>(`/api/debts/${d.id}`)),
+    ]);
+    const shop = (Array.isArray(shopsData) ? shopsData : []).find((s: any) => s.id === shopId) ?? { name: "GreenLink" };
+    const { jsPDF } = await import("jspdf");
+    const autoTable = (await import("jspdf-autotable")).default;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+    const ML = 16, MR = 16, CW = W - ML - MR;
+    const green: [number, number, number] = [5, 150, 105];
+    const slate: [number, number, number] = [30, 41, 59];
+    const muted: [number, number, number] = [100, 116, 139];
+    const border: [number, number, number] = [226, 232, 240];
+    const totalAmount = details.reduce((s, d: any) => s + Number(d?.totalAmount || 0), 0);
+    const totalBalance = details.reduce((s, d: any) => s + Number(d?.balance || 0), 0);
+    const totalPaid = totalAmount - totalBalance;
+    const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
+    const status = totalBalance <= 0 ? "PAID IN FULL" : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
+
+    doc.setFillColor(...green); doc.rect(0, 0, W, 3, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...slate);
+    doc.text(shop.name || "GreenLink", ML, 14);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
+    doc.text("CUSTOMER DEBT STATEMENT", W - MR, 12, { align: "right" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...muted);
+    doc.text(`Generated ${format(new Date(), "dd MMM yyyy, HH:mm")}`, W - MR, 17, { align: "right" });
+    doc.setDrawColor(...border); doc.line(ML, 23, W - MR, 23);
+
+    doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...slate);
+    doc.text(group.customerName, ML, 34);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted);
+    doc.text(group.customerPhone || "No phone number", ML, 40);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
+    doc.text(status, W - MR, 35, { align: "right" });
+
+    autoTable(doc, {
+      startY: 47, margin: { left: ML, right: MR },
+      head: [["Debt Ref", "Date", "Description", "Total", "Paid", "Balance"]],
+      body: details.map((d: any) => [
+        `#${String(d.id).slice(0, 8).toUpperCase()}`,
+        format(new Date(d.createdAt), "dd MMM yyyy"),
+        d.notes || (d.items?.length ? `${d.items.length} item${d.items.length === 1 ? "" : "s"}` : "Debt record"),
+        money(d.totalAmount), money(d.amountPaid), money(d.balance),
+      ]),
+      headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
+      bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 27 }, 2: { cellWidth: "auto" }, 3: { cellWidth: 29, halign: "right" }, 4: { cellWidth: 29, halign: "right" }, 5: { cellWidth: 31, halign: "right", fontStyle: "bold" } },
+    });
+
+    let y = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
+    doc.text("PAYMENT HISTORY", ML, y); y += 5;
+    const paymentRows = details.flatMap((d: any) => (d.payments || []).map((p: any) => [
+      format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
+      `#${String(d.id).slice(0, 8).toUpperCase()}`,
+      p.paymentType === "reversal" ? "Payment reversed" : "Payment received",
+      p.recordedBy || "—",
+      money(Math.abs(Number(p.amount))),
+    ]));
+    autoTable(doc, {
+      startY: y, margin: { left: ML, right: MR },
+      head: [["Date & Time", "Debt Ref", "Entry", "Recorded By", "Amount"]],
+      body: paymentRows.length ? paymentRows : [["—", "—", "No payments recorded", "—", "—"]],
+      headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
+      bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: { 0: { cellWidth: 37 }, 1: { cellWidth: 25 }, 2: { cellWidth: "auto" }, 3: { cellWidth: 30 }, 4: { cellWidth: 31, halign: "right", fontStyle: "bold" } },
+    });
+    y = (doc as any).lastAutoTable.finalY + 8;
+    if (y > H - 45) { doc.addPage(); y = 22; }
+    doc.setFillColor(248, 250, 252); doc.setDrawColor(...border); doc.roundedRect(ML, y, CW, 20, 2, 2, "FD");
+    const summary = [
+      ["TOTAL DEBT", money(totalAmount)],
+      ["TOTAL PAID", money(totalPaid)],
+      ["BALANCE DUE", money(totalBalance)],
+    ];
+    summary.forEach(([label, value], i) => {
+      const x = ML + (CW / 3) * i + CW / 6;
+      doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...green); doc.text(label, x, y + 7, { align: "center" });
+      const valueColor: [number, number, number] = i === 2 && totalBalance > 0 ? [220, 38, 38] : i === 1 ? green : slate;
+      doc.setFontSize(9); doc.setTextColor(...valueColor); doc.text(value, x, y + 14, { align: "center" });
+    });
+    doc.setDrawColor(...border); doc.line(ML, H - 13, W - MR, H - 13);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...muted);
+    doc.text("This statement includes all debt records currently grouped under this customer.", ML, H - 8);
+    const safeName = group.customerName.replace(/[^a-z0-9]/gi, "_");
+    doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
+    toast.success("Customer statement downloaded!", { id: "customer-debt-pdf" });
+  } catch (err) {
+    console.error("Customer debt PDF error:", err);
+    toast.error("Failed to generate customer statement", { id: "customer-debt-pdf" });
+  }
+}
+
+function CustomerDownloadButton({ group }: { group: CustomerGroup }) {
+  const [loading, setLoading] = useState(false);
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
+  return (
+    <button
+      onClick={async (e) => { e.stopPropagation(); if (loading) return; setLoading(true); try { await downloadCustomerPdf(group, shopId); } finally { setLoading(false); } }}
+      disabled={loading}
+      className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors disabled:opacity-50"
+      title="Download all debt records for this customer"
+    >
+      {loading ? <span className="w-3 h-3 rounded-full border border-primary border-t-transparent animate-spin" /> : <Download className="h-3 w-3" />}
+      All PDF
+    </button>
+  );
+}
+
+function CustomerGroupRow({
+  group,
+  onSelectDebt,
+}: {
+  group: CustomerGroup;
+  onSelectDebt: (debt: any) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isPaid = group.totalBalance <= 0;
+  const isPartial = !isPaid && group.totalBalance < group.totalAmount;
+  const statusLabel = isPaid ? "Paid" : group.isOverdue ? "Overdue" : isPartial ? "Partial" : "Unpaid";
+  const statusCss = isPaid
+    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
+    : group.isOverdue
+    ? "bg-red-500/15 text-red-400 border-red-500/25"
+    : isPartial
+    ? "bg-orange-500/15 text-orange-400 border-orange-500/25"
+    : "bg-destructive/15 text-destructive border-destructive/25";
+  const initials = group.customerName.split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
+
+  return (
+    <div className="border-b border-border/40">
+      <div
+        className="group flex items-center gap-3 px-4 py-3.5 hover:bg-muted/30 transition-colors cursor-pointer"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <div className={cn(
+          "w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold shrink-0",
+          isPaid ? "bg-emerald-500/15 text-emerald-400" : group.isOverdue ? "bg-red-500/15 text-red-400" : "bg-primary/15 text-primary",
+        )}>
+          {initials}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground truncate">{toTitleCase(group.customerName)}</p>
+          <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-0.5">
+            {group.customerPhone ? <><Phone className="h-2.5 w-2.5" />{group.customerPhone}<span>·</span></> : null}
+            {group.debts.length} debt record{group.debts.length === 1 ? "" : "s"}
+          </p>
+        </div>
+        <div className="hidden sm:block text-right pr-2">
+          <p className="text-sm font-semibold font-mono">{formatKES(group.totalAmount)}</p>
+          <p className="text-[10px] text-muted-foreground/50">Total across records</p>
+        </div>
+        <div className="text-right pr-2 shrink-0">
+          <p className={cn("text-sm font-bold font-mono", isPaid ? "text-emerald-400" : group.isOverdue ? "text-red-400" : isPartial ? "text-orange-400" : "text-destructive")}>{formatKES(group.totalBalance)}</p>
+          <p className="text-[10px] text-muted-foreground/50">Balance due</p>
+        </div>
+        <span className={cn("hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusCss)}>{statusLabel}</span>
+        <CustomerDownloadButton group={group} />
+        <ChevronDown className={cn("h-4 w-4 text-muted-foreground/40 transition-transform shrink-0", expanded && "rotate-180 text-primary")} />
+      </div>
+      {expanded && (
+        <div className="bg-muted/15 border-t border-border/40 px-4 py-2 space-y-1">
+          <div className="flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground/50">
+            <span>Individual debt records</span>
+            <span>Click a row to view history</span>
+          </div>
+          {group.debts.map((debt: any) => {
+            const debtPaid = debt.status === "paid";
+            const days = differenceInDays(new Date(), new Date(debt.createdAt));
+            return (
+              <button
+                key={debt.id}
+                onClick={() => onSelectDebt(debt)}
+                className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-card border border-transparent hover:border-border/60 transition-colors"
+              >
+                <div className="w-7 h-7 rounded-lg bg-card border border-border/60 flex items-center justify-center shrink-0">
+                  <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold truncate">{format(new Date(debt.createdAt), "d MMM yyyy, HH:mm")}</p>
+                  <p className="text-[10px] text-muted-foreground/60 truncate">{debt.notes || `${days} days old`} · Ref {debt.id.slice(0, 8).toUpperCase()}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs font-bold font-mono">{formatKES(debt.totalAmount)}</p>
+                  <p className={cn("text-[10px] font-mono", debtPaid ? "text-emerald-400" : "text-destructive")}>{debtPaid ? "Paid" : `${formatKES(debt.balance)} due`}</p>
+                </div>
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30" />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Debt Detail Panel (right-side two-pane) ──────────────────────────────
 type DetailTab = "overview" | "payments" | "items";
 
@@ -684,7 +932,9 @@ function DebtDetailPanel({
   onClose: () => void;
 }) {
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
-  const { data, isLoading } = useGetDebt(debt.id, { query: { staleTime: 30_000 } });
+  const { data, isLoading } = useGetDebt(debt.id, { query: { queryKey: getGetDebtQueryKey(debt.id), staleTime: 30_000 } });
+  const qc = useQueryClient();
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
   const payments: any[] = (data as any)?.payments ?? [];
   const items: any[]    = (data as any)?.items    ?? [];
 
@@ -713,6 +963,13 @@ function DebtDetailPanel({
     { id: "payments"  as DetailTab, label: isLoading ? "Payments" : `Payments (${payments.length})` },
     { id: "items"     as DetailTab, label: isLoading ? "Items"    : `Items (${items.length})` },
   ];
+  const reversedPaymentIds = new Set(
+    payments.filter((p: any) => p.paymentType === "reversal" && p.reversalOfId).map((p: any) => p.reversalOfId),
+  );
+  const refreshDebt = () => {
+    qc.invalidateQueries({ queryKey: getListDebtsQueryKey({ shopId: localStorage.getItem("greenlink_shopId") || "" }) });
+    qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
+  };
 
   return (
     <div className="flex flex-col h-full bg-card">
@@ -857,25 +1114,49 @@ function DebtDetailPanel({
                   <p className="text-xs text-muted-foreground/40 text-center py-6 italic">No payments recorded yet</p>
                 )}
 
-                {payments.map((p: any, i: number) => (
-                  <div key={p.id ?? i} className="flex items-center gap-3 p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
-                    <div className="w-8 h-8 rounded-full bg-emerald-500/15 flex items-center justify-center shrink-0">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                {payments.map((p: any, i: number) => {
+                  const isReversal = p.paymentType === "reversal" || Number(p.amount) < 0;
+                  const isReversed = !isReversal && reversedPaymentIds.has(p.id);
+                  return (
+                  <div key={p.id ?? i} className={cn(
+                    "flex items-center gap-3 p-3 rounded-xl border",
+                    isReversal ? "bg-destructive/5 border-destructive/20" : isReversed ? "bg-muted/30 border-border/50" : "bg-emerald-500/5 border-emerald-500/20",
+                  )}>
+                    <div className={cn(
+                      "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
+                      isReversal ? "bg-destructive/15" : isReversed ? "bg-muted" : "bg-emerald-500/15",
+                    )}>
+                      {isReversal
+                        ? <X className="h-3.5 w-3.5 text-destructive" />
+                        : <CheckCircle2 className={cn("h-3.5 w-3.5", isReversed ? "text-muted-foreground" : "text-emerald-400")} />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-xs font-semibold">Payment Received</p>
+                        <p className="text-xs font-semibold">
+                          {isReversal ? "Payment Reversed" : isReversed ? "Payment Received · Reversed" : "Payment Received"}
+                        </p>
                         {p.recordedBy && (
                           <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                             <User2 className="h-2.5 w-2.5" />{p.recordedBy}
                           </span>
                         )}
                       </div>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">{format(new Date(p.paidAt), "d MMM yyyy, HH:mm")}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        {format(new Date(p.paidAt), "d MMM yyyy, HH:mm")}
+                        {p.note ? ` · ${p.note}` : ""}
+                      </p>
                     </div>
-                    <p className="text-xs font-bold font-mono text-emerald-400 shrink-0">+{formatKES(p.amount)}</p>
+                    <div className="text-right shrink-0">
+                      <p className={cn("text-xs font-bold font-mono", isReversal ? "text-destructive" : isReversed ? "text-muted-foreground line-through" : "text-emerald-400")}>
+                        {isReversal ? "" : "+"}{formatKES(Math.abs(p.amount))}
+                      </p>
+                      {isOwner && !isReversal && !isReversed && (
+                        <ReversePaymentButton debtId={debt.id} payment={p} onDone={refreshDebt} />
+                      )}
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
 
                 <div className="mt-1 p-3 rounded-xl bg-muted/30 border border-border flex items-center justify-between">
                   <span className="text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? "s" : ""}</span>
@@ -934,7 +1215,7 @@ function DebtDetailPanel({
           {!isPaid && <PaymentDialog debt={debt} />}
           <DebtDownloadButton debt={debt} />
           {isOwner && !isPaid && <MarkPaidButton debt={debt} />}
-          {isOwner && <DeleteDebtDialog debt={debt} onDeleted={onClose} />}
+          {/* Financial records stay in the ledger; corrections use reversible entries. */}
         </div>
         {debt.customerPhone && !isPaid && (
           <a
@@ -954,7 +1235,7 @@ function DebtDetailPanel({
 
 // ─── Legacy panel kept for internal use only ──────────────────────────────
 function DebtHistoryPanel({ debtId }: { debtId: string }) {
-  const { data, isLoading } = useGetDebt(debtId, { query: { enabled: !!debtId } });
+  const { data, isLoading } = useGetDebt(debtId, { query: { queryKey: getGetDebtQueryKey(debtId), enabled: !!debtId } });
 
   if (isLoading) {
     return (
@@ -1239,7 +1520,8 @@ export default function Debts() {
 
   const [search, setSearch]             = useState("");
   const debouncedSearch                 = useDebounce(search, 100);
-  const [tab, setTab]                   = useState<DebtTab>("unpaid");
+  const [tab, setTab]                   = useState<DebtTab>("all");
+  const [viewMode, setViewMode]         = useState<"customers" | "records">("customers");
   const [selectedDebt, setSelectedDebt] = useState<any>(null);
   const [bulkRemindOpen, setBulkRemindOpen] = useState(false);
 
@@ -1247,7 +1529,7 @@ export default function Debts() {
 
   const { data: allDebts, isLoading } = useListDebts(
     { shopId },
-    { query: { enabled: !!shopId, refetchInterval: 5_000, refetchIntervalInBackground: true } }
+    { query: { queryKey: getListDebtsQueryKey({ shopId }), enabled: !!shopId, refetchInterval: 5_000, refetchIntervalInBackground: true } }
   );
 
   // Keep selectedDebt in sync when data refreshes
@@ -1392,6 +1674,20 @@ export default function Debts() {
                 </span>
               </button>
             )}
+            <div className="hidden sm:flex items-center rounded-xl bg-muted/60 p-0.5">
+              <button
+                onClick={() => setViewMode("customers")}
+                className={cn("px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors", viewMode === "customers" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground")}
+              >
+                Customers
+              </button>
+              <button
+                onClick={() => setViewMode("records")}
+                className={cn("px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors", viewMode === "records" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground")}
+              >
+                Records
+              </button>
+            </div>
             <AddDebtDialog shopId={shopId} onAdded={() => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() })} />
           </div>
         </div>
@@ -1456,7 +1752,7 @@ export default function Debts() {
       <div className="flex-1 overflow-y-auto">
 
         {/* Column headers — hidden on mobile */}
-        {!isLoading && filtered.length > 0 && (
+        {!isLoading && filtered.length > 0 && viewMode === "records" && (
           <div className="hidden sm:grid grid-cols-[auto_1fr_110px_100px_110px_32px] items-center px-4 py-2 border-b border-border/50 bg-muted/20 sticky top-0 z-10">
             <div className="w-9 mr-3" />
             <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Customer</div>
@@ -1497,7 +1793,11 @@ export default function Debts() {
 
         ) : (
           <div className="divide-y divide-border/40">
-            {filtered.map((debt: any) => {
+            {viewMode === "customers" ? (
+              grouped.map((group) => (
+                <CustomerGroupRow key={group.key} group={group} onSelectDebt={setSelectedDebt} />
+              ))
+            ) : filtered.map((debt: any) => {
               const isPaid    = debt.status === "paid";
               const isPartial = debt.status === "partial";
               const daysAgo   = differenceInDays(new Date(), new Date(debt.createdAt));
@@ -1593,7 +1893,7 @@ export default function Debts() {
         {/* Row count */}
         {!isLoading && filtered.length > 0 && (
           <p className="text-[11px] text-muted-foreground/40 text-center py-4">
-            Showing {filtered.length} record{filtered.length !== 1 ? "s" : ""}
+            Showing {viewMode === "customers" ? grouped.length : filtered.length} {viewMode === "customers" ? `customer${grouped.length !== 1 ? "s" : ""}` : `record${filtered.length !== 1 ? "s" : ""}`}
           </p>
         )}
       </div>

@@ -381,6 +381,14 @@ export interface Debt {
   paidAt?: string | null;
 }
 
+export type DebtPaymentPaymentType = typeof DebtPaymentPaymentType[keyof typeof DebtPaymentPaymentType];
+
+
+export const DebtPaymentPaymentType = {
+  payment: 'payment',
+  reversal: 'reversal',
+} as const;
+
 export interface DebtPayment {
   id: string;
   debtId: string;
@@ -388,6 +396,11 @@ export interface DebtPayment {
   paidAt: string;
   /** @nullable */
   recordedBy?: string | null;
+  paymentType: DebtPaymentPaymentType;
+  /** @nullable */
+  reversalOfId?: string | null;
+  /** @nullable */
+  note?: string | null;
 }
 
 export interface DebtWithPayments {
@@ -433,6 +446,12 @@ export interface DebtPaymentInput {
   amount: number;
   /** @nullable */
   recordedBy?: string | null;
+  /** @nullable */
+  note?: string | null;
+}
+
+export interface DebtPaymentReversalInput {
+  reason?: string;
 }
 
 export interface InventoryMovement {

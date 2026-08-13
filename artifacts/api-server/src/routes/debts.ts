@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
-import { requireAuth } from "../middleware/auth";
-import { debts, debtPayments, notifications, saleItems } from "@workspace/db/schema";
+import { requireAuth, requireOwner } from "../middleware/auth";
+import { debts, debtPayments, notifications, saleItems, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
 
 const debtsRouter = new Hono<AppEnv>();
@@ -143,6 +143,7 @@ debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
     db.select().from(debtPayments).where(eq(debtPayments.debtId, debtId)).all(),
   ]);
   if (!debt) return c.json({ error: "Not found" }, 404);
+  if (debt.shopId !== c.get("session").shopId) return c.json({ error: "Forbidden" }, 403);
 
   // Fetch sale items if this debt is linked to a sale
   let items: { productName: string; qty: number; unitPrice: number; totalPrice: number }[] = [];
@@ -200,20 +201,32 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   const body = await c.req.json<{
     amount: number;
     recordedBy?: string;
+    note?: string | null;
   }>();
   const db = createDb(c.env.DB);
   const debtId = c.req.param("debtId");
   const debt = await db.select().from(debts).where(eq(debts.id, debtId)).get();
   if (!debt) return c.json({ error: "Not found" }, 404);
+  if (debt.shopId !== c.get("session").shopId) return c.json({ error: "Forbidden" }, 403);
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return c.json({ error: "Payment amount must be greater than zero" }, 400);
+  }
+  if (amount > debt.balance + 0.005) {
+    return c.json({ error: "Payment cannot be greater than the remaining balance" }, 400);
+  }
 
   const now = new Date().toISOString();
   const paymentId = crypto.randomUUID();
   await db.insert(debtPayments).values({
     id: paymentId,
     debtId,
-    amount: body.amount,
-    recordedBy: body.recordedBy ?? null,
+    amount,
+    recordedBy: body.recordedBy ?? c.get("session").userName ?? null,
     paidAt: now,
+    paymentType: "payment",
+    reversalOfId: null,
+    note: body.note ?? null,
   });
 
   // Fully atomic — all four columns derive from the DB's current values plus the
@@ -221,10 +234,10 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   await db
     .update(debts)
     .set({
-      amountPaid: sql`amount_paid + ${body.amount}`,
-      balance: sql`MAX(0, total_amount - amount_paid - ${body.amount})`,
-      status: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${body.amount}) = 0 THEN 'paid' WHEN amount_paid + ${body.amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
-      paidAt: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${body.amount}) = 0 THEN ${now} ELSE NULL END`,
+      amountPaid: sql`amount_paid + ${amount}`,
+      balance: sql`MAX(0, total_amount - amount_paid - ${amount})`,
+      status: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN 'paid' WHEN amount_paid + ${amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
+      paidAt: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN ${now} ELSE NULL END`,
     })
     .where(eq(debts.id, debtId));
 
@@ -252,6 +265,71 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
     .where(eq(debtPayments.id, paymentId))
     .get();
   return c.json(payment!, 201);
+});
+
+// Corrections never delete financial history. Instead, an owner creates a
+// linked reversal entry that restores the balance and leaves both events visible.
+debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireOwner, async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("session");
+  const debtId = c.req.param("debtId");
+  const paymentId = c.req.param("paymentId");
+  const body = await c.req.json<{ reason?: string }>().catch(() => ({} as { reason?: string }));
+
+  const debt = await db.select().from(debts).where(eq(debts.id, debtId)).get();
+  if (!debt) return c.json({ error: "Debt not found" }, 404);
+  if (debt.shopId !== session.shopId) return c.json({ error: "Forbidden" }, 403);
+
+  const original = await db.select().from(debtPayments)
+    .where(and(eq(debtPayments.id, paymentId), eq(debtPayments.debtId, debtId)))
+    .get();
+  if (!original) return c.json({ error: "Payment not found" }, 404);
+  if (original.paymentType === "reversal" || original.amount <= 0) {
+    return c.json({ error: "Only an original payment can be reversed" }, 400);
+  }
+  const existingReversal = await db.select({ id: debtPayments.id })
+    .from(debtPayments)
+    .where(and(eq(debtPayments.debtId, debtId), eq(debtPayments.reversalOfId, paymentId)))
+    .get();
+  if (existingReversal) return c.json({ error: "This payment has already been reversed" }, 409);
+
+  const now = new Date().toISOString();
+  const reversalId = crypto.randomUUID();
+  const reason = body.reason?.trim() || "Payment correction";
+  await db.insert(debtPayments).values({
+    id: reversalId,
+    debtId,
+    amount: -original.amount,
+    recordedBy: session.userName ?? "Owner",
+    paidAt: now,
+    paymentType: "reversal",
+    reversalOfId: original.id,
+    note: reason,
+  });
+
+  await db.update(debts).set({
+    amountPaid: sql`MAX(0, amount_paid - ${original.amount})`,
+    balance: sql`MIN(total_amount, total_amount - MAX(0, amount_paid - ${original.amount}))`,
+    status: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) = 0 THEN 'unpaid' WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN 'paid' ELSE 'partial' END`,
+    paidAt: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN paid_at ELSE NULL END`,
+  }).where(eq(debts.id, debtId));
+
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    shopId: debt.shopId,
+    action: "debt_payment_reversed",
+    entityType: "debt_payment",
+    entityId: original.id,
+    oldValueJson: JSON.stringify({ amount: original.amount, debtId }),
+    newValueJson: JSON.stringify({ reversalId, reason }),
+    performedBy: session.userName ?? "Owner",
+    createdAt: now,
+  });
+
+  const today = now.slice(0, 10);
+  await kvDel(c.env.SESSIONS, CK.debts(debt.shopId), CK.dashboard(debt.shopId, today));
+  const reversal = await db.select().from(debtPayments).where(eq(debtPayments.id, reversalId)).get();
+  return c.json(reversal!, 201);
 });
 
 debtsRouter.delete("/debts/:debtId", requireAuth, async (c) => {

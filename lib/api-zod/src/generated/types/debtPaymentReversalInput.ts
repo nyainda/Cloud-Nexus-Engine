@@ -6,10 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface DebtPaymentInput {
-  amount: number;
-  /** @nullable */
-  recordedBy?: string | null;
-  /** @nullable */
-  note?: string | null;
+export interface DebtPaymentReversalInput {
+  reason?: string;
 }

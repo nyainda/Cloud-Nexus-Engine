@@ -24,6 +24,8 @@ export * from './debt';
 export * from './debtInput';
 export * from './debtPayment';
 export * from './debtPaymentInput';
+export * from './debtPaymentPaymentType';
+export * from './debtPaymentReversalInput';
 export * from './debtsSummary';
 export * from './debtStatus';
 export * from './debtUpdate';

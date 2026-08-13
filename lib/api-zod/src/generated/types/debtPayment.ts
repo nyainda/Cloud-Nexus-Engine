@@ -5,6 +5,7 @@
  * GreenLink & Sunrise Agrovet Retail Operations OS API
  * OpenAPI spec version: 0.1.0
  */
+import type { DebtPaymentPaymentType } from './debtPaymentPaymentType';
 
 export interface DebtPayment {
   id: string;
@@ -13,4 +14,9 @@ export interface DebtPayment {
   paidAt: string;
   /** @nullable */
   recordedBy?: string | null;
+  paymentType: DebtPaymentPaymentType;
+  /** @nullable */
+  reversalOfId?: string | null;
+  /** @nullable */
+  note?: string | null;
 }

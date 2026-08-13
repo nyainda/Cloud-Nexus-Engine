@@ -176,6 +176,9 @@ export const debtPayments = sqliteTable("debt_payments", {
   amount: real("amount").notNull(),
   recordedBy: text("recorded_by"),
   paidAt: text("paid_at").notNull().$defaultFn(() => new Date().toISOString()),
+  paymentType: text("payment_type").notNull().default("payment"),
+  reversalOfId: text("reversal_of_id"),
+  note: text("note"),
 });
 
 export type DebtPayment = typeof debtPayments.$inferSelect;

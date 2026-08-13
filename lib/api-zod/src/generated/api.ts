@@ -580,7 +580,10 @@ export const GetDebtResponse = zod.object({
   "debtId": zod.string(),
   "amount": zod.number(),
   "paidAt": zod.string(),
-  "recordedBy": zod.string().nullish()
+  "recordedBy": zod.string().nullish(),
+  "paymentType": zod.enum(['payment', 'reversal']),
+  "reversalOfId": zod.string().nullish(),
+  "note": zod.string().nullish()
 }))
 })
 
@@ -623,7 +626,21 @@ export const RecordDebtPaymentParams = zod.object({
 
 export const RecordDebtPaymentBody = zod.object({
   "amount": zod.number(),
-  "recordedBy": zod.string().nullish()
+  "recordedBy": zod.string().nullish(),
+  "note": zod.string().nullish()
+})
+
+
+/**
+ * @summary Reverse an incorrectly recorded payment
+ */
+export const ReverseDebtPaymentParams = zod.object({
+  "debtId": zod.coerce.string(),
+  "paymentId": zod.coerce.string()
+})
+
+export const ReverseDebtPaymentBody = zod.object({
+  "reason": zod.string().optional()
 })
 
 

@@ -145,6 +145,12 @@ pnpm smoke-test
 | **Multi-shop** | Two shops, one database — all queries filter by `shop_id` |
 | **Offline** | Service Worker caches API responses; POS works without internet |
 
+## Debt record safety
+
+- Customer debt records are grouped by customer by default, while the Records view keeps each debt entry separate.
+- A customer statement PDF combines all of that customer's debt records; each individual debt still has its own statement PDF.
+- Payments cannot exceed the current balance. If a payment or “Mark Paid” action was entered by mistake, an owner can use **Undo** to create a linked reversal entry. The original payment stays visible for audit history instead of being silently deleted.
+
 ---
 
 ## Tech Stack

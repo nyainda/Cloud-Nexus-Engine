@@ -109,7 +109,10 @@ CREATE TABLE IF NOT EXISTS debt_payments (
   debt_id TEXT NOT NULL REFERENCES debts(id) ON DELETE CASCADE,
   amount REAL NOT NULL,
   recorded_by TEXT,
-  paid_at TEXT NOT NULL
+  paid_at TEXT NOT NULL,
+  payment_type TEXT NOT NULL DEFAULT 'payment',
+  reversal_of_id TEXT,
+  note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS inventory_movements (
