@@ -1,0 +1,100 @@
+Query
+
+% of runtime
+Count
+Total time
+P50
+P99
+Rows read
+Rows read / rows returned
+Rows written
+select "id", "shop_id", "canonical_name", "normalized_name", "sku", "category", "unit", "purchase_price", "selling_price", "profit_margin", "product_type", "allow_decimals", "stock_qty", "alert_qty", "expiry_date", "tokens_json", "size", "is_active", "last_sold_at", "created_at", "updated_at" from "products" where ("products"."shop_id" = ? and "products"."is_active" = ?) limit ?
+65.55%
+985
+9.5 sec
+9.1 ms
+17.6 ms
+1.88M
+1
+0
+INSERT OR IGNORE INTO products_fts(rowid, id, shop_id, normalized_name, canonical_name, sku, category) SELECT rowid, id, shop_id, normalized_name, canonical_name, COALESCE(sku,''), COALESCE(category,'') FROM products WHERE is_active = 1
+4.66%
+66
+0.7 sec
+10.3 ms
+12.6 ms
+371.98k
+—
+217.34k
+select "sale_id", "product_name", "qty", "unit_price", "total_price", "total_profit" from "sale_items" where "sale_items"."sale_id" in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+4.09%
+501
+0.6 sec
+1 ms
+2.9 ms
+172.34k
+2
+0
+select "id", "shop_id", "type", "title", "message", "product_id", "debt_id", "is_read", "created_at" from "notifications" where "notifications"."shop_id" = ?
+4%
+55
+0.6 sec
+8.5 ms
+22.5 ms
+165.84k
+1
+0
+select "sale_id", "product_name", "qty", "unit_price", "total_price", "total_profit" from "sale_items" where "sale_items"."sale_id" in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+3.76%
+575
+0.5 sec
+0.9 ms
+1.9 ms
+195.5k
+2
+0
+select "id", "shop_id", "sale_id", "customer_name", "customer_phone", "total_amount", "amount_paid", "balance", "status", "notes", "paid_at", "created_at" from "debts" where "debts"."shop_id" = ?
+3.65%
+1068
+0.5 sec
+0.4 ms
+2 ms
+68.87k
+1
+0
+select count(*) from "products" where ("products"."shop_id" = ? and "products"."is_active" = ?)
+2.45%
+976
+0.4 sec
+0.3 ms
+2 ms
+1.86M
+1.91k
+0
+SELECT * FROM scan_sessions WHERE shop_id = ? ORDER BY created_at DESC LIMIT ?
+1.17%
+2
+0.2 sec
+84.6 ms
+84.6 ms
+46
+1
+0
+select "id", "shop_id", "total_amount", "total_cost", "total_profit", "discount", "sale_type", "payment_method", "served_by", "sync_status", "is_deleted", "deleted_at", "delete_reason", "deleted_by", "created_at" from "sales" where ("sales"."shop_id" = ? and "sales"."is_deleted" = ? and "sales"."created_at" >= ? and "sales"."created_at" <= ?) order by created_at DESC limit ?
+0.76%
+349
+0.1 sec
+0.3 ms
+1.2 ms
+1.75k
+1
+0
+select "sale_id", "product_id", "product_name", "qty", "unit_price", "unit_cost", "total_price", "total_profit" from "sale_items" where "sale_items"."sale_id" in (?)
+0.47%
+262
+0.1 sec
+0.2 ms
+1.1 ms
+7.6k
+1
+0
