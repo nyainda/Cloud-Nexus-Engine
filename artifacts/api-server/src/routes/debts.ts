@@ -269,7 +269,7 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
 
 // Corrections never delete financial history. Instead, an owner creates a
 // linked reversal entry that restores the balance and leaves both events visible.
-debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireOwner, async (c) => {
+debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requireOwner, async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("session");
   const debtId = c.req.param("debtId");
