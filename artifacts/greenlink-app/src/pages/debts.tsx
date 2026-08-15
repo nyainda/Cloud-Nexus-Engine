@@ -34,6 +34,20 @@ function debtProductSummary(items: any[] | undefined): string {
   return labels.length > 0 ? labels.join(", ") : "Unlinked debt";
 }
 
+function compactDebtProductSummary(items: any[] | undefined, maxItems = 2): string {
+  const labels = (items ?? [])
+    .map((item) => {
+      const name = item?.productName ?? item?.name;
+      if (!name) return "";
+      const qty = item?.qty ?? item?.quantity;
+      return qty !== undefined && qty !== null ? `${name} × ${qty}` : String(name);
+    })
+    .filter(Boolean);
+  if (labels.length === 0) return "Unlinked debt";
+  const visible = labels.slice(0, maxItems);
+  return labels.length > maxItems ? `${visible.join(", ")} + ${labels.length - maxItems} more` : visible.join(", ");
+}
+
 function PaymentDialog({ debt }: { debt: any }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -755,9 +769,37 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? "PAID IN FULL" : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
 
+    const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
+    let logoBase64 = "";
+    let logoNatW = 0;
+    let logoNatH = 0;
+    try {
+      const response = await fetch(shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg");
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      await new Promise<void>((resolve) => {
+        const image = new Image();
+        image.onload = () => { logoNatW = image.naturalWidth; logoNatH = image.naturalHeight; resolve(); };
+        image.onerror = () => resolve();
+        image.src = blobUrl;
+      });
+      URL.revokeObjectURL(blobUrl);
+      logoBase64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => resolve("");
+        reader.readAsDataURL(blob);
+      });
+    } catch { /* logo is optional */ }
+
     doc.setFillColor(...green); doc.rect(0, 0, W, 3, "F");
+    if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
+      const logoH = 14;
+      const scale = Math.min(28 / logoNatW, logoH / logoNatH);
+      doc.addImage(logoBase64, "JPEG", ML, 6, logoNatW * scale, logoNatH * scale);
+    }
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...slate);
-    doc.text(shop.name || "GreenLink", ML, 14);
+    doc.text(shop.name || "GreenLink", ML + 32, 14);
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
     doc.text("CUSTOMER DEBT STATEMENT", W - MR, 12, { align: "right" });
     doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...muted);
@@ -773,17 +815,18 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
 
     autoTable(doc, {
       startY: 47, margin: { left: ML, right: MR },
-      head: [["Debt Ref", "Date", "Description", "Total", "Paid", "Balance"]],
+      head: [["Debt Ref", "Date", "Products / Notes", "Status", "Total", "Paid", "Balance"]],
       body: details.map((d: any) => [
         `#${String(d.id).slice(0, 8).toUpperCase()}`,
         format(new Date(d.createdAt), "dd MMM yyyy"),
-        d.notes ? `${debtProductSummary(d.items)} · ${d.notes}` : debtProductSummary(d.items),
+        `${compactDebtProductSummary(d.items)}${d.notes ? ` · ${String(d.notes).slice(0, 42)}` : ""}`,
+        d.status === "cancelled" ? "VOIDED" : d.status === "paid" ? "PAID" : d.status === "partial" ? "PARTIAL" : "UNPAID",
         money(d.totalAmount), money(d.amountPaid), money(d.balance),
       ]),
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
       bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
       alternateRowStyles: { fillColor: [248, 250, 252] },
-      columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 27 }, 2: { cellWidth: "auto" }, 3: { cellWidth: 29, halign: "right" }, 4: { cellWidth: 29, halign: "right" }, 5: { cellWidth: 31, halign: "right", fontStyle: "bold" } },
+      columnStyles: { 0: { cellWidth: 23 }, 1: { cellWidth: 27 }, 2: { cellWidth: "auto" }, 3: { cellWidth: 22, fontStyle: "bold" }, 4: { cellWidth: 28, halign: "right" }, 5: { cellWidth: 28, halign: "right" }, 6: { cellWidth: 31, halign: "right", fontStyle: "bold" } },
     });
 
     let y = (doc as any).lastAutoTable.finalY + 10;
@@ -827,14 +870,14 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const paymentRows = details.flatMap((d: any) => (d.payments || []).map((p: any) => [
       format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
       `#${String(d.id).slice(0, 8).toUpperCase()}`,
-      debtProductSummary(d.items),
+      compactDebtProductSummary(d.items),
       `${p.paymentType === "reversal" ? "Payment reversed" : "Payment received"}${p.note ? ` · ${p.note}` : ""}`,
       p.recordedBy || "—",
       money(Math.abs(Number(p.amount))),
     ]));
     autoTable(doc, {
       startY: y, margin: { left: ML, right: MR },
-      head: [["Date & Time", "Debt Ref", "Product", "Entry", "Recorded By", "Amount"]],
+      head: [["Date & Time", "Debt Ref", "Products", "Entry", "Recorded By", "Amount"]],
       body: paymentRows.length ? paymentRows : [["—", "—", "—", "No payments recorded", "—", "—"]],
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
       bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
@@ -891,11 +934,15 @@ function CustomerGroupRow({
   onSelectDebt: (debt: any) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const isPaid = group.totalBalance <= 0;
-  const isPartial = !isPaid && group.totalBalance < group.totalAmount;
-  const statusLabel = isPaid ? "Paid" : group.isOverdue ? "Overdue" : isPartial ? "Partial" : "Unpaid";
+  const hasActive = group.activeDebts.length > 0;
+  const isPaid = hasActive && group.totalBalance <= 0;
+  const isPartial = hasActive && !isPaid && group.totalBalance < group.totalAmount;
+  const isVoided = !hasActive;
+  const statusLabel = isVoided ? "Voided" : isPaid ? "Paid" : group.isOverdue ? "Overdue" : isPartial ? "Partial" : "Unpaid";
   const statusCss = isPaid
     ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
+    : isVoided
+    ? "bg-muted text-muted-foreground border-border"
     : group.isOverdue
     ? "bg-red-500/15 text-red-400 border-red-500/25"
     : isPartial
@@ -942,6 +989,7 @@ function CustomerGroupRow({
           </div>
           {group.debts.map((debt: any) => {
             const debtPaid = debt.status === "paid";
+            const debtVoided = debt.status === "cancelled";
             const days = differenceInDays(new Date(), new Date(debt.createdAt));
             return (
               <button
@@ -958,7 +1006,7 @@ function CustomerGroupRow({
                 </div>
                 <div className="text-right">
                   <p className="text-xs font-bold font-mono">{formatKES(debt.totalAmount)}</p>
-                  <p className={cn("text-[10px] font-mono", debtPaid ? "text-emerald-400" : "text-destructive")}>{debtPaid ? "Paid" : `${formatKES(debt.balance)} due`}</p>
+                  <p className={cn("text-[10px] font-mono", debtVoided ? "text-muted-foreground" : debtPaid ? "text-emerald-400" : "text-destructive")}>{debtVoided ? "Voided" : debtPaid ? "Paid" : `${formatKES(debt.balance)} due`}</p>
                 </div>
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30" />
               </button>
@@ -990,21 +1038,24 @@ function DebtDetailPanel({
   const items: any[]    = (data as any)?.items    ?? [];
 
   const isPaid    = debt.status === "paid";
+  const isCancelled = debt.status === "cancelled";
   const isPartial = debt.status === "partial";
   const totalPaid = (debt.totalAmount ?? 0) - (debt.balance ?? 0);
   const paidPct   = debt.totalAmount > 0 ? Math.round((totalPaid / debt.totalAmount) * 100) : 0;
   const daysOpen  = differenceInDays(new Date(), new Date(debt.createdAt));
-  const isOverdue = !isPaid && daysOpen > 30;
+  const isOverdue = !isPaid && !isCancelled && daysOpen > 30;
 
-  const statusLabel = isPaid ? "PAID" : isPartial ? "PARTIAL" : "UNPAID";
+  const statusLabel = isCancelled ? "VOIDED" : isPaid ? "PAID" : isPartial ? "PARTIAL" : "UNPAID";
   const statusBadgeCss = isPaid
     ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
+    : isCancelled
+    ? "bg-muted text-muted-foreground border-border"
     : isOverdue
     ? "bg-red-500/15 text-red-400 border-red-500/25"
     : isPartial
     ? "bg-orange-500/15 text-orange-400 border-orange-500/25"
     : "bg-destructive/15 text-destructive border-destructive/25";
-  const statusColor = isPaid ? "text-emerald-400" : isOverdue ? "text-red-400" : isPartial ? "text-orange-400" : "text-destructive";
+  const statusColor = isCancelled ? "text-muted-foreground" : isPaid ? "text-emerald-400" : isOverdue ? "text-red-400" : isPartial ? "text-orange-400" : "text-destructive";
   const avatarBg    = isPaid ? "bg-emerald-500/15 text-emerald-400" : isOverdue ? "bg-red-500/15 text-red-400" : isPartial ? "bg-orange-500/15 text-orange-400" : "bg-destructive/15 text-destructive";
 
   const initials = debt.customerName.split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
@@ -1129,7 +1180,7 @@ function DebtDetailPanel({
                 { label: "Debt Ref",   value: debt.id.slice(0, 8).toUpperCase() },
                 { label: "Sale ID",    value: debt.saleId ? debt.saleId.slice(0, 14) + "…" : "—" },
                 { label: "Created At", value: format(new Date(debt.createdAt), "d MMM yyyy, HH:mm") },
-                ...(debt.paidAt ? [{ label: "Paid At", value: format(new Date(debt.paidAt), "d MMM yyyy") }] : []),
+                ...(debt.paidAt ? [{ label: isCancelled ? "Voided At" : "Paid At", value: format(new Date(debt.paidAt), "d MMM yyyy") }] : []),
                 ...(debt.notes ? [{ label: "Notes", value: debt.notes }] : []),
               ].map((row, i) => (
                 <div key={row.label} className={cn("flex items-start gap-3 px-3 py-2.5", i > 0 && "border-t border-border/60")}>
@@ -1267,12 +1318,12 @@ function DebtDetailPanel({
       {/* Actions footer */}
       <div className="border-t border-border p-3 shrink-0 space-y-2">
         <div className="flex gap-2 flex-wrap">
-          {!isPaid && <PaymentDialog debt={debt} />}
+          {!isPaid && !isCancelled && debt.balance > 0 && <PaymentDialog debt={debt} />}
           <DebtDownloadButton debt={debt} />
-          {isOwner && !isPaid && <MarkPaidButton debt={debt} />}
+          {isOwner && !isPaid && !isCancelled && debt.balance > 0 && <MarkPaidButton debt={debt} />}
           {/* Financial records stay in the ledger; corrections use reversible entries. */}
         </div>
-        {debt.customerPhone && !isPaid && (
+        {debt.customerPhone && !isPaid && !isCancelled && debt.balance > 0 && (
           <a
             href={`https://wa.me/${debt.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(`Hi ${debt.customerName}, you have an outstanding balance of ${formatKES(debt.balance)} at our shop. Please settle at your earliest convenience. Thank you!`)}`}
             target="_blank"
@@ -1597,7 +1648,7 @@ export default function Debts() {
 
   const stats = useMemo(() => {
     const debts = (allDebts || []) as any[];
-    const active  = debts.filter((d: any) => d.status !== "paid");
+    const active  = debts.filter((d: any) => d.status !== "paid" && d.status !== "cancelled");
     const overdue = active.filter((d: any) => differenceInDays(new Date(), new Date(d.createdAt)) > 30);
     const partial = debts.filter((d: any) => d.status === "partial");
     const paid    = debts.filter((d: any) => d.status === "paid");
@@ -1622,7 +1673,7 @@ export default function Debts() {
     const debts = (allDebts || []) as any[];
     let list = debts;
     if (tab === "overdue") {
-      list = debts.filter((d: any) => d.status !== "paid" && differenceInDays(new Date(), new Date(d.createdAt)) > 30);
+      list = debts.filter((d: any) => d.status !== "paid" && d.status !== "cancelled" && differenceInDays(new Date(), new Date(d.createdAt)) > 30);
     } else if (tab !== "all") {
       list = debts.filter((d: any) => d.status === tab);
     }
@@ -1645,7 +1696,7 @@ export default function Debts() {
       activeDebts: any[];
       totalAmount: number;
       totalBalance: number;
-      worstStatus: "unpaid" | "partial" | "paid";
+      worstStatus: "unpaid" | "partial" | "paid" | "cancelled";
       isOverdue: boolean;
     }>();
 
@@ -1660,22 +1711,22 @@ export default function Debts() {
           activeDebts: [],
           totalAmount: 0,
           totalBalance: 0,
-          worstStatus: "paid",
+          worstStatus: "cancelled",
           isOverdue: false,
         });
       }
       const g = map.get(key)!;
       g.debts.push(debt);
       g.totalAmount += debt.totalAmount || 0;
-      g.totalBalance += debt.balance || 0;
-      if (debt.status !== "paid") {
+      if (debt.status !== "cancelled") g.totalBalance += debt.balance || 0;
+      if (debt.status !== "paid" && debt.status !== "cancelled") {
         g.activeDebts.push(debt);
         const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
         if (daysAgo > 30) g.isOverdue = true;
       }
-      const statusRank = { unpaid: 2, partial: 1, paid: 0 } as Record<string, number>;
+       const statusRank = { unpaid: 3, partial: 2, paid: 1, cancelled: 0 } as Record<string, number>;
       if ((statusRank[debt.status] ?? 0) > (statusRank[g.worstStatus] ?? 0)) {
-        g.worstStatus = debt.status as "unpaid" | "partial" | "paid";
+         g.worstStatus = debt.status as "unpaid" | "partial" | "paid" | "cancelled";
       }
       // prefer a phone number if not set yet
       if (!g.customerPhone && debt.customerPhone) g.customerPhone = debt.customerPhone;

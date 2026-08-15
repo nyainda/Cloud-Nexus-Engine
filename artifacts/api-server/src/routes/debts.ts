@@ -332,7 +332,7 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
   return c.json(reversal!, 201);
 });
 
-debtsRouter.delete("/debts/:debtId", requireAuth, async (c) => {
+debtsRouter.delete("/debts/:debtId", requireOwner, async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("session");
   const debtId = c.req.param("debtId");
@@ -340,6 +340,16 @@ debtsRouter.delete("/debts/:debtId", requireAuth, async (c) => {
   const debt = await db.select().from(debts).where(eq(debts.id, debtId)).get();
   if (!debt) return c.json({ error: "Not found" }, 404);
   if (debt.shopId !== session.shopId) return c.json({ error: "Forbidden" }, 403);
+  const paymentRows = await db
+    .select({ id: debtPayments.id })
+    .from(debtPayments)
+    .where(eq(debtPayments.debtId, debtId))
+    .all();
+  if (debt.saleId || paymentRows.length > 0 || debt.amountPaid > 0) {
+    return c.json({
+      error: "This financial record cannot be deleted. Void the linked sale or reverse its payments instead.",
+    }, 409);
+  }
 
   // Delete associated notifications first
   await db.delete(notifications).where(eq(notifications.debtId, debtId));

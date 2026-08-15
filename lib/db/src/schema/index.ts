@@ -156,7 +156,7 @@ export const debts = sqliteTable("debts", {
   totalAmount: real("total_amount").notNull(),
   amountPaid: real("amount_paid").notNull().default(0),
   balance: real("balance").notNull(),
-  status: text("status", { enum: ["unpaid", "partial", "paid"] })
+  status: text("status", { enum: ["unpaid", "partial", "paid", "cancelled"] })
     .notNull()
     .default("unpaid"),
   notes: text("notes"),

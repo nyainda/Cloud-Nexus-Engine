@@ -284,6 +284,49 @@ function DeleteDialog({
   );
 }
 
+function DeleteIndividualDebtButton({
+  debt,
+  shopId,
+  customerName,
+  onDeleted,
+}: {
+  debt: any;
+  shopId: string;
+  customerName: string;
+  onDeleted: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const canDelete = !debt.saleId && Number(debt.amountPaid || 0) === 0 && debt.status !== "cancelled";
+
+  if (!canDelete) return null;
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete this individual debt record for ${customerName}? This is only available because no payment has been recorded.`)) return;
+    setLoading(true);
+    try {
+      await customFetch(`/api/debts/${debt.id}`, { method: "DELETE" });
+      toast.success("Debt record deleted");
+      onDeleted();
+    } catch (error: any) {
+      toast.error(error?.message || "Could not delete this debt record");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleDelete}
+      disabled={loading}
+      className="inline-flex items-center gap-1 text-[10px] font-semibold text-muted-foreground/60 hover:text-destructive transition-colors disabled:opacity-50"
+      title="Delete this unpaid manual debt record"
+    >
+      <Trash2 className="h-3 w-3" />
+      {loading ? "Deleting…" : "Delete record"}
+    </button>
+  );
+}
+
 // ─── Customer detail panel ────────────────────────────────────────────────────
 function CustomerDetailPanel({
   customer: initialCustomer,
@@ -516,8 +559,9 @@ function CustomerDetailPanel({
             ) : (
               debts.map((debt: any) => {
                 const isPaid = debt.status === "paid";
+                const isCancelled = debt.status === "cancelled";
                 const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
-                const isOverdue = !isPaid && daysAgo > 30;
+                const isOverdue = !isPaid && !isCancelled && daysAgo > 30;
                 const paidPct = debt.totalAmount > 0
                   ? Math.round(((debt.totalAmount - debt.balance) / debt.totalAmount) * 100)
                   : 0;
@@ -526,19 +570,21 @@ function CustomerDetailPanel({
                   <div key={debt.id} className={cn(
                     "rounded-2xl border bg-card/50 p-3.5",
                     isOverdue ? "border-red-500/30" :
-                    isPaid ? "border-emerald-500/20" : "border-border/70"
+                    isPaid ? "border-emerald-500/20" :
+                    isCancelled ? "border-border/50 opacity-75" : "border-border/70"
                   )}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap mb-1">
                           <span className={cn(
                             "text-[9px] font-bold uppercase px-1.5 py-0.5 rounded leading-none",
+                            isCancelled ? "bg-muted text-muted-foreground" :
                             isPaid ? "bg-emerald-500/15 text-emerald-400" :
                             isOverdue ? "bg-red-500/15 text-red-400" :
                             debt.status === "partial" ? "bg-orange-500/15 text-orange-400" :
                             "bg-destructive/15 text-destructive"
                           )}>
-                            {isOverdue ? `${daysAgo}d overdue` : debt.status}
+                            {isCancelled ? "Voided" : isOverdue ? `${daysAgo}d overdue` : debt.status}
                           </span>
                           <span className="text-[10px] text-muted-foreground/50">
                             {format(new Date(debt.createdAt), "d MMM yyyy")}
@@ -546,9 +592,11 @@ function CustomerDetailPanel({
                         </div>
                         <p className={cn(
                           "text-xs font-semibold",
-                          isPaid ? "text-emerald-400" : isOverdue ? "text-red-400" : "text-muted-foreground"
+                          isCancelled ? "text-muted-foreground" : isPaid ? "text-emerald-400" : isOverdue ? "text-red-400" : "text-muted-foreground"
                         )}>
-                          {isPaid
+                          {isCancelled
+                            ? "Sale voided"
+                            : isPaid
                             ? `Settled ${formatKES(debt.totalAmount)}`
                             : `${formatKES(debt.balance)} remaining`}
                         </p>
@@ -823,6 +871,15 @@ export default function Customers() {
                          </p>
                        )}
                     </div>
+                    <DeleteIndividualDebtButton
+                      debt={debt}
+                      shopId={shopId}
+                      customerName={customer.name}
+                      onDeleted={() => {
+                        qc.invalidateQueries({ queryKey: profileKey(shopId, customer.name) });
+                        qc.invalidateQueries({ queryKey: crmKey(shopId) });
+                      }}
+                    />
                   </div>
 
                   {/* Balance col */}

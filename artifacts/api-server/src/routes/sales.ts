@@ -338,15 +338,17 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
   if (sale.saleType === "debt") {
     const linkedDebt = await db.select().from(debts).where(eq(debts.saleId, saleId)).get();
     if (linkedDebt) {
-      if (linkedDebt.amountPaid === 0) {
-        await db.update(debts)
-          .set({ status: "cancelled" as any, balance: 0, paidAt: now })
-          .where(eq(debts.saleId, saleId));
-      } else {
-        await db.update(debts)
-          .set({ totalAmount: linkedDebt.amountPaid, balance: 0, status: "paid", paidAt: now })
-          .where(eq(debts.saleId, saleId));
-      }
+      // Keep the debt and its payment history for audit purposes, but remove
+      // the voided sale from outstanding customer balances. Do not rewrite the
+      // original total into a fake "paid" debt.
+      await db.update(debts)
+        .set({
+          status: "cancelled",
+          balance: 0,
+          paidAt: now,
+          notes: `${linkedDebt.notes ? `${linkedDebt.notes} · ` : ""}Sale voided${body.reason ? `: ${body.reason}` : ""}`,
+        })
+        .where(eq(debts.saleId, saleId));
     }
   }
 
@@ -366,6 +368,7 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
     c.env.SESSIONS,
     CK.products(sale.shopId),
     CK.dashboard(sale.shopId, today),
+    CK.debts(sale.shopId),
   );
   return c.body(null, 204);
 });

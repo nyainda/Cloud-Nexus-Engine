@@ -608,7 +608,7 @@ paths:
           in: query
           schema:
             type: string
-          description: Filter by status (unpaid|partial|paid)
+          description: Filter by status (unpaid|partial|paid|cancelled)
         - name: q
           in: query
           schema:
@@ -1731,7 +1731,7 @@ components:
           type: number
         status:
           type: string
-          enum: [unpaid, partial, paid]
+          enum: [unpaid, partial, paid, cancelled]
         notes:
           type: ["string", "null"]
         createdAt:

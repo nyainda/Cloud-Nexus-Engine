@@ -52,20 +52,20 @@ crmRouter.get("/crm", requireAuth, async (c) => {
       debtMap.set(key, {
         name: d.customerName,
         phone: d.customerPhone || "",
-        totalBalance: d.balance || 0,
+        totalBalance: d.status === "cancelled" ? 0 : (d.balance || 0),
         totalOwed: d.totalAmount || 0,
         debtCount: 1,
-        activeCount: d.status !== "paid" ? 1 : 0,
+        activeCount: d.status !== "paid" && d.status !== "cancelled" ? 1 : 0,
         lastActivity: d.createdAt,
         latestDebtAmount: d.totalAmount || 0,
         latestDebtBalance: d.balance || 0,
         latestDebtStatus: d.status,
       });
     } else {
-      ex.totalBalance += d.balance || 0;
+      ex.totalBalance += d.status === "cancelled" ? 0 : (d.balance || 0);
       ex.totalOwed += d.totalAmount || 0;
       ex.debtCount++;
-      if (d.status !== "paid") ex.activeCount++;
+      if (d.status !== "paid" && d.status !== "cancelled") ex.activeCount++;
       if (d.createdAt > ex.lastActivity) {
         ex.lastActivity = d.createdAt;
         ex.latestDebtAmount = d.totalAmount || 0;
@@ -182,7 +182,7 @@ crmRouter.get("/crm/profile", requireAuth, async (c) => {
     .filter((d) => d.customerName.toLowerCase().trim() === name.toLowerCase().trim())
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  const totalBalance = matchedDebts.reduce((s, d) => s + (d.balance || 0), 0);
+  const totalBalance = matchedDebts.reduce((s, d) => s + (d.status === "cancelled" ? 0 : (d.balance || 0)), 0);
   const totalOwed = matchedDebts.reduce((s, d) => s + (d.totalAmount || 0), 0);
 
   return c.json({
@@ -194,7 +194,7 @@ crmRouter.get("/crm/profile", requireAuth, async (c) => {
       totalOwed,
       totalPaid: totalOwed - totalBalance,
       debtCount: matchedDebts.length,
-      activeCount: matchedDebts.filter((d) => d.status !== "paid").length,
+      activeCount: matchedDebts.filter((d) => d.status !== "paid" && d.status !== "cancelled").length,
     },
   });
 });
@@ -265,7 +265,7 @@ crmRouter.get("/crm/:id", requireAuth, async (c) => {
     (d) => d.customerName.toLowerCase().trim() === customer.name.toLowerCase().trim()
   );
 
-  const totalBalance = matchedDebts.reduce((s, d) => s + (d.balance || 0), 0);
+  const totalBalance = matchedDebts.reduce((s, d) => s + (d.status === "cancelled" ? 0 : (d.balance || 0)), 0);
   const totalOwed = matchedDebts.reduce((s, d) => s + (d.totalAmount || 0), 0);
 
   return c.json({
@@ -276,7 +276,7 @@ crmRouter.get("/crm/:id", requireAuth, async (c) => {
       totalOwed,
       totalPaid: totalOwed - totalBalance,
       debtCount: matchedDebts.length,
-      activeCount: matchedDebts.filter((d) => d.status !== "paid").length,
+      activeCount: matchedDebts.filter((d) => d.status !== "paid" && d.status !== "cancelled").length,
     },
   });
 });
