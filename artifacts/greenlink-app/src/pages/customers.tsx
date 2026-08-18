@@ -620,6 +620,15 @@ function CustomerDetailPanel({
                         <p className="text-[10px] text-muted-foreground/40 mt-1">{paidPct}% paid</p>
                       </div>
                     )}
+                     <DeleteIndividualDebtButton
+                       debt={debt}
+                       shopId={shopId}
+                       customerName={customer.name}
+                       onDeleted={() => {
+                         qc.invalidateQueries({ queryKey: profileKey(shopId, customer.name) });
+                         qc.invalidateQueries({ queryKey: crmKey(shopId) });
+                       }}
+                     />
                   </div>
                 );
               })
@@ -871,15 +880,6 @@ export default function Customers() {
                          </p>
                        )}
                     </div>
-                    <DeleteIndividualDebtButton
-                      debt={debt}
-                      shopId={shopId}
-                      customerName={customer.name}
-                      onDeleted={() => {
-                        qc.invalidateQueries({ queryKey: profileKey(shopId, customer.name) });
-                        qc.invalidateQueries({ queryKey: crmKey(shopId) });
-                      }}
-                    />
                   </div>
 
                   {/* Balance col */}
