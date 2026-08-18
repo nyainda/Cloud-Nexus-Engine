@@ -21,6 +21,13 @@ import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { format, formatDistanceToNow, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
+import {
+  addDebtToCustomerListCaches,
+  applyDebtPayment,
+  patchCustomerListCaches,
+  patchCustomerProfileCaches,
+  patchDebtCaches,
+} from "@/lib/optimistic-finance";
 
 function debtProductSummary(items: any[] | undefined): string {
   const labels = (items ?? [])
@@ -60,7 +67,7 @@ function PaymentDialog({ debt }: { debt: any }) {
     ? Math.round(((debt.totalAmount - debt.balance) / debt.totalAmount) * 100)
     : 0;
 
-  const handlePayment = () => {
+  const handlePayment = async () => {
     const paid = Number(amount);
     if (!paid || paid <= 0 || submitting) return;
 
@@ -72,24 +79,41 @@ function PaymentDialog({ debt }: { debt: any }) {
 
     // Optimistic update — instant, no await
     qc.cancelQueries({ queryKey: exactKey });
-    qc.setQueryData(exactKey, (old: any) => {
-      if (!Array.isArray(old)) return old;
-      return old.map(d => {
-        if (d.id !== debt.id) return d;
-        const newBalance = Math.max(0, d.balance - paid);
-        return { ...d, balance: newBalance, status: newBalance === 0 ? "paid" : newBalance < d.totalAmount ? "partial" : d.status };
-      });
+    const paidAt = new Date().toISOString();
+    patchDebtCaches(qc, shopId, debt.id, (current) =>
+      applyDebtPayment(current, paid, paidAt),
+    );
+    patchCustomerListCaches(qc, debt.customerName, (customer) => {
+      const nextBalance = Math.max(0, Number(customer.totalBalance || 0) - paid);
+      const completesDebt = paid >= Number(debt.balance || 0);
+      return {
+        ...customer,
+        totalBalance: nextBalance,
+        activeCount: Math.max(
+          0,
+          Number(customer.activeCount || 0) - (completesDebt ? 1 : 0),
+        ),
+      };
     });
+    patchCustomerProfileCaches(qc, shopId, debt.id, (current) =>
+      applyDebtPayment(current, paid, paidAt),
+    );
 
     // Close instantly — don't wait for network
     setOpen(false);
     setAmount("");
-    setSubmitting(false);
-
     // If offline, queue the payment and return — sync will fire on reconnect
     if (!navigator.onLine) {
-      enqueueMutation("debt_payment", shopId, { debtId: debt.id, amount: paid, recordedBy: userName });
-      toast.success("Payment saved offline — will sync on reconnect");
+      try {
+        await enqueueMutation("debt_payment", shopId, { debtId: debt.id, amount: paid, recordedBy: userName });
+        toast.success("Payment saved offline — will sync on reconnect");
+      } catch {
+        qc.invalidateQueries({ queryKey: exactKey });
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        toast.error("Could not save offline payment — please retry");
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -103,10 +127,17 @@ function PaymentDialog({ debt }: { debt: any }) {
       .then(() => {
         // Server confirmed — safe to refetch and get any concurrent updates
         qc.invalidateQueries({ queryKey: exactKey });
+        qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
       })
       .catch(() => {
         qc.setQueryData(exactKey, snapshot);
+        qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
         toast.error("Payment failed — please retry");
+      })
+      .finally(() => {
+        setSubmitting(false);
       });
   };
 
@@ -215,10 +246,11 @@ function PaymentDialog({ debt }: { debt: any }) {
 // ─── Mark as Paid button ───────────────────────────────────────────────────────
 function MarkPaidButton({ debt }: { debt: any }) {
   const [loading, setLoading] = useState(false);
+  const [completed, setCompleted] = useState(false);
   const qc = useQueryClient();
   const shopId = localStorage.getItem("greenlink_shopId") || "";
 
-  if (debt.status === "paid") return null;
+  if (debt.status === "paid" || completed) return null;
 
   const handle = async () => {
     if (loading) return;
@@ -226,10 +258,20 @@ function MarkPaidButton({ debt }: { debt: any }) {
     const exactKey = getListDebtsQueryKey({ shopId });
     const snapshot = qc.getQueryData(exactKey);
     const now = new Date().toISOString();
-    qc.setQueryData(exactKey, (old: any) =>
-      Array.isArray(old)
-        ? old.map(d => d.id === debt.id ? { ...d, status: "paid", balance: 0, paidAt: now } : d)
-        : old
+    setCompleted(true);
+    patchDebtCaches(qc, shopId, debt.id, (current) =>
+      applyDebtPayment(current, Number(debt.balance || 0), now),
+    );
+    patchCustomerListCaches(qc, debt.customerName, (customer) => ({
+      ...customer,
+      totalBalance: Math.max(
+        0,
+        Number(customer.totalBalance || 0) - Number(debt.balance || 0),
+      ),
+      activeCount: Math.max(0, Number(customer.activeCount || 0) - 1),
+    }));
+    patchCustomerProfileCaches(qc, shopId, debt.id, (current) =>
+      applyDebtPayment(current, Number(debt.balance || 0), now),
     );
     toast.success(`${debt.customerName} marked as paid`);
     try {
@@ -243,8 +285,12 @@ function MarkPaidButton({ debt }: { debt: any }) {
       });
       qc.invalidateQueries({ queryKey: exactKey });
       qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
+      qc.invalidateQueries({ queryKey: ["/api/crm"] });
     } catch {
       qc.setQueryData(exactKey, snapshot);
+      qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
+      qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      setCompleted(false);
       toast.error("Failed to mark paid — please retry");
     } finally {
       setLoading(false);
@@ -1487,6 +1533,7 @@ function AddDebtDialog({ shopId, onAdded }: { shopId: string; onAdded: () => voi
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const qc = useQueryClient();
 
   const reset = () => { setCustomerName(""); setCustomerPhone(""); setAmount(""); setNotes(""); };
 
@@ -1497,6 +1544,34 @@ function AddDebtDialog({ shopId, onAdded }: { shopId: string; onAdded: () => voi
     if (!total || total <= 0) { toast.error("Enter a valid amount"); return; }
 
     setSaving(true);
+    const optimisticDebt = {
+      id: `optimistic-${crypto.randomUUID()}`,
+      shopId,
+      saleId: null,
+      customerName: name,
+      customerPhone: customerPhone.trim(),
+      totalAmount: total,
+      amountPaid: 0,
+      balance: total,
+      status: "unpaid",
+      notes: notes.trim() || null,
+      paidAt: null,
+      createdAt: new Date().toISOString(),
+      items: [],
+    };
+    const debtListKey = getListDebtsQueryKey({ shopId });
+    const debtSnapshot = qc.getQueryData(debtListKey);
+
+    // Show the new debt immediately. The server request continues in the
+    // background and rolls this entry back if Cloudflare rejects it.
+    qc.setQueryData(debtListKey, (old: any) =>
+      Array.isArray(old) ? [optimisticDebt, ...old] : old,
+    );
+    addDebtToCustomerListCaches(qc, shopId, optimisticDebt);
+    setOpen(false);
+    reset();
+    toast.success(`Debt of ${amount} recorded for ${name}`);
+
     try {
       await customFetch("/api/debts", {
         method: "POST",
@@ -1508,11 +1583,11 @@ function AddDebtDialog({ shopId, onAdded }: { shopId: string; onAdded: () => voi
           notes: notes.trim() || undefined,
         }),
       });
-      toast.success(`Debt of ${amount} recorded for ${name}`);
       onAdded();
-      setOpen(false);
-      reset();
+      qc.invalidateQueries({ queryKey: ["/api/crm"] });
     } catch {
+      qc.setQueryData(debtListKey, debtSnapshot);
+      qc.invalidateQueries({ queryKey: ["/api/crm"] });
       toast.error("Failed to record debt — please retry");
     } finally {
       setSaving(false);
@@ -1523,6 +1598,7 @@ function AddDebtDialog({ shopId, onAdded }: { shopId: string; onAdded: () => voi
     <>
       <button
         onClick={() => setOpen(true)}
+        disabled={saving}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
       >
         <UserPlus className="h-3.5 w-3.5" />

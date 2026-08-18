@@ -3,7 +3,7 @@ import {
   useListSales, useDeleteSale, getListSalesQueryKey,
   useListSaleReturns, useCreateSaleReturn, getListSaleReturnsQueryKey,
   getListProductsQueryKey, getListInventoryMovementsQueryKey,
-  getGetSaleQueryKey,
+  getGetSaleQueryKey, getListDebtsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -491,11 +491,13 @@ function VoidDialog({
   const qc = useQueryClient();
   const del = useDeleteSale();
   const role = localStorage.getItem("greenlink_role") || "owner";
+  const [completedSaleId, setCompletedSaleId] = useState<string | null>(null);
 
   const handleVoid = () => {
-    if (!sale) return;
+    if (!sale || del.isPending || completedSaleId === sale.id) return;
     const voidReason = reason.trim() || "Voided by owner";
     setReason("");
+    setCompletedSaleId(sale.id);
 
     // Optimistic: immediately remove from all sales list caches
     qc.setQueriesData(
@@ -512,11 +514,16 @@ function VoidDialog({
         await del.mutateAsync({ saleId: sale.id, data: { reason: voidReason, performedBy: role } });
         // Sync reality after server confirms
         qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
+         qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
+         qc.invalidateQueries({ queryKey: ["/api/crm"] });
         qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
         qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       } catch {
         // Roll back: re-add the sale back to the list
         qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
+         qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
+         qc.invalidateQueries({ queryKey: ["/api/crm"] });
+         setCompletedSaleId(null);
         toast.error("Failed to void sale — please retry");
       }
     })();
@@ -541,7 +548,7 @@ function VoidDialog({
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button variant="destructive" onClick={handleVoid} disabled={del.isPending}>
+          <Button variant="destructive" onClick={handleVoid} disabled={del.isPending || completedSaleId === sale?.id}>
             {del.isPending ? "Voiding…" : "Confirm Void"}
           </Button>
         </DialogFooter>

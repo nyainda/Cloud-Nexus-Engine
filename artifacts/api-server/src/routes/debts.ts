@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
@@ -205,65 +206,80 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   }>();
   const db = createDb(c.env.DB);
   const debtId = c.req.param("debtId");
-  const debt = await db.select().from(debts).where(eq(debts.id, debtId)).get();
-  if (!debt) return c.json({ error: "Not found" }, 404);
-  if (debt.shopId !== c.get("session").shopId) return c.json({ error: "Forbidden" }, 403);
   const amount = Number(body.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
     return c.json({ error: "Payment amount must be greater than zero" }, 400);
   }
-  if (amount > debt.balance + 0.005) {
-    return c.json({ error: "Payment cannot be greater than the remaining balance" }, 400);
-  }
+  const session = c.get("session");
 
-  const now = new Date().toISOString();
-  const paymentId = crypto.randomUUID();
-  await db.insert(debtPayments).values({
-    id: paymentId,
-    debtId,
-    amount,
-    recordedBy: body.recordedBy ?? c.get("session").userName ?? null,
-    paidAt: now,
-    paymentType: "payment",
-    reversalOfId: null,
-    note: body.note ?? null,
+  // Keep the balance check, payment insert, and debt update in one transaction.
+  // Without this, two fast Mark Paid requests could both read the same old
+  // balance and create duplicate payment records.
+  const { debt, payment, newStatus } = await db.transaction(async (tx) => {
+    const debt = await tx.select().from(debts).where(eq(debts.id, debtId)).get();
+    if (!debt) throw new Error("DEBT_NOT_FOUND");
+    if (debt.shopId !== session.shopId) throw new Error("DEBT_FORBIDDEN");
+    if (amount > debt.balance + 0.005) throw new Error("DEBT_OVERPAYMENT");
+
+    const now = new Date().toISOString();
+    const paymentId = crypto.randomUUID();
+    await tx.insert(debtPayments).values({
+      id: paymentId,
+      debtId,
+      amount,
+      recordedBy: body.recordedBy ?? session.userName ?? null,
+      paidAt: now,
+      paymentType: "payment",
+      reversalOfId: null,
+      note: body.note ?? null,
+    });
+
+    await tx
+      .update(debts)
+      .set({
+        amountPaid: sql`amount_paid + ${amount}`,
+        balance: sql`MAX(0, total_amount - amount_paid - ${amount})`,
+        status: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN 'paid' WHEN amount_paid + ${amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
+        paidAt: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN ${now} ELSE NULL END`,
+      })
+      .where(eq(debts.id, debtId));
+
+    const updatedDebt = await tx
+      .select({ status: debts.status })
+      .from(debts)
+      .where(eq(debts.id, debtId))
+      .get();
+    const newStatus = updatedDebt?.status;
+
+    if (newStatus === "paid") {
+      await tx
+        .delete(notifications)
+        .where(
+          and(
+            eq(notifications.debtId, debtId),
+            eq(notifications.type, "debt_reminder"),
+          ),
+        );
+    }
+
+    const payment = await tx
+      .select()
+      .from(debtPayments)
+      .where(eq(debtPayments.id, paymentId))
+      .get();
+    return { debt, payment, newStatus };
+  }).catch((error: unknown) => {
+    if (error instanceof Error) {
+      if (error.message === "DEBT_NOT_FOUND") throw new HTTPException(404, { message: "Not found" });
+      if (error.message === "DEBT_FORBIDDEN") throw new HTTPException(403, { message: "Forbidden" });
+      if (error.message === "DEBT_OVERPAYMENT") throw new HTTPException(400, { message: "Payment cannot be greater than the remaining balance" });
+    }
+    throw error;
   });
-
-  // Fully atomic — all four columns derive from the DB's current values plus the
-  // payment delta, so concurrent payments cannot overwrite each other.
-  await db
-    .update(debts)
-    .set({
-      amountPaid: sql`amount_paid + ${amount}`,
-      balance: sql`MAX(0, total_amount - amount_paid - ${amount})`,
-      status: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN 'paid' WHEN amount_paid + ${amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
-      paidAt: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN ${now} ELSE NULL END`,
-    })
-    .where(eq(debts.id, debtId));
-
-  // Re-read updated status to drive notification cleanup
-  const updatedDebt = await db.select({ status: debts.status }).from(debts).where(eq(debts.id, debtId)).get();
-  const newStatus = updatedDebt?.status;
-
-  if (newStatus === "paid") {
-    await db
-      .delete(notifications)
-      .where(
-        and(
-          eq(notifications.debtId, debtId),
-          eq(notifications.type, "debt_reminder"),
-        ),
-      );
-  }
 
   const today = new Date().toISOString().slice(0, 10);
   await kvDel(c.env.SESSIONS, CK.debts(debt.shopId), CK.dashboard(debt.shopId, today));
 
-  const payment = await db
-    .select()
-    .from(debtPayments)
-    .where(eq(debtPayments.id, paymentId))
-    .get();
   return c.json(payment!, 201);
 });
 
