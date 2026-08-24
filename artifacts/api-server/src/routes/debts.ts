@@ -212,73 +212,91 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   }
   const session = c.get("session");
 
-  // Keep the balance check, payment insert, and debt update in one transaction.
-  // Without this, two fast Mark Paid requests could both read the same old
-  // balance and create duplicate payment records.
-  const { debt, payment, newStatus } = await db.transaction(async (tx) => {
-    const debt = await tx.select().from(debts).where(eq(debts.id, debtId)).get();
-    if (!debt) throw new Error("DEBT_NOT_FOUND");
-    if (debt.shopId !== session.shopId) throw new Error("DEBT_FORBIDDEN");
-    if (amount > debt.balance + 0.005) throw new Error("DEBT_OVERPAYMENT");
+  // NOTE: Cloudflare D1 does not support interactive SQL transactions
+  // (BEGIN/COMMIT/SAVEPOINT) over the Workers binding — only single
+  // statements or the batch() API. drizzle-orm/d1's db.transaction()
+  // sends a raw "begin" statement, which D1 rejects, surfacing as
+  // "Failed query: begin". (Local `wrangler dev` uses a real SQLite
+  // engine that *does* support BEGIN, which is why this can appear to
+  // work in dev and then 500 in production.) See:
+  // https://github.com/drizzle-team/drizzle-orm/issues/758
+  //
+  // Instead, we get the same race-condition protection the old code's
+  // comment describes by making the balance check part of the UPDATE's
+  // WHERE clause itself. A single UPDATE statement is atomic on D1, so
+  // two concurrent "Mark Paid" requests can no longer both succeed
+  // against the same stale balance — the second one's WHERE clause will
+  // simply match zero rows once the first has applied.
+  const debtBefore = await db.select().from(debts).where(eq(debts.id, debtId)).get();
+  if (!debtBefore) throw new HTTPException(404, { message: "Not found" });
+  if (debtBefore.shopId !== session.shopId) throw new HTTPException(403, { message: "Forbidden" });
+  if (amount > debtBefore.balance + 0.005) {
+    throw new HTTPException(400, { message: "Payment cannot be greater than the remaining balance" });
+  }
 
-    const now = new Date().toISOString();
-    const paymentId = crypto.randomUUID();
-    await tx.insert(debtPayments).values({
-      id: paymentId,
-      debtId,
-      amount,
-      recordedBy: body.recordedBy ?? session.userName ?? null,
-      paidAt: now,
-      paymentType: "payment",
-      reversalOfId: null,
-      note: body.note ?? null,
-    });
+  const now = new Date().toISOString();
 
-    await tx
-      .update(debts)
-      .set({
-        amountPaid: sql`amount_paid + ${amount}`,
-        balance: sql`MAX(0, total_amount - amount_paid - ${amount})`,
-        status: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN 'paid' WHEN amount_paid + ${amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
-        paidAt: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN ${now} ELSE NULL END`,
-      })
-      .where(eq(debts.id, debtId));
+  const updateResult = await db
+    .update(debts)
+    .set({
+      amountPaid: sql`amount_paid + ${amount}`,
+      balance: sql`MAX(0, total_amount - amount_paid - ${amount})`,
+      status: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN 'paid' WHEN amount_paid + ${amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
+      paidAt: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN ${now} ELSE NULL END`,
+    })
+    .where(
+      and(
+        eq(debts.id, debtId),
+        sql`${amount} <= (total_amount - amount_paid) + 0.005`,
+      ),
+    )
+    .run();
 
-    const updatedDebt = await tx
-      .select({ status: debts.status })
-      .from(debts)
-      .where(eq(debts.id, debtId))
-      .get();
-    const newStatus = updatedDebt?.status;
+  const rowsChanged = (updateResult as unknown as { meta?: { changes?: number } }).meta?.changes ?? 0;
+  if (rowsChanged === 0) {
+    // Lost the race to a concurrent payment/reversal, or balance moved
+    // between the read above and this write.
+    throw new HTTPException(409, { message: "Balance changed — please refresh and try again" });
+  }
 
-    if (newStatus === "paid") {
-      await tx
-        .delete(notifications)
-        .where(
-          and(
-            eq(notifications.debtId, debtId),
-            eq(notifications.type, "debt_reminder"),
-          ),
-        );
-    }
-
-    const payment = await tx
-      .select()
-      .from(debtPayments)
-      .where(eq(debtPayments.id, paymentId))
-      .get();
-    return { debt, payment, newStatus };
-  }).catch((error: unknown) => {
-    if (error instanceof Error) {
-      if (error.message === "DEBT_NOT_FOUND") throw new HTTPException(404, { message: "Not found" });
-      if (error.message === "DEBT_FORBIDDEN") throw new HTTPException(403, { message: "Forbidden" });
-      if (error.message === "DEBT_OVERPAYMENT") throw new HTTPException(400, { message: "Payment cannot be greater than the remaining balance" });
-    }
-    throw error;
+  const paymentId = crypto.randomUUID();
+  await db.insert(debtPayments).values({
+    id: paymentId,
+    debtId,
+    amount,
+    recordedBy: body.recordedBy ?? session.userName ?? null,
+    paidAt: now,
+    paymentType: "payment",
+    reversalOfId: null,
+    note: body.note ?? null,
   });
 
-  const today = new Date().toISOString().slice(0, 10);
-  await kvDel(c.env.SESSIONS, CK.debts(debt.shopId), CK.dashboard(debt.shopId, today));
+  const updatedDebt = await db
+    .select({ status: debts.status, shopId: debts.shopId })
+    .from(debts)
+    .where(eq(debts.id, debtId))
+    .get();
+  const newStatus = updatedDebt?.status;
+
+  if (newStatus === "paid") {
+    await db
+      .delete(notifications)
+      .where(
+        and(
+          eq(notifications.debtId, debtId),
+          eq(notifications.type, "debt_reminder"),
+        ),
+      );
+  }
+
+  const payment = await db
+    .select()
+    .from(debtPayments)
+    .where(eq(debtPayments.id, paymentId))
+    .get();
+
+  const today = now.slice(0, 10);
+  await kvDel(c.env.SESSIONS, CK.debts(debtBefore.shopId), CK.dashboard(debtBefore.shopId, today));
 
   return c.json(payment!, 201);
 });
