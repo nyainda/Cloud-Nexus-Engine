@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { customers, debts } from "@workspace/db/schema";
+import { normalizeCustomerName, customerNameKey } from "../lib/normalize";
 
 const crmRouter = new Hono<AppEnv>();
 
@@ -71,6 +72,13 @@ crmRouter.get("/crm", requireAuth, async (c) => {
         ex.latestDebtAmount = d.totalAmount || 0;
         ex.latestDebtBalance = d.balance || 0;
         ex.latestDebtStatus = d.status;
+        // Display the spelling/phone from the most recent debt, not whichever
+        // row the (unordered) D1 select happened to return first. Without this,
+        // an unregistered customer's name could flicker between old and new
+        // casing on every reload depending on row order — not a rename actually
+        // "not sticking", just the wrong row being used to label the group.
+        ex.name = d.customerName;
+        if (d.customerPhone) ex.phone = d.customerPhone;
       }
     }
   }
@@ -215,6 +223,32 @@ crmRouter.post("/crm", requireAuth, async (c) => {
     return c.json({ error: "shopId and name are required" }, 400);
   }
 
+  const name = normalizeCustomerName(body.name);
+  const key = customerNameKey(name);
+
+  // Same person, different casing/spacing typed at a different till — merge
+  // into the existing record instead of creating a second "Jane Doe" /
+  // "jane doe" entry that then has to be manually reconciled later.
+  const existing = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.shopId, body.shopId))
+    .all()
+    .then((rows) => rows.find((r) => customerNameKey(r.name) === key) ?? null);
+
+  if (existing) {
+    const patch: Record<string, unknown> = {};
+    if (body.phone?.trim()) patch.phone = body.phone.trim();
+    if (body.email?.trim()) patch.email = body.email.trim();
+    if (body.notes?.trim()) patch.notes = body.notes.trim();
+    if (body.creditLimit != null) patch.creditLimit = body.creditLimit;
+    if (Object.keys(patch).length > 0) {
+      await db.update(customers).set(patch).where(eq(customers.id, existing.id)).run();
+    }
+    const merged = await db.select().from(customers).where(eq(customers.id, existing.id)).get();
+    return c.json(merged, 200);
+  }
+
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
@@ -223,7 +257,7 @@ crmRouter.post("/crm", requireAuth, async (c) => {
     .values({
       id,
       shopId: body.shopId,
-      name: body.name.trim(),
+      name,
       phone: (body.phone ?? "").trim(),
       email: body.email?.trim() || null,
       notes: body.notes?.trim() || null,
@@ -296,7 +330,7 @@ crmRouter.patch("/crm/rename", requireAuth, async (c) => {
     return c.json({ error: "shopId, oldName, and newName are required" }, 400);
   }
 
-  const newName = body.newName.trim();
+  const newName = normalizeCustomerName(body.newName);
   const shopId = body.shopId;
 
   // Update all debts matching the old name
@@ -354,13 +388,13 @@ crmRouter.patch("/crm/:id", requireAuth, async (c) => {
   if (!existing) return c.json({ error: "Not found" }, 404);
 
   const patch: Record<string, unknown> = {};
-  if (body.name !== undefined) patch.name = body.name.trim();
+  if (body.name !== undefined) patch.name = normalizeCustomerName(body.name);
   if (body.phone !== undefined) patch.phone = body.phone.trim();
   if ("email" in body) patch.email = body.email?.trim() || null;
   if ("notes" in body) patch.notes = body.notes?.trim() || null;
   if ("creditLimit" in body) patch.creditLimit = body.creditLimit ?? null;
 
-  const nameChanged = body.name !== undefined && body.name.trim() !== existing.name;
+  const nameChanged = body.name !== undefined && normalizeCustomerName(body.name) !== existing.name;
 
   if (Object.keys(patch).length > 0) {
     await db.update(customers).set(patch).where(eq(customers.id, id)).run();
@@ -368,7 +402,7 @@ crmRouter.patch("/crm/:id", requireAuth, async (c) => {
 
   // Cascade name change to all debt records for this shop
   if (nameChanged && body.name) {
-    const newName = body.name.trim();
+    const newName = normalizeCustomerName(body.name);
     await db
       .update(debts)
       .set({ customerName: newName })

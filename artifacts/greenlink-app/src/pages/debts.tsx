@@ -1776,6 +1776,13 @@ export default function Debts() {
       isOverdue: boolean;
     }>();
 
+    // Track which debt is the newest per group so the group's display name
+    // reflects the latest rename, not whichever debt happened to sort first
+    // (this list is sorted by balance, so "first seen" was effectively random
+    // relative to name history — that's what made a rename look like it
+    // "reverted" on some screens but not others).
+    const newestSeenAt = new Map<string, string>();
+
     for (const debt of filtered) {
       const key = debt.customerName?.toLowerCase().trim() || "unknown";
       if (!map.has(key)) {
@@ -1790,6 +1797,7 @@ export default function Debts() {
           worstStatus: "cancelled",
           isOverdue: false,
         });
+        newestSeenAt.set(key, debt.createdAt);
       }
       const g = map.get(key)!;
       g.debts.push(debt);
@@ -1804,8 +1812,12 @@ export default function Debts() {
       if ((statusRank[debt.status] ?? 0) > (statusRank[g.worstStatus] ?? 0)) {
          g.worstStatus = debt.status as "unpaid" | "partial" | "paid" | "cancelled";
       }
-      // prefer a phone number if not set yet
-      if (!g.customerPhone && debt.customerPhone) g.customerPhone = debt.customerPhone;
+      // Use the spelling/phone from whichever debt was created most recently.
+      if (debt.createdAt >= (newestSeenAt.get(key) ?? debt.createdAt)) {
+        newestSeenAt.set(key, debt.createdAt);
+        if (debt.customerName) g.customerName = debt.customerName;
+        if (debt.customerPhone) g.customerPhone = debt.customerPhone;
+      }
     }
 
     return Array.from(map.values());

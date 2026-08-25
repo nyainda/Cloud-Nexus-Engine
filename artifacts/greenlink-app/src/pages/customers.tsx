@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import { format, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
+import { toTitleCase } from "@/components/customer-autocomplete";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CustomerEntry {
@@ -105,7 +106,7 @@ function CustomerFormDialog({
   const handleSave = async () => {
     if (!name.trim()) { toast.error("Customer name is required"); return; }
     const trimmed = {
-      name: name.trim(), phone: phone.trim(),
+      name: toTitleCase(name), phone: phone.trim(),
       email: email.trim() || null, notes: notes.trim() || null,
       creditLimit: creditLimit ? Number(creditLimit) : null,
     };
