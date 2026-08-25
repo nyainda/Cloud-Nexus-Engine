@@ -112,11 +112,45 @@ function CustomerFormDialog({
     };
 
     let snapshot: any[] | undefined;
-    if (isEdit && isRegistered && initial?.id) {
+
+    // Optimistic update for every edit path, including a rename that lands
+    // on an already-existing customer's name. Previously only a plain
+    // registered-customer edit patched the cache immediately; renaming an
+    // unregistered (debt-only) customer — the exact case used to merge two
+    // spellings into one — did nothing until the network round trip plus a
+    // full /crm refetch finished, which is the multi-second "harmonizing"
+    // delay: the Debts page already looked merged because it recomputes its
+    // own view straight from fresh debt rows, while this list sat stale.
+    if (isEdit && initial) {
       snapshot = qc.getQueryData<any[]>(crmKey(shopId));
-      qc.setQueryData(crmKey(shopId), (old: any[] = []) =>
-        old.map(c => c.id === initial.id ? { ...c, ...trimmed } : c)
-      );
+      const oldKey = initial.name.toLowerCase().trim();
+      const newKey = trimmed.name.toLowerCase().trim();
+      qc.setQueryData(crmKey(shopId), (old: any[] = []) => {
+        const target = newKey !== oldKey
+          ? old.find(c => c.name.toLowerCase().trim() === newKey && c !== initial)
+          : undefined;
+        if (target) {
+          // Renaming onto an existing entry — merge them into one row right
+          // away. The upcoming refetch will replace this with exact server
+          // totals; this just avoids a visible flash of two rows.
+          const mergedEntry = {
+            ...target,
+            phone: trimmed.phone || target.phone,
+            email: trimmed.email ?? target.email,
+            notes: trimmed.notes ?? target.notes,
+            creditLimit: trimmed.creditLimit ?? target.creditLimit,
+            registered: target.registered || isRegistered,
+            totalBalance: Number(target.totalBalance || 0) + Number(initial.totalBalance || 0),
+            totalOwed: Number(target.totalOwed || 0) + Number(initial.totalOwed || 0),
+            debtCount: Number(target.debtCount || 0) + Number(initial.debtCount || 0),
+            activeCount: Number(target.activeCount || 0) + Number(initial.activeCount || 0),
+          };
+          return old
+            .filter(c => c !== target && c.name.toLowerCase().trim() !== oldKey)
+            .concat(mergedEntry);
+        }
+        return old.map(c => c.name.toLowerCase().trim() === oldKey ? { ...c, ...trimmed } : c);
+      });
     }
     onClose({ name: trimmed.name, phone: trimmed.phone });
     setSaving(true);
