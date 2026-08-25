@@ -981,9 +981,17 @@ function CustomerGroupRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasActive = group.activeDebts.length > 0;
-  const isPaid = hasActive && group.totalBalance <= 0;
-  const isPartial = hasActive && !isPaid && group.totalBalance < group.totalAmount;
-  const isVoided = !hasActive;
+  // A customer with zero active debts could mean either "fully paid off" or
+  // "the debt was cancelled" — two very different outcomes that both left
+  // hasActive === false. The old check (`isPaid = hasActive && ...`) could
+  // never be true once a customer's last debt was paid, so a fully-settled
+  // customer fell through to isVoided and showed a "Voided" badge instead
+  // of "Paid". Distinguish them by what's actually in the record history.
+  const hasPaidHistory = group.debts.some((d: any) => d.status === "paid");
+  const allCancelled = group.debts.length > 0 && group.debts.every((d: any) => d.status === "cancelled");
+  const isPaid = !hasActive && hasPaidHistory;
+  const isPartial = hasActive && group.totalBalance > 0 && group.totalBalance < group.totalAmount;
+  const isVoided = !hasActive && allCancelled;
   const statusLabel = isVoided ? "Voided" : isPaid ? "Paid" : group.isOverdue ? "Overdue" : isPartial ? "Partial" : "Unpaid";
   const statusCss = isPaid
     ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
@@ -995,6 +1003,13 @@ function CustomerGroupRow({
     ? "bg-orange-500/15 text-orange-400 border-orange-500/25"
     : "bg-destructive/15 text-destructive border-destructive/25";
   const initials = group.customerName.split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
+
+  // Split records so outstanding balances are never visually mixed with
+  // settled/voided history — outstanding first (most actionable), a
+  // collapsed "Settled" section underneath.
+  const outstandingDebts = group.debts.filter((d: any) => d.status === "unpaid" || d.status === "partial");
+  const settledDebts = group.debts.filter((d: any) => d.status === "paid" || d.status === "cancelled");
+  const [showSettled, setShowSettled] = useState(false);
 
   return (
     <div className="border-b border-border/40">
@@ -1029,38 +1044,64 @@ function CustomerGroupRow({
       </div>
       {expanded && (
         <div className="bg-muted/15 border-t border-border/40 px-4 py-2 space-y-1">
-          <div className="flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground/50">
-            <span>Individual debt records</span>
-            <span>Click a row to view history</span>
-          </div>
-          {group.debts.map((debt: any) => {
-            const debtPaid = debt.status === "paid";
-            const debtVoided = debt.status === "cancelled";
-            const days = differenceInDays(new Date(), new Date(debt.createdAt));
-            return (
+          {outstandingDebts.length > 0 && (
+            <>
+              <div className="flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground/50">
+                <span>Outstanding ({outstandingDebts.length})</span>
+                <span>Click a row to view history</span>
+              </div>
+              {outstandingDebts.map((debt: any) => (
+                <DebtRecordRow key={debt.id} debt={debt} onSelectDebt={onSelectDebt} />
+              ))}
+            </>
+          )}
+
+          {settledDebts.length > 0 && (
+            <div className={cn(outstandingDebts.length > 0 && "mt-2 pt-2 border-t border-border/30")}>
               <button
-                key={debt.id}
-                onClick={() => onSelectDebt(debt)}
-                className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-card border border-transparent hover:border-border/60 transition-colors"
+                onClick={() => setShowSettled(v => !v)}
+                className="w-full flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground/50 hover:text-muted-foreground transition-colors"
               >
-                <div className="w-7 h-7 rounded-lg bg-card border border-border/60 flex items-center justify-center shrink-0">
-                  <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold truncate">{format(new Date(debt.createdAt), "d MMM yyyy, HH:mm")}</p>
-                  <p className="text-[10px] text-muted-foreground/60 truncate">{debt.notes || `${days} days old`} · Ref {debt.id.slice(0, 8).toUpperCase()}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs font-bold font-mono">{formatKES(debt.totalAmount)}</p>
-                  <p className={cn("text-[10px] font-mono", debtVoided ? "text-muted-foreground" : debtPaid ? "text-emerald-400" : "text-destructive")}>{debtVoided ? "Voided" : debtPaid ? "Paid" : `${formatKES(debt.balance)} due`}</p>
-                </div>
-                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30" />
+                <span>Settled / Paid ({settledDebts.length})</span>
+                <ChevronDown className={cn("h-3 w-3 transition-transform", showSettled && "rotate-180")} />
               </button>
-            );
-          })}
+              {showSettled && (
+                <div className="opacity-70 space-y-1">
+                  {settledDebts.map((debt: any) => (
+                    <DebtRecordRow key={debt.id} debt={debt} onSelectDebt={onSelectDebt} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+function DebtRecordRow({ debt, onSelectDebt }: { debt: any; onSelectDebt: (debt: any) => void }) {
+  const debtPaid = debt.status === "paid";
+  const debtVoided = debt.status === "cancelled";
+  const days = differenceInDays(new Date(), new Date(debt.createdAt));
+  return (
+    <button
+      onClick={() => onSelectDebt(debt)}
+      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-card border border-transparent hover:border-border/60 transition-colors"
+    >
+      <div className="w-7 h-7 rounded-lg bg-card border border-border/60 flex items-center justify-center shrink-0">
+        <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold truncate">{format(new Date(debt.createdAt), "d MMM yyyy, HH:mm")}</p>
+        <p className="text-[10px] text-muted-foreground/60 truncate">{debt.notes || `${days} days old`} · Ref {debt.id.slice(0, 8).toUpperCase()}</p>
+      </div>
+      <div className="text-right">
+        <p className="text-xs font-bold font-mono">{formatKES(debt.totalAmount)}</p>
+        <p className={cn("text-[10px] font-mono", debtVoided ? "text-muted-foreground" : debtPaid ? "text-emerald-400" : "text-destructive")}>{debtVoided ? "Voided" : debtPaid ? "Paid" : `${formatKES(debt.balance)} due`}</p>
+      </div>
+      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30" />
+    </button>
   );
 }
 
