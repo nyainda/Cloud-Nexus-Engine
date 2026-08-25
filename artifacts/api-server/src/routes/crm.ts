@@ -5,8 +5,44 @@ import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { customers, debts } from "@workspace/db/schema";
 import { normalizeCustomerName, customerNameKey } from "../lib/normalize";
+import type { Db } from "../lib/db";
 
 const crmRouter = new Hono<AppEnv>();
+
+/**
+ * Ensure at most one `customers` row exists per (shop, name). Renaming a
+ * customer to a name that already belongs to another record used to leave
+ * two rows with the identical display name sitting side by side — nothing
+ * merged them, so the Customers page kept showing both indefinitely even
+ * though the Debts page (which derives its view straight from the debts
+ * table) already looked correctly harmonized. Call this after any write
+ * that changes a customer's name so a collision self-heals immediately,
+ * and it also cleans up any duplicate created before this fix existed.
+ */
+async function dedupeCustomersByName(db: Db, shopId: string, name: string) {
+  const key = customerNameKey(name);
+  const rows = await db.select().from(customers).where(eq(customers.shopId, shopId)).all();
+  const matches = rows.filter((r) => customerNameKey(r.name) === key);
+  if (matches.length <= 1) return matches[0] ?? null;
+
+  // Keep the oldest record and fold in any contact details the newer
+  // duplicate(s) have that the survivor is missing, then remove the rest.
+  matches.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const survivor = matches[0]!;
+  const dupes = matches.slice(1);
+  const patch: Record<string, unknown> = { name: normalizeCustomerName(survivor.name) };
+  for (const d of dupes) {
+    if (!survivor.phone && d.phone) patch.phone = d.phone;
+    if (!survivor.email && d.email) patch.email = d.email;
+    if (!survivor.notes && d.notes) patch.notes = d.notes;
+    if (survivor.creditLimit == null && d.creditLimit != null) patch.creditLimit = d.creditLimit;
+  }
+  await db.update(customers).set(patch).where(eq(customers.id, survivor.id)).run();
+  for (const d of dupes) {
+    await db.delete(customers).where(eq(customers.id, d.id)).run();
+  }
+  return db.select().from(customers).where(eq(customers.id, survivor.id)).get();
+}
 
 // ── Directory: registered customers + debt-discovered, merged ─────────────────
 crmRouter.get("/crm", requireAuth, async (c) => {
@@ -362,7 +398,12 @@ crmRouter.patch("/crm/rename", requireAuth, async (c) => {
     await db.update(customers).set(patch).where(eq(customers.id, existingReg.id)).run();
   }
 
-  return c.json({ updated: result.changes ?? 0, registeredUpdated: !!existingReg });
+  // The new name may already belong to a different registered customer —
+  // merge them into one row instead of leaving two records with the same
+  // name for the Customers page to show side by side.
+  const merged = await dedupeCustomersByName(db, shopId, newName);
+
+  return c.json({ updated: result.changes ?? 0, registeredUpdated: !!existingReg, customer: merged });
 });
 
 // ── Update customer ───────────────────────────────────────────────────────────
@@ -415,11 +456,11 @@ crmRouter.patch("/crm/:id", requireAuth, async (c) => {
       .run();
   }
 
-  const updated = await db
-    .select()
-    .from(customers)
-    .where(eq(customers.id, id))
-    .get();
+  // If the new name matches a different existing customer, merge them into
+  // one row now rather than leaving two records with the same display name.
+  const updated = nameChanged && body.name
+    ? await dedupeCustomersByName(db, shopId, normalizeCustomerName(body.name))
+    : await db.select().from(customers).where(eq(customers.id, id)).get();
   return c.json(updated);
 });
 
