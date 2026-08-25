@@ -5,6 +5,7 @@ import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, inventoryMovements, notifications, saleReturns, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
+import { normalizeCustomerName } from "../lib/normalize";
 
 const salesRouter = new Hono<AppEnv>();
 
@@ -118,7 +119,9 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   // A debt sale without a customer cannot be reconciled later: it would appear
   // in sales history but never be discoverable in the debt ledger or CRM.
   // Reject it before writing the sale so those two records cannot drift apart.
-  const debtCustomerName = body.debtCustomerName?.trim();
+  const debtCustomerName = body.debtCustomerName?.trim()
+    ? normalizeCustomerName(body.debtCustomerName)
+    : undefined;
   if (body.saleType === "debt" && !debtCustomerName) {
     return c.json({ error: "Customer name is required for debt sales" }, 400);
   }

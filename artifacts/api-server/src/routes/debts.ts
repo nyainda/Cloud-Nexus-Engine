@@ -6,6 +6,7 @@ import { createDb } from "../lib/db";
 import { requireAuth, requireOwner } from "../middleware/auth";
 import { debts, debtPayments, notifications, saleItems, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
+import { normalizeCustomerName } from "../lib/normalize";
 
 const debtsRouter = new Hono<AppEnv>();
 
@@ -120,7 +121,7 @@ debtsRouter.post("/debts", requireAuth, async (c) => {
     id,
     shopId: body.shopId,
     saleId: body.saleId ?? null,
-    customerName: body.customerName,
+    customerName: normalizeCustomerName(body.customerName),
     customerPhone: body.customerPhone,
     totalAmount: body.totalAmount,
     amountPaid: 0,
@@ -179,7 +180,7 @@ debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
   if (debtRecord.shopId !== session.shopId) return c.json({ error: "Forbidden" }, 403);
   const patch: Partial<typeof debts.$inferInsert> = {};
   if (body.notes !== undefined) patch.notes = body.notes;
-  if (body.customerName) patch.customerName = body.customerName;
+  if (body.customerName) patch.customerName = normalizeCustomerName(body.customerName);
   if (body.customerPhone) patch.customerPhone = body.customerPhone;
   if (body.status && ["unpaid", "partial", "paid"].includes(body.status)) {
     patch.status = body.status;
