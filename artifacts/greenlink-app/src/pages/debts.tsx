@@ -668,13 +668,18 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       isOpened: true,
     });
     let running = debt?.totalAmount ?? 0;
-    for (const p of payments) {
+    const reversedPaymentIds = new Set(
+      payments.filter((p: any) => p.paymentType === "reversal" && p.reversalOfId).map((p: any) => p.reversalOfId),
+    );
+    const printablePayments = payments.filter(
+      (p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id),
+    );
+    for (const p of printablePayments) {
       running -= p.amount;
-      const isReversal = p.paymentType === "reversal" || Number(p.amount) < 0;
       histRows.push({
         cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", productSummary,
-          `${isReversal ? "Payment Reversed" : "Payment Received"}${p.note ? ` · ${p.note}` : ""}`,
-          `${isReversal ? "+" : ""}KES ${Math.abs(Number(p.amount)).toLocaleString("en-KE")}`,
+          `Payment Received${p.note ? ` · ${p.note}` : ""}`,
+          `KES ${Number(p.amount).toLocaleString("en-KE")}`,
           `KES ${Math.max(0, running).toLocaleString("en-KE")}`],
         isOpened: false,
       });
@@ -707,9 +712,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         if (!row) return;
         if (row.isOpened) { data.cell.styles.textColor = [100, 116, 139]; data.cell.styles.fontStyle = "italic"; }
         else if (data.column.index === 4) {
-          const payment = payments[data.row.index - 1];
-          const isReversal = payment?.paymentType === "reversal" || Number(payment?.amount) < 0;
-          data.cell.styles.textColor = isReversal ? RED : GREEN;
+          data.cell.styles.textColor = GREEN;
           data.cell.styles.fontStyle = "bold";
         }
         else if (data.column.index === 5) { data.cell.styles.textColor = isPaid ? GREEN : statusColor; }
@@ -913,14 +916,23 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
 
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
     doc.text("PAYMENT HISTORY", ML, y); y += 5;
-    const paymentRows = details.flatMap((d: any) => (d.payments || []).map((p: any) => [
-      format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
-      `#${String(d.id).slice(0, 8).toUpperCase()}`,
-      compactDebtProductSummary(d.items),
-      `${p.paymentType === "reversal" ? "Payment reversed" : "Payment received"}${p.note ? ` · ${p.note}` : ""}`,
-      p.recordedBy || "—",
-      money(Math.abs(Number(p.amount))),
-    ]));
+    const paymentRows = details.flatMap((d: any) => {
+      const reversedPaymentIds = new Set(
+        (d.payments || [])
+          .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
+          .map((p: any) => p.reversalOfId),
+      );
+      return (d.payments || [])
+        .filter((p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id))
+        .map((p: any) => [
+          format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
+          `#${String(d.id).slice(0, 8).toUpperCase()}`,
+          compactDebtProductSummary(d.items),
+          `Payment received${p.note ? ` · ${p.note}` : ""}`,
+          p.recordedBy || "—",
+          money(Number(p.amount)),
+        ]);
+    });
     autoTable(doc, {
       startY: y, margin: { left: ML, right: MR },
       head: [["Date & Time", "Debt Ref", "Products", "Entry", "Recorded By", "Amount"]],
@@ -1562,7 +1574,7 @@ interface CustomerGroup {
   activeDebts: any[];
   totalBalance: number;
   totalAmount: number;
-  worstStatus: "unpaid" | "partial" | "paid";
+  worstStatus: "unpaid" | "partial" | "paid" | "cancelled";
   isOverdue: boolean;
 }
 

@@ -9,7 +9,7 @@
 export type ListDebtsParams = {
 shopId?: string;
 /**
- * Filter by status (unpaid|partial|paid)
+ * Filter by status (unpaid|partial|paid|cancelled)
  */
 status?: string;
 /**

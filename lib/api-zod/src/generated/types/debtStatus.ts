@@ -13,4 +13,5 @@ export const DebtStatus = {
   unpaid: 'unpaid',
   partial: 'partial',
   paid: 'paid',
+  cancelled: 'cancelled',
 } as const;

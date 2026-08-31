@@ -1738,6 +1738,10 @@ components:
           type: string
         paidAt:
           type: ["string", "null"]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DebtItem"
       required: [id, shopId, customerName, customerPhone, totalAmount, amountPaid, balance, status, createdAt]
 
     DebtPayment:
@@ -1789,11 +1793,28 @@ components:
           type: string
         paidAt:
           type: ["string", "null"]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DebtItem"
         payments:
           type: array
           items:
             $ref: "#/components/schemas/DebtPayment"
-      required: [id, shopId, customerName, customerPhone, totalAmount, amountPaid, balance, status, createdAt, payments]
+      required: [id, shopId, customerName, customerPhone, totalAmount, amountPaid, balance, status, createdAt, items, payments]
+
+    DebtItem:
+      type: object
+      properties:
+        productName:
+          type: string
+        qty:
+          type: number
+        unitPrice:
+          type: number
+        totalPrice:
+          type: number
+      required: [productName, qty, unitPrice, totalPrice]
 
     DebtInput:
       type: object
@@ -1821,6 +1842,18 @@ components:
           type: ["string", "null"]
         customerPhone:
           type: ["string", "null"]
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productName:
+                type: string
+              qty:
+                type: number
+              unitPrice:
+                type: number
+            required: [productName, qty, unitPrice]
 
     DebtPaymentInput:
       type: object

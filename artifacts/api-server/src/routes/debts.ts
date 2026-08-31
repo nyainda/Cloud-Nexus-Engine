@@ -10,6 +10,56 @@ import { normalizeCustomerName } from "../lib/normalize";
 
 const debtsRouter = new Hono<AppEnv>();
 
+type DebtItem = {
+  productName: string;
+  qty: number;
+  unitPrice: number;
+  totalPrice: number;
+};
+
+function parseDebtItems(itemsJson: string | null | undefined): DebtItem[] | null {
+  if (itemsJson == null) return null;
+  try {
+    const parsed = JSON.parse(itemsJson);
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .map((item): DebtItem | null => {
+        const productName = String(item?.productName ?? "").trim();
+        const qty = Number(item?.qty);
+        const unitPrice = Number(item?.unitPrice);
+        const totalPrice = Number(item?.totalPrice);
+        if (!productName || !Number.isFinite(qty) || !Number.isFinite(unitPrice) || !Number.isFinite(totalPrice)) {
+          return null;
+        }
+        return { productName, qty, unitPrice, totalPrice };
+      })
+      .filter((item): item is DebtItem => item !== null);
+  } catch {
+    return null;
+  }
+}
+
+async function loadDebtItems(db: ReturnType<typeof createDb>, debt: typeof debts.$inferSelect): Promise<DebtItem[]> {
+  const savedItems = parseDebtItems(debt.itemsJson);
+  if (savedItems !== null) return savedItems;
+  if (!debt.saleId) return [];
+
+  return db
+    .select({
+      productName: saleItems.productName,
+      qty: saleItems.qty,
+      unitPrice: saleItems.unitPrice,
+      totalPrice: saleItems.totalPrice,
+    })
+    .from(saleItems)
+    .where(eq(saleItems.saleId, debt.saleId))
+    .all();
+}
+
+function money(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 // ─── Customer autocomplete — distinct names/phones from debts ─────────────────
 debtsRouter.get("/customers", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
@@ -99,7 +149,7 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
 
   const result = rows.map(r => ({
     ...r,
-    items: r.saleId ? (itemsByHuman[r.saleId] ?? []) : [],
+    items: parseDebtItems(r.itemsJson) ?? (r.saleId ? (itemsByHuman[r.saleId] ?? []) : []),
   }));
 
   return c.json(result);
@@ -147,21 +197,7 @@ debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
   if (!debt) return c.json({ error: "Not found" }, 404);
   if (debt.shopId !== c.get("session").shopId) return c.json({ error: "Forbidden" }, 403);
 
-  // Fetch sale items if this debt is linked to a sale
-  let items: { productName: string; qty: number; unitPrice: number; totalPrice: number }[] = [];
-  if (debt.saleId) {
-    const rows = await db
-      .select({
-        productName: saleItems.productName,
-        qty: saleItems.qty,
-        unitPrice: saleItems.unitPrice,
-        totalPrice: saleItems.totalPrice,
-      })
-      .from(saleItems)
-      .where(eq(saleItems.saleId, debt.saleId))
-      .all();
-    items = rows;
-  }
+  const items = await loadDebtItems(db, debt);
 
   return c.json({ ...debt, payments, items });
 });
@@ -172,10 +208,11 @@ debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
     customerName?: string;
     customerPhone?: string;
     status?: "unpaid" | "partial" | "paid";
+    items?: { productName: string; qty: number; unitPrice: number }[];
   }>();
   const db = createDb(c.env.DB);
   const session = c.get("session");
-  const debtRecord = await db.select({ shopId: debts.shopId }).from(debts).where(eq(debts.id, c.req.param("debtId"))).get();
+  const debtRecord = await db.select().from(debts).where(eq(debts.id, c.req.param("debtId"))).get();
   if (!debtRecord) return c.json({ error: "Not found" }, 404);
   if (debtRecord.shopId !== session.shopId) return c.json({ error: "Forbidden" }, 403);
   const patch: Partial<typeof debts.$inferInsert> = {};
@@ -186,6 +223,63 @@ debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
     patch.status = body.status;
     patch.paidAt = body.status === "paid" ? new Date().toISOString() : null;
   }
+  let priceEditAudit: { oldItems: DebtItem[]; newItems: DebtItem[]; oldTotal: number; newTotal: number } | null = null;
+  if (body.items !== undefined) {
+    if (session.role !== "owner") return c.json({ error: "Owner access required to edit debt item prices" }, 403);
+    if (debtRecord.status === "cancelled") return c.json({ error: "Voided debt records cannot be edited" }, 409);
+    if (!Array.isArray(body.items) || body.items.length === 0) {
+      return c.json({ error: "At least one debt item is required" }, 400);
+    }
+
+    const newItems: DebtItem[] = [];
+    for (const item of body.items) {
+      const productName = String(item?.productName ?? "").trim();
+      const qty = Number(item?.qty);
+      const unitPrice = Number(item?.unitPrice);
+      if (!productName || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
+        return c.json({ error: "Each debt item needs a valid name, quantity, and non-negative price" }, 400);
+      }
+      newItems.push({
+        productName,
+        qty,
+        unitPrice: money(unitPrice),
+        totalPrice: money(qty * unitPrice),
+      });
+    }
+
+    const paymentRows = await db
+      .select({ amount: debtPayments.amount })
+      .from(debtPayments)
+      .where(eq(debtPayments.debtId, debtRecord.id))
+      .all();
+    const amountPaid = money(Math.max(0, paymentRows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)));
+    const totalAmount = money(newItems.reduce((sum, item) => sum + item.totalPrice, 0));
+    if (totalAmount + 0.005 < amountPaid) {
+      return c.json({
+        error: `The new total cannot be less than payments already recorded (${amountPaid.toFixed(2)})`,
+      }, 400);
+    }
+
+    const oldItems = (await loadDebtItems(db, debtRecord)) ?? [];
+    const balance = money(Math.max(0, totalAmount - amountPaid));
+    const status = totalAmount > 0 && amountPaid >= totalAmount - 0.005
+      ? "paid"
+      : amountPaid > 0
+      ? "partial"
+      : "unpaid";
+    patch.itemsJson = JSON.stringify(newItems);
+    patch.totalAmount = totalAmount;
+    patch.amountPaid = amountPaid;
+    patch.balance = balance;
+    patch.status = status;
+    patch.paidAt = status === "paid" ? debtRecord.paidAt ?? new Date().toISOString() : null;
+    priceEditAudit = {
+      oldItems,
+      newItems,
+      oldTotal: debtRecord.totalAmount,
+      newTotal: totalAmount,
+    };
+  }
   if (Object.keys(patch).length === 0) return c.json({ error: "No fields to update" }, 400);
   await db.update(debts).set(patch).where(eq(debts.id, c.req.param("debtId")));
   const debt = await db
@@ -194,6 +288,26 @@ debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
     .where(eq(debts.id, c.req.param("debtId")))
     .get();
   if (!debt) return c.json({ error: "Not found" }, 404);
+  if (priceEditAudit) {
+    const now = new Date().toISOString();
+    await db.insert(auditLog).values({
+      id: crypto.randomUUID(),
+      shopId: debt.shopId,
+      action: "debt_items_updated",
+      entityType: "debt",
+      entityId: debt.id,
+      oldValueJson: JSON.stringify({
+        totalAmount: priceEditAudit.oldTotal,
+        items: priceEditAudit.oldItems,
+      }),
+      newValueJson: JSON.stringify({
+        totalAmount: priceEditAudit.newTotal,
+        items: priceEditAudit.newItems,
+      }),
+      performedBy: session.userName ?? "Owner",
+      createdAt: now,
+    });
+  }
   const today = new Date().toISOString().slice(0, 10);
   await kvDel(c.env.SESSIONS, CK.debts(debtRecord.shopId), CK.dashboard(debtRecord.shopId, today));
   return c.json(debt);

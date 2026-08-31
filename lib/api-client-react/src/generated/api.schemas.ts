@@ -361,7 +361,15 @@ export const DebtStatus = {
   unpaid: 'unpaid',
   partial: 'partial',
   paid: 'paid',
+  cancelled: 'cancelled',
 } as const;
+
+export interface DebtItem {
+  productName: string;
+  qty: number;
+  unitPrice: number;
+  totalPrice: number;
+}
 
 export interface Debt {
   id: string;
@@ -379,6 +387,7 @@ export interface Debt {
   createdAt: string;
   /** @nullable */
   paidAt?: string | null;
+  items?: DebtItem[];
 }
 
 export type DebtPaymentPaymentType = typeof DebtPaymentPaymentType[keyof typeof DebtPaymentPaymentType];
@@ -419,6 +428,7 @@ export interface DebtWithPayments {
   createdAt: string;
   /** @nullable */
   paidAt?: string | null;
+  items: DebtItem[];
   payments: DebtPayment[];
 }
 
@@ -433,6 +443,12 @@ export interface DebtInput {
   notes?: string | null;
 }
 
+export type DebtUpdateItemsItem = {
+  productName: string;
+  qty: number;
+  unitPrice: number;
+};
+
 export interface DebtUpdate {
   /** @nullable */
   notes?: string | null;
@@ -440,6 +456,7 @@ export interface DebtUpdate {
   customerName?: string | null;
   /** @nullable */
   customerPhone?: string | null;
+  items?: DebtUpdateItemsItem[];
 }
 
 export interface DebtPaymentInput {
@@ -755,7 +772,7 @@ offset?: number;
 export type ListDebtsParams = {
 shopId?: string;
 /**
- * Filter by status (unpaid|partial|paid)
+ * Filter by status (unpaid|partial|paid|cancelled)
  */
 status?: string;
 /**

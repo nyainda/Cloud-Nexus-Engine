@@ -5,6 +5,7 @@
  * GreenLink & Sunrise Agrovet Retail Operations OS API
  * OpenAPI spec version: 0.1.0
  */
+import type { DebtUpdateItemsItem } from './debtUpdateItemsItem';
 
 export interface DebtUpdate {
   /** @nullable */
@@ -13,4 +14,5 @@ export interface DebtUpdate {
   customerName?: string | null;
   /** @nullable */
   customerPhone?: string | null;
+  items?: DebtUpdateItemsItem[];
 }

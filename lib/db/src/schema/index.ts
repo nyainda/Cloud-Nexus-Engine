@@ -160,6 +160,7 @@ export const debts = sqliteTable("debts", {
     .notNull()
     .default("unpaid"),
   notes: text("notes"),
+  itemsJson: text("items_json"),
   paidAt: text("paid_at"),
   createdAt: createdAt(),
 });

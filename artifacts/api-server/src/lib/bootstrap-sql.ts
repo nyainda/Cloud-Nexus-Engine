@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS debts (
   balance REAL NOT NULL,
   status TEXT NOT NULL DEFAULT 'unpaid',
   notes TEXT,
+  items_json TEXT,
   paid_at TEXT,
   created_at TEXT NOT NULL
 );

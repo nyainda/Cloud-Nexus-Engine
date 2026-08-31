@@ -362,6 +362,137 @@ function DeleteIndividualDebtButton({
   );
 }
 
+function EditDebtItemsButton({
+  debt,
+  shopId,
+  isOwner,
+  onSaved,
+}: {
+  debt: any;
+  shopId: string;
+  isOwner: boolean;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [items, setItems] = useState<Array<{ productName: string; qty: number; unitPrice: string }>>([]);
+
+  if (!isOwner || !debt.saleId) return null;
+
+  const loadItems = async () => {
+    setLoading(true);
+    try {
+      const detail = await customFetch<any>(`/api/debts/${debt.id}`);
+      const loaded = (detail?.items ?? []).map((item: any) => ({
+        productName: String(item.productName ?? ""),
+        qty: Number(item.qty ?? item.quantity ?? 0),
+        unitPrice: String(item.unitPrice ?? 0),
+      }));
+      setItems(loaded);
+    } catch {
+      toast.error("Could not load debt items");
+      setOpen(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) void loadItems();
+  };
+
+  const handleSave = async () => {
+    if (saving || items.length === 0) return;
+    const payload = items.map((item) => ({
+      productName: item.productName,
+      qty: item.qty,
+      unitPrice: Number(item.unitPrice),
+    }));
+    if (payload.some((item) => !item.productName.trim() || !Number.isFinite(item.qty) || item.qty <= 0 || !Number.isFinite(item.unitPrice) || item.unitPrice < 0)) {
+      toast.error("Enter a valid non-negative price for every item");
+      return;
+    }
+    setSaving(true);
+    try {
+      await customFetch(`/api/debts/${debt.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ items: payload }),
+      });
+      toast.success("Debt prices updated");
+      setOpen(false);
+      onSaved();
+    } catch (error: any) {
+      toast.error(error?.message || "Could not update debt prices");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const previewTotal = items.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitPrice) || 0), 0);
+
+  return (
+    <>
+      <button
+        onClick={() => handleOpenChange(true)}
+        className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:text-primary/80 transition-colors"
+        title="Edit prices for this debt"
+      >
+        <Edit3 className="h-3 w-3" />
+        Edit prices
+      </button>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit debt item prices</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            This changes this customer’s debt record only. The original sale and product catalog prices stay unchanged.
+          </p>
+          {loading ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">Loading items…</div>
+          ) : (
+            <div className="space-y-3">
+              {items.map((item, index) => (
+                <div key={`${item.productName}-${index}`} className="grid grid-cols-[1fr_92px] gap-3 items-end">
+                  <div className="min-w-0">
+                    <Label className="text-xs truncate block">{item.productName}</Label>
+                    <p className="text-[10px] text-muted-foreground mt-1">{item.qty} item{item.qty === 1 ? "" : "s"}</p>
+                  </div>
+                  <div>
+                    <Label htmlFor={`debt-price-${debt.id}-${index}`} className="text-xs">Unit price</Label>
+                    <Input
+                      id={`debt-price-${debt.id}-${index}`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={item.unitPrice}
+                      onChange={(event) => setItems((current) => current.map((entry, i) => i === index ? { ...entry, unitPrice: event.target.value } : entry))}
+                      className="mt-1 h-9"
+                    />
+                  </div>
+                </div>
+              ))}
+              <div className="flex items-center justify-between border-t border-border pt-3 text-sm">
+                <span className="font-semibold">New debt total</span>
+                <span className="font-bold font-mono">{formatKES(previewTotal)}</span>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
+            <Button onClick={handleSave} disabled={loading || saving || items.length === 0}>
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+              {saving ? "Saving…" : "Save prices"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // ─── Customer detail panel ────────────────────────────────────────────────────
 function CustomerDetailPanel({
   customer: initialCustomer,
@@ -655,15 +786,26 @@ function CustomerDetailPanel({
                         <p className="text-[10px] text-muted-foreground/40 mt-1">{paidPct}% paid</p>
                       </div>
                     )}
-                     <DeleteIndividualDebtButton
-                       debt={debt}
-                       shopId={shopId}
-                       customerName={customer.name}
-                       onDeleted={() => {
-                         qc.invalidateQueries({ queryKey: profileKey(shopId, customer.name) });
-                         qc.invalidateQueries({ queryKey: crmKey(shopId) });
-                       }}
-                     />
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <EditDebtItemsButton
+                        debt={debt}
+                        shopId={shopId}
+                        isOwner={isOwner}
+                        onSaved={() => {
+                          qc.invalidateQueries({ queryKey: profileKey(shopId, customer.name) });
+                          qc.invalidateQueries({ queryKey: crmKey(shopId) });
+                        }}
+                      />
+                      <DeleteIndividualDebtButton
+                        debt={debt}
+                        shopId={shopId}
+                        customerName={customer.name}
+                        onDeleted={() => {
+                          qc.invalidateQueries({ queryKey: profileKey(shopId, customer.name) });
+                          qc.invalidateQueries({ queryKey: crmKey(shopId) });
+                        }}
+                      />
+                    </div>
                   </div>
                 );
               })

@@ -240,6 +240,7 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     "ALTER TABLE debt_payments ADD COLUMN payment_type TEXT NOT NULL DEFAULT 'payment'",
     "ALTER TABLE debt_payments ADD COLUMN reversal_of_id TEXT",
     "ALTER TABLE debt_payments ADD COLUMN note TEXT",
+    "ALTER TABLE debts ADD COLUMN items_json TEXT",
     "CREATE INDEX IF NOT EXISTS idx_products_shop_active ON products(shop_id, is_active)",
     "CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id)",
     "CREATE INDEX IF NOT EXISTS idx_sales_shop_date ON sales(shop_id, created_at)",

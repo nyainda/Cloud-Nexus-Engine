@@ -521,7 +521,7 @@ export const CreateSaleReturnBody = zod.object({
  */
 export const ListDebtsQueryParams = zod.object({
   "shopId": zod.coerce.string().optional(),
-  "status": zod.coerce.string().optional().describe('Filter by status (unpaid|partial|paid)'),
+  "status": zod.coerce.string().optional().describe('Filter by status (unpaid|partial|paid|cancelled)'),
   "q": zod.coerce.string().optional().describe('Search by customer name\/phone')
 })
 
@@ -534,10 +534,16 @@ export const ListDebtsResponseItem = zod.object({
   "totalAmount": zod.number(),
   "amountPaid": zod.number(),
   "balance": zod.number(),
-  "status": zod.enum(['unpaid', 'partial', 'paid']),
+  "status": zod.enum(['unpaid', 'partial', 'paid', 'cancelled']),
   "notes": zod.string().nullish(),
   "createdAt": zod.string(),
-  "paidAt": zod.string().nullish()
+  "paidAt": zod.string().nullish(),
+  "items": zod.array(zod.object({
+  "productName": zod.string(),
+  "qty": zod.number(),
+  "unitPrice": zod.number(),
+  "totalPrice": zod.number()
+})).optional()
 })
 export const ListDebtsResponse = zod.array(ListDebtsResponseItem)
 
@@ -575,6 +581,12 @@ export const GetDebtResponse = zod.object({
   "notes": zod.string().nullish(),
   "createdAt": zod.string(),
   "paidAt": zod.string().nullish(),
+  "items": zod.array(zod.object({
+  "productName": zod.string(),
+  "qty": zod.number(),
+  "unitPrice": zod.number(),
+  "totalPrice": zod.number()
+})),
   "payments": zod.array(zod.object({
   "id": zod.string(),
   "debtId": zod.string(),
@@ -598,7 +610,12 @@ export const UpdateDebtParams = zod.object({
 export const UpdateDebtBody = zod.object({
   "notes": zod.string().nullish(),
   "customerName": zod.string().nullish(),
-  "customerPhone": zod.string().nullish()
+  "customerPhone": zod.string().nullish(),
+  "items": zod.array(zod.object({
+  "productName": zod.string(),
+  "qty": zod.number(),
+  "unitPrice": zod.number()
+})).optional()
 })
 
 export const UpdateDebtResponse = zod.object({
@@ -610,10 +627,16 @@ export const UpdateDebtResponse = zod.object({
   "totalAmount": zod.number(),
   "amountPaid": zod.number(),
   "balance": zod.number(),
-  "status": zod.enum(['unpaid', 'partial', 'paid']),
+  "status": zod.enum(['unpaid', 'partial', 'paid', 'cancelled']),
   "notes": zod.string().nullish(),
   "createdAt": zod.string(),
-  "paidAt": zod.string().nullish()
+  "paidAt": zod.string().nullish(),
+  "items": zod.array(zod.object({
+  "productName": zod.string(),
+  "qty": zod.number(),
+  "unitPrice": zod.number(),
+  "totalPrice": zod.number()
+})).optional()
 })
 
 
