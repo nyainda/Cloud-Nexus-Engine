@@ -529,6 +529,11 @@ function CustomerDetailPanel({
   const stats = profile?.stats;
   const debts = profile?.debts ?? [];
   const reg = profile?.customer;
+  // The selected row is the initial snapshot, while the profile query is the
+  // source of truth after a debt price edit. Use the fresh aggregate values in
+  // the panel so its avatar/actions do not keep showing the old balance while
+  // the profile and customer directory have already refreshed.
+  const displayedBalance = stats?.totalBalance ?? customer.totalBalance;
 
   const handleRegister = async () => {
     setRegistering(true);
@@ -548,7 +553,7 @@ function CustomerDetailPanel({
   };
 
   const waMsg = customer.phone
-    ? `Hi ${customer.name}, you have an outstanding balance of ${formatKES(customer.totalBalance)} at our shop. Please settle at your earliest convenience. Thank you!`
+    ? `Hi ${customer.name}, you have an outstanding balance of ${formatKES(displayedBalance)} at our shop. Please settle at your earliest convenience. Thank you!`
     : "";
   const waUrl = customer.phone
     ? `https://wa.me/${customer.phone.replace(/\D/g, "")}?text=${encodeURIComponent(waMsg)}`
@@ -565,7 +570,7 @@ function CustomerDetailPanel({
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0">
         <div className={cn(
           "w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0",
-          avatarColor(customer.name, customer.totalBalance > 0)
+          avatarColor(customer.name, displayedBalance > 0)
         )}>
           {customer.name.charAt(0).toUpperCase()}
         </div>
@@ -691,7 +696,7 @@ function CustomerDetailPanel({
                   {registering ? "Saving…" : "Save Profile"}
                 </button>
               )}
-              {(reg?.phone || customer.phone) && customer.totalBalance > 0 && (
+              {(reg?.phone || customer.phone) && displayedBalance > 0 && (
                 <a href={waUrl} target="_blank" rel="noopener noreferrer">
                   <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl border border-[#25D366]/30 text-[#25D366] bg-[#25D366]/5 hover:bg-[#25D366]/15 text-xs font-semibold transition-colors">
                     <MessageCircle className="w-3.5 h-3.5" />WhatsApp Reminder
