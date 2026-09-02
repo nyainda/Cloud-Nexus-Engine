@@ -2,3 +2,4 @@
 - [CF Worker in-memory cache pitfall](cf-cache-pitfall.md) — per-isolate Map cache causes cross-isolate stale reads; removed product list cache entirely
 - [Product list pagination for tests](product-list-pagination.md) — always use limit=3000 in tests; default limit=100 misses newly-created products at end of 2500+ rows
 - [Debt PDF presentation](debt-pdf-presentation.md) — customer statements stay focused on current debt/payment results, not correction mechanics
+- [D1 production usage hotspots](d1-usage-hotspots.md) — D1 Insights shows catalog polling/read scans, not sales writes, as the main free-tier pressure

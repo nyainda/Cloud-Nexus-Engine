@@ -234,17 +234,27 @@ salesRouter.post("/sales", requireAuth, async (c) => {
       });
 
       if (afterQty <= product.alertQty) {
-        await db.insert(notifications).values({
-          id: crypto.randomUUID(),
-          shopId: body.shopId,
-          type: "low_stock",
-          title: "Low Stock Alert",
-          message: `${product.canonicalName} is running low (${afterQty} remaining)`,
-          productId: product.id,
-          debtId: null,
-          isRead: false,
-          createdAt: now,
-        });
+        // Keep one unread low-stock alert per product. Without this guard,
+        // every sale below the threshold creates another identical unread
+        // row and steadily inflates D1 writes/storage.
+        await c.env.DB.prepare(`
+          INSERT INTO notifications
+            (id, shop_id, type, title, message, product_id, debt_id, is_read, created_at)
+          SELECT ?, ?, 'low_stock', ?, ?, ?, NULL, 0, ?
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM notifications
+            WHERE product_id = ? AND type = 'low_stock' AND is_read = 0
+          )
+        `).bind(
+          crypto.randomUUID(),
+          body.shopId,
+          "Low Stock Alert",
+          `${product.canonicalName} is running low (${afterQty} remaining)`,
+          product.id,
+          now,
+          product.id,
+        ).run();
       }
     }
   }

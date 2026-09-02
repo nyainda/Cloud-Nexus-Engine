@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, like, or, sql } from "drizzle-orm";
+import { eq, and, like, or, sql, getTableColumns } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
 import { requireAuth, requireOwner } from "../middleware/auth";
@@ -57,17 +57,26 @@ productsRouter.get("/products", requireAuth, async (c) => {
 
   const where = conditions.length ? and(...(conditions as any[])) : undefined;
 
-  const [countRows, rows] = await Promise.all([
-    db.select({ n: sql<number>`count(*)` }).from(products).where(where).all(),
-    db.select().from(products).where(where).limit(limit).offset(offset).all(),
-  ]);
+  // Return the exact total from the same query. The previous implementation
+  // ran a second count(*) scan for every product-list request, which doubled
+  // D1 rows read without changing the product payload.
+  const rows = await db
+    .select({
+      ...getTableColumns(products),
+      totalCount: sql<number>`count(*) over ()`,
+    })
+    .from(products)
+    .where(where)
+    .limit(limit)
+    .offset(offset)
+    .all();
 
-  const total = Number(countRows[0]?.n ?? 0);
+  const total = Number((rows[0] as any)?.totalCount ?? 0);
   const payload = {
     products: rows.map((p) => {
       // Strip heavy internal fields never used by the frontend
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { tokensJson, normalizedName, ...rest } = p as any;
+      const { tokensJson, normalizedName, totalCount, ...rest } = p as any;
       return rest;
     }),
     total,
