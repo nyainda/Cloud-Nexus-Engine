@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, like, or, sql } from "drizzle-orm";
+import { eq, and, desc, like, or, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
 import { requireAuth, requireOwner } from "../middleware/auth";
@@ -17,6 +17,34 @@ import {
 
 const productsRouter = new Hono<AppEnv>();
 
+const FULL_CATALOG_LIMIT = 3000;
+const PRODUCT_EDGE_CACHE_TTL = 600;
+
+function isFullCatalogRequest(
+  shopId: string | undefined,
+  q: string | undefined,
+  category: string | undefined,
+  lowStock: string | undefined,
+  limit: number,
+  offset: number,
+): boolean {
+  return Boolean(
+    shopId &&
+    !q &&
+    !category &&
+    lowStock !== "true" &&
+    limit === FULL_CATALOG_LIMIT &&
+    offset === 0,
+  );
+}
+
+function productCatalogCacheKey(shopId: string): Request {
+  return new Request(
+    `https://greenlink-product-cache.invalid/catalog/${encodeURIComponent(shopId)}`,
+    { method: "GET" },
+  );
+}
+
 productsRouter.get("/products", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const shopId = c.req.query("shopId");
@@ -26,11 +54,33 @@ productsRouter.get("/products", requireAuth, async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") ?? "100"), 3000);
   const offset = parseInt(c.req.query("offset") ?? "0");
 
-  // NOTE: product list cache intentionally removed.
-  // The in-memory cache is per-CF-isolate. With multiple warm isolates,
-  // a product created on isolate A clears A's cache, but GET routed to isolate B
-  // still serves B's stale 5-minute cache → the "disappearing product" bug.
-  // D1 queries run in ~50-100ms, well within our 800ms budget, so no cache needed.
+  const isFullCatalog = isFullCatalogRequest(shopId, q, category, lowStock, limit, offset);
+  let cacheKey: Request | undefined;
+  let catalogVersion: string | undefined;
+
+  // Full catalog loads are large, while searches and paginated calls stay live.
+  // The version probe is a single indexed row read, so cache hits do not scan
+  // the catalog and product edits are visible without relying on isolate-local
+  // memory or serving a stale fixed-TTL response after a write.
+  if (isFullCatalog && shopId && typeof caches !== "undefined" && caches.default) {
+    cacheKey = productCatalogCacheKey(shopId);
+    const versionRow = await db
+      .select({ updatedAt: products.updatedAt })
+      .from(products)
+      .where(eq(products.shopId, shopId))
+      .orderBy(desc(products.updatedAt))
+      .limit(1)
+      .get();
+    catalogVersion = versionRow?.updatedAt ?? "";
+
+    const cached = await caches.default.match(cacheKey);
+    if (cached && cached.headers.get("X-Product-Catalog-Version") === catalogVersion) {
+      const response = new Response(cached.body, cached);
+      response.headers.set("X-Product-Cache", "HIT");
+      response.headers.set("Cache-Control", "private, no-cache");
+      return response;
+    }
+  }
 
   // ── SQL search path ────────────────────────────────────────────────────────
   // Keep product search on the products table so each product write updates
@@ -88,7 +138,27 @@ productsRouter.get("/products", requireAuth, async (c) => {
     }),
     total,
   };
-  return c.json(payload);
+  const response = c.json(payload);
+
+  if (cacheKey && catalogVersion !== undefined) {
+    response.headers.set("X-Product-Catalog-Version", catalogVersion);
+    response.headers.set("Cache-Control", `private, max-age=0`);
+    c.executionCtx.waitUntil(
+      caches.default.put(
+        cacheKey,
+        new Response(JSON.stringify(payload), {
+          headers: {
+            "Content-Type": "application/json",
+            "X-Product-Catalog-Version": catalogVersion,
+            "Cache-Control": `private, max-age=${PRODUCT_EDGE_CACHE_TTL}`,
+          },
+        }),
+      ),
+    );
+    response.headers.set("X-Product-Cache", "MISS");
+  }
+
+  return response;
 });
 
 productsRouter.post("/products", requireAuth, async (c) => {

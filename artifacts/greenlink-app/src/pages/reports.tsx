@@ -1022,7 +1022,7 @@ export default function Reports() {
 
   const { data: productsData } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 300_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, staleTime: 1_800_000, gcTime: GC, refetchInterval: 1_800_000, refetchIntervalInBackground: false } }
   );
 
   const lowMarginProducts = useMemo(() => {

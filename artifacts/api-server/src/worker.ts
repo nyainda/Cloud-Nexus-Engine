@@ -49,6 +49,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     // D1 indexes — added after initial deployment; CREATE INDEX IF NOT EXISTS is idempotent
     "CREATE INDEX IF NOT EXISTS idx_products_shop_active ON products(shop_id, is_active)",
     "CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id)",
+    "CREATE INDEX IF NOT EXISTS idx_products_shop_updated_at ON products(shop_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_sales_shop_date ON sales(shop_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)",

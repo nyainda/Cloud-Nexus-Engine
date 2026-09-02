@@ -7,4 +7,4 @@ Production D1 pressure should be diagnosed with `wrangler d1 insights`, not infe
 
 **Why:** A prior production snapshot looked like a write problem because sales touch several tables, but Cloudflare's ranked metrics showed repeated product reads were the larger quota risk. Removing unnecessary count scans preserved the API total while cutting that repeated read work.
 
-**How to apply:** When D1 usage rises, run `wrangler d1 insights greenlink-db --sort-type=sum --sort-by=reads --timePeriod=1d` and `--sort-by=writes` before changing financial data retention or sale history. Treat frontend polling and duplicate alert generation as separate optimization targets.
+**How to apply:** When D1 usage rises, run `wrangler d1 insights greenlink-db --sort-type=sum --sort-by=reads --timePeriod=1d` and `--sort-by=writes` before changing financial data retention or sale history. Treat frontend polling and duplicate alert generation as separate optimization targets; large catalog responses should use a shop-scoped edge cache with an indexed version probe.
