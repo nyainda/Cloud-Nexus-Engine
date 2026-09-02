@@ -1,0 +1,147 @@
+
+Shipping today?
+Search
+Domains
+Add a domain
+Workers
+greenlink-pos-api
+
+Recents
+D1
+/
+greenlink-db
+
+Storage & databases
+/
+D1 SQLite Database
+
+Compute
+/
+Workers & Pages
+
+Analytics
+Total requests
+9.53k
+↗ 38.2%
+Worker invocations
+9.57k
+↗ 37.4%
+Workers errors
+0
+Cache hit rate
+0.00%
+No data
+CPU time P90
+21 ms
+↘ 9.2%
+Build minutes
+0
+No data
+Support
+System status
+Careers
+Terms of Use
+Report Security Issues
+Privacy Policy
+A blue and white pill with a checkmark and an x, representing privacy choicesCookie Preferences
+© 2026 Cloudflare, Inc.
+Why do I have that D1 writes is too high and I have IAM past that what is the reason why do I exceed that what is the reason what should I don't check that how I can remain in free please 
+
+
+See reasoning
+→
+Docs
+→
+Searched API endpoints
+→
+Ran List all D1 databases on the account to inspe...
+→
+Running List all tables and views in the `greenlink-d......
+→
+Ran Query the `greenlink-db` D1 database to list ...
+→
+Running Query row counts for all tables in `greenlink......
+→
+Running Query row counts for the main tables in `gree......
+→
+Running Query row counts for the first batch of table......
+→
+Ran Count rows in the audit_log table of `greenli...
+→
+Ran Query row counts for each table in `greenlink...
+→
+Ran List all triggers in `greenlink-db` to identi...
+→
+Ran List all manually-created indexes in `greenli...
+Agent
+Let me look up D1's free tier limits and what counts as a "write" so we can figure out what's driving your usage.Let me get the exact free tier limits and also check your D1 databases.Let me get the exact free tier numbers from the D1 pricing/limits page.Now let me check your D1 database's tables and recent activity to understand what's consuming writes.Now let me check for triggers that might be multiplying writes, and look at the FTS (full-text search) tables which can generate many writes per insert.Your D1 free tier gives you 100,000 row writes per day, and your greenlink-db app is burning through them fast — mainly because of FTS (full-text search) triggers on the products table that multiply every write 2–3×, plus a write-heavy app pattern where each sale touches 5+ tables.
+
+This enforcement started September 1, 2026 (yesterday) — before that, writes beyond the limit were not hard-blocked. That's why you're seeing this now.
+
+What counts as a "row write"
+Every INSERT, UPDATE, and DELETE counts as 1 row write per row affected. The free limit is 100,000/day (resets at midnight UTC).
+
+What's driving your write volume
+I inspected your database. Here's what I found:
+
+1. FTS triggers on products — the biggest multiplier
+You have 3 triggers on the products table that sync data to a full-text search index (products_fts):
+
+Operation	Row writes per product
+INSERT a product	2 (1 product + 1 FTS insert)
+UPDATE a product	3 (1 product + 1 FTS delete + 1 FTS insert)
+DELETE a product	2 (1 product + 1 FTS delete)
+With 5,806 products, a single full product re-sync costs ~17,000 row writes. Do that a few times a day and you've blown through 100K.
+
+2. Write-heavy transaction pattern
+Each sale likely writes to multiple tables:
+
+sales (1 write)
+sale_items — 1 write per item
+inventory_movements — 1+ write per item
+audit_log — 1 write
+notifications — 1+ write
+A single sale with 5 items = ~15–20 row writes. At that rate, ~5,000 sales/day hits the limit.
+
+3. High-volume tables
+Table	Rows
+notifications	6,782
+products	5,806
+inventory_movements	6,167
+sale_items	3,875
+price_history	2,041
+sales	1,876
+These tables are growing — every new row is a write.
+
+How to stay on the free plan
+Quick wins (do these first)
+Drop the FTS triggers if you don't need full-text search — this alone cuts product writes by 2–3×:
+DROP TRIGGER products_fts_insert;
+DROP TRIGGER products_fts_update;
+DROP TRIGGER products_fts_delete;
+If you need search, use LIKE queries with your existing indexes instead, or rebuild FTS less frequently.
+Stop bulk product re-syncs — if your app re-uploads all products on every deploy or sync, change it to only update products that actually changed. Each unnecessary UPDATE costs 3 row writes.
+Reduce notification writes — don't create a notification for every minor event. Batch them or only create notifications for important actions.
+Skip audit_log for low-importance actions — 74 rows is small now, but if it grows with every API call, it adds up.
+Medium-term optimizations
+Batch writes — instead of updating products one by one, batch multiple updates into a single transaction. D1 counts rows written, not statements, so this won't reduce the count directly — but it helps you identify and eliminate unnecessary writes.
+Cache read-heavy data in KV — if some data doesn't need to be in D1 (like product catalogs that rarely change), store it in Workers KV instead (free tier: 100K reads/day, 1K writes/day).
+Move price_history to append-only with cleanup — run a daily cleanup job to delete old price history rows (but note: deletes also count as writes).
+If you genuinely need this write volume
+If your app truly needs >100K writes/day after optimization, the Workers Paid plan is $5/month and includes 50 million row writes/month (vs. 100K/day free). For an active multi-shop inventory system, that's likely the right path.
+
+Where to check your daily usage
+You can monitor row writes in the dashboard:
+
+Go to Workers & Pages → D1
+Select greenlink-db
+View Metrics → Row Metrics
+This shows your daily row reads and writes so you can see exactly when you're approaching the limit.
+
+Would you like me to:
+
+Drop the FTS triggers on your products table right now to immediately cut write volume?
+Check your recent write patterns via the GraphQL Analytics API to see exactly which day you exceeded the limit and by how much?
+Support
+Type @ to tag a resource or ? for shortcuts
+

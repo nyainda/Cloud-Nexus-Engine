@@ -19,7 +19,6 @@ const productsRouter = new Hono<AppEnv>();
 
 productsRouter.get("/products", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const rawDb = c.env.DB;
   const shopId = c.req.query("shopId");
   const q = c.req.query("q")?.trim();
   const category = c.req.query("category");
@@ -27,79 +26,17 @@ productsRouter.get("/products", requireAuth, async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") ?? "100"), 3000);
   const offset = parseInt(c.req.query("offset") ?? "0");
 
-  // ── FTS5 path: fast full-text search when a query term is present ──────────
-  if (q) {
-    const norm = normalizeProductName(q);
-    // FTS5 MATCH uses prefix tokens — escape special chars, add * for prefix match
-    const ftsQuery = norm.replace(/["']/g, "").split(/\s+/).filter(Boolean)
-      .map(t => `"${t}"*`).join(" OR ");
-
-    // Extra SQL conditions (category / lowStock / shopId / isActive)
-    const extras: string[] = ["p.is_active = 1"];
-    const binds: (string | number)[] = [ftsQuery];
-    if (shopId) { extras.push(`p.shop_id = ?`); binds.push(shopId); }
-    if (category) { extras.push(`p.category = ?`); binds.push(category); }
-    if (lowStock === "true") extras.push(`p.stock_qty <= p.alert_qty`);
-
-    const whereClause = extras.length ? `AND ${extras.join(" AND ")}` : "";
-
-    const countSql = `
-      SELECT COUNT(*) as n
-      FROM products_fts fts
-      JOIN products p ON p.rowid = fts.rowid
-      WHERE products_fts MATCH ? ${whereClause}`;
-
-    const dataSql = `
-      SELECT p.*
-      FROM products_fts fts
-      JOIN products p ON p.rowid = fts.rowid
-      WHERE products_fts MATCH ? ${whereClause}
-      ORDER BY rank
-      LIMIT ${limit} OFFSET ${offset}`;
-
-    try {
-      const [countRes, dataRes] = await Promise.all([
-        rawDb.prepare(countSql).bind(...binds).all(),
-        rawDb.prepare(dataSql).bind(...binds).all(),
-      ]);
-      const total = Number((countRes.results[0] as any)?.n ?? 0);
-      const rows = dataRes.results as any[];
-      return c.json({
-        products: rows.map((p) => ({
-          id: p.id,
-          shopId: p.shop_id,
-          canonicalName: p.canonical_name,
-          sku: p.sku,
-          category: p.category,
-          unit: p.unit,
-          productType: p.product_type ?? "normal",
-          allowDecimals: Boolean(p.allow_decimals),
-          purchasePrice: p.purchase_price,
-          sellingPrice: p.selling_price,
-          profitMargin: p.profit_margin,
-          stockQty: p.stock_qty,
-          alertQty: p.alert_qty,
-          size: p.size,
-          expiryDate: p.expiry_date,
-          isActive: p.is_active !== undefined ? Boolean(p.is_active) : true,
-          lastSoldAt: p.last_sold_at,
-          createdAt: p.created_at,
-          updatedAt: p.updated_at,
-        })),
-        total,
-      });
-    } catch {
-      // FTS table not yet populated (first boot) — fall through to LIKE path
-    }
-  }
-
   // NOTE: product list cache intentionally removed.
   // The in-memory cache is per-CF-isolate. With multiple warm isolates,
   // a product created on isolate A clears A's cache, but GET routed to isolate B
   // still serves B's stale 5-minute cache → the "disappearing product" bug.
   // D1 queries run in ~50-100ms, well within our 800ms budget, so no cache needed.
 
-  // ── Non-search / fallback path: SQL WHERE with LIKE ─────────────────────────
+  // ── SQL search path ────────────────────────────────────────────────────────
+  // Keep product search on the products table so each product write updates
+  // only products. The old FTS5 triggers multiplied product writes and were
+  // unnecessary for this catalog size; these indexed/filterable columns are
+  // sufficient for the POS search workload.
   const conditions: ReturnType<typeof eq>[] = [];
   if (shopId) conditions.push(eq(products.shopId, shopId));
   conditions.push(eq(products.isActive, true));

@@ -151,28 +151,16 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     )`,
     "CREATE INDEX IF NOT EXISTS idx_customers_shop ON customers(shop_id)",
     "CREATE INDEX IF NOT EXISTS idx_customers_shop_name ON customers(shop_id, name)",
+    // FTS5 product search was replaced by the products-table LIKE search.
+    // Remove the old virtual table and triggers so future cold starts cannot
+    // recreate the write multiplier.
+    "DROP TRIGGER IF EXISTS products_fts_insert",
+    "DROP TRIGGER IF EXISTS products_fts_update",
+    "DROP TRIGGER IF EXISTS products_fts_delete",
+    "DROP TABLE IF EXISTS products_fts",
   ];
   for (const m of MIGRATIONS) {
     try { await db.prepare(m).run(); } catch { /* already exists or not applicable */ }
-  }
-
-  // FTS backfill is intentionally claimed through D1, not a module-level
-  // boolean. Cloudflare may run many isolates against the same database, and
-  // each isolate must not repeat the full products scan.
-  try {
-    const claim = await db
-      .prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
-      .bind("products_fts_v1", new Date().toISOString())
-      .run();
-    if (Number(claim.meta?.changes ?? 0) > 0) {
-      await db.prepare(
-        `INSERT OR IGNORE INTO products_fts(rowid, id, shop_id, normalized_name, canonical_name, sku, category)
-         SELECT rowid, id, shop_id, normalized_name, canonical_name, COALESCE(sku,''), COALESCE(category,'')
-         FROM products WHERE is_active = 1`,
-      ).run();
-    }
-  } catch (err) {
-    console.error("[boot] FTS backfill failed:", err);
   }
 
   // ── Fix old quotations schema (has extra NOT NULL columns: type, customer_address, updated_at)
