@@ -201,11 +201,11 @@ export default function Alerts() {
   };
 
   const { data: notifications, isLoading: notifsLoading, refetch } = useListNotifications(
-    { shopId }, { query: { enabled: !!shopId, refetchInterval: 20_000, refetchIntervalInBackground: true } as any }
+    { shopId }, { query: { enabled: !!shopId, refetchInterval: 300_000, refetchIntervalInBackground: false } as any }
   );
 
   const { data: productsData, isLoading: productsLoading } = useListProducts(
-    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 60_000, refetchInterval: 20_000, refetchIntervalInBackground: true } as any }
+    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 300_000, refetchInterval: 300_000, refetchIntervalInBackground: false } as any }
   );
 
   const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any });

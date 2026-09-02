@@ -862,7 +862,7 @@ export default function POS() {
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, refetchInterval: 300_000, refetchIntervalInBackground: false } }
   );
 
   // Sync freshness: stale if last update > 35s ago and not currently refetching

@@ -1730,7 +1730,7 @@ export default function Stock() {
 
   const { data: productsData, isLoading } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, refetchInterval: 300_000, refetchIntervalInBackground: false } }
   );
 
   const allProducts = productsData?.products || [];

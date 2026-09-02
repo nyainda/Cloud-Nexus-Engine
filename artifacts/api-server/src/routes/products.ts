@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, like, or, sql, getTableColumns } from "drizzle-orm";
+import { eq, and, like, or, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
 import { requireAuth, requireOwner } from "../middleware/auth";
@@ -57,26 +57,33 @@ productsRouter.get("/products", requireAuth, async (c) => {
 
   const where = conditions.length ? and(...(conditions as any[])) : undefined;
 
-  // Return the exact total from the same query. The previous implementation
-  // ran a second count(*) scan for every product-list request, which doubled
-  // D1 rows read without changing the product payload.
+  // Full-catalog callers use limit=3000 and do not need a separate total scan.
+  // Keep exact totals for paginated/default callers, while avoiding a costly
+  // count/window scan on the POS, stock, reports, and alerts catalog loads.
+  const includeTotal = c.req.query("includeTotal") === "true";
+  const needsExactTotal = includeTotal || limit < 3000 || offset > 0;
   const rows = await db
-    .select({
-      ...getTableColumns(products),
-      totalCount: sql<number>`count(*) over ()`,
-    })
+    .select()
     .from(products)
     .where(where)
     .limit(limit)
     .offset(offset)
     .all();
 
-  const total = Number((rows[0] as any)?.totalCount ?? 0);
+  let total = rows.length + offset;
+  if (needsExactTotal) {
+    const countRows = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(products)
+      .where(where)
+      .all();
+    total = Number(countRows[0]?.n ?? 0);
+  }
   const payload = {
     products: rows.map((p) => {
       // Strip heavy internal fields never used by the frontend
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { tokensJson, normalizedName, totalCount, ...rest } = p as any;
+      const { tokensJson, normalizedName, ...rest } = p as any;
       return rest;
     }),
     total,
