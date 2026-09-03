@@ -9,9 +9,29 @@ const SHOP_A_ID = "shop-greenlink";
 const SHOP_B_ID = "shop-sunrise";
 
 let bootstrapped = false;
+const BOOTSTRAP_MARKER = "schema-bootstrap-v2";
 
 async function bootstrapD1(db: D1Database): Promise<void> {
   if (bootstrapped) return;
+
+  // Cloudflare may execute this module in many short-lived isolates. The
+  // module flag only protects one isolate, so check a durable D1 marker before
+  // doing any bootstrap or migration DDL. Without this guard, every cold
+  // isolate repeats the whole schema setup and can rebuild/drop the old FTS
+  // table, consuming D1 row-write quota.
+  try {
+    const marker = await db
+      .prepare("SELECT key FROM app_migrations WHERE key = ?")
+      .bind(BOOTSTRAP_MARKER)
+      .first<{ key: string }>();
+    if (marker) {
+      bootstrapped = true;
+      return;
+    }
+  } catch {
+    // The marker table is absent only on an uninitialized/legacy database.
+    // The one-time bootstrap below creates it.
+  }
 
   const statements = BOOTSTRAP_SQL.split(";")
     .map((s) => s.trim())
@@ -72,34 +92,6 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       keys_auth TEXT NOT NULL,
       created_at TEXT NOT NULL
     )`,
-    // FTS5 virtual table for fast product search
-    `CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
-      id UNINDEXED,
-      shop_id UNINDEXED,
-      normalized_name,
-      canonical_name,
-      sku,
-      category,
-      content='products',
-      content_rowid='rowid'
-    )`,
-    // Keep FTS in sync on insert
-    `CREATE TRIGGER IF NOT EXISTS products_fts_insert AFTER INSERT ON products BEGIN
-       INSERT INTO products_fts(rowid, id, shop_id, normalized_name, canonical_name, sku, category)
-       VALUES (new.rowid, new.id, new.shop_id, new.normalized_name, new.canonical_name, COALESCE(new.sku,''), COALESCE(new.category,''));
-     END`,
-    // Keep FTS in sync on update
-    `CREATE TRIGGER IF NOT EXISTS products_fts_update AFTER UPDATE ON products BEGIN
-       INSERT INTO products_fts(products_fts, rowid, id, shop_id, normalized_name, canonical_name, sku, category)
-       VALUES ('delete', old.rowid, old.id, old.shop_id, old.normalized_name, old.canonical_name, COALESCE(old.sku,''), COALESCE(old.category,''));
-       INSERT INTO products_fts(rowid, id, shop_id, normalized_name, canonical_name, sku, category)
-       VALUES (new.rowid, new.id, new.shop_id, new.normalized_name, new.canonical_name, COALESCE(new.sku,''), COALESCE(new.category,''));
-     END`,
-    // Keep FTS in sync on delete
-    `CREATE TRIGGER IF NOT EXISTS products_fts_delete AFTER DELETE ON products BEGIN
-       INSERT INTO products_fts(products_fts, rowid, id, shop_id, normalized_name, canonical_name, sku, category)
-       VALUES ('delete', old.rowid, old.id, old.shop_id, old.normalized_name, old.canonical_name, COALESCE(old.sku,''), COALESCE(old.category,''));
-     END`,
     // Customer returns table
     `CREATE TABLE IF NOT EXISTS sale_returns (
       id TEXT PRIMARY KEY,
@@ -210,7 +202,15 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       try { await db.prepare("CREATE INDEX IF NOT EXISTS idx_quotations_shop_date ON quotations(shop_id, created_at)").run(); } catch {}
       try { await db.prepare("CREATE INDEX IF NOT EXISTS idx_quotations_shop_status ON quotations(shop_id, status)").run(); } catch {}
     }
-  } catch { /* quota table may not exist yet — safe to skip */ }
+  } catch { /* quotations table may not exist yet — safe to skip */ }
+
+  // Only mark the schema work complete after all bootstrap/migration steps
+  // above have been attempted. Future isolates do one indexed marker lookup
+  // and skip every DDL statement.
+  await db
+    .prepare("INSERT OR REPLACE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+    .bind(BOOTSTRAP_MARKER, new Date().toISOString())
+    .run();
 
   const { results } = await db.prepare("SELECT COUNT(*) as n FROM shops").all();
   const shopCount = Number((results as Array<{ n: number }>)[0]?.n ?? 0);
