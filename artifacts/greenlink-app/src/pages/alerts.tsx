@@ -200,8 +200,10 @@ export default function Alerts() {
     }
   };
 
+  // Notifications are fetched when Alerts opens or when the user refreshes.
+  // They are low priority, so avoid a recurring D1 read while this screen stays open.
   const { data: notifications, isLoading: notifsLoading, refetch } = useListNotifications(
-    { shopId }, { query: { enabled: !!shopId, refetchInterval: 300_000, refetchIntervalInBackground: false } as any }
+    { shopId }, { query: { enabled: !!shopId, refetchInterval: false } as any }
   );
 
   const { data: productsData, isLoading: productsLoading } = useListProducts(
