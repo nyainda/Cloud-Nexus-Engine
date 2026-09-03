@@ -403,7 +403,11 @@ crmRouter.patch("/crm/rename", requireAuth, async (c) => {
   // name for the Customers page to show side by side.
   const merged = await dedupeCustomersByName(db, shopId, newName);
 
-  return c.json({ updated: result.changes ?? 0, registeredUpdated: !!existingReg, customer: merged });
+  return c.json({
+    updated: (result as { changes?: number }).changes ?? 0,
+    registeredUpdated: !!existingReg,
+    customer: merged,
+  });
 });
 
 // ── Update customer ───────────────────────────────────────────────────────────

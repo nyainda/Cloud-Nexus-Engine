@@ -33,6 +33,7 @@ import type {
   DebtPayment,
   DebtPaymentInput,
   DebtPaymentReversalInput,
+  DebtTransferInput,
   DebtUpdate,
   DebtWithPayments,
   DebtsSummary,
@@ -85,6 +86,7 @@ import type {
   SupplierInput,
   SupplierUpdate,
   TopProduct,
+  TransferDebtItemsResponse,
   UploadUrlRequest,
   UploadUrlResult,
   VerifyPinInput
@@ -2262,6 +2264,57 @@ export function useGetDebt<TData = Awaited<ReturnType<typeof getDebt>>, TError =
 
 
 
+
+export const getTransferDebtItemsUrl = (debtId: string,) => {
+  return `/api/debts/${debtId}/transfer`
+}
+
+/**
+ * @summary Move selected outstanding debt items to another customer
+ */
+export const transferDebtItems = async (debtId: string,
+    debtTransferInput: DebtTransferInput, options?: RequestInit): Promise<TransferDebtItemsResponse> => {
+  return customFetch<TransferDebtItemsResponse>(getTransferDebtItemsUrl(debtId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      debtTransferInput,)
+  }
+);}
+
+export const getTransferDebtItemsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext> => {
+  const mutationKey = ['transferDebtItems'];
+  const {mutation: mutationOptions, request: requestOptions} = options ?
+    options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+    options
+    : {...options, mutation: {...options.mutation, mutationKey}}
+    : {mutation: { mutationKey, }, request: undefined};
+
+  const mutationFn: MutationFunction<Awaited<ReturnType<typeof transferDebtItems>>, {debtId: string;data: BodyType<DebtTransferInput>}> = (props) => {
+    const {debtId,data} = props ?? {};
+    return transferDebtItems(debtId,data,requestOptions)
+  }
+
+  return { mutationFn, ...mutationOptions }}
+
+export type TransferDebtItemsMutationResult = NonNullable<Awaited<ReturnType<typeof transferDebtItems>>>
+export type TransferDebtItemsMutationBody = BodyType<DebtTransferInput>
+export type TransferDebtItemsMutationError = ErrorType<unknown>
+
+export function useTransferDebtItems<TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+  ): UseMutationResult<
+        Awaited<ReturnType<typeof transferDebtItems>>,
+        TError,
+        {debtId: string;data: BodyType<DebtTransferInput>},
+        TContext
+      > {
+  return useMutation(getTransferDebtItemsMutationOptions(options));
+}
 
 export const getUpdateDebtUrl = (debtId: string,) => {
 

@@ -683,6 +683,39 @@ paths:
               schema:
                 $ref: "#/components/schemas/Debt"
 
+  /debts/{debtId}/transfer:
+    post:
+      operationId: transferDebtItems
+      tags: [debts]
+      summary: Move selected outstanding debt items to another customer
+      parameters:
+        - name: debtId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DebtTransferInput"
+      responses:
+        "201":
+          description: Debt items moved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sourceDebtId:
+                    type: string
+                  targetDebt:
+                    $ref: "#/components/schemas/Debt"
+                  sourceDebt:
+                    $ref: "#/components/schemas/Debt"
+                required: [sourceDebtId, targetDebt, sourceDebt]
+
   /debts/{debtId}/payments:
     post:
       operationId: recordDebtPayment
@@ -1871,6 +1904,35 @@ components:
       properties:
         reason:
           type: string
+
+    DebtTransferItem:
+      type: object
+      properties:
+        itemIndex:
+          type: integer
+          minimum: 0
+        qty:
+          type: number
+          exclusiveMinimum: 0
+      required: [itemIndex, qty]
+
+    DebtTransferInput:
+      type: object
+      properties:
+        shopId:
+          type: string
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/DebtTransferItem"
+        operationId:
+          type: string
+      required: [customerName, items]
 
     # ─── INVENTORY ────────────────────────────────────────
     InventoryMovement:

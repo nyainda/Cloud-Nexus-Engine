@@ -202,6 +202,217 @@ debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
   return c.json({ ...debt, payments, items });
 });
 
+// Move selected unpaid item quantities to a new customer while keeping the
+// original debt date, prices, and payment history. This is one D1 batch so the
+// source and receiving records cannot get out of sync.
+debtsRouter.post("/debts/:debtId/transfer", requireAuth, requireOwner, async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("session");
+  const debtId = c.req.param("debtId");
+  const body = await c.req.json<{
+    shopId?: string;
+    customerName?: string;
+    customerPhone?: string;
+    items?: Array<{ itemIndex?: number; qty?: number }>;
+    operationId?: string;
+  }>().catch(() => ({})) as {
+    shopId?: string;
+    customerName?: string;
+    customerPhone?: string;
+    items?: Array<{ itemIndex?: number; qty?: number }>;
+    operationId?: string;
+  };
+
+  if (body.shopId && body.shopId !== session.shopId) {
+    return c.json({ error: "Shop mismatch" }, 403);
+  }
+
+  const customerName = body.customerName?.trim()
+    ? normalizeCustomerName(body.customerName)
+    : "";
+  const customerPhone = body.customerPhone?.trim() ?? "";
+  if (!customerName) return c.json({ error: "Receiving customer name is required" }, 400);
+  if (!Array.isArray(body.items) || body.items.length === 0) {
+    return c.json({ error: "Select at least one item to move" }, 400);
+  }
+
+  const source = await db
+    .select()
+    .from(debts)
+    .where(and(eq(debts.id, debtId), eq(debts.shopId, session.shopId)))
+    .get();
+  if (!source) return c.json({ error: "Debt not found" }, 404);
+
+  const operationId = body.operationId?.trim() || crypto.randomUUID();
+  if (!/^[0-9a-f-]{20,}$/i.test(operationId)) {
+    return c.json({ error: "Invalid operation id" }, 400);
+  }
+
+  // The operation id is also the receiving debt id. A client retry therefore
+  // returns the already-created record instead of creating a duplicate,
+  // including when the first operation settled the source balance completely.
+  const existingTarget = await db.select().from(debts).where(eq(debts.id, operationId)).get();
+  if (existingTarget) {
+    if (existingTarget.shopId !== session.shopId) return c.json({ error: "Operation already exists" }, 409);
+    return c.json({
+      sourceDebtId: debtId,
+      targetDebt: { ...existingTarget, items: parseDebtItems(existingTarget.itemsJson) ?? [] },
+      alreadyApplied: true,
+    });
+  }
+
+  if (source.status === "cancelled") return c.json({ error: "Cancelled debts cannot be moved" }, 409);
+  if (Number(source.balance) <= 0) return c.json({ error: "This debt has no outstanding balance to move" }, 409);
+
+  const sourceItems = await loadDebtItems(db, source);
+  if (sourceItems.length === 0) {
+    return c.json({ error: "This debt has no item details to move" }, 409);
+  }
+
+  const selections = new Map<number, number>();
+  for (const selection of body.items) {
+    const itemIndex = Number(selection.itemIndex);
+    const qty = Number(selection.qty);
+    if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= sourceItems.length) {
+      return c.json({ error: "Invalid item selection" }, 400);
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return c.json({ error: "Selected quantities must be greater than zero" }, 400);
+    }
+    selections.set(itemIndex, money((selections.get(itemIndex) ?? 0) + qty));
+  }
+
+  const movedItems: DebtItem[] = [];
+  const remainingItems: DebtItem[] = [];
+  let movedTotal = 0;
+  for (let i = 0; i < sourceItems.length; i++) {
+    const item = sourceItems[i]!;
+    const movedQty = selections.get(i) ?? 0;
+    if (movedQty > item.qty) {
+      return c.json({ error: `Cannot move more than the available quantity of ${item.productName}` }, 400);
+    }
+    const movedLineTotal = money(movedQty * item.unitPrice);
+    const remainingQty = money(item.qty - movedQty);
+    if (movedQty > 0) {
+      movedItems.push({
+        productName: item.productName,
+        qty: movedQty,
+        unitPrice: item.unitPrice,
+        totalPrice: movedLineTotal,
+      });
+      movedTotal = money(movedTotal + movedLineTotal);
+    }
+    if (remainingQty > 0) {
+      remainingItems.push({
+        productName: item.productName,
+        qty: remainingQty,
+        unitPrice: item.unitPrice,
+        totalPrice: money(remainingQty * item.unitPrice),
+      });
+    }
+  }
+
+  if (movedItems.length === 0 || movedTotal <= 0) {
+    return c.json({ error: "Select a quantity greater than zero" }, 400);
+  }
+  if (movedTotal > Number(source.balance) + 0.01) {
+    return c.json({
+      error: `You can move up to ${money(Number(source.balance))} of this debt's outstanding balance`,
+    }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const remainingTotal = money(Math.max(0, Number(source.totalAmount) - movedTotal));
+  const remainingBalance = money(Math.max(0, Number(source.balance) - movedTotal));
+  const remainingPaid = money(Number(source.amountPaid));
+  const sourceIsSettled = remainingBalance <= 0.01;
+  const sourceStatus = sourceIsSettled ? "paid" : remainingPaid > 0 ? "partial" : "unpaid";
+  const targetDebt = {
+    id: operationId,
+    shopId: session.shopId,
+    // This is a new debt ownership record, not a second sale entry.
+    saleId: null,
+    customerName,
+    customerPhone,
+    totalAmount: movedTotal,
+    amountPaid: 0,
+    balance: movedTotal,
+    status: "unpaid",
+    notes: source.notes ?? null,
+    createdAt: source.createdAt,
+    paidAt: null,
+    itemsJson: JSON.stringify(movedItems),
+  } as const;
+
+  const auditPayload = {
+    operationId,
+    sourceDebtId: debtId,
+    targetDebtId: operationId,
+    movedItems,
+    movedTotal,
+    originalCreatedAt: source.createdAt,
+    receivingCustomerName: customerName,
+    receivingCustomerPhone: customerPhone,
+  };
+
+  await db.batch([
+    db.update(debts)
+      .set({
+        totalAmount: remainingTotal,
+        amountPaid: remainingPaid,
+        balance: remainingBalance,
+        status: sourceStatus,
+        paidAt: sourceIsSettled ? now : source.paidAt,
+        itemsJson: JSON.stringify(remainingItems),
+      })
+      .where(and(eq(debts.id, debtId), eq(debts.shopId, session.shopId))),
+    db.insert(debts).values(targetDebt),
+    db.insert(auditLog).values({
+      id: crypto.randomUUID(),
+      shopId: session.shopId,
+      action: "debt_items_transferred",
+      entityType: "debt",
+      entityId: debtId,
+      performedBy: session.role,
+      oldValueJson: JSON.stringify({
+        customerName: source.customerName,
+        customerPhone: source.customerPhone,
+        totalAmount: source.totalAmount,
+        balance: source.balance,
+        items: sourceItems,
+      }),
+      newValueJson: JSON.stringify(auditPayload),
+      createdAt: now,
+    }),
+    db.insert(auditLog).values({
+      id: crypto.randomUUID(),
+      shopId: session.shopId,
+      action: "debt_items_received",
+      entityType: "debt",
+      entityId: operationId,
+      performedBy: session.role,
+      oldValueJson: null,
+      newValueJson: JSON.stringify(auditPayload),
+      createdAt: now,
+    }),
+  ]);
+
+  await kvDel(c.env.SESSIONS, CK.debts(session.shopId));
+  return c.json({
+    sourceDebtId: debtId,
+    targetDebt: { ...targetDebt, items: movedItems },
+    sourceDebt: {
+      ...source,
+      totalAmount: remainingTotal,
+      amountPaid: remainingPaid,
+      balance: remainingBalance,
+      status: sourceStatus,
+      paidAt: sourceIsSettled ? now : source.paidAt,
+      items: remainingItems,
+    },
+  }, 201);
+});
+
 debtsRouter.patch("/debts/:debtId", requireAuth, async (c) => {
   const body = await c.req.json<{
     notes?: string;

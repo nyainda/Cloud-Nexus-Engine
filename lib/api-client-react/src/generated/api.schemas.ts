@@ -471,6 +471,25 @@ export interface DebtPaymentReversalInput {
   reason?: string;
 }
 
+export interface DebtTransferItem {
+  itemIndex: number;
+  qty: number;
+}
+
+export interface DebtTransferInput {
+  shopId?: string;
+  customerName: string;
+  customerPhone: string;
+  items: DebtTransferItem[];
+  operationId?: string;
+}
+
+export interface TransferDebtItemsResponse {
+  sourceDebtId: string;
+  targetDebt: Debt;
+  sourceDebt: Debt;
+}
+
 export interface InventoryMovement {
   id: string;
   productId: string;

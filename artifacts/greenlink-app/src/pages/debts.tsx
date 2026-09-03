@@ -6,6 +6,7 @@ import { CustomerAutocomplete, toTitleCase, type SelectedCustomer } from "@/comp
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter
 } from "@/components/ui/dialog";
@@ -1117,6 +1118,212 @@ function DebtRecordRow({ debt, onSelectDebt }: { debt: any; onSelectDebt: (debt:
   );
 }
 
+function DebtTransferDialog({
+  debt,
+  items,
+  onDone,
+}: {
+  debt: any;
+  items: any[];
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [quantities, setQuantities] = useState<Record<number, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
+
+  useEffect(() => {
+    if (!open) return;
+    setCustomerName("");
+    setCustomerPhone("");
+    setQuantities(
+      Object.fromEntries(items.map((item, index) => [index, String(item.qty ?? item.quantity ?? 0)])),
+    );
+  }, [open, items]);
+
+  const selectedTotal = items.reduce((sum, item, index) => {
+    const qty = Number(quantities[index] ?? 0);
+    return sum + (Number.isFinite(qty) ? qty * Number(item.unitPrice ?? 0) : 0);
+  }, 0);
+  const hasSelection = items.some((_, index) => Number(quantities[index] ?? 0) > 0);
+  const overBalance = selectedTotal > Number(debt.balance ?? 0) + 0.01;
+
+  const selectAll = () => {
+    setQuantities(
+      Object.fromEntries(items.map((item, index) => [index, String(item.qty ?? item.quantity ?? 0)])),
+    );
+  };
+
+  const clearAll = () => setQuantities({});
+
+  const handleSubmit = async () => {
+    if (submitting || !customerName.trim() || !hasSelection || overBalance) return;
+    setSubmitting(true);
+    try {
+      const selectedItems = items
+        .map((item, itemIndex) => ({ itemIndex, qty: Number(quantities[itemIndex] ?? 0) }))
+        .filter((item) => Number.isFinite(item.qty) && item.qty > 0);
+
+      await customFetch(`/api/debts/${debt.id}/transfer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shopId,
+          customerName: customerName.trim(),
+          customerPhone: customerPhone.trim(),
+          items: selectedItems,
+          operationId: crypto.randomUUID(),
+        }),
+      });
+      toast.success(`Debt items recorded for ${toTitleCase(customerName)}`);
+      setOpen(false);
+      onDone();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not move the debt items");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={items.length === 0 || Number(debt.balance ?? 0) <= 0}
+          className="h-8 gap-1.5 text-xs border-primary/30 text-primary hover:bg-primary/10"
+        >
+          <Users className="h-3.5 w-3.5" />
+          Move items
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-primary" />
+            Move debt items
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
+            <p className="text-xs font-semibold">Current record: {toTitleCase(debt.customerName)}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              The receiving record keeps the original taken date and item prices. Only the outstanding amount can be moved.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Receiving customer</Label>
+            <CustomerAutocomplete
+              shopId={shopId}
+              value={customerName}
+              onChange={setCustomerName}
+              onSelect={(customer: SelectedCustomer) => {
+                setCustomerName(customer.name);
+                setCustomerPhone(customer.phone);
+              }}
+              placeholder="Search or enter a customer name"
+            />
+            <Input
+              value={customerPhone}
+              onChange={(event) => setCustomerPhone(event.target.value)}
+              placeholder="Phone number (optional)"
+              className="h-9"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Items and quantities</Label>
+              <div className="flex gap-2">
+                <button type="button" onClick={selectAll} className="text-[11px] font-semibold text-primary hover:underline">
+                  Select all
+                </button>
+                <button type="button" onClick={clearAll} className="text-[11px] font-semibold text-muted-foreground hover:text-foreground">
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border overflow-hidden">
+              {items.map((item, index) => {
+                const available = Number(item.qty ?? item.quantity ?? 0);
+                const quantity = Number(quantities[index] ?? 0);
+                const selected = quantity > 0;
+                return (
+                  <div key={`${item.productName}-${index}`} className={cn("flex items-center gap-2.5 px-3 py-2.5", index > 0 && "border-t border-border/50")}>
+                    <Checkbox
+                      checked={selected}
+                      onCheckedChange={(checked) => {
+                        setQuantities((current) => ({
+                          ...current,
+                          [index]: checked ? String(available) : "",
+                        }));
+                      }}
+                      aria-label={`Move ${item.productName}`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold">{item.productName}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {formatKES(item.unitPrice)} each · {available} available
+                      </p>
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      max={available}
+                      step="any"
+                      value={quantities[index] ?? ""}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        setQuantities((current) => ({ ...current, [index]: next }));
+                      }}
+                      className="h-8 w-20 text-right text-xs"
+                      aria-label={`Quantity of ${item.productName}`}
+                    />
+                    <span className="w-20 text-right text-xs font-mono font-semibold text-primary">
+                      {formatKES(Math.max(0, quantity * Number(item.unitPrice ?? 0)))}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-xl border border-border bg-muted/30 p-3">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Remaining here</p>
+              <p className="mt-1 text-sm font-bold font-mono">{formatKES(Math.max(0, Number(debt.balance ?? 0) - selectedTotal))}</p>
+            </div>
+            <div className={cn("rounded-xl border p-3", overBalance ? "border-destructive/30 bg-destructive/5" : "border-primary/20 bg-primary/5")}>
+              <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">New debt</p>
+              <p className={cn("mt-1 text-sm font-bold font-mono", overBalance ? "text-destructive" : "text-primary")}>{formatKES(selectedTotal)}</p>
+            </div>
+          </div>
+          {overBalance && (
+            <p className="text-[11px] font-semibold text-destructive">
+              The selected items exceed the outstanding balance of {formatKES(debt.balance)}.
+            </p>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={submitting || !customerName.trim() || !hasSelection || overBalance}
+          >
+            {submitting ? "Saving…" : "Save new debt"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Debt Detail Panel (right-side two-pane) ──────────────────────────────
 type DetailTab = "overview" | "payments" | "items";
 
@@ -1420,6 +1627,9 @@ function DebtDetailPanel({
           {!isPaid && !isCancelled && debt.balance > 0 && <PaymentDialog debt={debt} />}
           <DebtDownloadButton debt={debt} />
           {isOwner && !isPaid && !isCancelled && debt.balance > 0 && <MarkPaidButton debt={debt} />}
+          {isOwner && !isPaid && !isCancelled && debt.balance > 0 && (
+            <DebtTransferDialog debt={debt} items={items} onDone={refreshDebt} />
+          )}
           {/* Financial records stay in the ledger; corrections use reversible entries. */}
         </div>
         {debt.customerPhone && !isPaid && !isCancelled && debt.balance > 0 && (
