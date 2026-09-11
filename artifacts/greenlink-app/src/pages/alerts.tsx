@@ -212,9 +212,11 @@ export default function Alerts() {
 
   const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any });
 
-  // limit is not in the OpenAPI spec for GET /debts — omit it; backend returns all debts for the shop
+  // limit is not in the OpenAPI spec for GET /debts — omit it; backend returns all debts for the shop.
+  // Debt-changing actions elsewhere already invalidate this query key, so we don't
+  // need a timed poll here — refetch on focus/mount is enough for a summary badge.
   const { data: debtsData } = useListDebts(
-    { shopId }, { query: { enabled: !!shopId && isOwner, refetchInterval: 20_000, refetchIntervalInBackground: true } as any }
+    { shopId }, { query: { enabled: !!shopId && isOwner, staleTime: 30_000, refetchOnWindowFocus: true, refetchInterval: false, refetchIntervalInBackground: false } as any }
   );
 
   const markRead = useMarkNotificationRead();

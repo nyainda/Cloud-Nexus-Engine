@@ -6,6 +6,7 @@ import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, inventoryMovements, notifications, saleReturns, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
 import { normalizeCustomerName } from "../lib/normalize";
+import { chunk } from "../lib/chunk";
 
 const salesRouter = new Hono<AppEnv>();
 
@@ -40,31 +41,44 @@ salesRouter.get("/sales", requireAuth, async (c) => {
   let result: any[] = rows;
   if (rows.length > 0) {
     const saleIds = rows.map(r => r.id);
-    const [allItems, linkedDebts] = await Promise.all([
-      db
-      .select({
-        saleId: saleItems.saleId,
-        productId: saleItems.productId,
-        productName: saleItems.productName,
-        qty: saleItems.qty,
-        unitPrice: saleItems.unitPrice,
-        unitCost: saleItems.unitCost,
-        totalPrice: saleItems.totalPrice,
-        totalProfit: saleItems.totalProfit,
-      })
-      .from(saleItems)
-      .where(inArray(saleItems.saleId, saleIds))
-      .all(),
-      db
-        .select({
-          saleId: debts.saleId,
-          customerName: debts.customerName,
-          customerPhone: debts.customerPhone,
-        })
-        .from(debts)
-        .where(inArray(debts.saleId, saleIds))
-        .all(),
+    const saleIdChunks = chunk(saleIds);
+
+    const [itemChunks, debtChunks] = await Promise.all([
+      Promise.all(
+        saleIdChunks.map(ids =>
+          db
+            .select({
+              saleId: saleItems.saleId,
+              productId: saleItems.productId,
+              productName: saleItems.productName,
+              qty: saleItems.qty,
+              unitPrice: saleItems.unitPrice,
+              unitCost: saleItems.unitCost,
+              totalPrice: saleItems.totalPrice,
+              totalProfit: saleItems.totalProfit,
+            })
+            .from(saleItems)
+            .where(inArray(saleItems.saleId, ids))
+            .all(),
+        ),
+      ),
+      Promise.all(
+        saleIdChunks.map(ids =>
+          db
+            .select({
+              saleId: debts.saleId,
+              customerName: debts.customerName,
+              customerPhone: debts.customerPhone,
+            })
+            .from(debts)
+            .where(inArray(debts.saleId, ids))
+            .all(),
+        ),
+      ),
     ]);
+
+    const allItems = itemChunks.flat();
+    const linkedDebts = debtChunks.flat();
 
     const itemsBySaleId: Record<string, any[]> = {};
     for (const item of allItems) {

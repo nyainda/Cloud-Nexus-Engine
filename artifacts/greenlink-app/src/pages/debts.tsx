@@ -1972,9 +1972,25 @@ export default function Debts() {
 
   const qc = useQueryClient();
 
+  // No timed polling here: every debt-changing action on this page (payments,
+  // new debt from a sale, edits) already calls invalidateQueries with this
+  // exact key, so React Query refetches right when something actually
+  // changes. We also refetch on window focus / remount, so switching back
+  // to this tab after a while still shows fresh data — we just don't pay
+  // for a D1 read every 5 seconds while nobody is looking, foreground or not.
   const { data: allDebts, isLoading } = useListDebts(
     { shopId },
-    { query: { queryKey: getListDebtsQueryKey({ shopId }), enabled: !!shopId, refetchInterval: 5_000, refetchIntervalInBackground: true } }
+    {
+      query: {
+        queryKey: getListDebtsQueryKey({ shopId }),
+        enabled: !!shopId,
+        staleTime: 15_000,
+        refetchOnWindowFocus: true,
+        refetchOnMount: true,
+        refetchInterval: false,
+        refetchIntervalInBackground: false,
+      },
+    }
   );
 
   // Keep selectedDebt in sync when data refreshes
