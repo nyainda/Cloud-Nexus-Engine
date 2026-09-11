@@ -58,13 +58,19 @@ export default function Transfers() {
       return next;
     });
 
+  // Transfers can be created by the *other* shop, so this device has no local
+  // mutation to invalidate off of — some polling is genuinely needed here.
+  // But transfers happen a handful of times a day, not every few seconds, and
+  // nobody needs to see them the moment the tab is minimized — so we poll
+  // slower and only in the foreground, and catch up instantly on focus.
   const { data: transfers, isLoading, refetch } = useQuery<any[]>({
     queryKey: ["transfers", shopId],
     queryFn: () => customFetch<any[]>(`/api/transfers?shopId=${encodeURIComponent(shopId)}&limit=200`),
     enabled: !!shopId,
-    staleTime: 20_000,
-    refetchInterval: 20_000,
-    refetchIntervalInBackground: true,
+    staleTime: 45_000,
+    refetchInterval: 45_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
   const filtered = useMemo(() => {

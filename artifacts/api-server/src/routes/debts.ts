@@ -7,6 +7,7 @@ import { requireAuth, requireOwner } from "../middleware/auth";
 import { debts, debtPayments, notifications, saleItems, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
 import { normalizeCustomerName } from "../lib/normalize";
+import { chunk } from "../lib/chunk";
 
 const debtsRouter = new Hono<AppEnv>();
 
@@ -121,18 +122,23 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
   const saleIds = rows.map(r => r.saleId).filter((id): id is string => !!id);
   let itemsByHuman: Record<string, { productName: string; qty: number; unitPrice: number; totalPrice: number; totalProfit?: number | null }[]> = {};
   if (saleIds.length > 0) {
-    const allItems = await db
-      .select({
-        saleId: saleItems.saleId,
-        productName: saleItems.productName,
-        qty: saleItems.qty,
-        unitPrice: saleItems.unitPrice,
-        totalPrice: saleItems.totalPrice,
-        totalProfit: saleItems.totalProfit,
-      })
-      .from(saleItems)
-      .where(inArray(saleItems.saleId, saleIds))
-      .all();
+    const itemChunks = await Promise.all(
+      chunk(saleIds).map(ids =>
+        db
+          .select({
+            saleId: saleItems.saleId,
+            productName: saleItems.productName,
+            qty: saleItems.qty,
+            unitPrice: saleItems.unitPrice,
+            totalPrice: saleItems.totalPrice,
+            totalProfit: saleItems.totalProfit,
+          })
+          .from(saleItems)
+          .where(inArray(saleItems.saleId, ids))
+          .all(),
+      ),
+    );
+    const allItems = itemChunks.flat();
 
     for (const item of allItems) {
       if (!item.saleId) continue;

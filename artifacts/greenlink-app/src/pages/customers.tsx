@@ -836,11 +836,16 @@ export default function Customers() {
 
   const qc = useQueryClient();
 
+  // Every action that changes customer data (sales, debt payments, edits) already
+  // invalidates crmKey — see pos.tsx, debts.tsx, sales-history.tsx. No timed poll
+  // needed; refetch on focus/mount keeps this fresh when you switch back to the tab.
   const { data: allCustomers = [], isLoading } = useQuery<CustomerEntry[]>({
     queryKey: crmKey(shopId),
     queryFn: () => customFetch<CustomerEntry[]>(`/api/crm?shopId=${encodeURIComponent(shopId)}`),
     enabled: !!shopId,
-    refetchInterval: 15_000,
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
+    refetchInterval: false,
   });
 
   const stats = useMemo(() => {
