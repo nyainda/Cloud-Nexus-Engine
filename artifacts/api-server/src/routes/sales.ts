@@ -304,6 +304,96 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   return c.json(sale!, 201);
 });
 
+// ── Orphaned debt sales (Sales History vs. Customer Debts drift) ────────────
+// A debt sale saved before server-side validation existed can appear in
+// Sales History with no matching row in the `debts` table, which is why it
+// never shows up under Customer Debts. The customer's identity is not
+// recoverable from the sale or audit tables, so this is a review-and-confirm
+// flow: list the affected sales, let a human attach the right customer to
+// each one, and only then create the missing debt record.
+// MUST be registered before /sales/:saleId, or "orphaned-debts" is captured
+// as a :saleId param instead of matching this route.
+salesRouter.get("/sales/orphaned-debts", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const shopId = c.req.query("shopId");
+  if (!shopId) return c.json({ error: "shopId is required" }, 400);
+
+  const debtSales = await db
+    .select()
+    .from(sales)
+    .where(and(eq(sales.shopId, shopId), eq(sales.saleType, "debt"), eq(sales.isDeleted, false)))
+    .orderBy(sql`created_at DESC`)
+    .all();
+
+  if (debtSales.length === 0) return c.json([]);
+
+  const saleIds = debtSales.map((s) => s.id);
+  const linkedDebtSaleIds = new Set<string>();
+  for (const batch of chunk(saleIds, 90)) {
+    const rows = await db.select({ saleId: debts.saleId }).from(debts).where(inArray(debts.saleId, batch)).all();
+    for (const r of rows) if (r.saleId) linkedDebtSaleIds.add(r.saleId);
+  }
+
+  const orphaned = debtSales.filter((s) => !linkedDebtSaleIds.has(s.id));
+  if (orphaned.length === 0) return c.json([]);
+
+  const orphanedIds = orphaned.map((s) => s.id);
+  const items = await db.select().from(saleItems).where(inArray(saleItems.saleId, orphanedIds)).all();
+  const itemsBySaleId: Record<string, typeof items> = {};
+  for (const it of items) (itemsBySaleId[it.saleId] ??= []).push(it);
+
+  return c.json(
+    orphaned.map((s) => ({
+      id: s.id,
+      createdAt: s.createdAt,
+      totalAmount: s.totalAmount,
+      servedBy: s.servedBy,
+      items: itemsBySaleId[s.id] ?? [],
+    })),
+  );
+});
+
+// Attach the confirmed customer to an orphaned debt sale, creating the
+// missing `debts` row so it finally appears in Customer Debts / CRM.
+// MUST also be registered before /sales/:saleId for the same reason.
+salesRouter.post("/sales/:id/link-debt", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const saleId = c.req.param("id");
+  const body = await c.req.json<{ shopId: string; customerName: string; customerPhone?: string }>();
+
+  if (!body.shopId || !body.customerName?.trim()) {
+    return c.json({ error: "shopId and customerName are required" }, 400);
+  }
+
+  const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
+  if (!sale || sale.shopId !== body.shopId) return c.json({ error: "Sale not found" }, 404);
+  if (sale.saleType !== "debt") return c.json({ error: "This sale is not a debt sale" }, 400);
+
+  const existing = await db.select().from(debts).where(eq(debts.saleId, saleId)).get();
+  if (existing) return c.json({ error: "This sale is already linked to a debt record", debt: existing }, 409);
+
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.insert(debts).values({
+    id,
+    shopId: body.shopId,
+    saleId,
+    customerName: normalizeCustomerName(body.customerName),
+    customerPhone: body.customerPhone?.trim() ?? "",
+    totalAmount: sale.totalAmount,
+    amountPaid: 0,
+    balance: sale.totalAmount,
+    status: "unpaid",
+    notes: "Linked retroactively — sale predates customer-name validation",
+    createdAt: sale.createdAt,
+  }).run();
+
+  await kvDel(c.env.SESSIONS, CK.debts(body.shopId), CK.dashboard(body.shopId, now.slice(0, 10)));
+
+  const created = await db.select().from(debts).where(eq(debts.id, id)).get();
+  return c.json(created, 201);
+});
+
 salesRouter.get("/sales/:saleId", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const saleId = c.req.param("saleId");
