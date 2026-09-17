@@ -6,7 +6,7 @@ import { createDb } from "../lib/db";
 import { requireAuth, requireOwner } from "../middleware/auth";
 import { debts, debtPayments, notifications, saleItems, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
-import { normalizeCustomerName } from "../lib/normalize";
+import { normalizeCustomerName, customerNameKey } from "../lib/normalize";
 import { chunk } from "../lib/chunk";
 
 const debtsRouter = new Hono<AppEnv>();
@@ -73,10 +73,11 @@ debtsRouter.get("/customers", requireAuth, async (c) => {
     .where(shopId ? eq(debts.shopId, shopId) : undefined)
     .all();
 
-  // Deduplicate by lowercased name
+  // Deduplicate by the canonical customer key so repeated internal spaces
+  // cannot split one person into multiple autocomplete entries.
   const seen = new Set<string>();
   const unique = rows.filter(r => {
-    const key = r.customerName.toLowerCase();
+    const key = customerNameKey(r.customerName);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -89,7 +90,12 @@ debtsRouter.get("/customers", requireAuth, async (c) => {
       )
     : unique;
 
-  return c.json(filtered.slice(0, 12));
+  return c.json(
+    filtered.slice(0, 12).map((r) => ({
+      ...r,
+      customerName: normalizeCustomerName(r.customerName),
+    })),
+  );
 });
 
 debtsRouter.get("/debts", requireAuth, async (c) => {
@@ -155,6 +161,9 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
 
   const result = rows.map(r => ({
     ...r,
+    // Canonicalize legacy rows on read so older records with repeated spaces
+    // are grouped with newer records without mutating financial history.
+    customerName: normalizeCustomerName(r.customerName),
     items: parseDebtItems(r.itemsJson) ?? (r.saleId ? (itemsByHuman[r.saleId] ?? []) : []),
   }));
 
@@ -205,7 +214,12 @@ debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
 
   const items = await loadDebtItems(db, debt);
 
-  return c.json({ ...debt, payments, items });
+  return c.json({
+    ...debt,
+    customerName: normalizeCustomerName(debt.customerName),
+    payments,
+    items,
+  });
 });
 
 // Move selected unpaid item quantities to a new customer while keeping the

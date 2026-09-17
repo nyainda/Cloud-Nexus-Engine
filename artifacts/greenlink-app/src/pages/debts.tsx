@@ -2063,7 +2063,7 @@ export default function Debts() {
     const newestSeenAt = new Map<string, string>();
 
     for (const debt of filtered) {
-      const key = debt.customerName?.toLowerCase().trim() || "unknown";
+      const key = debt.customerName?.trim().replace(/\s+/g, " ").toLowerCase() || "unknown";
       if (!map.has(key)) {
         map.set(key, {
           key,

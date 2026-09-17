@@ -83,11 +83,11 @@ crmRouter.get("/crm", requireAuth, async (c) => {
   };
   const debtMap = new Map<string, DebtStats>();
   for (const d of debtRows) {
-    const key = d.customerName.toLowerCase().trim();
+    const key = customerNameKey(d.customerName);
     const ex = debtMap.get(key);
     if (!ex) {
       debtMap.set(key, {
-        name: d.customerName,
+        name: normalizeCustomerName(d.customerName),
         phone: d.customerPhone || "",
         totalBalance: d.status === "cancelled" ? 0 : (d.balance || 0),
         totalOwed: d.totalAmount || 0,
@@ -113,7 +113,7 @@ crmRouter.get("/crm", requireAuth, async (c) => {
         // an unregistered customer's name could flicker between old and new
         // casing on every reload depending on row order — not a rename actually
         // "not sticking", just the wrong row being used to label the group.
-        ex.name = d.customerName;
+        ex.name = normalizeCustomerName(d.customerName);
         if (d.customerPhone) ex.phone = d.customerPhone;
       }
     }
@@ -142,7 +142,7 @@ crmRouter.get("/crm", requireAuth, async (c) => {
   const covered = new Set<string>();
 
   for (const r of registered) {
-    const key = r.name.toLowerCase().trim();
+    const key = customerNameKey(r.name);
     covered.add(key);
     const stats = debtMap.get(key);
     result.push({
@@ -219,11 +219,12 @@ crmRouter.get("/crm/profile", requireAuth, async (c) => {
   ]);
 
   const registered = allRegistered.find(
-    (r) => r.name.toLowerCase().trim() === name.toLowerCase().trim()
+    (r) => customerNameKey(r.name) === customerNameKey(name)
   ) ?? null;
 
   const matchedDebts = allDebts
-    .filter((d) => d.customerName.toLowerCase().trim() === name.toLowerCase().trim())
+    .filter((d) => customerNameKey(d.customerName) === customerNameKey(name))
+    .map((d) => ({ ...d, customerName: normalizeCustomerName(d.customerName) }))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const totalBalance = matchedDebts.reduce((s, d) => s + (d.status === "cancelled" ? 0 : (d.balance || 0)), 0);
@@ -331,9 +332,9 @@ crmRouter.get("/crm/:id", requireAuth, async (c) => {
     .where(eq(debts.shopId, shopId))
     .all();
 
-  const matchedDebts = allDebts.filter(
-    (d) => d.customerName.toLowerCase().trim() === customer.name.toLowerCase().trim()
-  );
+  const matchedDebts = allDebts
+    .filter((d) => customerNameKey(d.customerName) === customerNameKey(customer.name))
+    .map((d) => ({ ...d, customerName: normalizeCustomerName(d.customerName) }));
 
   const totalBalance = matchedDebts.reduce((s, d) => s + (d.status === "cancelled" ? 0 : (d.balance || 0)), 0);
   const totalOwed = matchedDebts.reduce((s, d) => s + (d.totalAmount || 0), 0);
@@ -390,7 +391,7 @@ crmRouter.patch("/crm/rename", requireAuth, async (c) => {
     .from(customers)
     .where(eq(customers.shopId, shopId))
     .all()
-    .then(rows => rows.find(r => r.name.toLowerCase().trim() === body.oldName.toLowerCase().trim()) ?? null);
+    .then(rows => rows.find(r => customerNameKey(r.name) === customerNameKey(body.oldName)) ?? null);
 
   if (existingReg) {
     const patch: Record<string, unknown> = { name: newName };

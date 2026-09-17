@@ -11,7 +11,8 @@ const crmListKey = ["/api/crm"];
 const crmProfileKey = ["/api/crm/profile"];
 
 function sameCustomerName(left: unknown, right: string) {
-  return String(left ?? "").trim().toLowerCase() === right.trim().toLowerCase();
+  return String(left ?? "").trim().replace(/\s+/g, " ").toLowerCase()
+    === right.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 /**

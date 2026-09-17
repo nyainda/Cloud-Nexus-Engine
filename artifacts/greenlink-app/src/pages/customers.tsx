@@ -19,6 +19,10 @@ import { format, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toTitleCase } from "@/components/customer-autocomplete";
 
+function customerKey(name: string) {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CustomerEntry {
   id: string | null;
@@ -123,11 +127,11 @@ function CustomerFormDialog({
     // own view straight from fresh debt rows, while this list sat stale.
     if (isEdit && initial) {
       snapshot = qc.getQueryData<any[]>(crmKey(shopId));
-      const oldKey = initial.name.toLowerCase().trim();
-      const newKey = trimmed.name.toLowerCase().trim();
+      const oldKey = customerKey(initial.name);
+      const newKey = customerKey(trimmed.name);
       qc.setQueryData(crmKey(shopId), (old: any[] = []) => {
         const target = newKey !== oldKey
-          ? old.find(c => c.name.toLowerCase().trim() === newKey && c !== initial)
+          ? old.find(c => customerKey(c.name) === newKey && c !== initial)
           : undefined;
         if (target) {
           // Renaming onto an existing entry — merge them into one row right
@@ -146,10 +150,10 @@ function CustomerFormDialog({
             activeCount: Number(target.activeCount || 0) + Number(initial.activeCount || 0),
           };
           return old
-            .filter(c => c !== target && c.name.toLowerCase().trim() !== oldKey)
+            .filter(c => c !== target && customerKey(c.name) !== oldKey)
             .concat(mergedEntry);
         }
-        return old.map(c => c.name.toLowerCase().trim() === oldKey ? { ...c, ...trimmed } : c);
+        return old.map(c => customerKey(c.name) === oldKey ? { ...c, ...trimmed } : c);
       });
     }
     onClose({ name: trimmed.name, phone: trimmed.phone });

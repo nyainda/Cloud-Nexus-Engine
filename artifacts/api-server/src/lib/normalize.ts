@@ -27,5 +27,5 @@ export function normalizeCustomerName(name: string): string {
 
 /** Lowercased/trimmed key for case-insensitive matching of customer names. */
 export function customerNameKey(name: string): string {
-  return name.trim().toLowerCase();
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
 }
