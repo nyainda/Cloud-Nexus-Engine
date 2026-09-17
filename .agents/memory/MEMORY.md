@@ -4,3 +4,4 @@
 - [Debt PDF presentation](debt-pdf-presentation.md) — customer statements stay focused on current debt/payment results, not correction mechanics
 - [D1 production usage hotspots](d1-usage-hotspots.md) — D1 Insights shows catalog polling/read scans, not sales writes, as the main free-tier pressure
 - [D1 schema bootstrap across isolates](d1-schema-bootstrap.md) — persistent migration markers are required; module-level Worker flags do not span cold isolates
+- [Debt sale reconciliation](debt-sale-reconciliation.md) — historical debt sales may lack customer rows; repair only with an explicitly confirmed customer name
