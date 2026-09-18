@@ -198,7 +198,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   const discount = body.discount ?? 0;
   totalAmount = Math.max(0, totalAmount - discount);
 
-  await db.insert(sales).values({
+  const saleValues = {
     id: saleId,
     shopId: body.shopId,
     totalAmount,
@@ -211,7 +211,34 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     syncStatus: "synced",
     isDeleted: false,
     createdAt: now,
-  });
+  } as const;
+
+  // Keep the sale and its debt ledger entry atomic. Previously the sale was
+  // inserted first and the debt row was inserted much later, after sale items,
+  // stock movements, and notifications. Any failure in that path left a valid
+  // debt sale in Sale History with no customer/debt record behind it.
+  const debtId = body.saleType === "debt" ? crypto.randomUUID() : null;
+  await db.batch([
+    db.insert(sales).values(saleValues),
+    ...(debtId && debtCustomerName
+      ? [
+          db.insert(debts).values({
+            id: debtId,
+            shopId: body.shopId,
+            saleId,
+            customerName: debtCustomerName,
+            customerPhone: body.debtCustomerPhone?.trim() ?? "",
+            totalAmount,
+            amountPaid: 0,
+            balance: totalAmount,
+            status: "unpaid",
+            notes: null,
+            paidAt: null,
+            createdAt: now,
+          }),
+        ]
+      : []),
+  ]);
 
   for (const item of lineItems) {
     await db.insert(saleItems).values(item);
@@ -271,24 +298,6 @@ salesRouter.post("/sales", requireAuth, async (c) => {
         ).run();
       }
     }
-  }
-
-  if (body.saleType === "debt" && debtCustomerName) {
-    const debtId = crypto.randomUUID();
-    await db.insert(debts).values({
-      id: debtId,
-      shopId: body.shopId,
-      saleId,
-      customerName: debtCustomerName,
-      customerPhone: body.debtCustomerPhone?.trim() ?? "",
-      totalAmount,
-      amountPaid: 0,
-      balance: totalAmount,
-      status: "unpaid",
-      notes: null,
-      paidAt: null,
-      createdAt: now,
-    });
   }
 
   // Bust products + today's dashboard cache
