@@ -56,6 +56,21 @@ function compactDebtProductSummary(items: any[] | undefined, maxItems = 2): stri
   return labels.length > maxItems ? `${visible.join(", ")} + ${labels.length - maxItems} more` : visible.join(", ");
 }
 
+function debtBalanceDue(debt: any): number {
+  return Math.max(0, Number(debt?.balance || 0));
+}
+
+function debtCredit(debt: any): number {
+  return Math.max(0, -Number(debt?.balance || 0));
+}
+
+function debtAmountPaid(debt: any): number {
+  return Math.max(
+    0,
+    Number(debt?.amountPaid ?? Number(debt?.totalAmount || 0) - Number(debt?.balance || 0)),
+  );
+}
+
 function PaymentDialog({ debt }: { debt: any }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -64,8 +79,12 @@ function PaymentDialog({ debt }: { debt: any }) {
   const qc = useQueryClient();
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const userName = localStorage.getItem("greenlink_userName") || "";
+  const currentBalance = debtBalanceDue(debt);
+  const enteredAmount = Number(amount) || 0;
+  const extraCredit = Math.max(0, enteredAmount - currentBalance);
+  const remainingAfterPayment = Math.max(0, currentBalance - enteredAmount);
   const paidPct = debt.totalAmount > 0
-    ? Math.round(((debt.totalAmount - debt.balance) / debt.totalAmount) * 100)
+    ? Math.min(100, Math.round((debtAmountPaid(debt) / debt.totalAmount) * 100))
     : 0;
 
   const handlePayment = async () => {
@@ -86,13 +105,14 @@ function PaymentDialog({ debt }: { debt: any }) {
     );
     patchCustomerListCaches(qc, debt.customerName, (customer) => {
       const nextBalance = Math.max(0, Number(customer.totalBalance || 0) - paid);
-      const completesDebt = paid >= Number(debt.balance || 0);
+      const creditIncrease = Math.max(0, paid - currentBalance);
       return {
         ...customer,
         totalBalance: nextBalance,
+        totalCredit: Math.max(0, Number(customer.totalCredit || 0) + creditIncrease),
         activeCount: Math.max(
           0,
-          Number(customer.activeCount || 0) - (completesDebt ? 1 : 0),
+          Number(customer.activeCount || 0) - (paid >= currentBalance ? 1 : 0),
         ),
       };
     });
@@ -181,7 +201,7 @@ function PaymentDialog({ debt }: { debt: any }) {
           <div>
             <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
               <span>Paid {paidPct}%</span>
-              <span>Balance: <span className="text-destructive font-bold font-mono">{formatKES(debt.balance)}</span></span>
+               <span>Balance: <span className="text-destructive font-bold font-mono">{formatKES(currentBalance)}</span></span>
             </div>
             <div className="h-2 bg-muted rounded-full overflow-hidden">
               <div
@@ -203,9 +223,27 @@ function PaymentDialog({ debt }: { debt: any }) {
             value={amount}
             onChange={e => setAmount(e.target.value)}
             placeholder="0"
-            max={debt.balance}
             autoFocus
           />
+          {enteredAmount > 0 && (
+            <div className={cn(
+              "rounded-lg border px-3 py-2 text-xs",
+              extraCredit > 0
+                ? "border-emerald-500/25 bg-emerald-500/5 text-emerald-400"
+                : "border-border bg-muted/30 text-muted-foreground",
+            )}>
+              {extraCredit > 0 ? (
+                <>
+                  <span className="font-semibold">Extra customer credit: {formatKES(extraCredit)}</span>
+                  <span className="block mt-0.5 text-[10px] text-muted-foreground">
+                    The debt will close at zero. This extra amount will be kept for the customer and applied to a future debt or sale.
+                  </span>
+                </>
+              ) : (
+                <span>Remaining after payment: <strong>{formatKES(remainingAfterPayment)}</strong></span>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-2">
             {quickAmounts.map(q => (
               <Button
@@ -228,7 +266,7 @@ function PaymentDialog({ debt }: { debt: any }) {
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           <Button
             onClick={handlePayment}
-            disabled={!amount || Number(amount) <= 0 || Number(amount) > debt.balance || submitting}
+            disabled={!amount || Number(amount) <= 0 || submitting}
             className="px-8 min-w-[140px]"
           >
             {submitting ? (
@@ -442,7 +480,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const payments: any[] = debt?.payments ?? [];
     const items: any[]    = debt?.items    ?? [];
     const productSummary = debtProductSummary(items);
-    const totalPaid = (debt?.totalAmount ?? 0) - (debt?.balance ?? 0);
+    const balanceDue = debtBalanceDue(debt);
+    const customerCredit = debtCredit(debt);
+    const totalPaid = debtAmountPaid(debt);
     const openedDate = format(new Date(debt?.createdAt), "dd MMM yyyy");
     const daysOpen   = differenceInDays(new Date(), new Date(debt?.createdAt));
     const generatedAt = format(new Date(), "dd MMM yyyy, h:mm a");
@@ -581,7 +621,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const LBW = (CW - 5) / 2;
     const RBW = CW - LBW - 5;
     const LBX = ML, RBX = ML + LBW + 5;
-    const CARD_H = 36;
+    const CARD_H = customerCredit > 0 ? 43 : 36;
 
     // Customer card — white with green left border
     doc.setFillColor(...LGRAY); doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
@@ -611,10 +651,14 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const summaryRows = [
       { label: "Total Debt",  value: `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`, color: SLATE   },
       { label: "Amount Paid", value: `KES ${totalPaid.toLocaleString("en-KE")}`,                color: GREEN   },
-      { label: "Balance Due", value: `KES ${(debt?.balance ?? 0).toLocaleString("en-KE")}`,     color: isPaid ? GREEN : statusColor },
+      { label: "Balance Due", value: `KES ${balanceDue.toLocaleString("en-KE")}`,               color: isPaid ? GREEN : statusColor },
+      ...(customerCredit > 0
+        ? [{ label: "Customer Credit", value: `KES ${customerCredit.toLocaleString("en-KE")}`, color: GREEN }]
+        : []),
     ];
+    const summaryGap = customerCredit > 0 ? 6 : 7.5;
     summaryRows.forEach((row, i) => {
-      const ry = y + 14 + i * 7.5;
+      const ry = y + 14 + i * summaryGap;
       doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
       doc.text(row.label, RBX + 6, ry);
       doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(...(row.color as RGB));
@@ -660,7 +704,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     sectionLabel(y, "PAYMENT HISTORY");
     y += 6;
 
-    type HistRow = { cells: string[]; isOpened: boolean };
+    type HistRow = { cells: string[]; isOpened: boolean; isCredit?: boolean };
     const histRows: HistRow[] = [];
     histRows.push({
       cells: [format(new Date(debt?.createdAt), "dd MMM yyyy, HH:mm"), "System", productSummary, "Debt Opened",
@@ -676,14 +720,26 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       (p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id),
     );
     for (const p of printablePayments) {
-      running -= p.amount;
+      const paymentAmount = Number(p.amount || 0);
+      const creditCreated = Math.max(0, paymentAmount - Math.max(0, running));
+      running -= paymentAmount;
       histRows.push({
         cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", productSummary,
           `Payment Received${p.note ? ` · ${p.note}` : ""}`,
-          `KES ${Number(p.amount).toLocaleString("en-KE")}`,
+          `KES ${paymentAmount.toLocaleString("en-KE")}`,
           `KES ${Math.max(0, running).toLocaleString("en-KE")}`],
         isOpened: false,
       });
+      if (creditCreated > 0) {
+        histRows.push({
+          cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", productSummary,
+            "Customer credit carried forward",
+            `KES ${creditCreated.toLocaleString("en-KE")}`,
+            `KES ${creditCreated.toLocaleString("en-KE")} credit`],
+          isOpened: false,
+          isCredit: true,
+        });
+      }
     }
     if (histRows.length === 1) {
       histRows.push({ cells: ["—", "—", productSummary, "No payments recorded yet", "—", "—"], isOpened: false });
@@ -711,7 +767,8 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         if (data.section !== "body") return;
         const row = histRows[data.row.index];
         if (!row) return;
-        if (row.isOpened) { data.cell.styles.textColor = [100, 116, 139]; data.cell.styles.fontStyle = "italic"; }
+        if (row.isCredit) { data.cell.styles.textColor = GREEN; data.cell.styles.fontStyle = "bold"; }
+        else if (row.isOpened) { data.cell.styles.textColor = [100, 116, 139]; data.cell.styles.fontStyle = "italic"; }
         else if (data.column.index === 4) {
           data.cell.styles.textColor = GREEN;
           data.cell.styles.fontStyle = "bold";
@@ -736,16 +793,19 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const cols3 = [
       { label: "TOTAL DEBT",  value: `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`, vc: SLATE },
       { label: "PAID",        value: `KES ${totalPaid.toLocaleString("en-KE")}`,                vc: GREEN },
-      { label: "BALANCE DUE", value: `KES ${(debt?.balance ?? 0).toLocaleString("en-KE")}`,     vc: isPaid ? GREEN : statusColor },
+      { label: "BALANCE DUE", value: `KES ${balanceDue.toLocaleString("en-KE")}`,               vc: isPaid ? GREEN : statusColor },
+      ...(customerCredit > 0
+        ? [{ label: "CUSTOMER CREDIT", value: `KES ${customerCredit.toLocaleString("en-KE")}`, vc: GREEN }]
+        : []),
     ];
-    const colW = CW / 3;
+    const colW = CW / cols3.length;
     cols3.forEach((col, i) => {
       const cx = ML + colW * i + colW / 2;
       doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...GREEN);
       doc.text(col.label, cx, y + 6, { align: "center" });
       doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...(col.vc as RGB));
       doc.text(col.value, cx, y + 13, { align: "center" });
-      if (i < 2) {
+       if (i < cols3.length - 1) {
         doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
         doc.line(ML + colW * (i + 1), y + 3, ML + colW * (i + 1), y + BS_H - 3);
       }
@@ -814,10 +874,11 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const muted: [number, number, number] = [100, 116, 139];
     const border: [number, number, number] = [226, 232, 240];
     const totalAmount = details.reduce((s, d: any) => s + Number(d?.totalAmount || 0), 0);
-    const totalBalance = details.reduce((s, d: any) => s + Number(d?.balance || 0), 0);
-    const totalPaid = totalAmount - totalBalance;
+    const totalBalance = details.reduce((s, d: any) => s + debtBalanceDue(d), 0);
+    const totalCredit = details.reduce((s, d: any) => s + debtCredit(d), 0);
+    const totalPaid = details.reduce((s, d: any) => s + debtAmountPaid(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
-    const status = totalBalance <= 0 ? "PAID IN FULL" : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
+    const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
 
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
     let logoBase64 = "";
@@ -870,8 +931,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
         `#${String(d.id).slice(0, 8).toUpperCase()}`,
         format(new Date(d.createdAt), "dd MMM yyyy"),
         `${compactDebtProductSummary(d.items)}${d.notes ? ` · ${String(d.notes).slice(0, 42)}` : ""}`,
-        d.status === "cancelled" ? "VOIDED" : d.status === "paid" ? "PAID" : d.status === "partial" ? "PARTIAL" : "UNPAID",
-        money(d.totalAmount), money(d.amountPaid), money(d.balance),
+         d.status === "cancelled" ? "VOIDED" : d.status === "paid" ? (debtCredit(d) > 0 ? "PAID + CREDIT" : "PAID") : d.status === "partial" ? "PARTIAL" : "UNPAID",
+         money(d.totalAmount), money(debtAmountPaid(d)), money(debtBalanceDue(d)),
       ]),
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
       bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
@@ -923,16 +984,33 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
           .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
           .map((p: any) => p.reversalOfId),
       );
-      return (d.payments || [])
+      const printablePayments = (d.payments || [])
         .filter((p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id))
-        .map((p: any) => [
+      let running = Number(d.totalAmount || 0);
+      return printablePayments.flatMap((p: any) => {
+        const paymentAmount = Number(p.amount || 0);
+        const creditCreated = Math.max(0, paymentAmount - Math.max(0, running));
+        running -= paymentAmount;
+        const rows = [[
           format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
           `#${String(d.id).slice(0, 8).toUpperCase()}`,
           compactDebtProductSummary(d.items),
           `Payment received${p.note ? ` · ${p.note}` : ""}`,
           p.recordedBy || "—",
-          money(Number(p.amount)),
-        ]);
+          money(paymentAmount),
+        ]];
+        if (creditCreated > 0) {
+          rows.push([
+            format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
+            `#${String(d.id).slice(0, 8).toUpperCase()}`,
+            compactDebtProductSummary(d.items),
+            "Customer credit carried forward",
+            p.recordedBy || "—",
+            money(creditCreated),
+          ]);
+        }
+        return rows;
+      });
     });
     autoTable(doc, {
       startY: y, margin: { left: ML, right: MR },
@@ -950,11 +1028,13 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       ["TOTAL DEBT", money(totalAmount)],
       ["TOTAL PAID", money(totalPaid)],
       ["BALANCE DUE", money(totalBalance)],
+      ...(totalCredit > 0 ? [["CUSTOMER CREDIT", money(totalCredit)]] : []),
     ];
     summary.forEach(([label, value], i) => {
-      const x = ML + (CW / 3) * i + CW / 6;
+      const colW = CW / summary.length;
+      const x = ML + colW * i + colW / 2;
       doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...green); doc.text(label, x, y + 7, { align: "center" });
-      const valueColor: [number, number, number] = i === 2 && totalBalance > 0 ? [220, 38, 38] : i === 1 ? green : slate;
+      const valueColor: [number, number, number] = label === "BALANCE DUE" && totalBalance > 0 ? [220, 38, 38] : i === 1 || label === "CUSTOMER CREDIT" ? green : slate;
       doc.setFontSize(9); doc.setTextColor(...valueColor); doc.text(value, x, y + 14, { align: "center" });
     });
     doc.setDrawColor(...border); doc.line(ML, H - 13, W - MR, H - 13);
@@ -1050,6 +1130,7 @@ function CustomerGroupRow({
         <div className="text-right pr-2 shrink-0">
           <p className={cn("text-sm font-bold font-mono", isPaid ? "text-emerald-400" : group.isOverdue ? "text-red-400" : isPartial ? "text-orange-400" : "text-destructive")}>{formatKES(group.totalBalance)}</p>
           <p className="text-[10px] text-muted-foreground/50">Balance due</p>
+          {group.totalCredit > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(group.totalCredit)} credit</p>}
         </div>
         <span className={cn("hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusCss)}>{statusLabel}</span>
         <CustomerDownloadButton group={group} />
@@ -1111,7 +1192,9 @@ function DebtRecordRow({ debt, onSelectDebt }: { debt: any; onSelectDebt: (debt:
       </div>
       <div className="text-right">
         <p className="text-xs font-bold font-mono">{formatKES(debt.totalAmount)}</p>
-        <p className={cn("text-[10px] font-mono", debtVoided ? "text-muted-foreground" : debtPaid ? "text-emerald-400" : "text-destructive")}>{debtVoided ? "Voided" : debtPaid ? "Paid" : `${formatKES(debt.balance)} due`}</p>
+        <p className={cn("text-[10px] font-mono", debtVoided ? "text-muted-foreground" : debtPaid ? "text-emerald-400" : "text-destructive")}>
+          {debtVoided ? "Voided" : debtPaid ? (debtCredit(debt) > 0 ? `Paid · +${formatKES(debtCredit(debt))} credit` : "Paid") : `${formatKES(debtBalanceDue(debt))} due`}
+        </p>
       </div>
       <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30" />
     </button>
@@ -1346,8 +1429,10 @@ function DebtDetailPanel({
   const isPaid    = debt.status === "paid";
   const isCancelled = debt.status === "cancelled";
   const isPartial = debt.status === "partial";
-  const totalPaid = (debt.totalAmount ?? 0) - (debt.balance ?? 0);
-  const paidPct   = debt.totalAmount > 0 ? Math.round((totalPaid / debt.totalAmount) * 100) : 0;
+  const balanceDue = debtBalanceDue(debt);
+  const customerCredit = debtCredit(debt);
+  const totalPaid = debtAmountPaid(debt);
+  const paidPct   = debt.totalAmount > 0 ? Math.min(100, Math.round((totalPaid / debt.totalAmount) * 100)) : 0;
   const daysOpen  = differenceInDays(new Date(), new Date(debt.createdAt));
   const isOverdue = !isPaid && !isCancelled && daysOpen > 30;
 
@@ -1456,12 +1541,19 @@ function DebtDetailPanel({
               </div>
               <div className={cn("rounded-xl p-3 border", isPaid ? "bg-emerald-500/5 border-emerald-500/15" : "bg-destructive/5 border-destructive/15")}>
                 <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Balance Due</p>
-                <p className={cn("text-sm font-bold font-mono", statusColor)}>{formatKES(debt.balance)}</p>
+                 <p className={cn("text-sm font-bold font-mono", statusColor)}>{formatKES(balanceDue)}</p>
               </div>
               <div className="bg-muted/30 rounded-xl p-3 border border-border/40">
                 <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Status</p>
                 <span className={cn("text-xs font-bold", statusColor)}>{statusLabel}</span>
               </div>
+            {customerCredit > 0 && (
+              <div className="rounded-xl p-3 border border-emerald-500/15 bg-emerald-500/5">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-400 mb-1.5">Customer Credit</p>
+                <p className="text-sm font-bold font-mono text-emerald-400">{formatKES(customerCredit)}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Available for the customer&apos;s next debt or sale.</p>
+              </div>
+            )}
             </div>
 
             {/* Progress */}
@@ -1574,9 +1666,10 @@ function DebtDetailPanel({
                   <span className="text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? "s" : ""}</span>
                   <div className="text-right">
                     <p className="text-[10px] text-muted-foreground/60">Balance</p>
-                    <p className={cn("text-sm font-bold font-mono", debt.balance === 0 ? "text-emerald-400" : statusColor)}>
-                      {formatKES(debt.balance)}
+                    <p className={cn("text-sm font-bold font-mono", debtBalanceDue(debt) === 0 ? "text-emerald-400" : statusColor)}>
+                      {formatKES(debtBalanceDue(debt))}
                     </p>
+                    {debtCredit(debt) > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(debtCredit(debt))} credit</p>}
                   </div>
                 </div>
               </>
@@ -1783,6 +1876,7 @@ interface CustomerGroup {
   debts: any[];
   activeDebts: any[];
   totalBalance: number;
+  totalCredit: number;
   totalAmount: number;
   worstStatus: "unpaid" | "partial" | "paid" | "cancelled";
   isOverdue: boolean;
@@ -2009,14 +2103,14 @@ export default function Debts() {
     const paid    = debts.filter((d: any) => d.status === "paid");
     const unpaid  = debts.filter((d: any) => d.status === "unpaid");
     return {
-      totalBalance:  active.reduce((s: number, d: any)  => s + (d.balance     || 0), 0),
+      totalBalance:  active.reduce((s: number, d: any)  => s + debtBalanceDue(d), 0),
       totalDebt:     debts.reduce((s: number, d: any)   => s + (d.totalAmount || 0), 0),
       activeCount:   active.length,
       overdueCount:  overdue.length,
-      overdueBalance: overdue.reduce((s: number, d: any) => s + (d.balance || 0), 0),
+      overdueBalance: overdue.reduce((s: number, d: any) => s + debtBalanceDue(d), 0),
       overdueWithPhone: overdue.filter((d: any) => d.customerPhone),
       partialCount:  partial.length,
-      partialBalance: partial.reduce((s: number, d: any) => s + (d.balance || 0), 0),
+      partialBalance: partial.reduce((s: number, d: any) => s + debtBalanceDue(d), 0),
       paidCount:     paid.length,
       paidTotal:     paid.reduce((s: number, d: any)    => s + (d.totalAmount || 0), 0),
       unpaidCount:   unpaid.length,
@@ -2043,17 +2137,7 @@ export default function Debts() {
   }, [allDebts, tab, debouncedSearch]);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, {
-      key: string;
-      customerName: string;
-      customerPhone: string;
-      debts: any[];
-      activeDebts: any[];
-      totalAmount: number;
-      totalBalance: number;
-      worstStatus: "unpaid" | "partial" | "paid" | "cancelled";
-      isOverdue: boolean;
-    }>();
+    const map = new Map<string, CustomerGroup>();
 
     // Track which debt is the newest per group so the group's display name
     // reflects the latest rename, not whichever debt happened to sort first
@@ -2073,6 +2157,7 @@ export default function Debts() {
           activeDebts: [],
           totalAmount: 0,
           totalBalance: 0,
+          totalCredit: 0,
           worstStatus: "cancelled",
           isOverdue: false,
         });
@@ -2081,7 +2166,10 @@ export default function Debts() {
       const g = map.get(key)!;
       g.debts.push(debt);
       g.totalAmount += debt.totalAmount || 0;
-      if (debt.status !== "cancelled") g.totalBalance += debt.balance || 0;
+      if (debt.status !== "cancelled") {
+        g.totalBalance += debtBalanceDue(debt);
+        g.totalCredit += debtCredit(debt);
+      }
       if (debt.status !== "paid" && debt.status !== "cancelled") {
         g.activeDebts.push(debt);
         const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
@@ -2295,16 +2383,18 @@ export default function Debts() {
                 isPartial ? "bg-orange-500/15 text-orange-400 border-orange-500/25" :
                             "bg-destructive/15 text-destructive border-destructive/25";
 
-              const statusLabel =
+               const balanceDue = debtBalanceDue(debt);
+               const customerCredit = debtCredit(debt);
+               const statusLabel =
                 isOverdue ? "Overdue" :
-                isPaid    ? "Paid" :
+                 isPaid    ? (customerCredit > 0 ? "Paid + Credit" : "Paid") :
                 isPartial ? "Partial" :
                             "Unpaid";
 
               const initials = debt.customerName
                 .split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
 
-              const totalPaid = (debt.totalAmount ?? 0) - (debt.balance ?? 0);
+              const totalPaid = debtAmountPaid(debt);
 
               return (
                 <div
@@ -2343,7 +2433,8 @@ export default function Debts() {
 
                   {/* Balance */}
                   <div className="text-right pr-4 shrink-0">
-                    <p className={cn("text-sm font-bold font-mono", balanceCss)}>{formatKES(debt.balance)}</p>
+                    <p className={cn("text-sm font-bold font-mono", balanceCss)}>{formatKES(balanceDue)}</p>
+                    {customerCredit > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(customerCredit)} credit</p>}
                   </div>
 
                   {/* Status badge */}

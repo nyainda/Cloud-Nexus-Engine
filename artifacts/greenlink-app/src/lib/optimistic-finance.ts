@@ -104,23 +104,23 @@ export function patchCustomerProfileCaches(
 }
 
 export function applyDebtPayment(debt: any, amount: number, paidAt: string) {
-  const newBalance = Math.max(0, Number(debt.balance || 0) - amount);
-  const newAmountPaid = Math.min(
-    Number(debt.totalAmount || 0),
-    Number(debt.amountPaid ?? Number(debt.totalAmount || 0) - Number(debt.balance || 0)) + amount,
-  );
+  // Keep an overpayment as a negative debt balance. The API uses that
+  // negative balance as customer credit for the customer's next debt/sale.
+  const newBalance = Number(debt.balance || 0) - amount;
+  const newAmountPaid =
+    Number(debt.amountPaid ?? Number(debt.totalAmount || 0) - Number(debt.balance || 0)) + amount;
 
   return {
     ...debt,
     amountPaid: newAmountPaid,
     balance: newBalance,
     status:
-      newBalance === 0
+      newBalance <= 0.005
         ? "paid"
         : newAmountPaid > 0
           ? "partial"
           : debt.status,
-    ...(newBalance === 0 ? { paidAt } : {}),
+    ...(newBalance <= 0.005 ? { paidAt } : {}),
   };
 }
 
