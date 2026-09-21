@@ -5,6 +5,7 @@ import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { customers, debts } from "@workspace/db/schema";
 import { normalizeCustomerName, customerNameKey } from "../lib/normalize";
+import { creditBalance } from "../lib/debt-credit";
 import type { Db } from "../lib/db";
 
 const crmRouter = new Hono<AppEnv>();
@@ -73,6 +74,7 @@ crmRouter.get("/crm", requireAuth, async (c) => {
     name: string;
     phone: string;
     totalBalance: number;
+    totalCredit: number;
     totalOwed: number;
     debtCount: number;
     activeCount: number;
@@ -80,6 +82,7 @@ crmRouter.get("/crm", requireAuth, async (c) => {
     latestDebtAmount: number;
     latestDebtBalance: number;
     latestDebtStatus: string;
+    totalCredit: number;
   };
   const debtMap = new Map<string, DebtStats>();
   for (const d of debtRows) {
@@ -89,7 +92,8 @@ crmRouter.get("/crm", requireAuth, async (c) => {
       debtMap.set(key, {
         name: normalizeCustomerName(d.customerName),
         phone: d.customerPhone || "",
-        totalBalance: d.status === "cancelled" ? 0 : (d.balance || 0),
+        totalBalance: d.status === "cancelled" ? 0 : Math.max(0, d.balance || 0),
+        totalCredit: creditBalance(d),
         totalOwed: d.totalAmount || 0,
         debtCount: 1,
         activeCount: d.status !== "paid" && d.status !== "cancelled" ? 1 : 0,
@@ -99,7 +103,8 @@ crmRouter.get("/crm", requireAuth, async (c) => {
         latestDebtStatus: d.status,
       });
     } else {
-      ex.totalBalance += d.status === "cancelled" ? 0 : (d.balance || 0);
+      ex.totalBalance += d.status === "cancelled" ? 0 : Math.max(0, d.balance || 0);
+      ex.totalCredit += creditBalance(d);
       ex.totalOwed += d.totalAmount || 0;
       ex.debtCount++;
       if (d.status !== "paid" && d.status !== "cancelled") ex.activeCount++;
@@ -154,6 +159,7 @@ crmRouter.get("/crm", requireAuth, async (c) => {
       creditLimit: r.creditLimit ?? null,
       registered: true,
       totalBalance: stats?.totalBalance ?? 0,
+      totalCredit: stats?.totalCredit ?? 0,
       totalOwed: stats?.totalOwed ?? 0,
       debtCount: stats?.debtCount ?? 0,
       activeCount: stats?.activeCount ?? 0,
@@ -176,6 +182,7 @@ crmRouter.get("/crm", requireAuth, async (c) => {
       creditLimit: null,
       registered: false,
       totalBalance: stats.totalBalance,
+      totalCredit: stats.totalCredit,
       totalOwed: stats.totalOwed,
       debtCount: stats.debtCount,
       activeCount: stats.activeCount,
@@ -227,7 +234,8 @@ crmRouter.get("/crm/profile", requireAuth, async (c) => {
     .map((d) => ({ ...d, customerName: normalizeCustomerName(d.customerName) }))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  const totalBalance = matchedDebts.reduce((s, d) => s + (d.status === "cancelled" ? 0 : (d.balance || 0)), 0);
+  const totalBalance = matchedDebts.reduce((s, d) => s + (d.status === "cancelled" ? 0 : Math.max(0, d.balance || 0)), 0);
+  const totalCredit = matchedDebts.reduce((s, d) => s + creditBalance(d), 0);
   const totalOwed = matchedDebts.reduce((s, d) => s + (d.totalAmount || 0), 0);
 
   return c.json({
@@ -236,6 +244,7 @@ crmRouter.get("/crm/profile", requireAuth, async (c) => {
     debts: matchedDebts,
     stats: {
       totalBalance,
+      totalCredit,
       totalOwed,
       totalPaid: totalOwed - totalBalance,
       debtCount: matchedDebts.length,
@@ -336,7 +345,8 @@ crmRouter.get("/crm/:id", requireAuth, async (c) => {
     .filter((d) => customerNameKey(d.customerName) === customerNameKey(customer.name))
     .map((d) => ({ ...d, customerName: normalizeCustomerName(d.customerName) }));
 
-  const totalBalance = matchedDebts.reduce((s, d) => s + (d.status === "cancelled" ? 0 : (d.balance || 0)), 0);
+  const totalBalance = matchedDebts.reduce((s, d) => s + (d.status === "cancelled" ? 0 : Math.max(0, d.balance || 0)), 0);
+  const totalCredit = matchedDebts.reduce((s, d) => s + creditBalance(d), 0);
   const totalOwed = matchedDebts.reduce((s, d) => s + (d.totalAmount || 0), 0);
 
   return c.json({
@@ -344,6 +354,7 @@ crmRouter.get("/crm/:id", requireAuth, async (c) => {
     debts: matchedDebts,
     stats: {
       totalBalance,
+      totalCredit,
       totalOwed,
       totalPaid: totalOwed - totalBalance,
       debtCount: matchedDebts.length,

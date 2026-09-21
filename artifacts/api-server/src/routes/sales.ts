@@ -3,12 +3,17 @@ import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
-import { sales, saleItems, products, debts, inventoryMovements, notifications, saleReturns, auditLog } from "@workspace/db/schema";
+import { sales, saleItems, products, debts, debtPayments, inventoryMovements, notifications, saleReturns, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
 import { normalizeCustomerName } from "../lib/normalize";
+import { allocateCredit, getCustomerCreditSources } from "../lib/debt-credit";
 import { chunk } from "../lib/chunk";
 
 const salesRouter = new Hono<AppEnv>();
+
+function money(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
 
 salesRouter.get("/sales", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
@@ -198,6 +203,19 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   const discount = body.discount ?? 0;
   totalAmount = Math.max(0, totalAmount - discount);
 
+  const creditSources = debtCustomerName
+    ? await getCustomerCreditSources(db, body.shopId, debtCustomerName)
+    : [];
+  const creditAllocations = allocateCredit(creditSources, totalAmount);
+  const creditApplied = money(creditAllocations.reduce((sum, allocation) => sum + allocation.amount, 0));
+  const newDebtBalance = money(totalAmount - creditApplied);
+  const newDebtStatus = newDebtBalance <= 0.005
+    ? "paid"
+    : creditApplied > 0
+    ? "partial"
+    : "unpaid";
+  const debtPaymentId = creditApplied > 0 ? crypto.randomUUID() : null;
+
   const saleValues = {
     id: saleId,
     shopId: body.shopId,
@@ -229,12 +247,31 @@ salesRouter.post("/sales", requireAuth, async (c) => {
             customerName: debtCustomerName,
             customerPhone: body.debtCustomerPhone?.trim() ?? "",
             totalAmount,
-            amountPaid: 0,
-            balance: totalAmount,
-            status: "unpaid",
+            amountPaid: creditApplied,
+            balance: newDebtBalance,
+            status: newDebtStatus,
             notes: null,
-            paidAt: null,
+            paidAt: newDebtStatus === "paid" ? now : null,
             createdAt: now,
+          }),
+        ]
+      : []),
+    ...creditAllocations.map(({ source, amount }) =>
+      db.update(debts).set({
+        balance: money(Number(source.balance) + amount),
+      }).where(eq(debts.id, source.id)),
+    ),
+    ...(debtPaymentId
+      ? [
+          db.insert(debtPayments).values({
+            id: debtPaymentId,
+            debtId: debtId!,
+            amount: creditApplied,
+            recordedBy: body.servedBy ?? null,
+            paidAt: now,
+            paymentType: "credit_applied",
+            reversalOfId: null,
+            note: "Applied from customer overpayment credit",
           }),
         ]
       : []),

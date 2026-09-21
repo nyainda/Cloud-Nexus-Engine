@@ -7,6 +7,7 @@ import { requireAuth, requireOwner } from "../middleware/auth";
 import { debts, debtPayments, notifications, saleItems, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
 import { normalizeCustomerName, customerNameKey } from "../lib/normalize";
+import { allocateCredit, creditBalance, getCustomerCreditSources } from "../lib/debt-credit";
 import { chunk } from "../lib/chunk";
 
 const debtsRouter = new Hono<AppEnv>();
@@ -164,6 +165,7 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
     // Canonicalize legacy rows on read so older records with repeated spaces
     // are grouped with newer records without mutating financial history.
     customerName: normalizeCustomerName(r.customerName),
+    creditBalance: creditBalance(r),
     items: parseDebtItems(r.itemsJson) ?? (r.saleId ? (itemsByHuman[r.saleId] ?? []) : []),
   }));
 
@@ -182,20 +184,49 @@ debtsRouter.post("/debts", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  await db.insert(debts).values({
-    id,
-    shopId: body.shopId,
-    saleId: body.saleId ?? null,
-    customerName: normalizeCustomerName(body.customerName),
-    customerPhone: body.customerPhone,
-    totalAmount: body.totalAmount,
-    amountPaid: 0,
-    balance: body.totalAmount,
-    status: "unpaid",
-    notes: body.notes ?? null,
-    paidAt: null,
-    createdAt: now,
-  });
+  const customerName = normalizeCustomerName(body.customerName);
+  const creditSources = await getCustomerCreditSources(db, body.shopId, customerName);
+  const creditAllocations = allocateCredit(creditSources, body.totalAmount);
+  const creditApplied = money(creditAllocations.reduce((sum, allocation) => sum + allocation.amount, 0));
+  const balance = money(body.totalAmount - creditApplied);
+  const status = balance <= 0.005 ? "paid" : creditApplied > 0 ? "partial" : "unpaid";
+  const creditPaymentId = creditApplied > 0 ? crypto.randomUUID() : null;
+
+  await db.batch([
+    db.insert(debts).values({
+      id,
+      shopId: body.shopId,
+      saleId: body.saleId ?? null,
+      customerName,
+      customerPhone: body.customerPhone,
+      totalAmount: body.totalAmount,
+      amountPaid: creditApplied,
+      balance,
+      status,
+      notes: body.notes ?? null,
+      paidAt: status === "paid" ? now : null,
+      createdAt: now,
+    }),
+    ...creditAllocations.map(({ source, amount }) =>
+      db.update(debts).set({
+        balance: money(Number(source.balance) + amount),
+      }).where(eq(debts.id, source.id)),
+    ),
+    ...(creditPaymentId
+      ? [
+          db.insert(debtPayments).values({
+            id: creditPaymentId,
+            debtId: id,
+            amount: creditApplied,
+            recordedBy: c.get("session").userName ?? null,
+            paidAt: now,
+            paymentType: "credit_applied",
+            reversalOfId: null,
+            note: "Applied from customer overpayment credit",
+          }),
+        ]
+      : []),
+  ]);
   const debt = await db.select().from(debts).where(eq(debts.id, id)).get();
   const today = new Date().toISOString().slice(0, 10);
   await kvDel(c.env.SESSIONS, CK.debts(body.shopId), CK.dashboard(body.shopId, today));
@@ -217,6 +248,7 @@ debtsRouter.get("/debts/:debtId", requireAuth, async (c) => {
   return c.json({
     ...debt,
     customerName: normalizeCustomerName(debt.customerName),
+    creditBalance: creditBalance(debt),
     payments,
     items,
   });
@@ -576,8 +608,8 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   const debtBefore = await db.select().from(debts).where(eq(debts.id, debtId)).get();
   if (!debtBefore) throw new HTTPException(404, { message: "Not found" });
   if (debtBefore.shopId !== session.shopId) throw new HTTPException(403, { message: "Forbidden" });
-  if (amount > debtBefore.balance + 0.005) {
-    throw new HTTPException(400, { message: "Payment cannot be greater than the remaining balance" });
+  if (debtBefore.status === "cancelled") {
+    throw new HTTPException(409, { message: "Cancelled debts cannot receive payments" });
   }
 
   const now = new Date().toISOString();
@@ -586,16 +618,11 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
     .update(debts)
     .set({
       amountPaid: sql`amount_paid + ${amount}`,
-      balance: sql`MAX(0, total_amount - amount_paid - ${amount})`,
-      status: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN 'paid' WHEN amount_paid + ${amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
-      paidAt: sql`CASE WHEN MAX(0, total_amount - amount_paid - ${amount}) = 0 THEN ${now} ELSE NULL END`,
+      balance: sql`total_amount - amount_paid - ${amount}`,
+      status: sql`CASE WHEN amount_paid + ${amount} >= total_amount THEN 'paid' WHEN amount_paid + ${amount} > 0 THEN 'partial' ELSE 'unpaid' END`,
+      paidAt: sql`CASE WHEN amount_paid + ${amount} >= total_amount THEN COALESCE(paid_at, ${now}) ELSE NULL END`,
     })
-    .where(
-      and(
-        eq(debts.id, debtId),
-        sql`${amount} <= (total_amount - amount_paid) + 0.005`,
-      ),
-    )
+    .where(eq(debts.id, debtId))
     .run();
 
   const rowsChanged = (updateResult as unknown as { meta?: { changes?: number } }).meta?.changes ?? 0;
@@ -689,7 +716,7 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
 
   await db.update(debts).set({
     amountPaid: sql`MAX(0, amount_paid - ${original.amount})`,
-    balance: sql`MIN(total_amount, total_amount - MAX(0, amount_paid - ${original.amount}))`,
+    balance: sql`total_amount - MAX(0, amount_paid - ${original.amount})`,
     status: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) = 0 THEN 'unpaid' WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN 'paid' ELSE 'partial' END`,
     paidAt: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN paid_at ELSE NULL END`,
   }).where(eq(debts.id, debtId));
