@@ -71,9 +71,29 @@ function debtAmountPaid(debt: any): number {
   );
 }
 
+function sameCustomer(a: string, b: string): boolean {
+  return a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** Client-side mirror of the server's allocatePayment — oldest debt first. */
+function previewAllocations(debtsToPay: any[], paymentAmount: number) {
+  let remaining = Math.max(0, paymentAmount);
+  const allocations: { debt: any; amount: number }[] = [];
+  for (const d of debtsToPay) {
+    if (remaining <= 0) break;
+    const due = debtBalanceDue(d);
+    const amount = Math.min(remaining, due);
+    if (amount <= 0) continue;
+    allocations.push({ debt: d, amount });
+    remaining -= amount;
+  }
+  return { allocations, remaining };
+}
+
 function PaymentDialog({ debt }: { debt: any }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
+  const [applyToAll, setApplyToAll] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const recordPayment = useRecordDebtPayment();
   const qc = useQueryClient();
@@ -87,19 +107,122 @@ function PaymentDialog({ debt }: { debt: any }) {
     ? Math.min(100, Math.round((debtAmountPaid(debt) / debt.totalAmount) * 100))
     : 0;
 
+  // This customer's other open debts — lets us offer "spread this payment
+  // across everything they owe" instead of only ever touching the one debt
+  // the dialog was opened from.
+  const { data: allDebts } = useListDebts({ shopId }, { query: { queryKey: getListDebtsQueryKey({ shopId }), enabled: open } });
+  const otherOpenDebts = useMemo(() => {
+    if (!Array.isArray(allDebts)) return [];
+    return (allDebts as any[])
+      .filter(
+        (d) =>
+          d.id !== debt.id &&
+          (d.status === "unpaid" || d.status === "partial") &&
+          sameCustomer(d.customerName, debt.customerName),
+      )
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  }, [allDebts, debt.id, debt.customerName]);
+  const hasOtherDebts = otherOpenDebts.length > 0;
+
+  // Oldest-first, same ordering the backend uses, so the preview matches
+  // exactly what will actually happen once the request lands.
+  const payoffOrder = useMemo(
+    () => [debt, ...otherOpenDebts].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
+    [debt, otherOpenDebts],
+  );
+  const totalOwedAcrossDebts = useMemo(
+    () => payoffOrder.reduce((sum, d) => sum + debtBalanceDue(d), 0),
+    [payoffOrder],
+  );
+  const allocationPreview = useMemo(
+    () => (applyToAll && hasOtherDebts ? previewAllocations(payoffOrder, enteredAmount) : null),
+    [applyToAll, hasOtherDebts, payoffOrder, enteredAmount],
+  );
+
   const handlePayment = async () => {
     const paid = Number(amount);
     if (!paid || paid <= 0 || submitting) return;
+    const bulk = applyToAll && hasOtherDebts;
 
     // Guard against double-tap immediately
     setSubmitting(true);
 
     const exactKey = getListDebtsQueryKey({ shopId });
     const snapshot = qc.getQueryData(exactKey);
+    const paidAt = new Date().toISOString();
+
+    qc.cancelQueries({ queryKey: exactKey });
+
+    if (bulk) {
+      const { allocations, remaining } = previewAllocations(payoffOrder, paid);
+      const lastIdx = allocations.length - 1;
+
+      allocations.forEach(({ debt: d, amount: portion }, i) => {
+        const finalApplied = portion + (i === lastIdx ? remaining : 0);
+        patchDebtCaches(qc, shopId, d.id, (current) => applyDebtPayment(current, finalApplied, paidAt));
+        patchCustomerProfileCaches(qc, shopId, d.id, (current) => applyDebtPayment(current, finalApplied, paidAt));
+      });
+      const closedCount = allocations.filter(
+        ({ debt: d, amount: portion }) => debtBalanceDue(d) - portion <= 0.005,
+      ).length;
+      patchCustomerListCaches(qc, debt.customerName, (customer) => ({
+        ...customer,
+        totalBalance: Math.max(0, Number(customer.totalBalance || 0) - (paid - remaining)),
+        totalCredit: Math.max(0, Number(customer.totalCredit || 0) + remaining),
+        activeCount: Math.max(0, Number(customer.activeCount || 0) - closedCount),
+      }));
+
+      setOpen(false);
+      setAmount("");
+      setApplyToAll(false);
+
+      if (!navigator.onLine) {
+        try {
+          await enqueueMutation("customer_debt_payment", shopId, {
+            shopId,
+            customerName: debt.customerName,
+            amount: paid,
+            recordedBy: userName,
+          });
+          toast.success("Payment saved offline — will sync on reconnect");
+        } catch {
+          qc.setQueryData(exactKey, snapshot);
+          qc.invalidateQueries({ queryKey: ["/api/crm"] });
+          toast.error("Could not save offline payment — please retry");
+        } finally {
+          setSubmitting(false);
+        }
+        return;
+      }
+
+      toast.success(
+        allocations.length > 1
+          ? `Payment applied across ${allocations.length} debts!`
+          : "Payment recorded!",
+      );
+
+      customFetch("/api/debts/customer-payment", {
+        method: "POST",
+        body: JSON.stringify({ shopId, customerName: debt.customerName, amount: paid, recordedBy: userName }),
+      })
+        .then(() => {
+          qc.invalidateQueries({ queryKey: exactKey });
+          allocations.forEach(({ debt: d }) => qc.invalidateQueries({ queryKey: getGetDebtQueryKey(d.id) }));
+          qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        })
+        .catch(() => {
+          qc.setQueryData(exactKey, snapshot);
+          allocations.forEach(({ debt: d }) => qc.invalidateQueries({ queryKey: getGetDebtQueryKey(d.id) }));
+          qc.invalidateQueries({ queryKey: ["/api/crm"] });
+          toast.error("Payment failed — please retry");
+        })
+        .finally(() => {
+          setSubmitting(false);
+        });
+      return;
+    }
 
     // Optimistic update — instant, no await
-    qc.cancelQueries({ queryKey: exactKey });
-    const paidAt = new Date().toISOString();
     patchDebtCaches(qc, shopId, debt.id, (current) =>
       applyDebtPayment(current, paid, paidAt),
     );
@@ -123,6 +246,7 @@ function PaymentDialog({ debt }: { debt: any }) {
     // Close instantly — don't wait for network
     setOpen(false);
     setAmount("");
+    setApplyToAll(false);
     // If offline, queue the payment and return — sync will fire on reconnect
     if (!navigator.onLine) {
       try {
@@ -165,11 +289,14 @@ function PaymentDialog({ debt }: { debt: any }) {
   const quickAmounts = [
     { label: "25%", value: (debt.balance * 0.25).toFixed(0) },
     { label: "Half", value: (debt.balance * 0.5).toFixed(0) },
-    { label: "Full", value: debt.balance.toString() },
+    {
+      label: applyToAll && hasOtherDebts ? "All debts" : "Full",
+      value: (applyToAll && hasOtherDebts ? totalOwedAcrossDebts : debt.balance).toString(),
+    },
   ];
 
   return (
-    <Dialog open={open} onOpenChange={o => { setOpen(o); if (!o) setAmount(""); }}>
+    <Dialog open={open} onOpenChange={o => { setOpen(o); if (!o) { setAmount(""); setApplyToAll(false); } }}>
       <DialogTrigger asChild>
         <Button size="sm" className="h-8 text-xs px-3 font-semibold bg-primary hover:bg-primary/90 text-primary-foreground">
           <Wallet className="w-3.5 h-3.5 mr-1" />Record Payment
@@ -225,7 +352,47 @@ function PaymentDialog({ debt }: { debt: any }) {
             placeholder="0"
             autoFocus
           />
-          {enteredAmount > 0 && (
+          {hasOtherDebts && (
+            <label className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 px-3 py-2.5 cursor-pointer">
+              <Checkbox
+                checked={applyToAll}
+                onCheckedChange={(v) => setApplyToAll(v === true)}
+                className="mt-0.5"
+              />
+              <span className="text-xs">
+                <span className="font-semibold text-foreground">
+                  Apply to all of {debt.customerName}'s debts
+                </span>
+                <span className="block mt-0.5 text-[10px] text-muted-foreground">
+                  They owe {formatKES(totalOwedAcrossDebts)} across {payoffOrder.length} debts. This payment will pay off the oldest ones first instead of only this one.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {enteredAmount > 0 && allocationPreview ? (
+            <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs space-y-1.5">
+              <span className="font-semibold text-foreground block">Where this payment goes:</span>
+              {allocationPreview.allocations.map(({ debt: d, amount: portion }) => (
+                <div key={d.id} className="flex items-center justify-between text-muted-foreground">
+                  <span className="truncate pr-2">
+                    {format(new Date(d.createdAt), "d MMM yyyy")} debt
+                    {d.id === debt.id ? " (this one)" : ""}
+                  </span>
+                  <span className="font-mono text-foreground shrink-0">
+                    {formatKES(portion)}
+                    {debtBalanceDue(d) - portion <= 0.005 ? " ✓" : ""}
+                  </span>
+                </div>
+              ))}
+              {allocationPreview.remaining > 0 && (
+                <div className="flex items-center justify-between text-emerald-400 pt-1 border-t border-border/60">
+                  <span className="font-semibold">Left over as customer credit</span>
+                  <span className="font-mono font-semibold">{formatKES(allocationPreview.remaining)}</span>
+                </div>
+              )}
+            </div>
+          ) : enteredAmount > 0 && (
             <div className={cn(
               "rounded-lg border px-3 py-2 text-xs",
               extraCredit > 0

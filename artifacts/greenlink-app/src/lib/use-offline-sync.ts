@@ -74,6 +74,11 @@ async function processMutation(
         method: "POST",
         body: JSON.stringify(data),
       });
+    } else if (m.type === "customer_debt_payment") {
+      await customFetch("/api/debts/customer-payment", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
     }
     await deleteMutation(m.id);
     return { ok: true };
