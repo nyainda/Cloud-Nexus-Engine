@@ -11,7 +11,7 @@
 
 import Dexie, { type Table } from "dexie";
 
-export type QueuedMutationType = "sale" | "restock" | "debt_payment";
+export type QueuedMutationType = "sale" | "restock" | "debt_payment" | "customer_debt_payment";
 
 export interface QueuedMutation {
   id: string;

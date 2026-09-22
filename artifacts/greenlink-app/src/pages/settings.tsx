@@ -44,12 +44,14 @@ function mutationTypeLabel(type: QueuedMutation["type"]) {
   if (type === "sale") return "Sale";
   if (type === "restock") return "Restock";
   if (type === "debt_payment") return "Debt Payment";
+  if (type === "customer_debt_payment") return "Debt Payment (all debts)";
   return type;
 }
 function mutationTypeIcon(type: QueuedMutation["type"]) {
   if (type === "sale") return ShoppingCart;
   if (type === "restock") return Package;
   if (type === "debt_payment") return Banknote;
+  if (type === "customer_debt_payment") return Banknote;
   return CloudUpload;
 }
 

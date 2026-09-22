@@ -7,7 +7,13 @@ import { requireAuth, requireOwner } from "../middleware/auth";
 import { debts, debtPayments, notifications, saleItems, auditLog } from "@workspace/db/schema";
 import { kvDel, CK } from "../lib/cache";
 import { normalizeCustomerName, customerNameKey } from "../lib/normalize";
-import { allocateCredit, creditBalance, getCustomerCreditSources } from "../lib/debt-credit";
+import {
+  allocateCredit,
+  allocatePayment,
+  creditBalance,
+  getCustomerCreditSources,
+  getCustomerOutstandingDebts,
+} from "../lib/debt-credit";
 import { chunk } from "../lib/chunk";
 
 const debtsRouter = new Hono<AppEnv>();
@@ -672,6 +678,121 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   await kvDel(c.env.SESSIONS, CK.debts(debtBefore.shopId), CK.dashboard(debtBefore.shopId, today));
 
   return c.json(payment!, 201);
+});
+
+// Pays down a customer's oldest outstanding debts first with a single lump
+// sum, instead of forcing one payment per debt. Any amount left over once
+// every debt is covered is parked as credit on the last debt touched — the
+// same way a single-debt overpayment already works — so it's picked up
+// automatically as a credit source next time this customer buys on credit.
+debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
+  const body = await c.req.json<{
+    shopId: string;
+    customerName: string;
+    amount: number;
+    recordedBy?: string;
+    note?: string | null;
+  }>();
+  const db = createDb(c.env.DB);
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return c.json({ error: "Payment amount must be greater than zero" }, 400);
+  }
+  const session = c.get("session");
+  if (body.shopId !== session.shopId) throw new HTTPException(403, { message: "Forbidden" });
+
+  const customerName = normalizeCustomerName(body.customerName);
+  const outstanding = await getCustomerOutstandingDebts(db, body.shopId, customerName);
+  if (outstanding.length === 0) {
+    return c.json({ error: "This customer has no outstanding debts" }, 404);
+  }
+
+  const { allocations, remaining } = allocatePayment(outstanding, amount);
+  if (allocations.length === 0) {
+    return c.json({ error: "Nothing to allocate" }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const lastIndex = allocations.length - 1;
+  // Same read-then-batch-write shape as the credit application in POST
+  // /debts above: D1's batch() commits every statement in one transaction,
+  // but (unlike the single-debt payment route) each UPDATE here trusts a
+  // balance read a moment earlier rather than re-checking it inline. That's
+  // an acceptable, pre-existing tradeoff — if a concurrent payment lands on
+  // one of these debts in that instant, the worst case is a few extra
+  // shillings parked as credit instead of applied to that debt, never money
+  // created, lost, or double-counted.
+  const finalAmounts = allocations.map(({ amount: portion }, i) =>
+    money(portion + (i === lastIndex ? remaining : 0)),
+  );
+  const paymentIds = allocations.map(() => crypto.randomUUID());
+  const note = body.note ?? (allocations.length > 1 ? "Bulk payment — applied across debts" : null);
+
+  await db.batch([
+    ...allocations.map(({ debt }, i) =>
+      db
+        .update(debts)
+        .set({
+          amountPaid: sql`amount_paid + ${finalAmounts[i]}`,
+          balance: sql`total_amount - amount_paid - ${finalAmounts[i]}`,
+          status: sql`CASE WHEN amount_paid + ${finalAmounts[i]} >= total_amount THEN 'paid' WHEN amount_paid + ${finalAmounts[i]} > 0 THEN 'partial' ELSE 'unpaid' END`,
+          paidAt: sql`CASE WHEN amount_paid + ${finalAmounts[i]} >= total_amount THEN COALESCE(paid_at, ${now}) ELSE NULL END`,
+        })
+        .where(eq(debts.id, debt.id)),
+    ),
+    ...allocations.map(({ debt }, i) =>
+      db.insert(debtPayments).values({
+        id: paymentIds[i],
+        debtId: debt.id,
+        amount: finalAmounts[i],
+        recordedBy: body.recordedBy ?? session.userName ?? null,
+        paidAt: now,
+        paymentType: "payment",
+        reversalOfId: null,
+        note,
+      }),
+    ),
+  ]);
+
+  const affectedIds = allocations.map(({ debt }) => debt.id);
+  const updatedDebts = await db.select().from(debts).where(inArray(debts.id, affectedIds)).all();
+  const insertedPayments = await db.select().from(debtPayments).where(inArray(debtPayments.id, paymentIds)).all();
+
+  const paidOffIds = updatedDebts.filter((d) => d.status === "paid").map((d) => d.id);
+  if (paidOffIds.length > 0) {
+    await db
+      .delete(notifications)
+      .where(and(inArray(notifications.debtId, paidOffIds), eq(notifications.type, "debt_reminder")));
+  }
+
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    shopId: body.shopId,
+    action: "debt_customer_payment",
+    entityType: "debt",
+    entityId: affectedIds[0]!,
+    oldValueJson: JSON.stringify({ debtIds: affectedIds, requestedAmount: amount }),
+    newValueJson: JSON.stringify({
+      allocations: allocations.map(({ debt }, i) => ({ debtId: debt.id, amount: finalAmounts[i] })),
+      creditCreated: remaining,
+    }),
+    performedBy: session.userName ?? "Owner",
+    createdAt: now,
+  });
+
+  const today = now.slice(0, 10);
+  await kvDel(c.env.SESSIONS, CK.debts(body.shopId), CK.dashboard(body.shopId, today));
+
+  return c.json(
+    {
+      customerName,
+      totalApplied: money(amount - remaining),
+      creditCreated: money(remaining),
+      debts: updatedDebts,
+      payments: insertedPayments,
+    },
+    201,
+  );
 });
 
 // Corrections never delete financial history. Instead, an owner creates a
