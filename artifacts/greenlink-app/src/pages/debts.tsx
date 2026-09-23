@@ -487,6 +487,10 @@ function MarkPaidButton({ debt }: { debt: any }) {
           amount: debt.balance,
           recordedBy: localStorage.getItem("greenlink_userName") || undefined,
           note: "Marked paid",
+          // "Mark Paid" means "settle this debt" — draw down any credit the
+          // customer already has on other debts first, and only require
+          // fresh cash for whatever that credit doesn't cover.
+          useAvailableCredit: true,
         }),
       });
       qc.invalidateQueries({ queryKey: exactKey });

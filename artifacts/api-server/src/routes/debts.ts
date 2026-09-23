@@ -587,6 +587,7 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
     amount: number;
     recordedBy?: string;
     note?: string | null;
+    useAvailableCredit?: boolean;
   }>();
   const db = createDb(c.env.DB);
   const debtId = c.req.param("debtId");
@@ -618,6 +619,25 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
     throw new HTTPException(409, { message: "Cancelled debts cannot receive payments" });
   }
 
+  // "Mark Paid" (and anything else that opts in via useAvailableCredit) means
+  // "settle this debt" rather than "here is fresh cash" — so before asking
+  // for new money, draw down whatever credit this customer already has
+  // sitting on their OTHER debts. Same allocateCredit() helper POST /debts
+  // already uses to auto-apply credit when a brand-new debt is created;
+  // this just runs it here too, on demand, for an existing debt. The
+  // ordinary "Record Payment" dialog never sets this flag, so real cash
+  // entered there is never silently swapped out for stored credit.
+  let creditAllocations: Array<{ source: (typeof debts.$inferSelect); amount: number }> = [];
+  let creditApplied = 0;
+  if (body.useAvailableCredit) {
+    const creditSources = (
+      await getCustomerCreditSources(db, debtBefore.shopId, debtBefore.customerName)
+    ).filter((source) => source.id !== debtId);
+    creditAllocations = allocateCredit(creditSources, amount);
+    creditApplied = money(creditAllocations.reduce((sum, allocation) => sum + allocation.amount, 0));
+  }
+  const cashAmount = money(amount - creditApplied);
+
   const now = new Date().toISOString();
 
   const updateResult = await db
@@ -638,17 +658,51 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
     throw new HTTPException(409, { message: "Balance changed — please refresh and try again" });
   }
 
-  const paymentId = crypto.randomUUID();
-  await db.insert(debtPayments).values({
-    id: paymentId,
-    debtId,
-    amount,
-    recordedBy: body.recordedBy ?? session.userName ?? null,
-    paidAt: now,
-    paymentType: "payment",
-    reversalOfId: null,
-    note: body.note ?? null,
-  });
+  // The debt's own ledger above already moved by the full `amount`,
+  // regardless of where it came from. What's left is bookkeeping: record
+  // where that money actually came from (existing credit vs. new cash),
+  // and pull the credit portion off of whichever other debts it was
+  // sitting on as credit.
+  const creditPaymentId = crypto.randomUUID();
+  const cashPaymentId = crypto.randomUUID();
+  const paymentRows: Array<typeof debtPayments.$inferInsert> = [];
+  if (creditApplied > 0) {
+    paymentRows.push({
+      id: creditPaymentId,
+      debtId,
+      amount: creditApplied,
+      recordedBy: body.recordedBy ?? session.userName ?? null,
+      paidAt: now,
+      paymentType: "credit_applied",
+      reversalOfId: null,
+      note: "Applied from customer's existing credit",
+    });
+  }
+  if (cashAmount > 0.005) {
+    paymentRows.push({
+      id: cashPaymentId,
+      debtId,
+      amount: cashAmount,
+      recordedBy: body.recordedBy ?? session.userName ?? null,
+      paidAt: now,
+      paymentType: "payment",
+      reversalOfId: null,
+      note: body.note ?? null,
+    });
+  }
+  // Prefer the cash row in the response — matches what this endpoint always
+  // returned before useAvailableCredit existed; falls back to the
+  // credit-applied row on a fully credit-settled "Mark Paid".
+  const primaryPaymentId = cashAmount > 0.005 ? cashPaymentId : creditPaymentId;
+
+  await db.batch(
+    [
+      ...creditAllocations.map(({ source, amount: portion }) =>
+        db.update(debts).set({ balance: sql`balance + ${portion}` }).where(eq(debts.id, source.id)),
+      ),
+      ...paymentRows.map((row) => db.insert(debtPayments).values(row)),
+    ] as unknown as Parameters<typeof db.batch>[0],
+  );
 
   const updatedDebt = await db
     .select({ status: debts.status, shopId: debts.shopId, balance: debts.balance })
@@ -729,7 +783,7 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   const payment = await db
     .select()
     .from(debtPayments)
-    .where(eq(debtPayments.id, paymentId))
+    .where(eq(debtPayments.id, primaryPaymentId))
     .get();
 
   const today = now.slice(0, 10);
