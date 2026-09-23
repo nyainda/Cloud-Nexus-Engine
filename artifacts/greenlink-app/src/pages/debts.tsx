@@ -71,6 +71,31 @@ function debtAmountPaid(debt: any): number {
   );
 }
 
+// How much of this debt's amountPaid is actually fresh money the customer
+// handed over, as opposed to credit reallocated in from another one of
+// their debts (paymentType "credit_applied") or a reversed entry. Needed
+// anywhere we SUM amountPaid across several of a customer's debts — e.g.
+// the statement's customer-level "Total Paid" — because credit_applied
+// rows record money that was already counted once, on the debt it
+// originally came in on; including them again on the debt it was later
+// swept/applied to double-counts that same money.
+function debtGenuineCashReceived(debt: any): number {
+  const payments = debt?.payments || [];
+  const reversedIds = new Set(
+    payments
+      .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
+      .map((p: any) => p.reversalOfId),
+  );
+  return payments
+    .filter(
+      (p: any) =>
+        p.paymentType !== "reversal" &&
+        p.paymentType !== "credit_applied" &&
+        !reversedIds.has(p.id),
+    )
+    .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+}
+
 function sameCustomer(a: string, b: string): boolean {
   return a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -1047,7 +1072,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const totalAmount = details.reduce((s, d: any) => s + Number(d?.totalAmount || 0), 0);
     const totalBalance = details.reduce((s, d: any) => s + debtBalanceDue(d), 0);
     const totalCredit = details.reduce((s, d: any) => s + debtCredit(d), 0);
-    const totalPaid = details.reduce((s, d: any) => s + debtAmountPaid(d), 0);
+    const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
 
