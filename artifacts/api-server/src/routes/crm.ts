@@ -82,7 +82,6 @@ crmRouter.get("/crm", requireAuth, async (c) => {
     latestDebtAmount: number;
     latestDebtBalance: number;
     latestDebtStatus: string;
-    totalCredit: number;
   };
   const debtMap = new Map<string, DebtStats>();
   for (const d of debtRows) {
@@ -133,6 +132,7 @@ crmRouter.get("/crm", requireAuth, async (c) => {
     creditLimit: number | null;
     registered: boolean;
     totalBalance: number;
+    totalCredit: number;
     totalOwed: number;
     debtCount: number;
     activeCount: number;

@@ -651,7 +651,7 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   });
 
   const updatedDebt = await db
-    .select({ status: debts.status, shopId: debts.shopId })
+    .select({ status: debts.status, shopId: debts.shopId, balance: debts.balance })
     .from(debts)
     .where(eq(debts.id, debtId))
     .get();
@@ -666,6 +666,64 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
           eq(notifications.type, "debt_reminder"),
         ),
       );
+  }
+
+  // This payment may have overpaid the debt, in which case `updatedDebt.balance`
+  // is now negative — customer credit, per creditBalance()'s convention. Left
+  // alone, that credit would only ever get used the next time this customer
+  // buys on credit (POST /debts's auto-apply-at-creation) or via an explicit
+  // bulk payment — even if they already have OTHER open debts sitting right
+  // now that it could pay off. Sweep it into those debts immediately instead,
+  // oldest first, the same way POST /debts/customer-payment already does for
+  // a fresh incoming payment; only the leftover (if any) stays as credit here.
+  const overpayAmount = money(-(Number(updatedDebt?.balance ?? 0)));
+  if (overpayAmount > 0.005) {
+    const otherOutstanding = await getCustomerOutstandingDebts(db, debtBefore.shopId, debtBefore.customerName);
+    const { allocations, remaining } = allocatePayment(otherOutstanding, overpayAmount);
+    if (allocations.length > 0) {
+      const swept = money(overpayAmount - remaining);
+      const sweepPaymentIds = allocations.map(() => crypto.randomUUID());
+      await db.batch([
+        // Pull the swept portion off the credit parked on the debt we just paid...
+        db
+          .update(debts)
+          .set({ balance: sql`balance + ${swept}` })
+          .where(eq(debts.id, debtId)),
+        // ...and apply it to the customer's other open debts, oldest first.
+        ...allocations.map(({ debt, amount: portion }) =>
+          db
+            .update(debts)
+            .set({
+              amountPaid: sql`amount_paid + ${portion}`,
+              balance: sql`total_amount - amount_paid - ${portion}`,
+              status: sql`CASE WHEN amount_paid + ${portion} >= total_amount THEN 'paid' WHEN amount_paid + ${portion} > 0 THEN 'partial' ELSE 'unpaid' END`,
+              paidAt: sql`CASE WHEN amount_paid + ${portion} >= total_amount THEN COALESCE(paid_at, ${now}) ELSE NULL END`,
+            })
+            .where(eq(debts.id, debt.id)),
+        ),
+        ...allocations.map(({ debt, amount: portion }, i) =>
+          db.insert(debtPayments).values({
+            id: sweepPaymentIds[i],
+            debtId: debt.id,
+            amount: portion,
+            recordedBy: body.recordedBy ?? session.userName ?? null,
+            paidAt: now,
+            paymentType: "credit_applied",
+            reversalOfId: null,
+            note: "Applied from customer overpayment credit",
+          }),
+        ),
+      ]);
+
+      const sweptPaidOffIds = allocations
+        .filter(({ debt, amount: portion }) => money(Number(debt.balance) - portion) <= 0.005)
+        .map(({ debt }) => debt.id);
+      if (sweptPaidOffIds.length > 0) {
+        await db
+          .delete(notifications)
+          .where(and(inArray(notifications.debtId, sweptPaidOffIds), eq(notifications.type, "debt_reminder")));
+      }
+    }
   }
 
   const payment = await db
@@ -722,29 +780,37 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
   // one of these debts in that instant, the worst case is a few extra
   // shillings parked as credit instead of applied to that debt, never money
   // created, lost, or double-counted.
+  // Paired 1:1 with `allocations` by construction (same .map, same length),
+  // so the indexed lookups below always hit a real element — the `!`s just
+  // tell noUncheckedIndexedAccess what's already guaranteed structurally.
   const finalAmounts = allocations.map(({ amount: portion }, i) =>
     money(portion + (i === lastIndex ? remaining : 0)),
   );
   const paymentIds = allocations.map(() => crypto.randomUUID());
   const note = body.note ?? (allocations.length > 1 ? "Bulk payment — applied across debts" : null);
 
+  // db.batch() requires a statically non-empty tuple type; an array literal
+  // built entirely from spreads (as opposed to at least one literal leading
+  // element) can't carry that guarantee even though we've already checked
+  // allocations.length > 0 above. The cast just restates that runtime fact
+  // for the type checker.
   await db.batch([
     ...allocations.map(({ debt }, i) =>
       db
         .update(debts)
         .set({
-          amountPaid: sql`amount_paid + ${finalAmounts[i]}`,
-          balance: sql`total_amount - amount_paid - ${finalAmounts[i]}`,
-          status: sql`CASE WHEN amount_paid + ${finalAmounts[i]} >= total_amount THEN 'paid' WHEN amount_paid + ${finalAmounts[i]} > 0 THEN 'partial' ELSE 'unpaid' END`,
-          paidAt: sql`CASE WHEN amount_paid + ${finalAmounts[i]} >= total_amount THEN COALESCE(paid_at, ${now}) ELSE NULL END`,
+          amountPaid: sql`amount_paid + ${finalAmounts[i]!}`,
+          balance: sql`total_amount - amount_paid - ${finalAmounts[i]!}`,
+          status: sql`CASE WHEN amount_paid + ${finalAmounts[i]!} >= total_amount THEN 'paid' WHEN amount_paid + ${finalAmounts[i]!} > 0 THEN 'partial' ELSE 'unpaid' END`,
+          paidAt: sql`CASE WHEN amount_paid + ${finalAmounts[i]!} >= total_amount THEN COALESCE(paid_at, ${now}) ELSE NULL END`,
         })
         .where(eq(debts.id, debt.id)),
     ),
     ...allocations.map(({ debt }, i) =>
       db.insert(debtPayments).values({
-        id: paymentIds[i],
+        id: paymentIds[i]!,
         debtId: debt.id,
-        amount: finalAmounts[i],
+        amount: finalAmounts[i]!,
         recordedBy: body.recordedBy ?? session.userName ?? null,
         paidAt: now,
         paymentType: "payment",
@@ -752,7 +818,7 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
         note,
       }),
     ),
-  ]);
+  ] as unknown as Parameters<typeof db.batch>[0]);
 
   const affectedIds = allocations.map(({ debt }) => debt.id);
   const updatedDebts = await db.select().from(debts).where(inArray(debts.id, affectedIds)).all();
