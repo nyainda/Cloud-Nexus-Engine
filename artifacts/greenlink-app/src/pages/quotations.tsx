@@ -1,6 +1,9 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
-import { customFetch, useListProducts, useGetShop } from "@workspace/api-client-react";
+import {
+  customFetch, useListProducts, useGetShop,
+  getListProductsQueryKey, getGetShopQueryKey,
+} from "@workspace/api-client-react";
 import {
   Plus, Search, Trash2, ChevronLeft, Printer, CheckCircle2,
   XCircle, Clock, FileText, User, Phone, Mail, Calendar, StickyNote,
@@ -36,6 +39,8 @@ interface Quotation {
   discountAmount: number;
   total: number;
   items: QuotationItem[];
+  invoiceNumber: string | null;
+  invoiceIssuedAt: string | null;
   createdBy: string | null;
   createdAt: string;
 }
@@ -64,8 +69,14 @@ function StatusBadge({ status }: { status: Quotation["status"] }) {
 
 // ─── PDF generation ────────────────────────────────────────────────────────────
 
-async function downloadPdf(quotation: Quotation, shop: any) {
-  toast.loading("Generating PDF…", { id: "pdf" });
+async function downloadPdf(quotation: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation") {
+  const isInvoice = documentType === "invoice";
+  if (isInvoice && !quotation.invoiceNumber) {
+    toast.error("Issue an invoice first");
+    return;
+  }
+  const documentNumber = isInvoice ? quotation.invoiceNumber! : quotation.quoteNumber;
+  toast.loading(`Generating ${isInvoice ? "invoice" : "quotation"} PDF…`, { id: "pdf" });
   try {
     const { jsPDF } = await import("jspdf");
     const autoTable = (await import("jspdf-autotable")).default;
@@ -178,7 +189,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6);
       doc.setTextColor(180, 188, 200);
-      doc.text(`${shop?.name ?? ""}  ·  ${quotation.quoteNumber}  ·  continued`, ML, 6.5);
+      doc.text(`${shop?.name ?? ""}  ·  ${documentNumber}  ·  continued`, ML, 6.5);
       doc.text(`Page ${pg} of ${total}`, W - MR, 6.5, { align: "right" });
       // Reset graphics state so autotable inherits clean defaults after this hook
       doc.setFillColor(...WHITE);
@@ -239,7 +250,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...WHITE);
-    const qText  = "  QUOTATION  ";
+    const qText  = isInvoice ? "  INVOICE  " : "  QUOTATION  ";
     const qTextW = doc.getTextWidth(qText);
     const qTextX = W / 2 - qTextW / 2;
     doc.setDrawColor(...EMERALD);
@@ -264,12 +275,18 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     fieldRow(LBX, fy, LBW, "Phone / Mobile", quotation.customerPhone ?? "");   fy += GAP;
     fieldRow(LBX, fy, LBW, "Email",           quotation.customerEmail ?? "");
 
-    infoBox(RBX, y, RBW, INFO_H, "QUOTE DETAILS");
+    infoBox(RBX, y, RBW, INFO_H, isInvoice ? "INVOICE DETAILS" : "QUOTE DETAILS");
     let qy = y + 13;
-    fieldRow(RBX, qy, RBW, "Quotation No.", quotation.quoteNumber);            qy += GAP;
-    fieldRow(RBX, qy, RBW, "Date",          format(new Date(quotation.createdAt), "dd MMM yyyy")); qy += GAP;
-    if (quotation.validUntil) {
-      fieldRow(RBX, qy, RBW, "Valid Until", format(new Date(quotation.validUntil), "dd MMM yyyy"));
+    if (isInvoice) {
+      fieldRow(RBX, qy, RBW, "Invoice No.", documentNumber); qy += GAP;
+      fieldRow(RBX, qy, RBW, "Quote Ref.", quotation.quoteNumber); qy += GAP;
+      fieldRow(RBX, qy, RBW, "Invoice Date", format(new Date(quotation.invoiceIssuedAt ?? quotation.createdAt), "dd MMM yyyy"));
+    } else {
+      fieldRow(RBX, qy, RBW, "Quotation No.", quotation.quoteNumber);            qy += GAP;
+      fieldRow(RBX, qy, RBW, "Date",          format(new Date(quotation.createdAt), "dd MMM yyyy")); qy += GAP;
+      if (quotation.validUntil) {
+        fieldRow(RBX, qy, RBW, "Valid Until", format(new Date(quotation.validUntil), "dd MMM yyyy"));
+      }
     }
     y += INFO_H + 5;
 
@@ -346,12 +363,18 @@ async function downloadPdf(quotation: Quotation, shop: any) {
     const RCX = ML + LCW + 5;
 
     // Terms & Conditions
-    const defaultTerms = [
-      "Prices are valid for 30 days from date of quotation.",
-      "Prices are subject to change without prior notice.",
-      "Goods remain property of the shop until full payment received.",
-      "Delivery charges may apply depending on location.",
-    ];
+    const defaultTerms = isInvoice
+      ? [
+          "Payment is due upon receipt of this invoice.",
+          "Please use the invoice number as your payment reference.",
+          "Goods remain property of the shop until full payment is received.",
+        ]
+      : [
+          "Prices are valid for 30 days from date of quotation.",
+          "Prices are subject to change without prior notice.",
+          "Goods remain property of the shop until full payment received.",
+          "Delivery charges may apply depending on location.",
+        ];
     const termLines: string[] = quotation.notes
       ? (doc.splitTextToSize(quotation.notes, LCW - 12) as string[])
       : defaultTerms;
@@ -469,7 +492,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       totRow("SUBTOTAL", `KES ${quotation.subtotal.toLocaleString("en-KE")}`);
       totRow("DISCOUNT", `− KES ${quotation.discountAmount.toLocaleString("en-KE")}`);
     }
-    totRow("TOTAL AMOUNT", `KES ${quotation.total.toLocaleString("en-KE")}`, true);
+    totRow(isInvoice ? "AMOUNT DUE" : "TOTAL AMOUNT", `KES ${quotation.total.toLocaleString("en-KE")}`, true);
 
     // Thank you box
     const TY_BOX_Y = ry + 4;
@@ -521,7 +544,7 @@ async function downloadPdf(quotation: Quotation, shop: any) {
       .replace(/[^a-z0-9]/gi, "_")
       .replace(/_+/g, "_")
       .replace(/^_+|_+$/g, "");
-    doc.save(custSlug ? `${custSlug}_${quotation.quoteNumber}.pdf` : `${quotation.quoteNumber}.pdf`);
+    doc.save(custSlug ? `${custSlug}_${documentNumber}.pdf` : `${documentNumber}.pdf`);
     toast.success("PDF downloaded!", { id: "pdf" });
   } catch (err) {
     console.error(err);
@@ -531,15 +554,24 @@ async function downloadPdf(quotation: Quotation, shop: any) {
 
 // ─── WhatsApp ─────────────────────────────────────────────────────────────────
 
-function buildWhatsAppText(q: Quotation, shop: any): string {
+function buildWhatsAppText(q: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation"): string {
+  const isInvoice = documentType === "invoice" && !!q.invoiceNumber;
+  const documentNumber = isInvoice ? q.invoiceNumber! : q.quoteNumber;
   const lines: string[] = [
-    `*QUOTATION — ${q.quoteNumber}*`,
+    `*${isInvoice ? "INVOICE" : "QUOTATION"} — ${documentNumber}*`,
     `_${shop?.name ?? "Our Shop"}_`,
     "",
     `👤 *Customer:* ${q.customerName}`,
     ...(q.customerPhone ? [`📞 *Phone:* ${q.customerPhone}`] : []),
-    `📅 *Date:* ${format(new Date(q.createdAt), "dd MMM yyyy")}`,
-    ...(q.validUntil ? [`⏳ *Valid Until:* ${format(new Date(q.validUntil), "dd MMM yyyy")}`] : []),
+    ...(isInvoice
+      ? [
+          `📄 *Quotation Ref:* ${q.quoteNumber}`,
+          `📅 *Invoice Date:* ${format(new Date(q.invoiceIssuedAt ?? q.createdAt), "dd MMM yyyy")}`,
+        ]
+      : [
+          `📅 *Date:* ${format(new Date(q.createdAt), "dd MMM yyyy")}`,
+          ...(q.validUntil ? [`⏳ *Valid Until:* ${format(new Date(q.validUntil), "dd MMM yyyy")}`] : []),
+        ]),
     "",
     "*─── ITEMS ───*",
     ...q.items.map((item, i) =>
@@ -550,7 +582,7 @@ function buildWhatsAppText(q: Quotation, shop: any): string {
       `Subtotal: ${KES(q.subtotal)}`,
       `Discount: -${KES(q.discountAmount)}`,
     ] : []),
-    `*TOTAL: ${KES(q.total)}*`,
+    `*${isInvoice ? "AMOUNT DUE" : "TOTAL"}: ${KES(q.total)}*`,
     ...(q.notes ? ["", `📝 _${q.notes}_`] : []),
     "",
     "─────────────────",
@@ -563,8 +595,8 @@ function buildWhatsAppText(q: Quotation, shop: any): string {
   return lines.join("\n");
 }
 
-function shareWhatsApp(q: Quotation, shop: any) {
-  const text = buildWhatsAppText(q, shop);
+function shareWhatsApp(q: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation") {
+  const text = buildWhatsAppText(q, shop, documentType);
   const phone = q.customerPhone?.replace(/\D/g, "") ?? "";
   const url = phone
     ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
@@ -593,7 +625,7 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
         <span className="text-xs font-black text-[#C8FF00] font-mono">{quotation.quoteNumber}</span>
         <div className="flex-1" />
         <button
-          onClick={() => shareWhatsApp(quotation, shop)}
+          onClick={() => shareWhatsApp(quotation, shop, "quotation")}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/30 text-xs font-bold hover:bg-[#25D366]/30 transition-colors"
         >
           <MessageCircle className="h-3.5 w-3.5" />
@@ -826,7 +858,10 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  const { data: productsData } = useListProducts({ shopId, limit: 3000 }, { query: { enabled: !!shopId } });
+  const productParams = { shopId, limit: 3000 };
+  const { data: productsData } = useListProducts(productParams, {
+    query: { enabled: !!shopId, queryKey: getListProductsQueryKey(productParams) },
+  });
   const allProducts = useMemo(() => (productsData as any)?.products ?? [], [productsData]);
 
   const addedProductIds = useMemo(() => new Set(items.map(i => i.productId).filter(Boolean)), [items]);
@@ -1223,7 +1258,7 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
 
 // ─── Quotation Card ────────────────────────────────────────────────────────────
 
-function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onDownloadPdf, onConvertToSale }: {
+function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onDownloadPdf, onConvertToSale, onInvoice, invoiceBusy }: {
   q: Quotation;
   shop: any;
   onEdit: () => void;
@@ -1232,6 +1267,8 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
   onDelete: () => void;
   onDownloadPdf: () => void;
   onConvertToSale: () => void;
+  onInvoice: () => void;
+  invoiceBusy: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1249,6 +1286,11 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
             <div className="flex items-center gap-2 flex-wrap mb-1">
               <span className="text-sm font-black text-primary font-mono tracking-tight">{q.quoteNumber}</span>
               <StatusBadge status={q.status} />
+              {q.invoiceNumber && (
+                <span data-testid={`text-invoice-number-${q.id}`} className="text-[9px] font-black text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-1.5 py-0.5 rounded-full">
+                  {q.invoiceNumber}
+                </span>
+              )}
               {q.validUntil && new Date(q.validUntil) < new Date() && q.status !== "expired" && q.status !== "rejected" && q.status !== "accepted" && (
                 <span className="text-[9px] font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-full border border-amber-400/20">OVERDUE</span>
               )}
@@ -1284,6 +1326,17 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
           </button>
 
           <button
+            data-testid={`button-invoice-${q.id}`}
+            onClick={onInvoice}
+            disabled={invoiceBusy || (!q.invoiceNumber && q.status !== "accepted")}
+            title={q.invoiceNumber ? "Download issued invoice" : q.status === "accepted" ? "Issue an invoice from this accepted quotation" : "Mark this quotation as accepted before issuing an invoice"}
+            className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 text-[10px] font-black transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {invoiceBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+            <span>{invoiceBusy ? "Issuing…" : q.invoiceNumber ? "Invoice PDF" : q.status === "accepted" ? "Make invoice" : "Accept first"}</span>
+          </button>
+
+          <button
             onClick={() => setExpanded(v => !v)}
             className="h-7 px-2 flex items-center gap-1 rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors text-[10px] font-semibold"
           >
@@ -1294,9 +1347,9 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
           <div className="flex-1" />
 
           <button
-            onClick={() => shareWhatsApp(q, shop)}
+            onClick={() => shareWhatsApp(q, shop, q.invoiceNumber ? "invoice" : "quotation")}
             className="h-7 w-7 flex items-center justify-center rounded-lg text-[#25D366] hover:bg-[#25D366]/10 transition-colors"
-            title="Share via WhatsApp"
+            title={q.invoiceNumber ? "Share invoice via WhatsApp" : "Share quotation via WhatsApp"}
           >
             <MessageCircle className="h-3.5 w-3.5" />
           </button>
@@ -1314,15 +1367,18 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
           >
             <Eye className="h-3.5 w-3.5" />
           </button>
-          <button
-            onClick={onEdit}
-            className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/60 hover:text-primary hover:bg-primary/10 transition-colors"
-            title="Edit"
-          >
-            <Edit2 className="h-3.5 w-3.5" />
-          </button>
+          {!q.invoiceNumber && (
+            <button
+              onClick={onEdit}
+              className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/60 hover:text-primary hover:bg-primary/10 transition-colors"
+              title="Edit"
+              data-testid={`button-edit-quotation-${q.id}`}
+            >
+              <Edit2 className="h-3.5 w-3.5" />
+            </button>
+          )}
           {/* Status menu */}
-          <div className="relative">
+          {!q.invoiceNumber && <div className="relative">
             <button
               onClick={() => setMenuOpen(v => !v)}
               className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
@@ -1355,14 +1411,17 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
                 </div>
               </>
             )}
-          </div>
-          <button
-            onClick={onDelete}
-            className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-            title="Delete quotation"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          </div>}
+          {!q.invoiceNumber && (
+            <button
+              onClick={onDelete}
+              className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Delete quotation"
+              data-testid={`button-delete-quotation-${q.id}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1415,8 +1474,11 @@ export default function Quotations() {
   const [editTarget, setEditTarget] = useState<Quotation | null>(null);
   const [printTarget, setPrintTarget] = useState<Quotation | null>(null);
   const [clearingDrafts, setClearingDrafts] = useState(false);
+  const [invoiceBusyId, setInvoiceBusyId] = useState<string | null>(null);
 
-  const { data: shopData } = useGetShop(shopId, { query: { enabled: !!shopId } });
+  const { data: shopData } = useGetShop(shopId, {
+    query: { enabled: !!shopId, queryKey: getGetShopQueryKey(shopId) },
+  });
   const shop = shopData as any;
 
   const loadQuotations = useCallback(async () => {
@@ -1512,6 +1574,31 @@ export default function Quotations() {
     }));
     toast.success(`Loading ${q.quoteNumber} into POS…`);
     setLocation("/pos");
+  };
+
+  const handleInvoice = async (q: Quotation) => {
+    if (invoiceBusyId) return;
+    if (q.invoiceNumber) {
+      await downloadPdf(q, shop, "invoice");
+      return;
+    }
+    if (q.status !== "accepted") {
+      toast.info("Mark the quotation as accepted before issuing an invoice.");
+      return;
+    }
+    setInvoiceBusyId(q.id);
+    try {
+      const issued = await customFetch(`/api/quotations/${q.id}/invoice`, {
+        method: "POST",
+      }) as Quotation;
+      setQuoteList(prev => prev.map(item => item.id === issued.id ? issued : item));
+      toast.success(`${issued.invoiceNumber} issued`);
+      await downloadPdf(issued, shop, "invoice");
+    } catch (err: any) {
+      toast.error(err?.message ?? "Could not issue invoice");
+    } finally {
+      setInvoiceBusyId(null);
+    }
   };
 
   // Print view
@@ -1682,6 +1769,8 @@ export default function Quotations() {
                 onDelete={() => handleDelete(q)}
                 onDownloadPdf={() => downloadPdf(q, shop)}
                 onConvertToSale={() => handleConvertToSale(q)}
+                onInvoice={() => { void handleInvoice(q); }}
+                invoiceBusy={invoiceBusyId === q.id}
               />
             ))}
           </div>

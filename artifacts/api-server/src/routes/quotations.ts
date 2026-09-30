@@ -138,6 +138,9 @@ quotationsRouter.patch("/quotations/:id", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const existing = await db.select().from(quotations).where(eq(quotations.id, c.req.param("id"))).get();
   if (!existing) return c.json({ error: "Not found" }, 404);
+  if (existing.invoiceNumber) {
+    return c.json({ error: "This quotation has an issued invoice and can no longer be changed." }, 409);
+  }
 
   const patch: Partial<typeof quotations.$inferInsert> = {};
   if (body.status) patch.status = body.status;
@@ -168,9 +171,60 @@ quotationsRouter.patch("/quotations/:id", requireAuth, async (c) => {
   });
 });
 
+// ── Issue one immutable customer invoice from an accepted quotation ────────────
+quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const session = c.get("session");
+  const quotationId = c.req.param("id");
+  const existing = await db
+    .select()
+    .from(quotations)
+    .where(and(eq(quotations.id, quotationId), eq(quotations.shopId, session.shopId)))
+    .get();
+
+  if (!existing) return c.json({ error: "Quotation not found" }, 404);
+  if (existing.invoiceNumber) {
+    return c.json({
+      ...existing,
+      items: (() => { try { return JSON.parse(existing.itemsJson); } catch { return []; } })(),
+    });
+  }
+  if (existing.status !== "accepted") {
+    return c.json({ error: "Accept the quotation before issuing an invoice." }, 409);
+  }
+
+  // Derive the invoice number from the unique quote number. This makes retries
+  // idempotent and avoids allocating duplicate sequence numbers concurrently.
+  const invoiceNumber = `INV-${existing.quoteNumber.replace(/^Q-/i, "")}`;
+  const invoiceIssuedAt = new Date().toISOString();
+  await c.env.DB.prepare(`
+    UPDATE quotations
+    SET invoice_number = ?, invoice_issued_at = ?
+    WHERE id = ? AND shop_id = ? AND status = 'accepted' AND invoice_number IS NULL
+  `).bind(invoiceNumber, invoiceIssuedAt, quotationId, session.shopId).run();
+
+  const issued = await db
+    .select()
+    .from(quotations)
+    .where(and(eq(quotations.id, quotationId), eq(quotations.shopId, session.shopId)))
+    .get();
+  if (!issued?.invoiceNumber) {
+    return c.json({ error: "Could not issue invoice. Refresh and try again." }, 409);
+  }
+
+  return c.json({
+    ...issued,
+    items: (() => { try { return JSON.parse(issued.itemsJson); } catch { return []; } })(),
+  }, 201);
+});
+
 // ── Delete quotation ───────────────────────────────────────────────────────────
 quotationsRouter.delete("/quotations/:id", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
+  const existing = await db.select().from(quotations).where(eq(quotations.id, c.req.param("id"))).get();
+  if (existing?.invoiceNumber) {
+    return c.json({ error: "This quotation has an issued invoice and cannot be deleted." }, 409);
+  }
   await db.delete(quotations).where(eq(quotations.id, c.req.param("id")));
   return c.body(null, 204);
 });
