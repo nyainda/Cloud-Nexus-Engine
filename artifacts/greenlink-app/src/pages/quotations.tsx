@@ -1328,12 +1328,12 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
           <button
             data-testid={`button-invoice-${q.id}`}
             onClick={onInvoice}
-            disabled={invoiceBusy || (!q.invoiceNumber && q.status !== "accepted")}
-            title={q.invoiceNumber ? "Download issued invoice" : q.status === "accepted" ? "Issue an invoice from this accepted quotation" : "Mark this quotation as accepted before issuing an invoice"}
+            disabled={invoiceBusy}
+            title={q.invoiceNumber ? "Download issued invoice" : q.status === "accepted" ? "Issue an invoice from this accepted quotation" : "Accept this quotation and issue its invoice"}
             className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 text-[10px] font-black transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {invoiceBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-            <span>{invoiceBusy ? "Issuing…" : q.invoiceNumber ? "Invoice PDF" : q.status === "accepted" ? "Make invoice" : "Accept first"}</span>
+            <span>{invoiceBusy ? "Issuing…" : q.invoiceNumber ? "Invoice PDF" : q.status === "accepted" ? "Make invoice" : "Accept & invoice"}</span>
           </button>
 
           <button
@@ -1582,12 +1582,15 @@ export default function Quotations() {
       await downloadPdf(q, shop, "invoice");
       return;
     }
-    if (q.status !== "accepted") {
-      toast.info("Mark the quotation as accepted before issuing an invoice.");
-      return;
-    }
     setInvoiceBusyId(q.id);
     try {
+      if (q.status !== "accepted") {
+        const accepted = await customFetch(`/api/quotations/${q.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "accepted" }),
+        }) as Quotation;
+        setQuoteList(prev => prev.map(item => item.id === accepted.id ? accepted : item));
+      }
       const issued = await customFetch(`/api/quotations/${q.id}/invoice`, {
         method: "POST",
       }) as Quotation;
