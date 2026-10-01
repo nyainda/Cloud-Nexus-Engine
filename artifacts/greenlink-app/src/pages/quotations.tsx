@@ -860,7 +860,19 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
 
   const productParams = { shopId, limit: 3000 };
   const { data: productsData } = useListProducts(productParams, {
-    query: { enabled: !!shopId, queryKey: getListProductsQueryKey(productParams) },
+    // Every other page that loads the full catalog (POS, Stock, Reports,
+    // Alerts) sets staleTime/refetchInterval so they all share one cached
+    // fetch instead of re-requesting on every mount. This call was missing
+    // that, so opening Quotations always forced a fresh full-catalog read
+    // (up to ~3,000 rows) even seconds after POS had just fetched the same
+    // data — a large, avoidable chunk of D1 read-row volume.
+    query: {
+      enabled: !!shopId,
+      queryKey: getListProductsQueryKey(productParams),
+      staleTime: 1_800_000,
+      refetchInterval: 1_800_000,
+      refetchIntervalInBackground: false,
+    },
   });
   const allProducts = useMemo(() => (productsData as any)?.products ?? [], [productsData]);
 

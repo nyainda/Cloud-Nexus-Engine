@@ -1023,7 +1023,11 @@ export default function Reports() {
 
   const { data: productsData } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, staleTime: 1_800_000, gcTime: GC, refetchInterval: 1_800_000, refetchIntervalInBackground: false } }
+    // gcTime must be >= staleTime, or the cache entry gets evicted after 5
+    // idle minutes (GC) even though staleTime says it's good for 30 — any
+    // revisit after that forces a full ~3,000-row refetch instead of reusing
+    // what POS/Stock/Alerts already fetched moments earlier.
+    { query: { enabled: !!shopId, staleTime: 1_800_000, gcTime: 1_800_000, refetchInterval: 1_800_000, refetchIntervalInBackground: false } }
   );
 
   const lowMarginProducts = useMemo(() => {
