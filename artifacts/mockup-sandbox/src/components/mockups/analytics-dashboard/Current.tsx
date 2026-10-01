@@ -1,15 +1,9 @@
+import './_group.css';
 import { useState, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
-import {
-  useGetDashboard, useGetReportRange, useGetTopProducts,
-  useGetCategoryBreakdown, useGetHourlySales,
-  useListProducts, customFetch,
-} from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { formatKES } from "@/lib/format";
 import {
   TrendingUp, ShoppingBag, CreditCard, AlertTriangle,
   Package, TrendingDown, Percent, BarChart2, Trophy, Flame,
@@ -24,7 +18,10 @@ import {
   ResponsiveContainer, Cell,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import "./reports.css";
+
+function formatKES(amount: number): string {
+  return new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(amount);
+}
 
 // ─── PDF print helper ─────────────────────────────────────────────────────────
 function printCategoryPdf(categories: any[], period: string, shopName: string) {
@@ -501,6 +498,75 @@ function CashUpModal({ dashboard, shopName, onClose }: {
   );
 }
 
+
+
+const STATIC_TOP_PRODUCTS = [
+  { productId: "p-urea", productName: "Urea Fertilizer 50kg", totalQtySold: 42, totalRevenue: 252000, totalProfit: 37800 },
+  { productId: "p-dap", productName: "DAP Fertilizer 50kg", totalQtySold: 31, totalRevenue: 217000, totalProfit: 43400 },
+  { productId: "p-roundup", productName: "Roundup 1L", totalQtySold: 58, totalRevenue: 174000, totalProfit: 52200 },
+  { productId: "p-dithane", productName: "Dithane M-45 1kg", totalQtySold: 36, totalRevenue: 126000, totalProfit: 31500 },
+  { productId: "p-seed", productName: "Hybrid Maize Seed 2kg", totalQtySold: 24, totalRevenue: 96000, totalProfit: 24000 },
+];
+
+const STATIC_CATEGORIES = [
+  { category: "Fertilizers", totalRevenue: 498000, totalProfit: 91300, salesCount: 73, products: [
+    { productId: "p-urea", productName: "Urea Fertilizer 50kg", qtySold: 42, totalRevenue: 252000, totalProfit: 37800 },
+    { productId: "p-dap", productName: "DAP Fertilizer 50kg", qtySold: 31, totalRevenue: 217000, totalProfit: 43400 },
+    { productId: "p-can", productName: "CAN Fertilizer 50kg", qtySold: 6, totalRevenue: 29000, totalProfit: 10100 },
+  ] },
+  { category: "Crop Protection", totalRevenue: 386000, totalProfit: 101500, salesCount: 112, products: [
+    { productId: "p-roundup", productName: "Roundup 1L", qtySold: 58, totalRevenue: 174000, totalProfit: 52200 },
+    { productId: "p-dithane", productName: "Dithane M-45 1kg", qtySold: 36, totalRevenue: 126000, totalProfit: 31500 },
+    { productId: "p-atta", productName: "Attakan 100ml", qtySold: 18, totalRevenue: 86000, totalProfit: 17800 },
+  ] },
+  { category: "Seeds", totalRevenue: 224000, totalProfit: 58600, salesCount: 58, products: [
+    { productId: "p-seed", productName: "Hybrid Maize Seed 2kg", qtySold: 24, totalRevenue: 96000, totalProfit: 24000 },
+    { productId: "p-bean", productName: "Rosecoco Bean Seed 1kg", qtySold: 32, totalRevenue: 128000, totalProfit: 34600 },
+  ] },
+  { category: "Animal Health", totalRevenue: 142000, totalProfit: 39100, salesCount: 44, products: [
+    { productId: "p-dewormer", productName: "Albendazole Dewormer 1L", qtySold: 11, totalRevenue: 77000, totalProfit: 23100 },
+    { productId: "p-vitamins", productName: "Poultry Vitamins 500ml", qtySold: 13, totalRevenue: 65000, totalProfit: 16000 },
+  ] },
+];
+
+const STATIC_REPORT_RANGE = {
+  totalRevenue: 1250000, totalProfit: 290500, salesCount: 287, debtSales: 184000,
+  cashCollected: 94500, bankSales: 528000, cashOnlySales: 538000,
+  dailyBreakdown: Array.from({ length: 14 }, (_, index) => {
+    const date = new Date(); date.setDate(date.getDate() - (13 - index));
+    const revenue = 52000 + ((index * 13791) % 39000);
+    return { date: format(date, "yyyy-MM-dd"), revenue, profit: Math.round(revenue * 0.23), salesCount: 8 + ((index * 7) % 17) };
+  }),
+};
+const STATIC_PREVIOUS_RANGE = { totalRevenue: 1095000, totalProfit: 241000, salesCount: 263 };
+const STATIC_DASHBOARD = {
+  ...STATIC_REPORT_RANGE, cashSales: 68400, cashCollectedToday: 12600, pendingDebtsTotal: 87350,
+  lowStockCount: 7, outOfStockCount: 3,
+  topProducts: STATIC_TOP_PRODUCTS,
+};
+const STATIC_HOURLY_SALES = Array.from({ length: 24 }, (_, hour) => ({
+  hour, salesCount: hour >= 7 && hour <= 19 ? [0, 1, 3, 5, 8, 4, 7, 10, 6, 9, 4, 2, 0][hour - 7] ?? 0 : 0,
+}));
+const STATIC_INVENTORY_PRODUCTS = [
+  { id: "inv-1", canonicalName: "Poultry Feed 50kg", purchasePrice: 2940, sellingPrice: 3000, stockQty: 8, isActive: true },
+  { id: "inv-2", canonicalName: "Calcium Nitrate 25kg", purchasePrice: 4250, sellingPrice: 4400, stockQty: 3, isActive: true },
+  { id: "inv-3", canonicalName: "Hand Sprayer 16L", purchasePrice: 2180, sellingPrice: 2400, stockQty: 0, isActive: true },
+  { id: "inv-4", canonicalName: "Urea Fertilizer 50kg", purchasePrice: 4850, sellingPrice: 6000, stockQty: 24, isActive: true },
+  { id: "inv-5", canonicalName: "Maize Seed 2kg", purchasePrice: 2950, sellingPrice: 4000, stockQty: 17, isActive: true },
+  { id: "inv-6", canonicalName: "Dithane M-45 1kg", purchasePrice: 2625, sellingPrice: 3500, stockQty: 12, isActive: true },
+];
+const STATIC_VOIDED_SALES = [
+  { id: "void-1", createdAt: new Date().toISOString(), saleType: "cash", totalAmount: 4850, deleteReason: "Incorrect item scanned" },
+  { id: "void-2", createdAt: new Date(Date.now() - 3600000).toISOString(), saleType: "debt", totalAmount: 7200, deleteReason: "Customer changed order" },
+];
+const STATIC_SEARCH_PRODUCTS: ProductVariant[] = [
+  { productId: "search-urea", productName: "Urea Fertilizer 50kg", category: "Fertilizers", totalQty: 42, totalRevenue: 252000, totalProfit: 37800, salesCount: 39 },
+  { productId: "search-roundup", productName: "Roundup 1L", category: "Crop Protection", totalQty: 58, totalRevenue: 174000, totalProfit: 52200, salesCount: 52 },
+  { productId: "search-roundup-500", productName: "Roundup 500ml", category: "Crop Protection", totalQty: 27, totalRevenue: 54000, totalProfit: 16200, salesCount: 25 },
+  { productId: "search-dithane", productName: "Dithane M-45 1kg", category: "Crop Protection", totalQty: 36, totalRevenue: 126000, totalProfit: 31500, salesCount: 34 },
+  { productId: "search-seed", productName: "Hybrid Maize Seed 2kg", category: "Seeds", totalQty: 24, totalRevenue: 96000, totalProfit: 24000, salesCount: 21 },
+];
+
 type QuickRange = "today" | "week" | "month";
 
 const QUICK_RANGES: { value: QuickRange; label: string }[] = [
@@ -539,7 +605,7 @@ function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, change
   accentClass: string; isLoading?: boolean; changePct?: number | null;
 }) {
   return (
-    <Card className={cn("reports-kpi-card shadow-none", label === "Revenue" && "reports-kpi-hero")}>
+    <Card className="shadow-none">
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
           <div className={cn("w-8 h-8 rounded-lg border flex items-center justify-center", accentClass)}>
@@ -626,15 +692,19 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
     debounceRef.current = setTimeout(() => setQuery(v.trim()), 400);
   };
 
-  const { data, isLoading, isFetching } = useQuery<ProductSearchResult>({
-    queryKey: ["product-search", shopId, query, dateRange.from, dateRange.to],
-    queryFn:  () =>
-      customFetch(
-        `/api/reports/product-search?shopId=${encodeURIComponent(shopId)}&q=${encodeURIComponent(query)}&from=${dateRange.from}&to=${dateRange.to}`,
-      ) as Promise<ProductSearchResult>,
-    enabled:   !!shopId && query.length >= 2,
-    staleTime: 60_000,
-  });
+  const data = useMemo<ProductSearchResult | undefined>(() => {
+    if (query.length < 2) return undefined;
+    const variants = STATIC_SEARCH_PRODUCTS.filter(product => product.productName.toLowerCase().includes(query.toLowerCase()));
+    const summary = variants.length ? variants.reduce((total, product) => ({
+      totalQty: total.totalQty + product.totalQty,
+      totalRevenue: total.totalRevenue + product.totalRevenue,
+      totalProfit: total.totalProfit + product.totalProfit,
+      salesCount: total.salesCount + product.salesCount,
+    }), { totalQty: 0, totalRevenue: 0, totalProfit: 0, salesCount: 0 }) : null;
+    return { query, variants, summary };
+  }, [query]);
+  const isLoading = false;
+  const isFetching = false;
 
   const variants   = data?.variants ?? [];
   const summary    = data?.summary  ?? null;
@@ -649,7 +719,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
 
   const handleShare = () => {
     if (!summary || variants.length === 0) return;
-    const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
+    const shopName = "GreenLink Agrovet · Nakuru";
     const lines = [
       `📦 *${query.toUpperCase()} — Sales Report*`,
       `🏪 ${shopName}`,
@@ -684,7 +754,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
   ];
 
   return (
-    <Card className="reports-search-card shadow-none border-primary/10">
+    <Card className="shadow-none border-primary/10">
       <CardHeader className="pb-3 pt-4 px-4">
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -960,8 +1030,8 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
   );
 }
 
-export default function Reports() {
-  const shopId = localStorage.getItem("greenlink_shopId") || "";
+export function Current() {
+  const shopId = "greenlink-nakuru";
 
   const [quickRange, setQuickRange] = useState<QuickRange>("month");
   const [customFrom, setCustomFrom] = useState("");
@@ -969,7 +1039,7 @@ export default function Reports() {
   const [useCustom, setUseCustom] = useState(false);
   const [showCashUp, setShowCashUp] = useState(false);
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
-  const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
+  const shopName = "GreenLink Agrovet · Nakuru";
 
   const today = format(new Date(), "yyyy-MM-dd");
   const dateRange = useCustom && customFrom && customTo
@@ -978,53 +1048,21 @@ export default function Reports() {
 
   const isToday = dateRange.from === today && dateRange.to === today;
 
-  const { data: voidedSales } = useQuery({
-    queryKey: ["voided-sales", shopId, dateRange.from],
-    queryFn: async () => {
-      // customFetch returns parsed data directly and throws on non-2xx
-      const all = await customFetch(`/api/sales?shopId=${encodeURIComponent(shopId)}&date=${dateRange.from}&includeVoided=true&limit=100`) as any[];
-      return all.filter((s: any) => s.isDeleted);
-    },
-    enabled: !!shopId && isToday,
-    staleTime: 30_000,
-  });
+  const voidedSales = STATIC_VOIDED_SALES;
 
   const prevRange = useMemo(() => getPrevDateRange(dateRange.from, dateRange.to), [dateRange.from, dateRange.to]);
 
-  const { data: dashboard, isLoading: dashLoading } = useGetDashboard(
-    { shopId, date: today },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
-  );
-
-  const { data: reportRange, isLoading: rangeLoading } = useGetReportRange(
-    { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
-  );
-
-  const { data: prevReport } = useGetReportRange(
-    { shopId, from: prevRange.from, to: prevRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE * 10, gcTime: GC } }
-  );
-
-  const { data: topProducts, isLoading: topLoading } = useGetTopProducts(
-    { shopId, from: dateRange.from, to: dateRange.to, limit: 10 },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
-  );
-
-  const { data: categoryData, isLoading: catLoading } = useGetCategoryBreakdown(
-    { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
-  );
-
-  const { data: hourlyData } = useGetHourlySales(
-    { shopId, date: today },
-    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
-  );
-
-  const { data: productsData } = useListProducts(
-    { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, staleTime: 1_800_000, gcTime: GC, refetchInterval: 1_800_000, refetchIntervalInBackground: false } }
-  );
+  const dashboard = STATIC_DASHBOARD;
+  const dashLoading = false;
+  const reportRange = STATIC_REPORT_RANGE;
+  const rangeLoading = false;
+  const prevReport = STATIC_PREVIOUS_RANGE;
+  const topProducts = STATIC_TOP_PRODUCTS;
+  const topLoading = false;
+  const categoryData = STATIC_CATEGORIES;
+  const catLoading = false;
+  const hourlyData = STATIC_HOURLY_SALES;
+  const productsData = { products: STATIC_INVENTORY_PRODUCTS };
 
   const lowMarginProducts = useMemo(() => {
     const all = productsData?.products ?? [];
@@ -1085,7 +1123,7 @@ export default function Reports() {
   }, [hourlyData]);
 
   return (
-    <div className="reports-page flex flex-col min-h-full bg-background">
+    <div className="analytics-dashboard flex flex-col min-h-screen bg-background">
       {/* Cash-Up Modal */}
       {showCashUp && (
         <CashUpModal
@@ -1096,7 +1134,7 @@ export default function Reports() {
       )}
 
       {/* Header */}
-      <div className="reports-header sticky top-0 z-20 bg-background border-b border-border px-4 py-3 space-y-3">
+      <div className="sticky top-0 z-20 bg-background border-b border-border px-4 py-3 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-foreground">Analytics</h1>
@@ -1151,10 +1189,10 @@ export default function Reports() {
         )}
       </div>
 
-      <div className="reports-content p-4 space-y-4 pb-8">
+      <div className="p-4 space-y-4 pb-8">
 
         {/* KPI Grid */}
-        <div className="reports-kpis grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <KpiCard
             label="Revenue"
             value={formatKES(revenue)}
@@ -1193,7 +1231,7 @@ export default function Reports() {
 
         {/* Payment Method Breakdown */}
         {(bankSales > 0 || cashOnlySales > 0) && (
-          <div className="reports-payment rounded-2xl border border-border bg-card overflow-hidden">
+          <div className="rounded-2xl border border-border bg-card overflow-hidden">
             <div className="px-4 py-3 border-b border-border/50">
               <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Payment Methods</p>
             </div>
@@ -1242,7 +1280,7 @@ export default function Reports() {
 
         {/* Month-over-Month Comparison */}
         {prevReport && (
-          <Card className="reports-comparison shadow-none">
+          <Card className="shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
                 <Calendar className="h-4 w-4 text-blue-500" />
@@ -1326,7 +1364,7 @@ export default function Reports() {
         )}
 
         {/* Inventory Value — full-width */}
-        <Card className="reports-stock-value shadow-none">
+        <Card className="shadow-none">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -1351,7 +1389,7 @@ export default function Reports() {
 
         {/* Outstanding debts */}
         {dashboard?.pendingDebtsTotal != null && dashboard.pendingDebtsTotal > 0 && (
-          <Card className="reports-debt shadow-none border-destructive/40">
+          <Card className="shadow-none border-destructive/40">
             <CardContent className="p-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <TrendingDown className="h-4 w-4 text-destructive shrink-0" />
@@ -1366,7 +1404,7 @@ export default function Reports() {
         )}
 
         {/* Inventory health */}
-        <div className="reports-stock-alerts grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <Card className="shadow-none border-destructive/40">
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
@@ -1394,10 +1432,10 @@ export default function Reports() {
         </div>
 
         {/* Revenue + Profit + Transaction Count Chart */}
-        <Card className="reports-trend shadow-none">
+        <Card className="shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <CardTitle className="text-sm font-bold">Sales Trend</CardTitle>
+              <CardTitle className="text-sm font-bold">Monthly Sales Profile</CardTitle>
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary inline-block" />Revenue</span>
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Profit</span>
@@ -1499,7 +1537,7 @@ export default function Reports() {
 
         {/* Hourly Activity — today only */}
         {isToday && (
-          <Card className="reports-hourly shadow-none">
+          <Card className="shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-bold flex items-center gap-1.5">
@@ -1551,7 +1589,7 @@ export default function Reports() {
         )}
 
         {/* Top Selling Products */}
-        <Card className="reports-products shadow-none">
+        <Card className="shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-bold flex items-center gap-1.5">
               <Trophy className="h-4 w-4 text-amber-500" />
@@ -1619,7 +1657,7 @@ export default function Reports() {
         </Card>
 
         {/* Category Breakdown */}
-        <Card className="reports-categories shadow-none">
+        <Card className="shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
             <div className="flex items-center justify-between w-full gap-2">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
@@ -1820,7 +1858,7 @@ export default function Reports() {
 
         {/* Voided Sales (today only) */}
         {isToday && voidedSales && voidedSales.length > 0 && (
-          <Card className="reports-void shadow-none border-destructive/20">
+          <Card className="shadow-none border-destructive/20">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
                 <Ban className="h-4 w-4 text-destructive" />
@@ -1859,7 +1897,7 @@ export default function Reports() {
 
         {/* Low Margin Alert */}
         {lowMarginProducts.length > 0 && (
-          <Card className="reports-low-margin shadow-none">
+          <Card className="shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
                 <Flame className="h-4 w-4 text-orange-500" />
