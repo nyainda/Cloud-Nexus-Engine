@@ -1,10 +1,11 @@
 import { Hono } from "hono";
-import { eq, and, gte, lte, sql } from "drizzle-orm";
+import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, debtPayments, notifications } from "@workspace/db/schema";
 import { kvGet, kvSet, CK, CACHE_TTL } from "../lib/cache";
+import { chunk } from "../lib/chunk";
 
 const reportsRouter = new Hono<AppEnv>();
 
@@ -232,12 +233,26 @@ reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
 
-  const [items, allProducts] = await Promise.all([
-    db.select().from(saleItems).where(
-      sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${fromTs} AND created_at <= ${toTs}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-    ).all(),
-    db.select().from(products).where(shopId ? eq(products.shopId, shopId) : undefined).all(),
-  ]);
+  const items = await db.select().from(saleItems).where(
+    sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${fromTs} AND created_at <= ${toTs}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
+  ).all();
+
+  // Only need category/name for products that actually sold in this range —
+  // not the whole catalog. On a shop with 2,000+ products this previously
+  // read every row (every column) on every single report view regardless of
+  // date range, which is what was driving D1 read-row volume so high.
+  const productIds = Array.from(new Set(items.map((i) => i.productId).filter((id): id is string => !!id)));
+  const allProducts = productIds.length
+    ? (await Promise.all(
+        chunk(productIds).map((batch) =>
+          db
+            .select({ id: products.id, category: products.category, canonicalName: products.canonicalName })
+            .from(products)
+            .where(inArray(products.id, batch))
+            .all(),
+        ),
+      )).flat()
+    : [];
   const productCategoryMap = new Map(allProducts.map((p) => [p.id, p.category ?? "Uncategorized"]));
   const productNameMap = new Map(allProducts.map((p) => [p.id, p.canonicalName ?? p.id]));
 

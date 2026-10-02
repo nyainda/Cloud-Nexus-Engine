@@ -325,6 +325,8 @@ export const quotations = sqliteTable("quotations", {
   discountAmount: real("discount_amount").notNull().default(0),
   total: real("total").notNull().default(0),
   itemsJson: text("items_json").notNull().default("[]"),
+  invoiceNumber: text("invoice_number"),
+  invoiceIssuedAt: text("invoice_issued_at"),
   createdBy: text("created_by"),
   createdAt: createdAt(),
 });

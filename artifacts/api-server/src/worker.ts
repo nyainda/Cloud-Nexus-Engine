@@ -10,6 +10,26 @@ const SHOP_B_ID = "shop-sunrise";
 
 let bootstrapped = false;
 const BOOTSTRAP_MARKER = "schema-bootstrap-v2";
+const QUOTATION_INVOICE_MARKER = "quotation-invoice-v1";
+
+async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
+  for (const statement of [
+    "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
+    "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
+  ]) {
+    try { await db.prepare(statement).run(); } catch { /* column already exists */ }
+  }
+
+  const { results } = await db.prepare("PRAGMA table_info(quotations)").all();
+  const columns = new Set((results as Array<{ name: string }>).map(column => column.name));
+  if (!columns.has("invoice_number") || !columns.has("invoice_issued_at")) {
+    throw new Error("Could not add quotation invoice columns");
+  }
+  await db
+    .prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+    .bind(QUOTATION_INVOICE_MARKER, new Date().toISOString())
+    .run();
+}
 
 async function bootstrapD1(db: D1Database): Promise<void> {
   if (bootstrapped) return;
@@ -19,18 +39,25 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   // doing any bootstrap or migration DDL. Without this guard, every cold
   // isolate repeats the whole schema setup and can rebuild/drop the old FTS
   // table, consuming D1 row-write quota.
+  let marker: { key: string } | null = null;
   try {
-    const marker = await db
+    marker = await db
       .prepare("SELECT key FROM app_migrations WHERE key = ?")
       .bind(BOOTSTRAP_MARKER)
       .first<{ key: string }>();
-    if (marker) {
-      bootstrapped = true;
-      return;
-    }
   } catch {
     // The marker table is absent only on an uninitialized/legacy database.
     // The one-time bootstrap below creates it.
+  }
+
+  if (marker) {
+    const invoiceMarker = await db
+      .prepare("SELECT key FROM app_migrations WHERE key = ?")
+      .bind(QUOTATION_INVOICE_MARKER)
+      .first<{ key: string }>();
+    if (!invoiceMarker) await ensureQuotationInvoiceColumns(db);
+    bootstrapped = true;
+    return;
   }
 
   const statements = BOOTSTRAP_SQL.split(";")
@@ -126,6 +153,8 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       discount_amount REAL NOT NULL DEFAULT 0,
       total REAL NOT NULL DEFAULT 0,
       items_json TEXT NOT NULL DEFAULT '[]',
+      invoice_number TEXT,
+      invoice_issued_at TEXT,
       created_by TEXT,
       created_at TEXT NOT NULL
     )`,
@@ -203,6 +232,10 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       try { await db.prepare("CREATE INDEX IF NOT EXISTS idx_quotations_shop_status ON quotations(shop_id, status)").run(); } catch {}
     }
   } catch { /* quotations table may not exist yet — safe to skip */ }
+
+  // Invoice issuance is an additive migration; keep this after the legacy
+  // quotation-table repair above, which may recreate the table.
+  await ensureQuotationInvoiceColumns(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup

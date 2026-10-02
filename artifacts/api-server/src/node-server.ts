@@ -206,6 +206,8 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
         discount_amount REAL NOT NULL DEFAULT 0,
         total REAL NOT NULL DEFAULT 0,
         items_json TEXT NOT NULL DEFAULT '[]',
+        invoice_number TEXT,
+        invoice_issued_at TEXT,
         created_by TEXT,
         created_at TEXT NOT NULL
       )`).run();
@@ -307,6 +309,8 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     "ALTER TABLE quotations ADD COLUMN customer_email TEXT",
     "ALTER TABLE quotations ADD COLUMN discount_amount REAL DEFAULT 0",
     "ALTER TABLE quotations ADD COLUMN items_json TEXT DEFAULT '[]'",
+    "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
+    "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
   ];
   for (const m of MIGRATIONS) {
     try {

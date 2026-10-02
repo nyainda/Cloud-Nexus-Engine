@@ -222,6 +222,8 @@ CREATE TABLE IF NOT EXISTS quotations (
   discount_amount REAL NOT NULL DEFAULT 0,
   total REAL NOT NULL DEFAULT 0,
   items_json TEXT NOT NULL DEFAULT '[]',
+  invoice_number TEXT,
+  invoice_issued_at TEXT,
   created_by TEXT,
   created_at TEXT NOT NULL
 );

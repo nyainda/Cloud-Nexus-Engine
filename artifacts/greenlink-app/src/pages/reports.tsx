@@ -16,6 +16,7 @@ import {
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
   ClipboardCheck, X, Share2, CheckCheck, Wallet, ReceiptText, Ban,
   Download, Calendar, ChevronDown, ChevronUp, FileText, Search, SearchX,
+  RefreshCw,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
@@ -24,6 +25,7 @@ import {
   ResponsiveContainer, Cell,
 } from "recharts";
 import { cn } from "@/lib/utils";
+import "./reports.css";
 
 // ─── PDF print helper ─────────────────────────────────────────────────────────
 function printCategoryPdf(categories: any[], period: string, shopName: string) {
@@ -525,8 +527,8 @@ function getPrevDateRange(from: string, to: string): { from: string; to: string 
   return { from: format(prevFrom, "yyyy-MM-dd"), to: format(prevTo, "yyyy-MM-dd") };
 }
 
-const STALE = 60_000;
-const GC = 5 * 60_000;
+const STALE = 5 * 60_000;
+const GC = 30 * 60_000;
 
 const CATEGORY_COLORS = [
   "#C8FF00", "#22c55e", "#3b82f6", "#f59e0b", "#ec4899",
@@ -538,7 +540,7 @@ function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, change
   accentClass: string; isLoading?: boolean; changePct?: number | null;
 }) {
   return (
-    <Card className="shadow-none">
+    <Card className={cn("reports-kpi-card shadow-none", label === "Revenue" && "reports-kpi-hero")}>
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
           <div className={cn("w-8 h-8 rounded-lg border flex items-center justify-center", accentClass)}>
@@ -683,7 +685,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
   ];
 
   return (
-    <Card className="shadow-none border-primary/10">
+    <Card className="reports-search-card shadow-none border-primary/10">
       <CardHeader className="pb-3 pt-4 px-4">
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -968,6 +970,10 @@ export default function Reports() {
   const [useCustom, setUseCustom] = useState(false);
   const [showCashUp, setShowCashUp] = useState(false);
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
+  const [showSalesDetails, setShowSalesDetails] = useState(false);
+  const [showInventoryDetails, setShowInventoryDetails] = useState(false);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const [lastManualRefreshAt, setLastManualRefreshAt] = useState<number | null>(null);
   const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
 
   const today = format(new Date(), "yyyy-MM-dd");
@@ -977,7 +983,7 @@ export default function Reports() {
 
   const isToday = dateRange.from === today && dateRange.to === today;
 
-  const { data: voidedSales } = useQuery({
+  const { data: voidedSales, refetch: refetchVoidedSales } = useQuery({
     queryKey: ["voided-sales", shopId, dateRange.from],
     queryFn: async () => {
       // customFetch returns parsed data directly and throws on non-2xx
@@ -985,45 +991,65 @@ export default function Reports() {
       return all.filter((s: any) => s.isDeleted);
     },
     enabled: !!shopId && isToday,
-    staleTime: 30_000,
+    staleTime: STALE,
   });
 
   const prevRange = useMemo(() => getPrevDateRange(dateRange.from, dateRange.to), [dateRange.from, dateRange.to]);
 
-  const { data: dashboard, isLoading: dashLoading } = useGetDashboard(
+  const { data: dashboard, isLoading: dashLoading, refetch: refetchDashboard } = useGetDashboard(
     { shopId, date: today },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: reportRange, isLoading: rangeLoading } = useGetReportRange(
+  const { data: reportRange, isLoading: rangeLoading, refetch: refetchReportRange } = useGetReportRange(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: prevReport } = useGetReportRange(
+  const { data: prevReport, refetch: refetchPrevReport } = useGetReportRange(
     { shopId, from: prevRange.from, to: prevRange.to },
     { query: { enabled: !!shopId, staleTime: STALE * 10, gcTime: GC } }
   );
 
-  const { data: topProducts, isLoading: topLoading } = useGetTopProducts(
+  const { data: topProducts, isLoading: topLoading, refetch: refetchTopProducts } = useGetTopProducts(
     { shopId, from: dateRange.from, to: dateRange.to, limit: 10 },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: categoryData, isLoading: catLoading } = useGetCategoryBreakdown(
+  const { data: categoryData, isLoading: catLoading, refetch: refetchCategoryData } = useGetCategoryBreakdown(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: hourlyData } = useGetHourlySales(
+  const { data: hourlyData, refetch: refetchHourlySales } = useGetHourlySales(
     { shopId, date: today },
-    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: productsData } = useListProducts(
+  const { data: productsData, refetch: refetchProductsData } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, staleTime: 1_800_000, gcTime: GC, refetchInterval: 1_800_000, refetchIntervalInBackground: false } }
+    // The full catalog is fetched only when the optional inventory panels open.
+    // Other app pages can still warm and share the same query-cache entry.
+    { query: { enabled: !!shopId && showInventoryDetails, staleTime: 1_800_000, gcTime: 1_800_000 } }
   );
+
+  const refreshReportData = async () => {
+    if (isManualRefreshing) return;
+    setIsManualRefreshing(true);
+    try {
+      await Promise.all([
+        refetchDashboard(),
+        refetchReportRange(),
+        refetchPrevReport(),
+        ...(isToday ? [refetchHourlySales(), refetchVoidedSales()] : []),
+        ...(showSalesDetails ? [refetchTopProducts(), refetchCategoryData()] : []),
+        ...(showInventoryDetails ? [refetchProductsData()] : []),
+      ]);
+      setLastManualRefreshAt(Date.now());
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
 
   const lowMarginProducts = useMemo(() => {
     const all = productsData?.products ?? [];
@@ -1069,6 +1095,16 @@ export default function Reports() {
     ? ((revenue - prevReport.totalRevenue) / prevReport.totalRevenue) * 100 : null;
   const profitChangePct = prevReport?.totalProfit && prevReport.totalProfit > 0
     ? ((profit - prevReport.totalProfit) / prevReport.totalProfit) * 100 : null;
+  // Revenue and Profit show a trend badge but Avg Sale and Cash Collected
+  // didn't, even though the same previous-period data needed for both is
+  // already being fetched — just not used for these two. Filling that in
+  // for visual/informational consistency across all four KPI cards.
+  const prevAvgTx = (prevReport?.salesCount ?? 0) > 0
+    ? (prevReport!.totalRevenue ?? 0) / prevReport!.salesCount : 0;
+  const avgTxChangePct = prevAvgTx > 0 ? ((avgTxValue - prevAvgTx) / prevAvgTx) * 100 : null;
+  const prevCashCollected = (prevReport as any)?.cashCollected ?? 0;
+  const cashCollectedChangePct = prevCashCollected > 0
+    ? ((cashCollected - prevCashCollected) / prevCashCollected) * 100 : null;
 
   const hourlyChartData = useMemo(() => {
     if (!hourlyData) return [];
@@ -1084,7 +1120,7 @@ export default function Reports() {
   }, [hourlyData]);
 
   return (
-    <div className="flex flex-col min-h-screen bg-background">
+    <div className="reports-page flex flex-col min-h-full bg-background">
       {/* Cash-Up Modal */}
       {showCashUp && (
         <CashUpModal
@@ -1095,7 +1131,7 @@ export default function Reports() {
       )}
 
       {/* Header */}
-      <div className="sticky top-0 z-20 bg-background border-b border-border px-4 py-3 space-y-3">
+      <div className="reports-header sticky top-0 z-20 bg-background border-b border-border px-4 py-3 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-foreground">Analytics</h1>
@@ -1103,14 +1139,24 @@ export default function Reports() {
           </div>
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => void refreshReportData()}
+              disabled={isManualRefreshing}
+              title="Refresh the analytics reports now"
+              className="reports-header-refresh flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border bg-card text-foreground text-xs font-semibold hover:border-primary/50 disabled:opacity-60 transition-colors"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isManualRefreshing && "animate-spin")} />
+              {isManualRefreshing ? "Updating" : lastManualRefreshAt ? `Updated ${format(lastManualRefreshAt, "h:mm a")}` : "Refresh"}
+            </button>
+            <button
               onClick={() => setShowCashUp(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors"
             >
               <ClipboardCheck className="h-3.5 w-3.5" />
               Cash Up
             </button>
-            <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 text-[10px]">
-              Live
+            <Badge variant="outline" className="reports-status-badge text-muted-foreground border-border text-[10px]">
+              No polling
             </Badge>
           </div>
         </div>
@@ -1150,10 +1196,10 @@ export default function Reports() {
         )}
       </div>
 
-      <div className="p-4 space-y-4 pb-8">
+      <div className="reports-content p-4 space-y-4 pb-8">
 
         {/* KPI Grid */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="reports-kpis grid grid-cols-2 gap-3">
           <KpiCard
             label="Revenue"
             value={formatKES(revenue)}
@@ -1179,6 +1225,7 @@ export default function Reports() {
             icon={Percent}
             accentClass="border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400"
             isLoading={statsLoading}
+            changePct={avgTxChangePct}
           />
           <KpiCard
             label="Cash Collected"
@@ -1187,12 +1234,44 @@ export default function Reports() {
             icon={CreditCard}
             accentClass="border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950 text-orange-600 dark:text-orange-400"
             isLoading={statsLoading}
+            changePct={cashCollectedChangePct}
           />
+        </div>
+
+        <div className="reports-insight-controls" aria-label="Optional analytics details">
+          <button
+            type="button"
+            aria-expanded={showSalesDetails}
+            onClick={() => setShowSalesDetails(value => !value)}
+            className={cn("reports-insight-toggle", showSalesDetails && "is-open")}
+          >
+            <span className="reports-insight-icon"><BarChart2 className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-bold">Sales breakdown</span>
+              <span className="block text-xs text-muted-foreground">Top products and categories</span>
+            </span>
+            <span className="reports-insight-action">{showSalesDetails ? "Hide" : "Load"}</span>
+            {showSalesDetails ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+          <button
+            type="button"
+            aria-expanded={showInventoryDetails}
+            onClick={() => setShowInventoryDetails(value => !value)}
+            className={cn("reports-insight-toggle", showInventoryDetails && "is-open")}
+          >
+            <span className="reports-insight-icon"><Package className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-bold">Inventory details</span>
+              <span className="block text-xs text-muted-foreground">Stock value and margins</span>
+            </span>
+            <span className="reports-insight-action">{showInventoryDetails ? "Hide" : "Load"}</span>
+            {showInventoryDetails ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
         </div>
 
         {/* Payment Method Breakdown */}
         {(bankSales > 0 || cashOnlySales > 0) && (
-          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+          <div className="reports-payment rounded-2xl border border-border bg-card overflow-hidden">
             <div className="px-4 py-3 border-b border-border/50">
               <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Payment Methods</p>
             </div>
@@ -1241,7 +1320,7 @@ export default function Reports() {
 
         {/* Month-over-Month Comparison */}
         {prevReport && (
-          <Card className="shadow-none">
+          <Card className="reports-comparison shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
                 <Calendar className="h-4 w-4 text-blue-500" />
@@ -1324,8 +1403,9 @@ export default function Reports() {
           </Card>
         )}
 
-        {/* Inventory Value — full-width */}
-        <Card className="shadow-none">
+        {/* Full catalog analysis is opt-in to avoid an unnecessary 3,000-row read. */}
+        {showInventoryDetails && (
+        <Card className="reports-stock-value shadow-none">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -1347,10 +1427,11 @@ export default function Reports() {
             </div>
           </CardContent>
         </Card>
+        )}
 
         {/* Outstanding debts */}
         {dashboard?.pendingDebtsTotal != null && dashboard.pendingDebtsTotal > 0 && (
-          <Card className="shadow-none border-destructive/40">
+          <Card className="reports-debt shadow-none border-destructive/40">
             <CardContent className="p-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <TrendingDown className="h-4 w-4 text-destructive shrink-0" />
@@ -1365,7 +1446,7 @@ export default function Reports() {
         )}
 
         {/* Inventory health */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="reports-stock-alerts grid grid-cols-2 gap-3">
           <Card className="shadow-none border-destructive/40">
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
@@ -1393,10 +1474,10 @@ export default function Reports() {
         </div>
 
         {/* Revenue + Profit + Transaction Count Chart */}
-        <Card className="shadow-none">
+        <Card className="reports-trend shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <CardTitle className="text-sm font-bold">Monthly Sales Profile</CardTitle>
+              <CardTitle className="text-sm font-bold">Sales Trend</CardTitle>
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary inline-block" />Revenue</span>
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Profit</span>
@@ -1498,7 +1579,7 @@ export default function Reports() {
 
         {/* Hourly Activity — today only */}
         {isToday && (
-          <Card className="shadow-none">
+          <Card className="reports-hourly shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-bold flex items-center gap-1.5">
@@ -1549,8 +1630,10 @@ export default function Reports() {
           </Card>
         )}
 
+        {showSalesDetails && (
+        <>
         {/* Top Selling Products */}
-        <Card className="shadow-none">
+        <Card className="reports-products shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-bold flex items-center gap-1.5">
               <Trophy className="h-4 w-4 text-amber-500" />
@@ -1618,7 +1701,7 @@ export default function Reports() {
         </Card>
 
         {/* Category Breakdown */}
-        <Card className="shadow-none">
+        <Card className="reports-categories shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
             <div className="flex items-center justify-between w-full gap-2">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
@@ -1814,12 +1897,14 @@ export default function Reports() {
             })()}
           </CardContent>
         </Card>
+        </>
+        )}
 
         <ProductSearchSection shopId={shopId} />
 
         {/* Voided Sales (today only) */}
         {isToday && voidedSales && voidedSales.length > 0 && (
-          <Card className="shadow-none border-destructive/20">
+          <Card className="reports-void shadow-none border-destructive/20">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
                 <Ban className="h-4 w-4 text-destructive" />
@@ -1857,8 +1942,8 @@ export default function Reports() {
         )}
 
         {/* Low Margin Alert */}
-        {lowMarginProducts.length > 0 && (
-          <Card className="shadow-none">
+        {showInventoryDetails && lowMarginProducts.length > 0 && (
+          <Card className="reports-low-margin shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
                 <Flame className="h-4 w-4 text-orange-500" />
