@@ -535,6 +535,17 @@ const CATEGORY_COLORS = [
   "#8b5cf6", "#06b6d4", "#f97316", "#6366f1", "#14b8a6",
 ];
 
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+interface MonthlySalesResponse {
+  shopId: string;
+  year: number;
+  totalRevenue: number;
+  totalProfit: number;
+  totalSalesCount: number;
+  monthlyBreakdown: { month: number; revenue: number; profit: number; salesCount: number }[];
+}
+
 function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, changePct }: {
   label: string; value?: string; sub?: string; icon: React.ElementType;
   accentClass: string; isLoading?: boolean; changePct?: number | null;
@@ -972,11 +983,14 @@ export default function Reports() {
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const [showSalesDetails, setShowSalesDetails] = useState(false);
   const [showInventoryDetails, setShowInventoryDetails] = useState(false);
+  const [showMonthlySales, setShowMonthlySales] = useState(false);
+  const [monthlySalesYear, setMonthlySalesYear] = useState(() => new Date().getFullYear());
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [lastManualRefreshAt, setLastManualRefreshAt] = useState<number | null>(null);
   const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
 
   const today = format(new Date(), "yyyy-MM-dd");
+  const currentYear = new Date().getFullYear();
   const dateRange = useCustom && customFrom && customTo
     ? { from: customFrom, to: customTo }
     : getDateRange(quickRange);
@@ -1033,6 +1047,26 @@ export default function Reports() {
     { query: { enabled: !!shopId && showInventoryDetails, staleTime: 1_800_000, gcTime: 1_800_000 } }
   );
 
+  const {
+    data: monthlySales,
+    isLoading: monthlySalesLoading,
+    error: monthlySalesError,
+    refetch: refetchMonthlySales,
+  } = useQuery<MonthlySalesResponse>({
+    queryKey: ["reports", "monthly-sales", shopId, monthlySalesYear],
+    queryFn: () => customFetch<MonthlySalesResponse>(
+      `/api/reports/monthly-sales?shopId=${encodeURIComponent(shopId)}&year=${monthlySalesYear}`,
+    ),
+    enabled: !!shopId && showMonthlySales,
+    staleTime: monthlySalesYear === currentYear ? 15 * 60_000 : 30 * 60_000,
+    gcTime: GC,
+  });
+
+  const monthlySalesChartData = monthlySales?.monthlyBreakdown.map((month) => ({
+    ...month,
+    monthLabel: MONTH_LABELS[month.month - 1],
+  })) ?? [];
+
   const refreshReportData = async () => {
     if (isManualRefreshing) return;
     setIsManualRefreshing(true);
@@ -1044,6 +1078,7 @@ export default function Reports() {
         ...(isToday ? [refetchHourlySales(), refetchVoidedSales()] : []),
         ...(showSalesDetails ? [refetchTopProducts(), refetchCategoryData()] : []),
         ...(showInventoryDetails ? [refetchProductsData()] : []),
+        ...(showMonthlySales ? [refetchMonthlySales()] : []),
       ]);
       setLastManualRefreshAt(Date.now());
     } finally {
@@ -1267,7 +1302,100 @@ export default function Reports() {
             <span className="reports-insight-action">{showInventoryDetails ? "Hide" : "Load"}</span>
             {showInventoryDetails ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
           </button>
+          <button
+            type="button"
+            aria-expanded={showMonthlySales}
+            onClick={() => setShowMonthlySales(value => !value)}
+            className={cn("reports-insight-toggle", showMonthlySales && "is-open")}
+          >
+            <span className="reports-insight-icon"><Calendar className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-bold">Monthly sales</span>
+              <span className="block text-xs text-muted-foreground">Compare all 12 months</span>
+            </span>
+            <span className="reports-insight-action">{showMonthlySales ? "Hide" : "Load"}</span>
+            {showMonthlySales ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
         </div>
+
+        {showMonthlySales && (
+          <Card className="reports-monthly shadow-none">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <CardTitle className="text-sm font-bold">Monthly revenue</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">Revenue for all 12 months; yearly profit and transaction totals below</p>
+                </div>
+                <label className="reports-year-select">
+                  <span className="sr-only">Choose year</span>
+                  <select
+                    aria-label="Year for monthly sales"
+                    value={monthlySalesYear}
+                    onChange={event => setMonthlySalesYear(Number(event.target.value))}
+                  >
+                    {Array.from({ length: currentYear - 1999 }, (_, index) => currentYear - index).map(year => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="h-3.5 w-3.5 pointer-events-none text-muted-foreground" />
+                </label>
+              </div>
+            </CardHeader>
+            <CardContent className="px-3 pb-4">
+              {monthlySalesLoading ? (
+                <Skeleton className="h-[250px] w-full rounded-xl" />
+              ) : monthlySalesError ? (
+                <div className="reports-monthly-error" role="alert">
+                  <span>Monthly sales could not be loaded.</span>
+                  <Button variant="outline" size="sm" onClick={() => void refetchMonthlySales()}>Try again</Button>
+                </div>
+              ) : monthlySales ? (
+                <>
+                  <div className="reports-monthly-chart">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={monthlySalesChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="monthLabel"
+                          interval={0}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          width={48}
+                          tickFormatter={value => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : String(value)}
+                          tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          formatter={(value: number, name: string) => [formatKES(value), name === "revenue" ? "Revenue" : "Profit"]}
+                          labelFormatter={label => `${label} ${monthlySalesYear}`}
+                          contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
+                        />
+                        <Bar dataKey="revenue" name="Revenue" fill="#C8FF00" radius={[5, 5, 0, 0]} maxBarSize={34} isAnimationActive={false}>
+                          {monthlySalesChartData.map(month => (
+                            <Cell key={month.month} fill={month.month === new Date().getMonth() + 1 && monthlySalesYear === currentYear ? "#C8FF00" : "hsl(var(--primary) / 0.55)"} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  {monthlySales.totalSalesCount === 0 ? (
+                    <p className="reports-monthly-empty">No sales recorded in {monthlySalesYear}.</p>
+                  ) : (
+                    <div className="reports-monthly-totals">
+                      <div><span>YEAR REVENUE</span><strong>{formatKES(monthlySales.totalRevenue)}</strong></div>
+                      <div><span>GROSS PROFIT</span><strong>{formatKES(monthlySales.totalProfit)}</strong></div>
+                      <div><span>TRANSACTIONS</span><strong>{monthlySales.totalSalesCount.toLocaleString()}</strong></div>
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Payment Method Breakdown */}
         {(bankSales > 0 || cashOnlySales > 0) && (
