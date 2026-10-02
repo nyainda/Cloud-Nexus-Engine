@@ -16,6 +16,7 @@ import {
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
   ClipboardCheck, X, Share2, CheckCheck, Wallet, ReceiptText, Ban,
   Download, Calendar, ChevronDown, ChevronUp, FileText, Search, SearchX,
+  RefreshCw,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
@@ -526,8 +527,8 @@ function getPrevDateRange(from: string, to: string): { from: string; to: string 
   return { from: format(prevFrom, "yyyy-MM-dd"), to: format(prevTo, "yyyy-MM-dd") };
 }
 
-const STALE = 60_000;
-const GC = 5 * 60_000;
+const STALE = 5 * 60_000;
+const GC = 30 * 60_000;
 
 const CATEGORY_COLORS = [
   "#C8FF00", "#22c55e", "#3b82f6", "#f59e0b", "#ec4899",
@@ -969,6 +970,10 @@ export default function Reports() {
   const [useCustom, setUseCustom] = useState(false);
   const [showCashUp, setShowCashUp] = useState(false);
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
+  const [showSalesDetails, setShowSalesDetails] = useState(false);
+  const [showInventoryDetails, setShowInventoryDetails] = useState(false);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const [lastManualRefreshAt, setLastManualRefreshAt] = useState<number | null>(null);
   const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
 
   const today = format(new Date(), "yyyy-MM-dd");
@@ -978,7 +983,7 @@ export default function Reports() {
 
   const isToday = dateRange.from === today && dateRange.to === today;
 
-  const { data: voidedSales } = useQuery({
+  const { data: voidedSales, refetch: refetchVoidedSales } = useQuery({
     queryKey: ["voided-sales", shopId, dateRange.from],
     queryFn: async () => {
       // customFetch returns parsed data directly and throws on non-2xx
@@ -986,49 +991,65 @@ export default function Reports() {
       return all.filter((s: any) => s.isDeleted);
     },
     enabled: !!shopId && isToday,
-    staleTime: 30_000,
+    staleTime: STALE,
   });
 
   const prevRange = useMemo(() => getPrevDateRange(dateRange.from, dateRange.to), [dateRange.from, dateRange.to]);
 
-  const { data: dashboard, isLoading: dashLoading } = useGetDashboard(
+  const { data: dashboard, isLoading: dashLoading, refetch: refetchDashboard } = useGetDashboard(
     { shopId, date: today },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: reportRange, isLoading: rangeLoading } = useGetReportRange(
+  const { data: reportRange, isLoading: rangeLoading, refetch: refetchReportRange } = useGetReportRange(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: prevReport } = useGetReportRange(
+  const { data: prevReport, refetch: refetchPrevReport } = useGetReportRange(
     { shopId, from: prevRange.from, to: prevRange.to },
     { query: { enabled: !!shopId, staleTime: STALE * 10, gcTime: GC } }
   );
 
-  const { data: topProducts, isLoading: topLoading } = useGetTopProducts(
+  const { data: topProducts, isLoading: topLoading, refetch: refetchTopProducts } = useGetTopProducts(
     { shopId, from: dateRange.from, to: dateRange.to, limit: 10 },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: categoryData, isLoading: catLoading } = useGetCategoryBreakdown(
+  const { data: categoryData, isLoading: catLoading, refetch: refetchCategoryData } = useGetCategoryBreakdown(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: hourlyData } = useGetHourlySales(
+  const { data: hourlyData, refetch: refetchHourlySales } = useGetHourlySales(
     { shopId, date: today },
-    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: productsData } = useListProducts(
+  const { data: productsData, refetch: refetchProductsData } = useListProducts(
     { shopId, limit: 3000 },
-    // gcTime must be >= staleTime, or the cache entry gets evicted after 5
-    // idle minutes (GC) even though staleTime says it's good for 30 — any
-    // revisit after that forces a full ~3,000-row refetch instead of reusing
-    // what POS/Stock/Alerts already fetched moments earlier.
-    { query: { enabled: !!shopId, staleTime: 1_800_000, gcTime: 1_800_000, refetchInterval: 1_800_000, refetchIntervalInBackground: false } }
+    // The full catalog is fetched only when the optional inventory panels open.
+    // Other app pages can still warm and share the same query-cache entry.
+    { query: { enabled: !!shopId && showInventoryDetails, staleTime: 1_800_000, gcTime: 1_800_000 } }
   );
+
+  const refreshReportData = async () => {
+    if (isManualRefreshing) return;
+    setIsManualRefreshing(true);
+    try {
+      await Promise.all([
+        refetchDashboard(),
+        refetchReportRange(),
+        refetchPrevReport(),
+        ...(isToday ? [refetchHourlySales(), refetchVoidedSales()] : []),
+        ...(showSalesDetails ? [refetchTopProducts(), refetchCategoryData()] : []),
+        ...(showInventoryDetails ? [refetchProductsData()] : []),
+      ]);
+      setLastManualRefreshAt(Date.now());
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
 
   const lowMarginProducts = useMemo(() => {
     const all = productsData?.products ?? [];
@@ -1118,14 +1139,24 @@ export default function Reports() {
           </div>
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => void refreshReportData()}
+              disabled={isManualRefreshing}
+              title="Refresh the analytics reports now"
+              className="reports-header-refresh flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border bg-card text-foreground text-xs font-semibold hover:border-primary/50 disabled:opacity-60 transition-colors"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isManualRefreshing && "animate-spin")} />
+              {isManualRefreshing ? "Updating" : lastManualRefreshAt ? `Updated ${format(lastManualRefreshAt, "h:mm a")}` : "Refresh"}
+            </button>
+            <button
               onClick={() => setShowCashUp(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors"
             >
               <ClipboardCheck className="h-3.5 w-3.5" />
               Cash Up
             </button>
-            <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 text-[10px]">
-              Live
+            <Badge variant="outline" className="reports-status-badge text-muted-foreground border-border text-[10px]">
+              No polling
             </Badge>
           </div>
         </div>
@@ -1205,6 +1236,37 @@ export default function Reports() {
             isLoading={statsLoading}
             changePct={cashCollectedChangePct}
           />
+        </div>
+
+        <div className="reports-insight-controls" aria-label="Optional analytics details">
+          <button
+            type="button"
+            aria-expanded={showSalesDetails}
+            onClick={() => setShowSalesDetails(value => !value)}
+            className={cn("reports-insight-toggle", showSalesDetails && "is-open")}
+          >
+            <span className="reports-insight-icon"><BarChart2 className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-bold">Sales breakdown</span>
+              <span className="block text-xs text-muted-foreground">Top products and categories</span>
+            </span>
+            <span className="reports-insight-action">{showSalesDetails ? "Hide" : "Load"}</span>
+            {showSalesDetails ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+          <button
+            type="button"
+            aria-expanded={showInventoryDetails}
+            onClick={() => setShowInventoryDetails(value => !value)}
+            className={cn("reports-insight-toggle", showInventoryDetails && "is-open")}
+          >
+            <span className="reports-insight-icon"><Package className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-bold">Inventory details</span>
+              <span className="block text-xs text-muted-foreground">Stock value and margins</span>
+            </span>
+            <span className="reports-insight-action">{showInventoryDetails ? "Hide" : "Load"}</span>
+            {showInventoryDetails ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
         </div>
 
         {/* Payment Method Breakdown */}
@@ -1341,7 +1403,8 @@ export default function Reports() {
           </Card>
         )}
 
-        {/* Inventory Value — full-width */}
+        {/* Full catalog analysis is opt-in to avoid an unnecessary 3,000-row read. */}
+        {showInventoryDetails && (
         <Card className="reports-stock-value shadow-none">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
@@ -1364,6 +1427,7 @@ export default function Reports() {
             </div>
           </CardContent>
         </Card>
+        )}
 
         {/* Outstanding debts */}
         {dashboard?.pendingDebtsTotal != null && dashboard.pendingDebtsTotal > 0 && (
@@ -1566,6 +1630,8 @@ export default function Reports() {
           </Card>
         )}
 
+        {showSalesDetails && (
+        <>
         {/* Top Selling Products */}
         <Card className="reports-products shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
@@ -1831,6 +1897,8 @@ export default function Reports() {
             })()}
           </CardContent>
         </Card>
+        </>
+        )}
 
         <ProductSearchSection shopId={shopId} />
 
@@ -1874,7 +1942,7 @@ export default function Reports() {
         )}
 
         {/* Low Margin Alert */}
-        {lowMarginProducts.length > 0 && (
+        {showInventoryDetails && lowMarginProducts.length > 0 && (
           <Card className="reports-low-margin shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">
