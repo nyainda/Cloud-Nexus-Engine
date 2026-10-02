@@ -1074,6 +1074,16 @@ export default function Reports() {
     ? ((revenue - prevReport.totalRevenue) / prevReport.totalRevenue) * 100 : null;
   const profitChangePct = prevReport?.totalProfit && prevReport.totalProfit > 0
     ? ((profit - prevReport.totalProfit) / prevReport.totalProfit) * 100 : null;
+  // Revenue and Profit show a trend badge but Avg Sale and Cash Collected
+  // didn't, even though the same previous-period data needed for both is
+  // already being fetched — just not used for these two. Filling that in
+  // for visual/informational consistency across all four KPI cards.
+  const prevAvgTx = (prevReport?.salesCount ?? 0) > 0
+    ? (prevReport!.totalRevenue ?? 0) / prevReport!.salesCount : 0;
+  const avgTxChangePct = prevAvgTx > 0 ? ((avgTxValue - prevAvgTx) / prevAvgTx) * 100 : null;
+  const prevCashCollected = (prevReport as any)?.cashCollected ?? 0;
+  const cashCollectedChangePct = prevCashCollected > 0
+    ? ((cashCollected - prevCashCollected) / prevCashCollected) * 100 : null;
 
   const hourlyChartData = useMemo(() => {
     if (!hourlyData) return [];
@@ -1184,6 +1194,7 @@ export default function Reports() {
             icon={Percent}
             accentClass="border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400"
             isLoading={statsLoading}
+            changePct={avgTxChangePct}
           />
           <KpiCard
             label="Cash Collected"
@@ -1192,6 +1203,7 @@ export default function Reports() {
             icon={CreditCard}
             accentClass="border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950 text-orange-600 dark:text-orange-400"
             isLoading={statsLoading}
+            changePct={cashCollectedChangePct}
           />
         </div>
 
