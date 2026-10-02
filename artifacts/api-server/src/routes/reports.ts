@@ -180,6 +180,61 @@ reportsRouter.get("/reports/range", requireAuth, async (c) => {
   });
 });
 
+reportsRouter.get("/reports/monthly-sales", requireAuth, async (c) => {
+  const db = createDb(c.env.DB);
+  const shopId = c.req.query("shopId");
+  const rawYear = c.req.query("year");
+  const year = Number(rawYear);
+  const currentYear = new Date().getFullYear();
+
+  if (!shopId) return c.json({ error: "shopId is required" }, 400);
+  if (!/^\d{4}$/.test(rawYear ?? "") || !Number.isInteger(year) || year < 2000 || year > currentYear) {
+    return c.json({ error: `year must be between 2000 and ${currentYear}` }, 400);
+  }
+
+  const fromTs = `${year}-01-01T00:00:00.000Z`;
+  const toTs = `${year}-12-31T23:59:59.999Z`;
+  const groupedRows = await db
+    .select({
+      month: sql<number>`CAST(strftime('%m', ${sales.createdAt}) AS INTEGER)`,
+      revenue: sql<number>`COALESCE(SUM(${sales.totalAmount}), 0)`,
+      profit: sql<number>`COALESCE(SUM(${sales.totalProfit}), 0)`,
+      salesCount: sql<number>`COUNT(*)`,
+    })
+    .from(sales)
+    .where(
+      and(
+        eq(sales.shopId, shopId),
+        eq(sales.isDeleted, false),
+        gte(sales.createdAt, fromTs),
+        lte(sales.createdAt, toTs),
+      ),
+    )
+    .groupBy(sql`strftime('%m', ${sales.createdAt})`)
+    .all();
+
+  const groupedByMonth = new Map(groupedRows.map((row) => [row.month, row]));
+  const monthlyBreakdown = Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1;
+    const row = groupedByMonth.get(month);
+    return {
+      month,
+      revenue: row?.revenue ?? 0,
+      profit: row?.profit ?? 0,
+      salesCount: row?.salesCount ?? 0,
+    };
+  });
+
+  return c.json({
+    shopId,
+    year,
+    totalRevenue: monthlyBreakdown.reduce((total, month) => total + month.revenue, 0),
+    totalProfit: monthlyBreakdown.reduce((total, month) => total + month.profit, 0),
+    totalSalesCount: monthlyBreakdown.reduce((total, month) => total + month.salesCount, 0),
+    monthlyBreakdown,
+  });
+});
+
 reportsRouter.get("/reports/top-products", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const shopId = c.req.query("shopId") ?? null;
