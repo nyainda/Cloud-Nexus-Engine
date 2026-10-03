@@ -90,6 +90,7 @@ function debtGenuineCashReceived(debt: any): number {
     .filter(
       (p: any) =>
         p.paymentType !== "reversal" &&
+        Number(p.amount) >= 0 &&
         p.paymentType !== "credit_applied" &&
         !reversedIds.has(p.id),
     )
@@ -673,6 +674,10 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       ?? shops.find((s: any) => s.id === debt?.shopId)
       ?? shops[0]
       ?? { name: "GreenLink", id: shopId };
+    if (debt?.status === "cancelled") {
+      toast.error("No current debt record is available for a statement.", { id: "debt-pdf" });
+      return;
+    }
     const payments: any[] = debt?.payments ?? [];
     const items: any[]    = debt?.items    ?? [];
     const productSummary = debtProductSummary(items);
@@ -913,7 +918,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       payments.filter((p: any) => p.paymentType === "reversal" && p.reversalOfId).map((p: any) => p.reversalOfId),
     );
     const printablePayments = payments.filter(
-      (p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id),
+      (p: any) => p.paymentType !== "reversal" && Number(p.amount) >= 0 && !reversedPaymentIds.has(p.id),
     );
     for (const p of printablePayments) {
       const paymentAmount = Number(p.amount || 0);
@@ -921,7 +926,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       running -= paymentAmount;
       histRows.push({
         cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", productSummary,
-          `Payment Received${p.note ? ` · ${p.note}` : ""}`,
+          p.paymentType === "credit_applied"
+            ? "Customer credit applied"
+            : `Payment Received${p.note ? ` · ${p.note}` : ""}`,
           `KES ${paymentAmount.toLocaleString("en-KE")}`,
           `KES ${Math.max(0, running).toLocaleString("en-KE")}`],
         isOpened: false,
@@ -1054,10 +1061,22 @@ function DebtDownloadButton({ debt }: { debt: any }) {
 async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
   toast.loading("Generating customer statement…", { id: "customer-debt-pdf" });
   try {
-    const [shopsData, ...details] = await Promise.all([
+    const currentDebts = group.debts.filter((debt: any) => debt.status !== "cancelled");
+    if (currentDebts.length === 0) {
+      toast.error("No current debt records are available for a statement.", { id: "customer-debt-pdf" });
+      return;
+    }
+    const [shopsData, ...fetchedDetails] = await Promise.all([
       customFetch<any[]>("/api/shops"),
-      ...group.debts.map((d: any) => customFetch<any>(`/api/debts/${d.id}`)),
+      ...currentDebts.map((d: any) => customFetch<any>(`/api/debts/${d.id}`)),
     ]);
+    // Re-check server-fresh statuses so a record cancelled after the customer
+    // list loaded cannot leak into this statement.
+    const details = fetchedDetails.filter((debt: any) => debt?.status !== "cancelled");
+    if (details.length === 0) {
+      toast.error("No current debt records are available for a statement.", { id: "customer-debt-pdf" });
+      return;
+    }
     const shop = (Array.isArray(shopsData) ? shopsData : []).find((s: any) => s.id === shopId) ?? { name: "GreenLink" };
     const { jsPDF } = await import("jspdf");
     const autoTable = (await import("jspdf-autotable")).default;
@@ -1127,7 +1146,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
         `#${String(d.id).slice(0, 8).toUpperCase()}`,
         format(new Date(d.createdAt), "dd MMM yyyy"),
         `${compactDebtProductSummary(d.items)}${d.notes ? ` · ${String(d.notes).slice(0, 42)}` : ""}`,
-         d.status === "cancelled" ? "VOIDED" : d.status === "paid" ? (debtCredit(d) > 0 ? "PAID + CREDIT" : "PAID") : d.status === "partial" ? "PARTIAL" : "UNPAID",
+         d.status === "paid" ? (debtCredit(d) > 0 ? "PAID + CREDIT" : "PAID") : d.status === "partial" ? "PARTIAL" : "UNPAID",
          money(d.totalAmount), money(debtAmountPaid(d)), money(debtBalanceDue(d)),
       ]),
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
@@ -1181,7 +1200,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
           .map((p: any) => p.reversalOfId),
       );
       const printablePayments = (d.payments || [])
-        .filter((p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id))
+        .filter((p: any) => p.paymentType !== "reversal" && Number(p.amount) >= 0 && !reversedPaymentIds.has(p.id))
       let running = Number(d.totalAmount || 0);
       return printablePayments.flatMap((p: any) => {
         const paymentAmount = Number(p.amount || 0);
@@ -1191,7 +1210,9 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
           format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
           `#${String(d.id).slice(0, 8).toUpperCase()}`,
           compactDebtProductSummary(d.items),
-          `Payment received${p.note ? ` · ${p.note}` : ""}`,
+          p.paymentType === "credit_applied"
+            ? "Customer credit applied"
+            : `Payment received${p.note ? ` · ${p.note}` : ""}`,
           p.recordedBy || "—",
           money(paymentAmount),
         ]];
@@ -1235,7 +1256,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     });
     doc.setDrawColor(...border); doc.line(ML, H - 13, W - MR, H - 13);
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...muted);
-    doc.text("This statement includes all debt records currently grouped under this customer.", ML, H - 8);
+    doc.text("This statement shows the customer's current debt balances, payments, and credit.", ML, H - 8);
     const safeName = group.customerName.replace(/[^a-z0-9]/gi, "_");
     doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
     toast.success("Customer statement downloaded!", { id: "customer-debt-pdf" });
@@ -1248,6 +1269,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
 function CustomerDownloadButton({ group }: { group: CustomerGroup }) {
   const [loading, setLoading] = useState(false);
   const shopId = localStorage.getItem("greenlink_shopId") || "";
+  if (!group.debts.some((debt: any) => debt.status !== "cancelled")) return null;
   return (
     <button
       onClick={async (e) => { e.stopPropagation(); if (loading) return; setLoading(true); try { await downloadCustomerPdf(group, shopId); } finally { setLoading(false); } }}
@@ -2053,9 +2075,14 @@ function DebtHistoryPanel({ debtId }: { debtId: string }) {
         <span className="text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? "s" : ""}</span>
         <div className="text-right">
           <p className="text-[10px] text-muted-foreground/50">Balance remaining</p>
-          <p className={cn("text-sm font-bold font-mono", (data as any)?.balance === 0 ? "text-emerald-400" : "text-destructive")}>
-            {formatKES((data as any)?.balance ?? 0)}
+          <p className={cn("text-sm font-bold font-mono", debtBalanceDue(data) === 0 ? "text-emerald-400" : "text-destructive")}>
+            {formatKES(debtBalanceDue(data))}
           </p>
+          {debtCredit(data) > 0 && (
+            <p className="text-[10px] text-emerald-400 font-semibold">
+              +{formatKES(debtCredit(data))} customer credit
+            </p>
+          )}
         </div>
       </div>
       </div>

@@ -16,6 +16,7 @@ import {
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
   ClipboardCheck, X, Share2, CheckCheck, Wallet, ReceiptText, Ban,
   Download, Calendar, ChevronDown, ChevronUp, FileText, Search, SearchX,
+  RefreshCw,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
@@ -526,13 +527,24 @@ function getPrevDateRange(from: string, to: string): { from: string; to: string 
   return { from: format(prevFrom, "yyyy-MM-dd"), to: format(prevTo, "yyyy-MM-dd") };
 }
 
-const STALE = 60_000;
-const GC = 5 * 60_000;
+const STALE = 5 * 60_000;
+const GC = 30 * 60_000;
 
 const CATEGORY_COLORS = [
   "#C8FF00", "#22c55e", "#3b82f6", "#f59e0b", "#ec4899",
   "#8b5cf6", "#06b6d4", "#f97316", "#6366f1", "#14b8a6",
 ];
+
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+interface MonthlySalesResponse {
+  shopId: string;
+  year: number;
+  totalRevenue: number;
+  totalProfit: number;
+  totalSalesCount: number;
+  monthlyBreakdown: { month: number; revenue: number; profit: number; salesCount: number }[];
+}
 
 function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, changePct }: {
   label: string; value?: string; sub?: string; icon: React.ElementType;
@@ -969,16 +981,23 @@ export default function Reports() {
   const [useCustom, setUseCustom] = useState(false);
   const [showCashUp, setShowCashUp] = useState(false);
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
+  const [showSalesDetails, setShowSalesDetails] = useState(false);
+  const [showInventoryDetails, setShowInventoryDetails] = useState(false);
+  const [showMonthlySales, setShowMonthlySales] = useState(false);
+  const [monthlySalesYear, setMonthlySalesYear] = useState(() => new Date().getFullYear());
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const [lastManualRefreshAt, setLastManualRefreshAt] = useState<number | null>(null);
   const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
 
   const today = format(new Date(), "yyyy-MM-dd");
+  const currentYear = new Date().getFullYear();
   const dateRange = useCustom && customFrom && customTo
     ? { from: customFrom, to: customTo }
     : getDateRange(quickRange);
 
   const isToday = dateRange.from === today && dateRange.to === today;
 
-  const { data: voidedSales } = useQuery({
+  const { data: voidedSales, refetch: refetchVoidedSales } = useQuery({
     queryKey: ["voided-sales", shopId, dateRange.from],
     queryFn: async () => {
       // customFetch returns parsed data directly and throws on non-2xx
@@ -986,49 +1005,86 @@ export default function Reports() {
       return all.filter((s: any) => s.isDeleted);
     },
     enabled: !!shopId && isToday,
-    staleTime: 30_000,
+    staleTime: STALE,
   });
 
   const prevRange = useMemo(() => getPrevDateRange(dateRange.from, dateRange.to), [dateRange.from, dateRange.to]);
 
-  const { data: dashboard, isLoading: dashLoading } = useGetDashboard(
+  const { data: dashboard, isLoading: dashLoading, refetch: refetchDashboard } = useGetDashboard(
     { shopId, date: today },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: reportRange, isLoading: rangeLoading } = useGetReportRange(
+  const { data: reportRange, isLoading: rangeLoading, refetch: refetchReportRange } = useGetReportRange(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: prevReport } = useGetReportRange(
+  const { data: prevReport, refetch: refetchPrevReport } = useGetReportRange(
     { shopId, from: prevRange.from, to: prevRange.to },
     { query: { enabled: !!shopId, staleTime: STALE * 10, gcTime: GC } }
   );
 
-  const { data: topProducts, isLoading: topLoading } = useGetTopProducts(
+  const { data: topProducts, isLoading: topLoading, refetch: refetchTopProducts } = useGetTopProducts(
     { shopId, from: dateRange.from, to: dateRange.to, limit: 10 },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: categoryData, isLoading: catLoading } = useGetCategoryBreakdown(
+  const { data: categoryData, isLoading: catLoading, refetch: refetchCategoryData } = useGetCategoryBreakdown(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: hourlyData } = useGetHourlySales(
+  const { data: hourlyData, refetch: refetchHourlySales } = useGetHourlySales(
     { shopId, date: today },
-    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC } }
   );
 
-  const { data: productsData } = useListProducts(
+  const { data: productsData, refetch: refetchProductsData } = useListProducts(
     { shopId, limit: 3000 },
-    // gcTime must be >= staleTime, or the cache entry gets evicted after 5
-    // idle minutes (GC) even though staleTime says it's good for 30 — any
-    // revisit after that forces a full ~3,000-row refetch instead of reusing
-    // what POS/Stock/Alerts already fetched moments earlier.
-    { query: { enabled: !!shopId, staleTime: 1_800_000, gcTime: 1_800_000, refetchInterval: 1_800_000, refetchIntervalInBackground: false } }
+    // The full catalog is fetched only when the optional inventory panels open.
+    // Other app pages can still warm and share the same query-cache entry.
+    { query: { enabled: !!shopId && showInventoryDetails, staleTime: 1_800_000, gcTime: 1_800_000 } }
   );
+
+  const {
+    data: monthlySales,
+    isLoading: monthlySalesLoading,
+    error: monthlySalesError,
+    refetch: refetchMonthlySales,
+  } = useQuery<MonthlySalesResponse>({
+    queryKey: ["reports", "monthly-sales", shopId, monthlySalesYear],
+    queryFn: () => customFetch<MonthlySalesResponse>(
+      `/api/reports/monthly-sales?shopId=${encodeURIComponent(shopId)}&year=${monthlySalesYear}`,
+    ),
+    enabled: !!shopId && showMonthlySales,
+    staleTime: monthlySalesYear === currentYear ? 15 * 60_000 : 30 * 60_000,
+    gcTime: GC,
+  });
+
+  const monthlySalesChartData = monthlySales?.monthlyBreakdown.map((month) => ({
+    ...month,
+    monthLabel: MONTH_LABELS[month.month - 1],
+  })) ?? [];
+
+  const refreshReportData = async () => {
+    if (isManualRefreshing) return;
+    setIsManualRefreshing(true);
+    try {
+      await Promise.all([
+        refetchDashboard(),
+        refetchReportRange(),
+        refetchPrevReport(),
+        ...(isToday ? [refetchHourlySales(), refetchVoidedSales()] : []),
+        ...(showSalesDetails ? [refetchTopProducts(), refetchCategoryData()] : []),
+        ...(showInventoryDetails ? [refetchProductsData()] : []),
+        ...(showMonthlySales ? [refetchMonthlySales()] : []),
+      ]);
+      setLastManualRefreshAt(Date.now());
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
 
   const lowMarginProducts = useMemo(() => {
     const all = productsData?.products ?? [];
@@ -1074,6 +1130,16 @@ export default function Reports() {
     ? ((revenue - prevReport.totalRevenue) / prevReport.totalRevenue) * 100 : null;
   const profitChangePct = prevReport?.totalProfit && prevReport.totalProfit > 0
     ? ((profit - prevReport.totalProfit) / prevReport.totalProfit) * 100 : null;
+  // Revenue and Profit show a trend badge but Avg Sale and Cash Collected
+  // didn't, even though the same previous-period data needed for both is
+  // already being fetched — just not used for these two. Filling that in
+  // for visual/informational consistency across all four KPI cards.
+  const prevAvgTx = (prevReport?.salesCount ?? 0) > 0
+    ? (prevReport!.totalRevenue ?? 0) / prevReport!.salesCount : 0;
+  const avgTxChangePct = prevAvgTx > 0 ? ((avgTxValue - prevAvgTx) / prevAvgTx) * 100 : null;
+  const prevCashCollected = (prevReport as any)?.cashCollected ?? 0;
+  const cashCollectedChangePct = prevCashCollected > 0
+    ? ((cashCollected - prevCashCollected) / prevCashCollected) * 100 : null;
 
   const hourlyChartData = useMemo(() => {
     if (!hourlyData) return [];
@@ -1108,14 +1174,24 @@ export default function Reports() {
           </div>
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => void refreshReportData()}
+              disabled={isManualRefreshing}
+              title="Refresh the analytics reports now"
+              className="reports-header-refresh flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border bg-card text-foreground text-xs font-semibold hover:border-primary/50 disabled:opacity-60 transition-colors"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isManualRefreshing && "animate-spin")} />
+              {isManualRefreshing ? "Updating" : lastManualRefreshAt ? `Updated ${format(lastManualRefreshAt, "h:mm a")}` : "Refresh"}
+            </button>
+            <button
               onClick={() => setShowCashUp(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors"
             >
               <ClipboardCheck className="h-3.5 w-3.5" />
               Cash Up
             </button>
-            <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 text-[10px]">
-              Live
+            <Badge variant="outline" className="reports-status-badge text-muted-foreground border-border text-[10px]">
+              No polling
             </Badge>
           </div>
         </div>
@@ -1184,6 +1260,7 @@ export default function Reports() {
             icon={Percent}
             accentClass="border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400"
             isLoading={statsLoading}
+            changePct={avgTxChangePct}
           />
           <KpiCard
             label="Cash Collected"
@@ -1192,8 +1269,133 @@ export default function Reports() {
             icon={CreditCard}
             accentClass="border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950 text-orange-600 dark:text-orange-400"
             isLoading={statsLoading}
+            changePct={cashCollectedChangePct}
           />
         </div>
+
+        <div className="reports-insight-controls" aria-label="Optional analytics details">
+          <button
+            type="button"
+            aria-expanded={showSalesDetails}
+            onClick={() => setShowSalesDetails(value => !value)}
+            className={cn("reports-insight-toggle", showSalesDetails && "is-open")}
+          >
+            <span className="reports-insight-icon"><BarChart2 className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-bold">Sales breakdown</span>
+              <span className="block text-xs text-muted-foreground">Top products and categories</span>
+            </span>
+            <span className="reports-insight-action">{showSalesDetails ? "Hide" : "Load"}</span>
+            {showSalesDetails ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+          <button
+            type="button"
+            aria-expanded={showInventoryDetails}
+            onClick={() => setShowInventoryDetails(value => !value)}
+            className={cn("reports-insight-toggle", showInventoryDetails && "is-open")}
+          >
+            <span className="reports-insight-icon"><Package className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-bold">Inventory details</span>
+              <span className="block text-xs text-muted-foreground">Stock value and margins</span>
+            </span>
+            <span className="reports-insight-action">{showInventoryDetails ? "Hide" : "Load"}</span>
+            {showInventoryDetails ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+          <button
+            type="button"
+            aria-expanded={showMonthlySales}
+            onClick={() => setShowMonthlySales(value => !value)}
+            className={cn("reports-insight-toggle", showMonthlySales && "is-open")}
+          >
+            <span className="reports-insight-icon"><Calendar className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-sm font-bold">Monthly sales</span>
+              <span className="block text-xs text-muted-foreground">Compare all 12 months</span>
+            </span>
+            <span className="reports-insight-action">{showMonthlySales ? "Hide" : "Load"}</span>
+            {showMonthlySales ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+        </div>
+
+        {showMonthlySales && (
+          <Card className="reports-monthly shadow-none">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <CardTitle className="text-sm font-bold">Monthly revenue</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">Revenue for all 12 months; yearly profit and transaction totals below</p>
+                </div>
+                <label className="reports-year-select">
+                  <span className="sr-only">Choose year</span>
+                  <select
+                    aria-label="Year for monthly sales"
+                    value={monthlySalesYear}
+                    onChange={event => setMonthlySalesYear(Number(event.target.value))}
+                  >
+                    {Array.from({ length: currentYear - 1999 }, (_, index) => currentYear - index).map(year => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="h-3.5 w-3.5 pointer-events-none text-muted-foreground" />
+                </label>
+              </div>
+            </CardHeader>
+            <CardContent className="px-3 pb-4">
+              {monthlySalesLoading ? (
+                <Skeleton className="h-[250px] w-full rounded-xl" />
+              ) : monthlySalesError ? (
+                <div className="reports-monthly-error" role="alert">
+                  <span>Monthly sales could not be loaded.</span>
+                  <Button variant="outline" size="sm" onClick={() => void refetchMonthlySales()}>Try again</Button>
+                </div>
+              ) : monthlySales ? (
+                <>
+                  <div className="reports-monthly-chart">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={monthlySalesChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="monthLabel"
+                          interval={0}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          width={48}
+                          tickFormatter={value => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : String(value)}
+                          tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          formatter={(value: number, name: string) => [formatKES(value), name === "revenue" ? "Revenue" : "Profit"]}
+                          labelFormatter={label => `${label} ${monthlySalesYear}`}
+                          contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
+                        />
+                        <Bar dataKey="revenue" name="Revenue" fill="#C8FF00" radius={[5, 5, 0, 0]} maxBarSize={34} isAnimationActive={false}>
+                          {monthlySalesChartData.map(month => (
+                            <Cell key={month.month} fill={month.month === new Date().getMonth() + 1 && monthlySalesYear === currentYear ? "#C8FF00" : "hsl(var(--primary) / 0.55)"} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  {monthlySales.totalSalesCount === 0 ? (
+                    <p className="reports-monthly-empty">No sales recorded in {monthlySalesYear}.</p>
+                  ) : (
+                    <div className="reports-monthly-totals">
+                      <div><span>YEAR REVENUE</span><strong>{formatKES(monthlySales.totalRevenue)}</strong></div>
+                      <div><span>GROSS PROFIT</span><strong>{formatKES(monthlySales.totalProfit)}</strong></div>
+                      <div><span>TRANSACTIONS</span><strong>{monthlySales.totalSalesCount.toLocaleString()}</strong></div>
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Payment Method Breakdown */}
         {(bankSales > 0 || cashOnlySales > 0) && (
@@ -1329,7 +1531,8 @@ export default function Reports() {
           </Card>
         )}
 
-        {/* Inventory Value — full-width */}
+        {/* Full catalog analysis is opt-in to avoid an unnecessary 3,000-row read. */}
+        {showInventoryDetails && (
         <Card className="reports-stock-value shadow-none">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
@@ -1352,6 +1555,7 @@ export default function Reports() {
             </div>
           </CardContent>
         </Card>
+        )}
 
         {/* Outstanding debts */}
         {dashboard?.pendingDebtsTotal != null && dashboard.pendingDebtsTotal > 0 && (
@@ -1554,6 +1758,8 @@ export default function Reports() {
           </Card>
         )}
 
+        {showSalesDetails && (
+        <>
         {/* Top Selling Products */}
         <Card className="reports-products shadow-none">
           <CardHeader className="pb-2 pt-4 px-4">
@@ -1819,6 +2025,8 @@ export default function Reports() {
             })()}
           </CardContent>
         </Card>
+        </>
+        )}
 
         <ProductSearchSection shopId={shopId} />
 
@@ -1862,7 +2070,7 @@ export default function Reports() {
         )}
 
         {/* Low Margin Alert */}
-        {lowMarginProducts.length > 0 && (
+        {showInventoryDetails && lowMarginProducts.length > 0 && (
           <Card className="reports-low-margin shadow-none">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-sm font-bold flex items-center gap-1.5">

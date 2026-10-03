@@ -1033,6 +1033,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/RangeReport"
 
+  /reports/monthly-sales:
+    get:
+      operationId: getMonthlySales
+      tags: [reports]
+      summary: Aggregated monthly sales for one calendar year
+      parameters:
+        - name: shopId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Twelve monthly sales summaries for the selected year
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthlySalesReport"
+        "400":
+          description: Invalid shop or year
+
   /reports/top-products:
     get:
       operationId: getTopProducts
@@ -2111,6 +2137,35 @@ components:
           items:
             $ref: "#/components/schemas/DailySummary"
       required: [from, to, totalRevenue, totalProfit, totalCost, salesCount, marginPct, dailyBreakdown]
+
+    MonthlySalesReport:
+      type: object
+      properties:
+        shopId:
+          type: string
+        year:
+          type: integer
+        totalRevenue:
+          type: number
+        totalProfit:
+          type: number
+        totalSalesCount:
+          type: integer
+        monthlyBreakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              month:
+                type: integer
+              revenue:
+                type: number
+              profit:
+                type: number
+              salesCount:
+                type: integer
+            required: [month, revenue, profit, salesCount]
+      required: [shopId, year, totalRevenue, totalProfit, totalSalesCount, monthlyBreakdown]
 
     DailySummary:
       type: object
