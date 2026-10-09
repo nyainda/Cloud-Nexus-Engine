@@ -34,6 +34,7 @@ function addDays(date: string, amount: number) {
 }
 function cents(value: number) { return value / 100; }
 type CustomerInsightRow = { customerKey: string; customerName: string; customerPhone: string; varietyName: string; quantity: number; totalAmountCents: number; lastPurchase: string };
+type IndividualSaleEntry = { id: string; requestId: string; businessDate: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
 
 export default function NurseryRegister() {
   const qc = useQueryClient();
@@ -57,6 +58,11 @@ export default function NurseryRegister() {
     queryKey: ["/api/nursery/varieties", shopId],
     queryFn: () => customFetch("/api/nursery/varieties") as Promise<Variety[]>,
     enabled: !!shopId,
+  });
+  const individualEntriesQuery = useQuery({
+    queryKey: ["/api/nursery/entries", shopId, from, to],
+    queryFn: () => customFetch("/api/nursery/entries?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&limit=300") as Promise<{ rows: IndividualSaleEntry[] }>,
+    enabled: !!shopId && !!from && !!to && from <= to,
   });
   const customerInsightsQuery = useQuery({
     queryKey: ["/api/nursery/customer-insights", shopId, from, to],
@@ -106,6 +112,7 @@ export default function NurseryRegister() {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
       ]);
@@ -301,6 +308,38 @@ export default function NurseryRegister() {
                 </div>
               </div>;
             })()}
+        </CardContent>
+      </Card>
+
+
+      <Card>
+        <CardHeader className="border-b border-border/70 bg-muted/20">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-600 dark:text-indigo-300"><ClipboardList className="h-5 w-5" /></div>
+              <div><CardTitle>Individual sales</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Every recorded sale, not just daily totals.</p></div>
+            </div>
+            <span className="w-fit rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground">{individualEntriesQuery.data?.rows?.length ?? 0} entries shown</span>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {individualEntriesQuery.isLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading individual sales…</p>
+            : individualEntriesQuery.isError ? <p className="py-8 text-center text-sm text-destructive">Could not load individual sales. Refresh and try again.</p>
+            : !individualEntriesQuery.data?.rows?.length ? <div className="rounded-xl border border-dashed p-8 text-center"><ClipboardList className="mx-auto h-8 w-8 text-muted-foreground/60" /><p className="mt-2 font-medium">No individual entries in this period</p><p className="mt-1 text-sm text-muted-foreground">New sales will appear here after this feature is deployed. Older records remain available in the aggregated sales report.</p></div>
+            : <div className="overflow-x-auto">
+              <table className="w-full min-w-[850px] text-left text-sm">
+                <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Date / time</th><th className="px-3 py-3">Seedlings / customer</th><th className="px-3 py-3 text-right">Quantity</th><th className="px-3 py-3 text-right">Unit price</th><th className="px-3 py-3">Payment</th><th className="px-3 py-3 text-right">Sale total</th></tr></thead>
+                <tbody>{individualEntriesQuery.data.rows.map((entry) => <tr key={entry.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                  <td className="whitespace-nowrap px-3 py-3"><p>{entry.businessDate}</p><p className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></td>
+                  <td className="px-3 py-3"><p className="font-semibold">{entry.varietyName}</p><p className="text-xs text-muted-foreground">{entry.customerName || "Walk-in customer"}{entry.customerPhone ? " · " + entry.customerPhone : ""}</p></td>
+                  <td className="px-3 py-3 text-right font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatKES(cents(entry.unitPriceCents))}</td>
+                  <td className="px-3 py-3"><span className={"inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span></td>
+                  <td className="px-3 py-3 text-right font-bold tabular-nums">{formatKES(cents(entry.totalAmountCents))}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>}
+          <p className="mt-3 text-xs text-muted-foreground">Showing up to 300 individual entries for the selected date range. Use the report date filters to narrow the list.</p>
         </CardContent>
       </Card>
 
