@@ -774,7 +774,7 @@ function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => voi
         </div>
 
         <p className="text-sm text-muted-foreground">
-          Use this for <span className="font-semibold text-foreground">returned goods</span> or <span className="font-semibold text-foreground">data entry mistakes</span>. This permanently removes the debt and all its payment records.
+          Use this for a <span className="font-semibold text-foreground">debt entered by mistake</span>. It permanently removes the record. Debts that have payments or come from a sale can't be deleted — reverse the payments or void the sale instead.
         </p>
 
         <DialogFooter>
@@ -2078,7 +2078,12 @@ function DebtDetailPanel({
           {isOwner && !isPaid && !isCancelled && debt.balance > 0 && (
             <DebtTransferDialog debt={debt} items={items} onDone={refreshDebt} />
           )}
-          {/* Financial records stay in the ledger; corrections use reversible entries. */}
+          {/* Only a debt with no sale and no money history can be deleted (the
+              server enforces the same rule); everything else is corrected by
+              reversing payments or voiding the sale. */}
+          {isOwner && !isCancelled && !isLoading && payments.length === 0 && !totalPaid && !(data as any)?.saleId && !(debt as any).saleId && (
+            <DeleteDebtDialog debt={debt} onDeleted={onClose} />
+          )}
         </div>
         {debt.customerPhone && !isPaid && !isCancelled && debt.balance > 0 && (
           <a

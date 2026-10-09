@@ -1063,11 +1063,14 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
     note: reason,
   });
 
+  // balance moves relative to its CURRENT value. Recomputing it from
+  // total - amount_paid would hand back credit the customer already spent
+  // (credit use only ever adjusts balance), e.g. when undoing a credit top-up.
   await db.update(debts).set({
     amountPaid: sql`MAX(0, amount_paid - ${original.amount})`,
-    balance: sql`total_amount - MAX(0, amount_paid - ${original.amount})`,
-    status: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) = 0 THEN 'unpaid' WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN 'paid' ELSE 'partial' END`,
-    paidAt: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN paid_at ELSE NULL END`,
+    balance: sql`balance + ${original.amount}`,
+    status: sql`CASE WHEN balance + ${original.amount} <= 0.005 THEN 'paid' WHEN MAX(0, amount_paid - ${original.amount}) = 0 THEN 'unpaid' ELSE 'partial' END`,
+    paidAt: sql`CASE WHEN balance + ${original.amount} <= 0.005 THEN paid_at ELSE NULL END`,
   }).where(eq(debts.id, debtId));
 
   await db.insert(auditLog).values({
