@@ -123,6 +123,11 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
 
   if (customerName) {
     statements.push(c.env.DB.prepare(
+      `INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at)
+       SELECT ?, ?, ?, ?, NULL, NULL, NULL, ?
+       WHERE NOT EXISTS (SELECT 1 FROM customers WHERE shop_id = ? AND lower(trim(name)) = ?)`
+    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, shopId, customerKey));
+    statements.push(c.env.DB.prepare(
       `INSERT INTO nursery_customer_daily_sales
         (id, shop_id, business_date, customer_key, customer_name, customer_phone, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at)
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
