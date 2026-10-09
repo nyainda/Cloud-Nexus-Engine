@@ -109,21 +109,21 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   const customerKey = customerName.toLocaleLowerCase().replace(/\s+/g, " ");
   const statements = [
     c.env.DB.prepare(
-      \`INSERT INTO nursery_daily_sales
+      `INSERT INTO nursery_daily_sales
         (id, shop_id, business_date, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at)
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)
        ON CONFLICT(shop_id, business_date, variety_id, unit_price_cents, payment_method)
        DO UPDATE SET quantity = nursery_daily_sales.quantity + excluded.quantity,
          total_amount_cents = nursery_daily_sales.total_amount_cents + excluded.total_amount_cents,
-         updated_at = excluded.updated_at\`
+         updated_at = excluded.updated_at`
     ).bind(crypto.randomUUID(), shopId, businessDate, variety.id, unitPriceCents, paymentMethod,
       quantity, totalCents, now, now, requestId, shopId),
   ];
 
   if (customerName) {
     statements.push(c.env.DB.prepare(
-      \`INSERT INTO nursery_customer_daily_sales
+      `INSERT INTO nursery_customer_daily_sales
         (id, shop_id, business_date, customer_key, customer_name, customer_phone, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at)
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)
@@ -132,23 +132,23 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
          total_amount_cents = nursery_customer_daily_sales.total_amount_cents + excluded.total_amount_cents,
          customer_name = excluded.customer_name,
          customer_phone = CASE WHEN excluded.customer_phone != '' THEN excluded.customer_phone ELSE nursery_customer_daily_sales.customer_phone END,
-         updated_at = excluded.updated_at\`
+         updated_at = excluded.updated_at`
     ).bind(crypto.randomUUID(), shopId, businessDate, customerKey, customerName, customerPhone,
       variety.id, unitPriceCents, paymentMethod, quantity, totalCents, now, now, requestId, shopId));
   }
 
   if (debtId) {
     const itemsJson = JSON.stringify([{
-      productName: \`Nursery seedlings — \${variety.name}\`,
+      productName: `Nursery seedlings — ${variety.name}`,
       qty: quantity,
       unitPrice,
       totalPrice: totalAmount,
     }]);
     statements.push(c.env.DB.prepare(
-      \`INSERT INTO debts
+      `INSERT INTO debts
         (id, shop_id, sale_id, customer_name, customer_phone, total_amount, amount_paid, balance, status, notes, items_json, paid_at, created_at)
        SELECT ?, ?, NULL, ?, ?, ?, 0, ?, 'unpaid', ?, ?, NULL, ?
-       WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)\`
+       WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)`
     ).bind(debtId, shopId, customerName, customerPhone, totalAmount, totalAmount,
       "Nursery register credit sale", itemsJson, now, requestId, shopId));
   }
@@ -201,7 +201,7 @@ nurseryRouter.get("/nursery/customer-insights", requireAuth, async (c) => {
     return c.json({ error: "Choose a valid report date range." }, 400);
   }
   const rows = await c.env.DB.prepare(
-    \`SELECT s.customer_key AS customerKey, s.customer_name AS customerName,
+    `SELECT s.customer_key AS customerKey, s.customer_name AS customerName,
       s.customer_phone AS customerPhone, v.name AS varietyName,
       SUM(s.quantity) AS quantity, SUM(s.total_amount_cents) AS totalAmountCents,
       MAX(s.business_date) AS lastPurchase
@@ -209,7 +209,7 @@ nurseryRouter.get("/nursery/customer-insights", requireAuth, async (c) => {
      JOIN nursery_varieties v ON v.id = s.variety_id AND v.shop_id = s.shop_id
      WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?
      GROUP BY s.customer_key, s.customer_name, s.customer_phone, s.variety_id, v.name
-     ORDER BY totalAmountCents DESC, s.customer_name COLLATE NOCASE\`
+     ORDER BY totalAmountCents DESC, s.customer_name COLLATE NOCASE`
   ).bind(shopId, from, to).all();
   return c.json({ rows: rows.results ?? [] });
 });
