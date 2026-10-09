@@ -19,8 +19,13 @@ type ReportRow = {
 };
 type ReportData = {
   rows: ReportRow[];
+  total: number;
+  page: number;
+  pageSize: number;
   summary: { totalSeedlings: number; totalRevenueCents: number; cashCents: number; mpesaCents: number; creditCents: number };
+  dailySummary: { totalSeedlings: number; totalRevenueCents: number; cashCents: number; mpesaCents: number; creditCents: number };
 };
+type EntriesData = { rows: IndividualSaleEntry[]; total: number; page: number; pageSize: number; summary: { quantity: number; totalCents: number; creditCents: number } };
 
 function localDate(date = new Date()) {
   const year = date.getFullYear();
@@ -68,6 +73,10 @@ export default function NurseryRegister() {
   const [cart, setCart] = useState<Array<{ varietyId: string; name: string; quantity: string; unitPrice: string }>>([]);
   const [saleSearch, setSaleSearch] = useState("");
   const [salePaymentFilter, setSalePaymentFilter] = useState<"all" | "cash" | "mpesa" | "credit">("all");
+  const [salesPage, setSalesPage] = useState(1);
+  const [reportPage, setReportPage] = useState(1);
+  const salesPageSize = 25;
+  const reportPageSize = 20;
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
 
   const varietiesQuery = useQuery({
@@ -93,9 +102,10 @@ export default function NurseryRegister() {
     if (varietiesQuery.data) void saveNurseryVarietiesToCache(shopId, varietiesQuery.data);
   }, [shopId, varietiesQuery.data]);
   const individualEntriesQuery = useQuery({
-    queryKey: ["/api/nursery/entries", shopId, from, to],
-    queryFn: () => customFetch("/api/nursery/entries?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&limit=300") as Promise<{ rows: IndividualSaleEntry[] }>,
+    queryKey: ["/api/nursery/entries", shopId, from, to, salesPage, salesPageSize, saleSearch, salePaymentFilter],
+    queryFn: () => customFetch("/api/nursery/entries?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&page=" + salesPage + "&pageSize=" + salesPageSize + "&search=" + encodeURIComponent(saleSearch.trim()) + "&payment=" + salePaymentFilter) as Promise<EntriesData>,
     enabled: !!shopId && !!from && !!to && from <= to,
+    placeholderData: previous => previous,
   });
   const customerInsightsQuery = useQuery({
     queryKey: ["/api/nursery/customer-insights", shopId, from, to],
@@ -103,9 +113,10 @@ export default function NurseryRegister() {
     enabled: !!shopId && !!from && !!to && from <= to,
   });
   const reportQuery = useQuery({
-    queryKey: ["/api/nursery/report", shopId, from, to],
-    queryFn: () => customFetch(`/api/nursery/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`) as Promise<ReportData>,
+    queryKey: ["/api/nursery/report", shopId, from, to, businessDate, reportPage, reportPageSize],
+    queryFn: () => customFetch(`/api/nursery/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&businessDate=${encodeURIComponent(businessDate)}&page=${reportPage}&pageSize=${reportPageSize}`) as Promise<ReportData>,
     enabled: !!shopId && !!from && !!to && from <= to,
+    placeholderData: previous => previous,
   });
 
   const varieties = (varietiesQuery.data ?? []).filter(v => Boolean(v.isActive));
@@ -133,28 +144,21 @@ export default function NurseryRegister() {
   const selectedVariety = varieties.find(v => v.id === varietyId) ?? varieties[0];
   const report = reportQuery.data;
   const reportRows = report?.rows ?? [];
+  const reportTotal = report?.total ?? 0;
+  const reportPageCount = Math.max(1, Math.ceil(reportTotal / reportPageSize));
   const individualEntries = individualEntriesQuery.data?.rows ?? [];
-  const filteredIndividualEntries = useMemo(() => {
-    const needle = saleSearch.trim().toLocaleLowerCase();
-    return individualEntries.filter(entry => {
-      const matchesPayment = salePaymentFilter === "all" || entry.paymentMethod === salePaymentFilter;
-      const matchesSearch = !needle || [entry.varietyName, entry.customerName, entry.customerPhone, entry.businessDate].some(value => String(value ?? "").toLocaleLowerCase().includes(needle));
-      return matchesPayment && matchesSearch;
-    });
-  }, [individualEntries, saleSearch, salePaymentFilter]);
-  const individualSaleSummary = useMemo(() => individualEntries.reduce((sum, entry) => ({
-    quantity: sum.quantity + Number(entry.quantity || 0),
-    totalCents: sum.totalCents + Number(entry.totalAmountCents || 0),
-    creditCents: sum.creditCents + (entry.paymentMethod === "credit" ? Number(entry.totalAmountCents || 0) : 0),
-  }), { quantity: 0, totalCents: 0, creditCents: 0 }), [individualEntries]);
-  const dateRows = useMemo(() => reportRows.filter(row => row.businessDate === businessDate), [reportRows, businessDate]);
-  const todaySummary = useMemo(() => dateRows.reduce((sum, row) => ({
-    quantity: sum.quantity + Number(row.quantity || 0),
-    revenueCents: sum.revenueCents + Number(row.totalAmountCents || 0),
-    cashCents: sum.cashCents + (row.paymentMethod === "cash" ? Number(row.totalAmountCents || 0) : 0),
-    mpesaCents: sum.mpesaCents + (row.paymentMethod === "mpesa" ? Number(row.totalAmountCents || 0) : 0),
-    creditCents: sum.creditCents + (row.paymentMethod === "credit" ? Number(row.totalAmountCents || 0) : 0),
-  }), { quantity: 0, revenueCents: 0, cashCents: 0, mpesaCents: 0, creditCents: 0 }), [dateRows]);
+  const individualTotal = individualEntriesQuery.data?.total ?? 0;
+  const individualPageCount = Math.max(1, Math.ceil(individualTotal / salesPageSize));
+  const filteredIndividualEntries = individualEntries;
+  const individualSaleSummary = individualEntriesQuery.data?.summary ?? { quantity: 0, totalCents: 0, creditCents: 0 };
+  const daily = report?.dailySummary;
+  const todaySummary = {
+    quantity: Number(daily?.totalSeedlings ?? 0),
+    revenueCents: Number(daily?.totalRevenueCents ?? 0),
+    cashCents: Number(daily?.cashCents ?? 0),
+    mpesaCents: Number(daily?.mpesaCents ?? 0),
+    creditCents: Number(daily?.creditCents ?? 0),
+  };
 
   async function saveEntry(event: FormEvent) {
     event.preventDefault();
@@ -516,6 +520,7 @@ export default function NurseryRegister() {
               </div>
               {(varietiesQuery.data ?? []).length === 0 && <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">Add cabbage, spinach or any seedling varieties sold by this shop.</p>}
               {(varietiesQuery.data ?? []).length > 0 && filteredCatalogue.length === 0 && <div className="rounded-xl border border-dashed p-6 text-center"><Sprout className="mx-auto h-6 w-6 text-muted-foreground/60" /><p className="mt-2 text-sm font-medium">No varieties match this view</p><p className="mt-1 text-xs text-muted-foreground">Try another search or switch the status filter.</p></div>}
+              <div className="max-h-[min(55vh,520px)] overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-muted/10 p-2">
               <div className="grid gap-2 sm:grid-cols-2">
               {visibleCatalogue.map(v => <div key={v.id} className="group rounded-xl border border-border bg-card p-3 transition-colors hover:border-sky-600/30 hover:bg-sky-500/[0.03]">
                 {editingVarietyId === v.id ? (
@@ -535,6 +540,7 @@ export default function NurseryRegister() {
                   </div>
                 )}
               </div>)}
+              </div>
               </div>
               {filteredCatalogue.length > catalogueLimit && <Button type="button" variant="outline" className="w-full gap-2" onClick={() => setCatalogueLimit(limit => limit + 12)}>Show {Math.min(12, filteredCatalogue.length - catalogueLimit)} more varieties <ChevronDown className="h-4 w-4" /></Button>}
             </div>
@@ -602,7 +608,7 @@ export default function NurseryRegister() {
             <div className="flex flex-wrap items-center gap-2">
               <div className="rounded-xl border border-border/80 bg-background/80 px-3 py-2">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Transactions</p>
-                <p className="mt-0.5 text-lg font-bold tabular-nums">{individualEntries.length.toLocaleString()}</p>
+                <p className="mt-0.5 text-lg font-bold tabular-nums">{individualTotal.toLocaleString()}</p>
               </div>
               <div className="rounded-xl border border-border/80 bg-background/80 px-3 py-2">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Seedlings sold</p>
@@ -619,18 +625,18 @@ export default function NurseryRegister() {
           <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/20 p-3 sm:grid-cols-[minmax(0,1fr)_190px_auto] sm:items-center">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={saleSearch} onChange={e => setSaleSearch(e.target.value)} placeholder="Search customer, phone, seedling or date…" aria-label="Search individual sales" className="h-10 border-border/80 bg-background pl-9" />
+              <Input value={saleSearch} onChange={e => { setSaleSearch(e.target.value); setSalesPage(1); }} placeholder="Search customer, phone, seedling or date…" aria-label="Search individual sales" className="h-10 border-border/80 bg-background pl-9" />
             </div>
             <div className="relative">
               <SlidersHorizontal className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <select aria-label="Filter by payment method" value={salePaymentFilter} onChange={e => setSalePaymentFilter(e.target.value as typeof salePaymentFilter)} className="h-10 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+              <select aria-label="Filter by payment method" value={salePaymentFilter} onChange={e => { setSalePaymentFilter(e.target.value as typeof salePaymentFilter); setSalesPage(1); }} className="h-10 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
                 <option value="all">All payment methods</option><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="credit">Credit</option>
               </select>
             </div>
-            <Button type="button" variant="ghost" size="sm" onClick={() => { setSaleSearch(""); setSalePaymentFilter("all"); }} disabled={!saleSearch && salePaymentFilter === "all"} className="h-10">Clear filters</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => { setSaleSearch(""); setSalePaymentFilter("all"); setSalesPage(1); }} disabled={!saleSearch && salePaymentFilter === "all"} className="h-10">Clear filters</Button>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <p>Showing <span className="font-semibold text-foreground">{filteredIndividualEntries.length.toLocaleString()}</span> of {individualEntries.length.toLocaleString()} loaded transactions</p>
+            <p>Showing <span className="font-semibold text-foreground">{individualTotal ? ((salesPage - 1) * salesPageSize + 1).toLocaleString() : "0"}–{Math.min(salesPage * salesPageSize, individualTotal).toLocaleString()}</span> of {individualTotal.toLocaleString()} matching transactions</p>
             <p className="inline-flex items-center gap-1.5"><CircleDollarSign className="h-3.5 w-3.5" /> Credit sales value: <span className="font-semibold text-foreground">{formatKES(cents(individualSaleSummary.creditCents))}</span></p>
           </div>
           {editingSaleId && <form onSubmit={saveSaleEdit} className="rounded-2xl border border-primary/30 bg-primary/[0.04] p-4 shadow-sm sm:p-5">
@@ -652,7 +658,7 @@ export default function NurseryRegister() {
           </form>}
           {individualEntriesQuery.isLoading ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{[0,1,2].map(item => <div key={item} className="h-36 animate-pulse rounded-2xl border bg-muted/40" />)}</div>
             : individualEntriesQuery.isError ? <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center"><p className="font-medium text-destructive">Could not load individual sales</p><p className="mt-1 text-sm text-muted-foreground">Check your connection and try refreshing.</p><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void individualEntriesQuery.refetch()}><RefreshCw className="mr-2 h-4 w-4" /> Try again</Button></div>
-            : !filteredIndividualEntries.length ? <div className="rounded-2xl border border-dashed border-border p-8 text-center sm:p-12"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground"><ClipboardList className="h-6 w-6" /></div><p className="mt-3 font-semibold">{individualEntries.length ? "No matching sales found" : "No individual entries in this period"}</p><p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">{individualEntries.length ? "Try another search term or clear the payment filter." : "New sales will appear here once recorded. Older records remain available in the aggregated sales report."}</p>{(saleSearch || salePaymentFilter !== "all") && <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setSaleSearch(""); setSalePaymentFilter("all"); }}>Clear filters</Button>}</div>
+            : !filteredIndividualEntries.length ? <div className="rounded-2xl border border-dashed border-border p-8 text-center sm:p-12"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground"><ClipboardList className="h-6 w-6" /></div><p className="mt-3 font-semibold">{saleSearch || salePaymentFilter !== "all" ? "No matching sales found" : "No individual entries in this period"}</p><p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">{saleSearch || salePaymentFilter !== "all" ? "Try another search term or clear the payment filter." : "New sales will appear here once recorded. Older records remain available in the aggregated sales report."}</p>{(saleSearch || salePaymentFilter !== "all") && <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setSaleSearch(""); setSalePaymentFilter("all"); setSalesPage(1); }}>Clear filters</Button>}</div>
             : <>
               <div className="grid gap-3 sm:grid-cols-2 xl:hidden">
                 {filteredIndividualEntries.map(entry => <div key={entry.id} className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card p-4 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
@@ -681,7 +687,14 @@ export default function NurseryRegister() {
                 </table>
               </div>
             </>}
-          <p className="border-t border-border/70 pt-3 text-xs leading-relaxed text-muted-foreground">Showing up to 300 individual entries for the selected date range. Search and payment filters affect this ledger only; saved edits and deletions also refresh the sales report, customer insights, and debt records. Nursery sales remain separate from normal POS inventory deductions.</p>
+          {individualTotal > 0 && <div className="flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">Page {salesPage} of {individualPageCount} · 25 transactions per page</p>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" disabled={salesPage <= 1 || individualEntriesQuery.isFetching} onClick={() => setSalesPage(page => Math.max(1, page - 1))}>Previous</Button>
+              <Button type="button" variant="outline" size="sm" disabled={salesPage >= individualPageCount || individualEntriesQuery.isFetching} onClick={() => setSalesPage(page => Math.min(individualPageCount, page + 1))}>Next</Button>
+            </div>
+          </div>}
+          <p className="border-t border-border/70 pt-3 text-xs leading-relaxed text-muted-foreground">Only 25 individual transactions are fetched per page. Search and payment filters run in D1, while saved edits and deletions refresh the sales report, customer insights, and debt records. Nursery sales remain separate from normal POS inventory deductions.</p>
         </CardContent>
       </Card>
 
@@ -690,11 +703,11 @@ export default function NurseryRegister() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <CardTitle>Sales report</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={() => choosePeriod("day")}>Day</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => choosePeriod("week")}>This week</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => choosePeriod("month")}>This month</Button>
-              <div className="flex items-center gap-2"><Label htmlFor="report-from" className="text-xs">From</Label><Input id="report-from" type="date" className="w-auto" value={from} onChange={e => setFrom(e.target.value)} /></div>
-              <div className="flex items-center gap-2"><Label htmlFor="report-to" className="text-xs">To</Label><Input id="report-to" type="date" className="w-auto" value={to} min={from} onChange={e => setTo(e.target.value)} /></div>
+              <Button type="button" size="sm" variant="outline" onClick={() => { choosePeriod("day"); setReportPage(1); setSalesPage(1); }}>Day</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => { choosePeriod("week"); setReportPage(1); setSalesPage(1); }}>This week</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => { choosePeriod("month"); setReportPage(1); setSalesPage(1); }}>This month</Button>
+              <div className="flex items-center gap-2"><Label htmlFor="report-from" className="text-xs">From</Label><Input id="report-from" type="date" className="w-auto" value={from} onChange={e => { setFrom(e.target.value); setReportPage(1); setSalesPage(1); }} /></div>
+              <div className="flex items-center gap-2"><Label htmlFor="report-to" className="text-xs">To</Label><Input id="report-to" type="date" className="w-auto" value={to} min={from} onChange={e => { setTo(e.target.value); setReportPage(1); setSalesPage(1); }} /></div>
               <Button type="button" size="icon" variant="ghost" aria-label="Refresh report" onClick={() => qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] })}><RefreshCw className="h-4 w-4" /></Button>
             </div>
           </div>
@@ -708,7 +721,14 @@ export default function NurseryRegister() {
               </table>
             </div>
           )}
-          <p className="mt-3 text-xs text-muted-foreground">Shop/date/variety/payment totals are aggregated in D1. Named customer purchases are also summarized by customer and variety; credit sales create a linked customer debt.</p>
+          {reportTotal > 0 && <div className="mt-4 flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">Showing {((reportPage - 1) * reportPageSize + 1).toLocaleString()}–{Math.min(reportPage * reportPageSize, reportTotal).toLocaleString()} of {reportTotal.toLocaleString()} report rows · Page {reportPage} of {reportPageCount}</p>
+            <div className="flex items-center gap-2">
+              <Button type="button" size="sm" variant="outline" disabled={reportPage <= 1 || reportQuery.isFetching} onClick={() => setReportPage(page => Math.max(1, page - 1))}>Previous</Button>
+              <Button type="button" size="sm" variant="outline" disabled={reportPage >= reportPageCount || reportQuery.isFetching} onClick={() => setReportPage(page => Math.min(reportPageCount, page + 1))}>Next</Button>
+            </div>
+          </div>}
+          <p className="mt-3 text-xs text-muted-foreground">Report rows are aggregated and paginated in D1; the summary totals still cover the full selected date range. Named customer purchases are also summarized by customer and variety; credit sales create a linked customer debt.</p>
         </CardContent>
       </Card>
     </div>
