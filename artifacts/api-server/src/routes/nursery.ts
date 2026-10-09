@@ -201,6 +201,165 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   return c.json({ ok: true, requestId, debtId: saved?.debtId ?? null });
 });
 
+
+function adjustNurseryAggregateStatements(
+  db: AppEnv["Bindings"]["DB"],
+  shopId: string,
+  sale: { businessDate: string; varietyId: string; unitPriceCents: number; paymentMethod: string; quantity: number; totalAmountCents: number; customerName: string; customerPhone: string },
+  direction: 1 | -1,
+  now: string,
+) {
+  const quantity = sale.quantity * direction;
+  const total = sale.totalAmountCents * direction;
+  const statements = [
+    db.prepare(
+      "UPDATE nursery_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ?"
+    ).bind(quantity, total, now, shopId, sale.businessDate, sale.varietyId, sale.unitPriceCents, sale.paymentMethod),
+    db.prepare(
+      "DELETE FROM nursery_daily_sales WHERE shop_id = ? AND business_date = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity <= 0"
+    ).bind(shopId, sale.businessDate, sale.varietyId, sale.unitPriceCents, sale.paymentMethod),
+  ];
+  const customerKey = sale.customerName.trim().toLocaleLowerCase().replace(/\\s+/g, " ");
+  if (customerKey) {
+    statements.push(db.prepare(
+      "UPDATE nursery_customer_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND customer_key = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ?"
+    ).bind(quantity, total, now, shopId, sale.businessDate, customerKey, sale.varietyId, sale.unitPriceCents, sale.paymentMethod));
+    statements.push(db.prepare(
+      "DELETE FROM nursery_customer_daily_sales WHERE shop_id = ? AND business_date = ? AND customer_key = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity <= 0"
+    ).bind(shopId, sale.businessDate, customerKey, sale.varietyId, sale.unitPriceCents, sale.paymentMethod));
+  }
+  return statements;
+}
+
+nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const id = c.req.param("id");
+  const body = await c.req.json<{
+    businessDate?: string; varietyId?: string; quantity?: number; unitPrice?: number;
+    paymentMethod?: string; customerName?: string; customerPhone?: string;
+  }>();
+  const businessDate = body.businessDate ?? "";
+  const quantity = Number(body.quantity);
+  const unitPrice = Number(body.unitPrice);
+  const paymentMethod = body.paymentMethod ?? "";
+  const customerName = body.customerName?.trim().replace(/\\s+/g, " ") ?? "";
+  const customerPhone = body.customerPhone?.trim() ?? "";
+  if (!validDate(businessDate) || !body.varietyId || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 10000000 ||
+      !Number.isFinite(unitPrice) || unitPrice < 0 || unitPrice > 1000000 || !paymentMethods.has(paymentMethod) ||
+      customerName.length > 120 || customerPhone.length > 40 ||
+      (paymentMethod === "credit" && (!customerName || unitPrice <= 0))) {
+    return c.json({ error: "Check the date, variety, quantity, price, customer details and payment method." }, 400);
+  }
+
+  const old = await c.env.DB.prepare(
+    "SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId, variety_name AS varietyName, customer_name AS customerName, customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents, payment_method AS paymentMethod, debt_id AS debtId, created_at AS createdAt FROM nursery_sale_entries WHERE id = ? AND shop_id = ?"
+  ).bind(id, shopId).first<{
+    id: string; requestId: string; businessDate: string; varietyId: string; varietyName: string;
+    customerName: string; customerPhone: string; quantity: number; unitPriceCents: number;
+    totalAmountCents: number; paymentMethod: string; debtId: string | null; createdAt: string;
+  }>();
+  if (!old) return c.json({ error: "Sale entry not found." }, 404);
+
+  const variety = await c.env.DB.prepare(
+    "SELECT id, name FROM nursery_varieties WHERE id = ? AND shop_id = ?"
+  ).bind(body.varietyId, shopId).first<{ id: string; name: string }>();
+  if (!variety) return c.json({ error: "Choose a variety belonging to this shop." }, 400);
+
+  let oldDebt: { amount_paid: number; total_amount: number } | null = null;
+  if (old.debtId) {
+    oldDebt = await c.env.DB.prepare("SELECT amount_paid, total_amount FROM debts WHERE id = ? AND shop_id = ?")
+      .bind(old.debtId, shopId).first<{ amount_paid: number; total_amount: number }>();
+    if (oldDebt && Number(oldDebt.amount_paid) > 0 &&
+        (paymentMethod !== "credit" || Math.round(unitPrice * 100) * quantity !== old.totalAmountCents ||
+         customerName !== old.customerName || customerPhone !== old.customerPhone)) {
+      return c.json({ error: "This credit sale already has a payment recorded. Settle or reconcile its debt before changing its amount or customer." }, 409);
+    }
+  }
+
+  const unitPriceCents = Math.round(unitPrice * 100);
+  const totalAmountCents = quantity * unitPriceCents;
+  const now = new Date().toISOString();
+  const oldAggregate = {
+    businessDate: old.businessDate, varietyId: old.varietyId, unitPriceCents: old.unitPriceCents,
+    paymentMethod: old.paymentMethod, quantity: old.quantity, totalAmountCents: old.totalAmountCents,
+    customerName: old.customerName, customerPhone: old.customerPhone,
+  };
+  const nextAggregate = {
+    businessDate, varietyId: variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents,
+    customerName, customerPhone,
+  };
+  const statements = [
+    ...adjustNurseryAggregateStatements(c.env.DB, shopId, oldAggregate, -1, now),
+    c.env.DB.prepare(
+      "INSERT INTO nursery_daily_sales (id, shop_id, business_date, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, business_date, variety_id, unit_price_cents, payment_method) DO UPDATE SET quantity = nursery_daily_sales.quantity + excluded.quantity, total_amount_cents = nursery_daily_sales.total_amount_cents + excluded.total_amount_cents, updated_at = excluded.updated_at"
+    ).bind(crypto.randomUUID(), shopId, businessDate, variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents, now, now),
+    c.env.DB.prepare(
+      "INSERT INTO nursery_sale_entries (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, request_id) DO UPDATE SET business_date = excluded.business_date, variety_id = excluded.variety_id, variety_name = excluded.variety_name, customer_name = excluded.customer_name, customer_phone = excluded.customer_phone, quantity = excluded.quantity, unit_price_cents = excluded.unit_price_cents, total_amount_cents = excluded.total_amount_cents, payment_method = excluded.payment_method, debt_id = excluded.debt_id"
+    ).bind(old.id, old.requestId, shopId, businessDate, variety.id, variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, paymentMethod === "credit" ? old.debtId : null, old.createdAt ?? now),
+  ];
+  statements.push(...adjustNurseryAggregateStatements(c.env.DB, shopId, nextAggregate, 1, now).slice(2));
+
+  if (old.debtId && paymentMethod !== "credit") {
+    statements.push(c.env.DB.prepare("DELETE FROM debts WHERE id = ? AND shop_id = ? AND amount_paid = 0").bind(old.debtId, shopId));
+    statements.push(c.env.DB.prepare("UPDATE nursery_entry_requests SET debt_id = NULL WHERE id = ? AND shop_id = ?").bind(old.requestId, shopId));
+  } else if (paymentMethod === "credit" && old.debtId) {
+    const itemsJson = JSON.stringify([{ productName: "Nursery seedlings — " + variety.name, qty: quantity, unitPrice, totalPrice: totalAmountCents / 100 }]);
+    statements.push(c.env.DB.prepare(
+      "UPDATE debts SET customer_name = ?, customer_phone = ?, total_amount = ?, balance = ?, status = CASE WHEN ? = 0 THEN 'unpaid' ELSE 'partial' END, items_json = ?, notes = 'Nursery register credit sale' WHERE id = ? AND shop_id = ? AND amount_paid = 0"
+    ).bind(customerName, customerPhone, totalAmountCents / 100, totalAmountCents / 100, 0, itemsJson, old.debtId, shopId));
+  } else if (paymentMethod === "credit" && !old.debtId) {
+    const debtId = crypto.randomUUID();
+    const itemsJson = JSON.stringify([{ productName: "Nursery seedlings — " + variety.name, qty: quantity, unitPrice, totalPrice: totalAmountCents / 100 }]);
+    statements.push(c.env.DB.prepare(
+      "INSERT INTO debts (id, shop_id, sale_id, customer_name, customer_phone, total_amount, amount_paid, balance, status, notes, items_json, paid_at, created_at) VALUES (?, ?, NULL, ?, ?, ?, 0, ?, 'unpaid', 'Nursery register credit sale', ?, NULL, ?)"
+    ).bind(debtId, shopId, customerName, customerPhone, totalAmountCents / 100, totalAmountCents / 100, itemsJson, now));
+    statements.push(c.env.DB.prepare("UPDATE nursery_sale_entries SET debt_id = ? WHERE id = ? AND shop_id = ?").bind(debtId, id, shopId));
+    statements.push(c.env.DB.prepare("UPDATE nursery_entry_requests SET debt_id = ? WHERE id = ? AND shop_id = ?").bind(debtId, old.requestId, shopId));
+  }
+
+  if (customerName) {
+    const customerKey = customerName.toLocaleLowerCase().replace(/\\s+/g, " ");
+    statements.push(c.env.DB.prepare(
+      "INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at) SELECT ?, ?, ?, ?, NULL, NULL, NULL, ? WHERE NOT EXISTS (SELECT 1 FROM customers WHERE shop_id = ? AND lower(trim(name)) = ?)"
+    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, shopId, customerKey));
+    statements.push(c.env.DB.prepare(
+      "INSERT INTO nursery_customer_daily_sales (id, shop_id, business_date, customer_key, customer_name, customer_phone, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, business_date, customer_key, variety_id, unit_price_cents, payment_method) DO UPDATE SET quantity = nursery_customer_daily_sales.quantity + excluded.quantity, total_amount_cents = nursery_customer_daily_sales.total_amount_cents + excluded.total_amount_cents, customer_name = excluded.customer_name, customer_phone = CASE WHEN excluded.customer_phone != '' THEN excluded.customer_phone ELSE nursery_customer_daily_sales.customer_phone END, updated_at = excluded.updated_at"
+    ).bind(crypto.randomUUID(), shopId, businessDate, customerKey, customerName, customerPhone, variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents, now, now));
+  }
+
+  await c.env.DB.batch(statements);
+  return c.json({ ok: true, id, businessDate, varietyId: variety.id, varietyName: variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, debtId: paymentMethod === "credit" ? old.debtId : null, createdAt: now });
+});
+
+nurseryRouter.delete("/nursery/entries/:id", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const id = c.req.param("id");
+  const old = await c.env.DB.prepare(
+    "SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId, customer_name AS customerName, customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents, payment_method AS paymentMethod, debt_id AS debtId FROM nursery_sale_entries WHERE id = ? AND shop_id = ?"
+  ).bind(id, shopId).first<{
+    id: string; requestId: string; businessDate: string; varietyId: string; customerName: string; customerPhone: string;
+    quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: string; debtId: string | null;
+  }>();
+  if (!old) return c.json({ error: "Sale entry not found." }, 404);
+  if (old.debtId) {
+    const debt = await c.env.DB.prepare("SELECT amount_paid FROM debts WHERE id = ? AND shop_id = ?")
+      .bind(old.debtId, shopId).first<{ amount_paid: number }>();
+    if (debt && Number(debt.amount_paid) > 0) {
+      return c.json({ error: "This credit sale has a payment recorded. Reconcile the customer debt before deleting the sale." }, 409);
+    }
+  }
+
+  const now = new Date().toISOString();
+  const statements = adjustNurseryAggregateStatements(c.env.DB, shopId, old, -1, now);
+  statements.push(c.env.DB.prepare("DELETE FROM nursery_sale_entries WHERE id = ? AND shop_id = ?").bind(id, shopId));
+  if (old.debtId) {
+    statements.push(c.env.DB.prepare("DELETE FROM debts WHERE id = ? AND shop_id = ? AND amount_paid = 0").bind(old.debtId, shopId));
+    statements.push(c.env.DB.prepare("UPDATE nursery_entry_requests SET debt_id = NULL WHERE id = ? AND shop_id = ?").bind(old.requestId, shopId));
+  }
+  await c.env.DB.batch(statements);
+  return c.json({ ok: true, deleted: true });
+});
+
 nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
   const from = c.req.query("from") ?? "";
@@ -241,7 +400,7 @@ nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
     return c.json({ error: "Choose a valid date range." }, 400);
   }
   const rows = await c.env.DB.prepare(
-    `SELECT id, request_id AS requestId, business_date AS businessDate,
+    `SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId,
       variety_name AS varietyName, customer_name AS customerName,
       customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents,
       total_amount_cents AS totalAmountCents, payment_method AS paymentMethod,
