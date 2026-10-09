@@ -35,7 +35,7 @@ function addDays(date: string, amount: number) {
 }
 function cents(value: number) { return value / 100; }
 type CustomerInsightRow = { customerKey: string; customerName: string; customerPhone: string; varietyName: string; quantity: number; totalAmountCents: number; lastPurchase: string };
-type IndividualSaleEntry = { id: string; requestId: string; businessDate: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
+type IndividualSaleEntry = { id: string; requestId: string; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
 
 export default function NurseryRegister() {
   const qc = useQueryClient();
@@ -57,6 +57,9 @@ export default function NurseryRegister() {
   const [editingName, setEditingName] = useState("");
   const [editingPrice, setEditingPrice] = useState("");
   const [busyVarietyId, setBusyVarietyId] = useState<string | null>(null);
+  const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
+  const [saleEdit, setSaleEdit] = useState({ businessDate: "", varietyId: "", quantity: "", unitPrice: "", paymentMethod: "cash" as "cash" | "mpesa" | "credit", customerName: "", customerPhone: "" });
+  const [busySaleId, setBusySaleId] = useState<string | null>(null);
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
 
   const varietiesQuery = useQuery({
@@ -272,6 +275,65 @@ export default function NurseryRegister() {
     } finally { setBusyVarietyId(null); }
   }
 
+  function beginEditSale(entry: IndividualSaleEntry) {
+    setEditingSaleId(entry.id);
+    setSaleEdit({ businessDate: entry.businessDate, varietyId: entry.varietyId, quantity: String(entry.quantity), unitPrice: String(cents(entry.unitPriceCents)), paymentMethod: entry.paymentMethod, customerName: entry.customerName || "", customerPhone: entry.customerPhone || "" });
+  }
+
+  async function saveSaleEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!editingSaleId) return;
+    const quantity = Number(saleEdit.quantity);
+    const unitPrice = Number(saleEdit.unitPrice);
+    const variety = (varietiesQuery.data ?? []).find(v => v.id === saleEdit.varietyId);
+    if (!saleEdit.businessDate || !variety || !Number.isSafeInteger(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) { toast.error("Check the date, variety, quantity and price."); return; }
+    if (saleEdit.paymentMethod === "credit" && (!saleEdit.customerName.trim() || unitPrice <= 0)) { toast.error("Credit sales need a customer name and a price above zero."); return; }
+    const key = ["/api/nursery/entries", shopId, from, to] as const;
+    const previous = qc.getQueryData<{ rows: IndividualSaleEntry[] }>(key);
+    const entry = previous?.rows.find(row => row.id === editingSaleId);
+    if (!entry) { toast.error("Refresh the sales list and try again."); return; }
+    const optimistic: IndividualSaleEntry = { ...entry, businessDate: saleEdit.businessDate, varietyId: variety.id, varietyName: variety.name, quantity, unitPriceCents: Math.round(unitPrice * 100), totalAmountCents: quantity * Math.round(unitPrice * 100), paymentMethod: saleEdit.paymentMethod, customerName: saleEdit.customerName.trim(), customerPhone: saleEdit.customerPhone.trim() };
+    if (previous) qc.setQueryData(key, { ...previous, rows: previous.rows.map(row => row.id === editingSaleId ? optimistic : row) });
+    setEditingSaleId(null);
+    setBusySaleId(entry.id);
+    try {
+      await customFetch(`/api/nursery/entries/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ ...saleEdit, quantity, unitPrice, customerName: saleEdit.customerName.trim(), customerPhone: saleEdit.customerPhone.trim() }) });
+      toast.success("Sale updated. Reports and customer summaries are being refreshed.");
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/debts"] }),
+        qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+      ]);
+    } catch (error: any) {
+      if (previous) qc.setQueryData(key, previous);
+      toast.error(error?.message || "Could not update sale. The previous entry was restored.");
+    } finally { setBusySaleId(null); }
+  }
+
+  async function deleteSale(entry: IndividualSaleEntry) {
+    const key = ["/api/nursery/entries", shopId, from, to] as const;
+    const previous = qc.getQueryData<{ rows: IndividualSaleEntry[] }>(key);
+    if (previous) qc.setQueryData(key, { ...previous, rows: previous.rows.filter(row => row.id !== entry.id) });
+    setBusySaleId(entry.id);
+    try {
+      await customFetch(`/api/nursery/entries/${encodeURIComponent(entry.id)}`, { method: "DELETE" });
+      if (editingSaleId === entry.id) setEditingSaleId(null);
+      toast.success("Sale deleted. Totals and customer summaries are being refreshed.");
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/debts"] }),
+        qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+      ]);
+    } catch (error: any) {
+      if (previous) qc.setQueryData(key, previous);
+      toast.error(error?.message || "Could not delete sale. The previous entry was restored.");
+    } finally { setBusySaleId(null); }
+  }
+
   function choosePeriod(period: "day" | "week" | "month") {
     const end = businessDate;
     const start = period === "day" ? end : period === "week"
@@ -449,18 +511,32 @@ export default function NurseryRegister() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
               <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-600 dark:text-indigo-300"><ClipboardList className="h-5 w-5" /></div>
-              <div><CardTitle>Individual sales</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Every recorded sale, not just daily totals.</p></div>
+              <div><CardTitle>Individual sales</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Edit or remove an entry; linked summaries refresh from the corrected record.</p></div>
             </div>
             <span className="w-fit rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground">{individualEntriesQuery.data?.rows?.length ?? 0} entries shown</span>
           </div>
         </CardHeader>
         <CardContent className="pt-4">
+          {editingSaleId && <form onSubmit={saveSaleEdit} className="mb-4 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.04] p-4">
+            <div className="mb-3 flex items-center justify-between gap-2"><div><p className="font-semibold">Edit sale entry</p><p className="text-xs text-muted-foreground">Changes update the report and customer aggregates.</p></div><Button type="button" variant="ghost" size="icon" aria-label="Cancel sale edit" onClick={() => setEditingSaleId(null)}><X className="h-4 w-4" /></Button></div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="space-y-1"><Label htmlFor="sale-edit-date">Sale date</Label><Input id="sale-edit-date" type="date" value={saleEdit.businessDate} onChange={e => setSaleEdit(s => ({ ...s, businessDate: e.target.value }))} required /></div>
+              <div className="space-y-1"><Label htmlFor="sale-edit-variety">Variety</Label><select id="sale-edit-variety" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={saleEdit.varietyId} onChange={e => setSaleEdit(s => ({ ...s, varietyId: e.target.value }))} required>{(varietiesQuery.data ?? []).map(v => <option key={v.id} value={v.id}>{v.name}{Boolean(v.isActive) ? "" : " (archived)"}</option>)}</select></div>
+              <div className="space-y-1"><Label htmlFor="sale-edit-qty">Quantity</Label><Input id="sale-edit-qty" type="number" min="1" step="1" value={saleEdit.quantity} onChange={e => setSaleEdit(s => ({ ...s, quantity: e.target.value }))} required /></div>
+              <div className="space-y-1"><Label htmlFor="sale-edit-price">Unit price (KES)</Label><Input id="sale-edit-price" type="number" min="0" step="0.01" value={saleEdit.unitPrice} onChange={e => setSaleEdit(s => ({ ...s, unitPrice: e.target.value }))} required /></div>
+              <div className="space-y-1"><Label htmlFor="sale-edit-payment">Payment method</Label><select id="sale-edit-payment" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={saleEdit.paymentMethod} onChange={e => setSaleEdit(s => ({ ...s, paymentMethod: e.target.value as "cash" | "mpesa" | "credit" }))}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="credit">Credit</option></select></div>
+              <div className="space-y-1"><Label htmlFor="sale-edit-customer">Customer name</Label><Input id="sale-edit-customer" value={saleEdit.customerName} onChange={e => setSaleEdit(s => ({ ...s, customerName: e.target.value }))} maxLength={120} placeholder="Walk-in customer if blank" /></div>
+              <div className="space-y-1"><Label htmlFor="sale-edit-phone">Customer phone</Label><Input id="sale-edit-phone" type="tel" value={saleEdit.customerPhone} onChange={e => setSaleEdit(s => ({ ...s, customerPhone: e.target.value }))} maxLength={40} /></div>
+            </div>
+            {saleEdit.paymentMethod === "credit" && <p className="mt-2 text-xs text-violet-700 dark:text-violet-300">Credit entries require a customer and positive price. Sales with payments already recorded must be reconciled in Debts before editing or deleting.</p>}
+            <div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => setEditingSaleId(null)}>Cancel</Button><Button type="submit" disabled={busySaleId === editingSaleId} className="gap-1"><Save className="h-4 w-4" /> Save changes</Button></div>
+          </form>}
           {individualEntriesQuery.isLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading individual sales…</p>
             : individualEntriesQuery.isError ? <p className="py-8 text-center text-sm text-destructive">Could not load individual sales. Refresh and try again.</p>
             : !individualEntriesQuery.data?.rows?.length ? <div className="rounded-xl border border-dashed p-8 text-center"><ClipboardList className="mx-auto h-8 w-8 text-muted-foreground/60" /><p className="mt-2 font-medium">No individual entries in this period</p><p className="mt-1 text-sm text-muted-foreground">New sales will appear here after this feature is deployed. Older records remain available in the aggregated sales report.</p></div>
             : <div className="overflow-x-auto">
               <table className="w-full min-w-[850px] text-left text-sm">
-                <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Date / time</th><th className="px-3 py-3">Seedlings / customer</th><th className="px-3 py-3 text-right">Quantity</th><th className="px-3 py-3 text-right">Unit price</th><th className="px-3 py-3">Payment</th><th className="px-3 py-3 text-right">Sale total</th></tr></thead>
+                <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Date / time</th><th className="px-3 py-3">Seedlings / customer</th><th className="px-3 py-3 text-right">Quantity</th><th className="px-3 py-3 text-right">Unit price</th><th className="px-3 py-3">Payment</th><th className="px-3 py-3 text-right">Sale total</th><th className="px-3 py-3">Actions</th></tr></thead>
                 <tbody>{individualEntriesQuery.data.rows.map((entry) => <tr key={entry.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
                   <td className="whitespace-nowrap px-3 py-3"><p>{entry.businessDate}</p><p className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></td>
                   <td className="px-3 py-3"><p className="font-semibold">{entry.varietyName}</p><p className="text-xs text-muted-foreground">{entry.customerName || "Walk-in customer"}{entry.customerPhone ? " · " + entry.customerPhone : ""}</p></td>
@@ -468,6 +544,7 @@ export default function NurseryRegister() {
                   <td className="px-3 py-3 text-right tabular-nums">{formatKES(cents(entry.unitPriceCents))}</td>
                   <td className="px-3 py-3"><span className={"inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span></td>
                   <td className="px-3 py-3 text-right font-bold tabular-nums">{formatKES(cents(entry.totalAmountCents))}</td>
+                  <td className="px-3 py-3"><div className="flex items-center gap-1.5"><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</Button><Button type="button" variant="destructive" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm(`Delete this ${entry.varietyName} sale for ${formatKES(cents(entry.totalAmountCents))}? The totals will be adjusted.`)) void deleteSale(entry); }} className="gap-1"><Trash2 className="h-3.5 w-3.5" /> Delete</Button></div></td>
                 </tr>)}</tbody>
               </table>
             </div>}
