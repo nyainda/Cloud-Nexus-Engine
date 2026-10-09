@@ -360,7 +360,10 @@ nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
   if (!validDate(from) || !validDate(to) || from > to) {
     return c.json({ error: "Choose a valid report date range." }, 400);
   }
-  // Aggregate in SQLite: only a small result set is returned to the Worker.
+  const page = Math.max(1, Math.floor(Number(c.req.query("page") ?? 1) || 1));
+  const pageSize = Math.min(50, Math.max(1, Math.floor(Number(c.req.query("pageSize") ?? 20) || 20)));
+  const offset = (page - 1) * pageSize;
+  // Aggregate and paginate in D1 so long date ranges do not return every report row.
   const rows = await c.env.DB.prepare(
     `SELECT s.business_date AS businessDate, s.variety_id AS varietyId, v.name AS varietyName,
       s.unit_price_cents AS unitPriceCents, s.payment_method AS paymentMethod,
@@ -369,8 +372,17 @@ nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
      JOIN nursery_varieties v ON v.id = s.variety_id AND v.shop_id = s.shop_id
      WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?
      GROUP BY s.business_date, s.variety_id, v.name, s.unit_price_cents, s.payment_method
-     ORDER BY s.business_date DESC, v.name COLLATE NOCASE, s.payment_method`
-  ).bind(shopId, from, to).all();
+     ORDER BY s.business_date DESC, v.name COLLATE NOCASE, s.payment_method
+     LIMIT ? OFFSET ?`
+  ).bind(shopId, from, to, pageSize, offset).all();
+  const count = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS total FROM (
+       SELECT s.business_date, s.variety_id, s.unit_price_cents, s.payment_method
+       FROM nursery_daily_sales s
+       WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?
+       GROUP BY s.business_date, s.variety_id, s.unit_price_cents, s.payment_method
+     )`
+  ).bind(shopId, from, to).first<{ total: number }>();
   const summary = await c.env.DB.prepare(
     `SELECT COALESCE(SUM(quantity), 0) AS totalSeedlings,
       COALESCE(SUM(total_amount_cents), 0) AS totalRevenueCents,
@@ -379,7 +391,7 @@ nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
       COALESCE(SUM(CASE WHEN payment_method = 'credit' THEN total_amount_cents ELSE 0 END), 0) AS creditCents
      FROM nursery_daily_sales WHERE shop_id = ? AND business_date >= ? AND business_date <= ?`
   ).bind(shopId, from, to).first();
-  return c.json({ rows: rows.results ?? [], summary });
+  return c.json({ rows: rows.results ?? [], summary, total: Number(count?.total ?? 0), page, pageSize });
 });
 
 
@@ -388,10 +400,15 @@ nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
   const from = c.req.query("from") ?? "";
   const to = c.req.query("to") ?? "";
-  const limit = Math.min(500, Math.max(1, Number(c.req.query("limit") ?? 200) || 200));
-  if (!validDate(from) || !validDate(to) || from > to) {
-    return c.json({ error: "Choose a valid date range." }, 400);
+  const page = Math.max(1, Math.floor(Number(c.req.query("page") ?? 1) || 1));
+  const pageSize = Math.min(50, Math.max(1, Math.floor(Number(c.req.query("pageSize") ?? 25) || 25)));
+  const offset = (page - 1) * pageSize;
+  const search = (c.req.query("search") ?? "").trim().slice(0, 100).toLocaleLowerCase();
+  const payment = c.req.query("payment") ?? "all";
+  if (!validDate(from) || !validDate(to) || from > to || !["all", "cash", "mpesa", "credit"].includes(payment)) {
+    return c.json({ error: "Choose a valid date range and payment filter." }, 400);
   }
+  const needle = `%${search}%`;
   const rows = await c.env.DB.prepare(
     `SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId,
       variety_name AS varietyName, customer_name AS customerName,
@@ -400,10 +417,18 @@ nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
       debt_id AS debtId, created_at AS createdAt
      FROM nursery_sale_entries
      WHERE shop_id = ? AND business_date >= ? AND business_date <= ?
+       AND (? = '' OR lower(variety_name) LIKE ? OR lower(customer_name) LIKE ? OR lower(customer_phone) LIKE ? OR business_date LIKE ?)
+       AND (? = 'all' OR payment_method = ?)
      ORDER BY business_date DESC, created_at DESC
-     LIMIT ?`
-  ).bind(shopId, from, to, limit).all();
-  return c.json({ rows: rows.results ?? [] });
+     LIMIT ? OFFSET ?`
+  ).bind(shopId, from, to, search, needle, needle, needle, needle, payment, payment, pageSize, offset).all();
+  const count = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS total FROM nursery_sale_entries
+     WHERE shop_id = ? AND business_date >= ? AND business_date <= ?
+       AND (? = '' OR lower(variety_name) LIKE ? OR lower(customer_name) LIKE ? OR lower(customer_phone) LIKE ? OR business_date LIKE ?)
+       AND (? = 'all' OR payment_method = ?)`
+  ).bind(shopId, from, to, search, needle, needle, needle, needle, payment, payment).first<{ total: number }>();
+  return c.json({ rows: rows.results ?? [], total: Number(count?.total ?? 0), page, pageSize });
 });
 
 nurseryRouter.get("/nursery/customer-insights", requireAuth, async (c) => {
