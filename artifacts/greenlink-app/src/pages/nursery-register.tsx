@@ -7,17 +7,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
-import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2 } from "lucide-react";
+import { CustomerAutocomplete, type SelectedCustomer } from "@/components/customer-autocomplete";
+import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
 type Variety = { id: string; name: string; defaultPrice: number; isActive: number | boolean };
 type ReportRow = {
   businessDate: string; varietyId: string; varietyName: string; unitPriceCents: number;
-  paymentMethod: "cash" | "mpesa"; quantity: number; totalAmountCents: number;
+  paymentMethod: "cash" | "mpesa" | "credit"; quantity: number; totalAmountCents: number;
 };
 type ReportData = {
   rows: ReportRow[];
-  summary: { totalSeedlings: number; totalRevenueCents: number; cashCents: number; mpesaCents: number };
+  summary: { totalSeedlings: number; totalRevenueCents: number; cashCents: number; mpesaCents: number; creditCents: number };
 };
 
 function localDate(date = new Date()) {
@@ -32,6 +33,7 @@ function addDays(date: string, amount: number) {
   return localDate(parsed);
 }
 function cents(value: number) { return value / 100; }
+type CustomerInsightRow = { customerKey: string; customerName: string; customerPhone: string; varietyName: string; quantity: number; totalAmountCents: number; lastPurchase: string };
 
 export default function NurseryRegister() {
   const qc = useQueryClient();
@@ -42,7 +44,9 @@ export default function NurseryRegister() {
   const [varietyId, setVarietyId] = useState("");
   const [quantity, setQuantity] = useState("100");
   const [unitPrice, setUnitPrice] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "mpesa">("cash");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "mpesa" | "credit">("cash");
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("0");
   const [saving, setSaving] = useState(false);
@@ -53,6 +57,11 @@ export default function NurseryRegister() {
     queryKey: ["/api/nursery/varieties", shopId],
     queryFn: () => customFetch("/api/nursery/varieties") as Promise<Variety[]>,
     enabled: !!shopId,
+  });
+  const customerInsightsQuery = useQuery({
+    queryKey: ["/api/nursery/customer-insights", shopId, from, to],
+    queryFn: () => customFetch(`/api/nursery/customer-insights?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`) as Promise<{ rows: CustomerInsightRow[] }>,
+    enabled: !!shopId && !!from && !!to && from <= to,
   });
   const reportQuery = useQuery({
     queryKey: ["/api/nursery/report", shopId, from, to],
@@ -70,11 +79,13 @@ export default function NurseryRegister() {
     revenueCents: sum.revenueCents + Number(row.totalAmountCents || 0),
     cashCents: sum.cashCents + (row.paymentMethod === "cash" ? Number(row.totalAmountCents || 0) : 0),
     mpesaCents: sum.mpesaCents + (row.paymentMethod === "mpesa" ? Number(row.totalAmountCents || 0) : 0),
-  }), { quantity: 0, revenueCents: 0, cashCents: 0, mpesaCents: 0 }), [dateRows]);
+    creditCents: sum.creditCents + (row.paymentMethod === "credit" ? Number(row.totalAmountCents || 0) : 0),
+  }), { quantity: 0, revenueCents: 0, cashCents: 0, mpesaCents: 0, creditCents: 0 }), [dateRows]);
 
   async function saveEntry(event: FormEvent) {
     event.preventDefault();
     if (!selectedVariety) { toast.error("Add a seedling variety first."); return; }
+    if (paymentMethod === "credit" && !customerName.trim()) { toast.error("Choose or enter the customer for a credit sale."); return; }
     if (!navigator.onLine) { toast.error("Connect to the internet before saving. Nursery entries are not queued offline yet."); return; }
     const qty = Number(quantity);
     const price = Number(unitPrice === "" ? selectedVariety.defaultPrice : unitPrice);
@@ -85,12 +96,19 @@ export default function NurseryRegister() {
     try {
       await customFetch("/api/nursery/entries", {
         method: "POST",
-        body: JSON.stringify({ requestId, businessDate, varietyId: selectedVariety.id, quantity: qty, unitPrice: price, paymentMethod }),
+        body: JSON.stringify({ requestId, businessDate, varietyId: selectedVariety.id, quantity: qty, unitPrice: price, paymentMethod, customerName: customerName.trim() || undefined, customerPhone: customerPhone.trim() || undefined }),
       });
       toast.success(`Saved ${qty.toLocaleString()} ${selectedVariety.name} seedlings`);
       setRequestId(crypto.randomUUID());
       setQuantity("100");
-      await qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] });
+      setCustomerName("");
+      setCustomerPhone("");
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/debts"] }),
+        qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+      ]);
     } catch (error: any) {
       toast.error(error?.message || "Could not save the entry. Retry without changing the entry to avoid duplicates.");
     } finally {
@@ -154,7 +172,7 @@ export default function NurseryRegister() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Card><CardContent className="flex items-center gap-3 p-4">
           <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-600"><Leaf className="h-5 w-5" /></div>
           <div><p className="text-xs text-muted-foreground">Seedlings sold that day</p><p className="text-2xl font-bold tabular-nums">{todaySummary.quantity.toLocaleString()}</p></div>
@@ -170,6 +188,10 @@ export default function NurseryRegister() {
         <Card><CardContent className="flex items-center gap-3 p-4">
           <div className="rounded-xl bg-sky-500/10 p-2.5 text-sky-600"><Smartphone className="h-5 w-5" /></div>
           <div><p className="text-xs text-muted-foreground">M-Pesa</p><p className="text-xl font-bold tabular-nums">{formatKES(cents(todaySummary.mpesaCents))}</p></div>
+        </CardContent></Card>
+        <Card><CardContent className="flex items-center gap-3 p-4">
+          <div className="rounded-xl bg-violet-500/10 p-2.5 text-violet-600"><CreditCard className="h-5 w-5" /></div>
+          <div><p className="text-xs text-muted-foreground">Sold on credit</p><p className="text-xl font-bold tabular-nums">{formatKES(cents(todaySummary.creditCents))}</p></div>
         </CardContent></Card>
       </div>
 
@@ -191,10 +213,23 @@ export default function NurseryRegister() {
               </div>
               <div className="space-y-2">
                 <Label>Payment method</Label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <button type="button" onClick={() => setPaymentMethod("cash")} className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition-colors ${paymentMethod === "cash" ? "border-emerald-600 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border text-muted-foreground hover:bg-muted/60"}`}><Banknote className="h-4 w-4" /> Cash</button>
                   <button type="button" onClick={() => setPaymentMethod("mpesa")} className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition-colors ${paymentMethod === "mpesa" ? "border-sky-600 bg-sky-500/10 text-sky-700 dark:text-sky-300" : "border-border text-muted-foreground hover:bg-muted/60"}`}><Smartphone className="h-4 w-4" /> M-Pesa</button>
+                  <button type="button" onClick={() => setPaymentMethod("credit")} className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition-colors ${paymentMethod === "credit" ? "border-violet-600 bg-violet-500/10 text-violet-700 dark:text-violet-300" : "border-border text-muted-foreground hover:bg-muted/60"}`}><CreditCard className="h-4 w-4" /> Credit</button>
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Customer (optional for cash / M-Pesa; required for credit)</Label>
+                <CustomerAutocomplete
+                  shopId={shopId}
+                  value={customerName}
+                  onChange={setCustomerName}
+                  onSelect={(customer: SelectedCustomer) => { setCustomerName(customer.name); setCustomerPhone(customer.phone); }}
+                  placeholder="Search existing customer or enter a name"
+                />
+                <Input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="Phone number (optional)" type="tel" />
+                {paymentMethod === "credit" && <p className="text-xs text-violet-700 dark:text-violet-300">This creates a debt in the existing Debts and Customers screens. No inventory is deducted.</p>}
               </div>
               <div className="flex items-center justify-between rounded-xl bg-muted/50 p-4">
                 <div><p className="text-sm text-muted-foreground">Entry total</p><p className="text-2xl font-bold tabular-nums">{formatKES((Number(quantity) || 0) * Number(unitPrice === "" ? selectedVariety?.defaultPrice ?? 0 : unitPrice))}</p></div>
@@ -224,6 +259,51 @@ export default function NurseryRegister() {
         </Card>
       </div>
 
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5 text-emerald-600" /> Customer buying insights</CardTitle>
+          <p className="text-sm text-muted-foreground">Customers who were named during entry, ranked by seedling spend for the selected report period.</p>
+        </CardHeader>
+        <CardContent>
+          {customerInsightsQuery.isLoading ? <p className="py-6 text-center text-sm text-muted-foreground">Loading customer insights…</p>
+            : customerInsightsQuery.isError ? <p className="py-6 text-center text-sm text-destructive">Could not load customer insights.</p>
+            : !customerInsightsQuery.data?.rows?.length ? <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">No named customer purchases in this date range yet. Add a customer to a sale to start seeing buying patterns.</p>
+            : (() => {
+              const grouped = new Map<string, { name: string; phone: string; quantity: number; totalCents: number; lastPurchase: string; varieties: Map<string, number> }>();
+              for (const row of customerInsightsQuery.data.rows) {
+                const item = grouped.get(row.customerKey) ?? { name: row.customerName, phone: row.customerPhone, quantity: 0, totalCents: 0, lastPurchase: row.lastPurchase, varieties: new Map<string, number>() };
+                item.quantity += Number(row.quantity || 0);
+                item.totalCents += Number(row.totalAmountCents || 0);
+                if (row.lastPurchase > item.lastPurchase) item.lastPurchase = row.lastPurchase;
+                item.varieties.set(row.varietyName, (item.varieties.get(row.varietyName) ?? 0) + Number(row.quantity || 0));
+                grouped.set(row.customerKey, item);
+              }
+              const customers = [...grouped.values()].sort((a, b) => b.totalCents - a.totalCents);
+              return <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Customers buying</p><p className="text-2xl font-bold">{customers.length}</p></div>
+                  <div className="rounded-xl bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Named seedlings sold</p><p className="text-2xl font-bold">{customers.reduce((sum, customer) => sum + customer.quantity, 0).toLocaleString()}</p></div>
+                  <div className="rounded-xl bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Named sales value</p><p className="text-2xl font-bold">{formatKES(customers.reduce((sum, customer) => sum + customer.totalCents, 0) / 100)}</p></div>
+                </div>
+                <div className="space-y-2">
+                  {customers.map((customer) => {
+                    const favorite = [...customer.varieties.entries()].sort((a, b) => b[1] - a[1])[0];
+                    return <div key={customer.name.toLowerCase()} className="flex flex-col gap-2 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="font-semibold">{customer.name}</p>
+                        <p className="text-xs text-muted-foreground">{customer.phone || "No phone recorded"} · Last purchase {customer.lastPurchase}</p>
+                        <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><TrendingUp className="h-3.5 w-3.5" /> Most purchased: {favorite?.[0] ?? "—"} ({favorite?.[1].toLocaleString() ?? "0"} seedlings)</p>
+                      </div>
+                      <div className="sm:text-right"><p className="text-lg font-bold tabular-nums">{formatKES(customer.totalCents / 100)}</p><p className="text-xs text-muted-foreground">{customer.quantity.toLocaleString()} seedlings</p></div>
+                    </div>;
+                  })}
+                </div>
+              </div>;
+            })()}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -243,11 +323,11 @@ export default function NurseryRegister() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[680px] text-left text-sm">
                 <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Date</th><th className="px-3 py-3">Variety</th><th className="px-3 py-3 text-right">Qty</th><th className="px-3 py-3 text-right">Unit price</th><th className="px-3 py-3">Payment</th><th className="px-3 py-3 text-right">Total</th></tr></thead>
-                <tbody>{reportRows.map((row, index) => <tr key={`${row.businessDate}-${row.varietyId}-${row.unitPriceCents}-${row.paymentMethod}-${index}`} className="border-b border-border/60 last:border-0 hover:bg-muted/30"><td className="whitespace-nowrap px-3 py-3">{row.businessDate}</td><td className="px-3 py-3 font-medium">{row.varietyName}</td><td className="px-3 py-3 text-right tabular-nums">{Number(row.quantity).toLocaleString()}</td><td className="px-3 py-3 text-right tabular-nums">{formatKES(cents(row.unitPriceCents))}</td><td className="px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${row.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-sky-500/10 text-sky-700 dark:text-sky-300"}`}>{row.paymentMethod === "mpesa" ? "M-Pesa" : "Cash"}</span></td><td className="px-3 py-3 text-right font-semibold tabular-nums">{formatKES(cents(row.totalAmountCents))}</td></tr>)}</tbody>
+                <tbody>{reportRows.map((row, index) => <tr key={`${row.businessDate}-${row.varietyId}-${row.unitPriceCents}-${row.paymentMethod}-${index}`} className="border-b border-border/60 last:border-0 hover:bg-muted/30"><td className="whitespace-nowrap px-3 py-3">{row.businessDate}</td><td className="px-3 py-3 font-medium">{row.varietyName}</td><td className="px-3 py-3 text-right tabular-nums">{Number(row.quantity).toLocaleString()}</td><td className="px-3 py-3 text-right tabular-nums">{formatKES(cents(row.unitPriceCents))}</td><td className="px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${row.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : row.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300"}`}>{row.paymentMethod === "mpesa" ? "M-Pesa" : row.paymentMethod === "credit" ? "Credit" : "Cash"}</span></td><td className="px-3 py-3 text-right font-semibold tabular-nums">{formatKES(cents(row.totalAmountCents))}</td></tr>)}</tbody>
               </table>
             </div>
           )}
-          <p className="mt-3 text-xs text-muted-foreground">Totals are aggregated in D1 by shop, date, variety, price and payment method. Customer-level transactions are not stored.</p>
+          <p className="mt-3 text-xs text-muted-foreground">Shop/date/variety/payment totals are aggregated in D1. Named customer purchases are also summarized by customer and variety; credit sales create a linked customer debt.</p>
         </CardContent>
       </Card>
     </div>
