@@ -156,7 +156,6 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       .first<{ key: string }>();
     if (!invoiceMarker) await ensureQuotationInvoiceColumns(db);
     await ensureNurseryRegister(db);
-  await ensureNurseryCustomerCredit(db);
     await ensureNurseryCustomerCredit(db);
     bootstrapped = true;
     return;
@@ -339,6 +338,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   // quotation-table repair above, which may recreate the table.
   await ensureQuotationInvoiceColumns(db);
   await ensureNurseryRegister(db);
+  await ensureNurseryCustomerCredit(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup
