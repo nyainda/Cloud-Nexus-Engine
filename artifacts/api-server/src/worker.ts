@@ -170,6 +170,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     if (!invoiceMarker) await ensureQuotationInvoiceColumns(db);
     await ensureNurseryRegister(db);
     await ensureNurseryCustomerCredit(db);
+    await ensureNurseryIndividualEntries(db);
     bootstrapped = true;
     return;
   }
@@ -352,6 +353,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   await ensureQuotationInvoiceColumns(db);
   await ensureNurseryRegister(db);
   await ensureNurseryCustomerCredit(db);
+  await ensureNurseryIndividualEntries(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup
