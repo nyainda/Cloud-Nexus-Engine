@@ -391,7 +391,15 @@ nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
       COALESCE(SUM(CASE WHEN payment_method = 'credit' THEN total_amount_cents ELSE 0 END), 0) AS creditCents
      FROM nursery_daily_sales WHERE shop_id = ? AND business_date >= ? AND business_date <= ?`
   ).bind(shopId, from, to).first();
-  return c.json({ rows: rows.results ?? [], summary, total: Number(count?.total ?? 0), page, pageSize });
+  const dailySummary = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(quantity), 0) AS totalSeedlings,
+      COALESCE(SUM(total_amount_cents), 0) AS totalRevenueCents,
+      COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN total_amount_cents ELSE 0 END), 0) AS cashCents,
+      COALESCE(SUM(CASE WHEN payment_method = 'mpesa' THEN total_amount_cents ELSE 0 END), 0) AS mpesaCents,
+      COALESCE(SUM(CASE WHEN payment_method = 'credit' THEN total_amount_cents ELSE 0 END), 0) AS creditCents
+     FROM nursery_daily_sales WHERE shop_id = ? AND business_date = ?`
+  ).bind(shopId, c.req.query("businessDate") ?? to).first();
+  return c.json({ rows: rows.results ?? [], summary, dailySummary, total: Number(count?.total ?? 0), page, pageSize });
 });
 
 
@@ -428,7 +436,16 @@ nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
        AND (? = '' OR lower(variety_name) LIKE ? OR lower(customer_name) LIKE ? OR lower(customer_phone) LIKE ? OR business_date LIKE ?)
        AND (? = 'all' OR payment_method = ?)`
   ).bind(shopId, from, to, search, needle, needle, needle, needle, payment, payment).first<{ total: number }>();
-  return c.json({ rows: rows.results ?? [], total: Number(count?.total ?? 0), page, pageSize });
+  const filteredSummary = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(quantity), 0) AS quantity,
+       COALESCE(SUM(total_amount_cents), 0) AS totalCents,
+       COALESCE(SUM(CASE WHEN payment_method = 'credit' THEN total_amount_cents ELSE 0 END), 0) AS creditCents
+     FROM nursery_sale_entries
+     WHERE shop_id = ? AND business_date >= ? AND business_date <= ?
+       AND (? = '' OR lower(variety_name) LIKE ? OR lower(customer_name) LIKE ? OR lower(customer_phone) LIKE ? OR business_date LIKE ?)
+       AND (? = 'all' OR payment_method = ?)`
+  ).bind(shopId, from, to, search, needle, needle, needle, needle, payment, payment).first();
+  return c.json({ rows: rows.results ?? [], total: Number(count?.total ?? 0), page, pageSize, summary: filteredSummary });
 });
 
 nurseryRouter.get("/nursery/customer-insights", requireAuth, async (c) => {
