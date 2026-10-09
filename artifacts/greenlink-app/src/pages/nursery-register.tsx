@@ -169,7 +169,9 @@ export default function NurseryRegister() {
         body: JSON.stringify({ name, defaultPrice: price }),
       }) as Variety;
       const current = qc.getQueryData<Variety[]>(key) ?? [];
-      const reconciled = current.map(v => v.id === tempId ? created : v);
+      const reconciled = current.some(v => v.id === tempId)
+        ? current.map(v => v.id === tempId ? created : v)
+        : [created, ...current.filter(v => v.id !== created.id)];
       qc.setQueryData(key, reconciled);
       void saveNurseryVarietiesToCache(shopId, reconciled);
       setVarietyId(created.id);
