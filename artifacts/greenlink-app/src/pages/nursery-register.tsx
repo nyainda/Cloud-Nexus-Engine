@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
 import { loadCachedNurseryVarieties, saveNurseryVarietiesToCache } from "@/lib/nursery-db";
 import { CustomerAutocomplete, type SelectedCustomer } from "@/components/customer-autocomplete";
-import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign, ChevronDown } from "lucide-react";
+import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign, ChevronDown, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 
 type Variety = { id: string; name: string; defaultPrice: number; isActive: number | boolean };
@@ -63,6 +63,9 @@ export default function NurseryRegister() {
   const [catalogueSearch, setCatalogueSearch] = useState("");
   const [catalogueStatus, setCatalogueStatus] = useState<"active" | "archived" | "all">("active");
   const [catalogueLimit, setCatalogueLimit] = useState(12);
+  const [catalogueExpanded, setCatalogueExpanded] = useState(false);
+  const [productSearch, setProductSearch] = useState("");
+  const [cart, setCart] = useState<Array<{ varietyId: string; name: string; quantity: string; unitPrice: string }>>([]);
   const [saleSearch, setSaleSearch] = useState("");
   const [salePaymentFilter, setSalePaymentFilter] = useState<"all" | "cash" | "mpesa" | "credit">("all");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
@@ -114,6 +117,19 @@ export default function NurseryRegister() {
       .sort((a, b) => Number(Boolean(b.isActive)) - Number(Boolean(a.isActive)) || a.name.localeCompare(b.name));
   }, [varietiesQuery.data, catalogueSearch, catalogueStatus]);
   const visibleCatalogue = filteredCatalogue.slice(0, catalogueLimit);
+  const matchingSaleVarieties = useMemo(() => {
+    const needle = productSearch.trim().toLocaleLowerCase();
+    return varieties.filter(v => !needle || v.name.toLocaleLowerCase().includes(needle)).slice(0, 8);
+  }, [varieties, productSearch]);
+  const cartTotal = cart.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unitPrice) || 0), 0);
+  function addToCart(variety: Variety) {
+    setCart(current => {
+      const existing = current.find(item => item.varietyId === variety.id);
+      if (existing) return current.map(item => item.varietyId === variety.id ? { ...item, quantity: String((Number(item.quantity) || 0) + 1) } : item);
+      return [...current, { varietyId: variety.id, name: variety.name, quantity: "1", unitPrice: String(variety.defaultPrice) }];
+    });
+    setProductSearch("");
+  }
   const selectedVariety = varieties.find(v => v.id === varietyId) ?? varieties[0];
   const report = reportQuery.data;
   const reportRows = report?.rows ?? [];
@@ -142,37 +158,44 @@ export default function NurseryRegister() {
 
   async function saveEntry(event: FormEvent) {
     event.preventDefault();
-    if (!selectedVariety) { toast.error("Add a seedling variety first."); return; }
+    if (!cart.length) { toast.error("Search and add at least one seedling variety."); return; }
     if (paymentMethod === "credit" && !customerName.trim()) { toast.error("Choose or enter the customer for a credit sale."); return; }
     if (!navigator.onLine) { toast.error("Connect to the internet before saving. Nursery entries are not queued offline yet."); return; }
-    const qty = Number(quantity);
-    const price = Number(unitPrice === "" ? selectedVariety.defaultPrice : unitPrice);
-    if (!Number.isSafeInteger(qty) || qty <= 0 || !Number.isFinite(price) || price < 0) {
-      toast.error("Enter a positive whole-number quantity and a valid price."); return;
+    const prepared = cart.map(item => ({ ...item, qty: Number(item.quantity), price: Number(item.unitPrice) }));
+    if (prepared.some(item => !Number.isSafeInteger(item.qty) || item.qty <= 0 || !Number.isFinite(item.price) || item.price < 0 || (paymentMethod === "credit" && item.price <= 0))) {
+      toast.error("Check every cart line: quantity must be a positive whole number and each price must be valid."); return;
     }
     setSaving(true);
+    let savedCount = 0;
     try {
-      await customFetch("/api/nursery/entries", {
-        method: "POST",
-        body: JSON.stringify({ requestId, businessDate, varietyId: selectedVariety.id, quantity: qty, unitPrice: price, paymentMethod, customerName: customerName.trim() || undefined, customerPhone: customerPhone.trim() || undefined }),
-      });
-      toast.success(`Saved ${qty.toLocaleString()} ${selectedVariety.name} seedlings`);
-      setRequestId(crypto.randomUUID());
-      setQuantity("100");
-      setCustomerName("");
-      setCustomerPhone("");
+      for (const item of prepared) {
+        await customFetch("/api/nursery/entries", { method: "POST", body: JSON.stringify({
+          requestId: crypto.randomUUID(), businessDate, varietyId: item.varietyId, quantity: item.qty,
+          unitPrice: item.price, paymentMethod, customerName: customerName.trim() || undefined,
+          customerPhone: customerPhone.trim() || undefined,
+        }) });
+        savedCount++;
+      }
+      toast.success(`Saved ${savedCount} item types (${prepared.reduce((sum, item) => sum + item.qty, 0).toLocaleString()} seedlings)`);
+      setCart([]); setCustomerName(""); setCustomerPhone("");
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
-        qc.invalidateQueries({ queryKey: ["/api/debts"] }),
-        qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+        qc.invalidateQueries({ queryKey: ["/api/debts"] }), qc.invalidateQueries({ queryKey: ["/api/crm"] }),
       ]);
     } catch (error: any) {
-      toast.error(error?.message || "Could not save the entry. Retry without changing the entry to avoid duplicates.");
-    } finally {
-      setSaving(false);
-    }
+      if (savedCount > 0) {
+        setCart(current => current.filter(item => !prepared.slice(0, savedCount).some(done => done.varietyId === item.varietyId)));
+        toast.error(`Saved ${savedCount} item type(s), but another item failed. Remaining items are kept in the cart; check the register before retrying.`);
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
+          qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
+          qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
+          qc.invalidateQueries({ queryKey: ["/api/debts"] }),
+        ]);
+      } else toast.error(error?.message || "Could not save the sale. Your cart is unchanged.");
+    } finally { setSaving(false); }
   }
 
   async function createVariety(event: FormEvent) {
@@ -414,18 +437,25 @@ export default function NurseryRegister() {
           <CardHeader className="rounded-t-xl border-b border-emerald-500/15 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent pb-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-emerald-600 p-2.5 text-white shadow-sm"><PackagePlus className="h-5 w-5" /></div><div className="min-w-0 flex-1"><CardTitle className="text-lg">New seedling sale</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Enter the quantity, price and how the customer paid.</p></div><span className="rounded-full border border-emerald-600/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">Sales entry</span></div></CardHeader>
           <CardContent className="space-y-4 pt-5">
             <form className="space-y-4" onSubmit={saveEntry}>
-              <div className="space-y-2">
-                <Label htmlFor="variety">Seedling variety</Label>
-                <select id="variety" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={selectedVariety?.id ?? ""} onChange={e => { const v = varieties.find(item => item.id === e.target.value); setVarietyId(e.target.value); setUnitPrice(v ? String(v.defaultPrice) : ""); }} required>
-                  {varieties.length === 0 && <option value="">Add a variety below first</option>}
-                  {varieties.map(v => <option key={v.id} value={v.id}>{v.name} · default {formatKES(v.defaultPrice)}</option>)}
-                </select>
+              <div className="space-y-3">
+                <Label htmlFor="seedling-search">Add seedlings to this sale</Label>
+                <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input id="seedling-search" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Search cabbage, tomato, kale…" className="h-11 bg-background pl-9" autoComplete="off" /></div>
+                {productSearch.trim() && <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+                  {matchingSaleVarieties.length ? matchingSaleVarieties.map(v => <button key={v.id} type="button" onClick={() => addToCart(v)} className="flex w-full items-center justify-between gap-3 border-b border-border/70 px-3 py-3 text-left last:border-0 hover:bg-muted/50"><span className="min-w-0"><span className="block truncate text-sm font-semibold">{v.name}</span><span className="text-xs text-muted-foreground">Default price · {formatKES(v.defaultPrice)} each</span></span><span className="flex shrink-0 items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300"><Plus className="h-3.5 w-3.5" /> Add</span></button>) : <p className="p-3 text-sm text-muted-foreground">No active varieties found. Add this variety in the catalogue first.</p>}
+                  {matchingSaleVarieties.length === 8 && <p className="border-t bg-muted/30 px-3 py-2 text-xs text-muted-foreground">Showing first 8 matches. Type more letters to narrow results.</p>}
+                </div>}
+                <div className="rounded-xl border border-border bg-muted/20 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-2"><p className="flex items-center gap-2 text-sm font-semibold"><ShoppingCart className="h-4 w-4 text-emerald-600" /> Sale items</p><span className="rounded-full bg-background px-2.5 py-1 text-xs font-semibold text-muted-foreground">{cart.length} varieties</span></div>
+                  {!cart.length ? <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">Search above and add each seedling type the customer wants.</p> : <div className="space-y-2">
+                    {cart.map(item => <div key={item.varietyId} className="rounded-lg border border-border bg-card p-3">
+                      <div className="mb-2 flex items-start justify-between gap-2"><p className="min-w-0 truncate text-sm font-semibold">{item.name}</p><button type="button" aria-label={`Remove ${item.name}`} onClick={() => setCart(current => current.filter(line => line.varietyId !== item.varietyId))} className="rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><X className="h-4 w-4" /></button></div>
+                      <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><Label className="text-xs">Quantity</Label><Input aria-label={`${item.name} quantity`} type="number" min="1" step="1" inputMode="numeric" value={item.quantity} onChange={e => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, quantity: e.target.value } : line))} className="h-9" /></div><div className="space-y-1"><Label className="text-xs">Price each (KES)</Label><Input aria-label={`${item.name} price per seedling`} type="number" min="0" step="0.01" value={item.unitPrice} onChange={e => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, unitPrice: e.target.value } : line))} className="h-9" /></div></div>
+                      <p className="mt-2 text-right text-sm font-semibold tabular-nums">{formatKES((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</p>
+                    </div>)}
+                  </div>}
+                </div>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2"><Label htmlFor="quantity">Quantity sold</Label><Input id="quantity" type="number" min="1" step="1" inputMode="numeric" value={quantity} onChange={e => setQuantity(e.target.value)} required /></div>
-                <div className="space-y-2"><Label htmlFor="price">Price per seedling (KES)</Label><Input id="price" type="number" min="0" step="0.01" value={unitPrice === "" && selectedVariety ? String(selectedVariety.defaultPrice) : unitPrice} onChange={e => setUnitPrice(e.target.value)} required /><p className="text-xs text-muted-foreground">Editable for this entry only; the saved default stays unchanged.</p></div>
-              </div>
-              <div className="space-y-2">
+<div className="space-y-2">
                 <Label>Payment method</Label>
                 <div className="grid grid-cols-3 gap-2">
                   <button type="button" onClick={() => setPaymentMethod("cash")} className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition-colors ${paymentMethod === "cash" ? "border-emerald-600 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border text-muted-foreground hover:bg-muted/60"}`}><Banknote className="h-4 w-4" /> Cash</button>
@@ -446,8 +476,8 @@ export default function NurseryRegister() {
                 {paymentMethod === "credit" && <p className="text-xs text-violet-700 dark:text-violet-300">This creates a debt in the existing Debts and Customers screens. No inventory is deducted.</p>}
               </div>
               <div className="flex flex-col gap-3 rounded-xl border border-emerald-600/15 bg-gradient-to-br from-emerald-500/10 to-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div><p className="text-sm text-muted-foreground">Entry total</p><p className="text-2xl font-bold tabular-nums">{formatKES((Number(quantity) || 0) * Number(unitPrice === "" ? selectedVariety?.defaultPrice ?? 0 : unitPrice))}</p></div>
-                <Button type="submit" disabled={saving || varieties.length === 0 || !navigator.onLine} className="h-11 gap-2 px-5 shadow-sm"><CheckCircle2 className="h-4 w-4" />{saving ? "Saving sale…" : "Record sale"}<ArrowUpRight className="h-4 w-4" /></Button>
+                <div><p className="text-sm text-muted-foreground">Sale total</p><p className="text-2xl font-bold tabular-nums">{formatKES(cartTotal)}</p><p className="text-xs text-muted-foreground">{cart.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0).toLocaleString()} seedlings in {cart.length} varieties</p></div>
+                <Button type="submit" disabled={saving || varieties.length === 0 || cart.length === 0 || !navigator.onLine} className="h-11 gap-2 px-5 shadow-sm"><CheckCircle2 className="h-4 w-4" />{saving ? "Saving sale…" : "Record sale"}<ArrowUpRight className="h-4 w-4" /></Button>
               </div>
               {!navigator.onLine && <p className="text-xs text-amber-600">Offline: connect before saving. This register does not queue offline entries yet.</p>}
             </form>
@@ -456,7 +486,9 @@ export default function NurseryRegister() {
 
         <Card>
           <CardHeader className="rounded-t-xl border-b border-sky-500/15 bg-gradient-to-r from-sky-500/10 via-sky-500/5 to-transparent pb-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-sky-600 p-2.5 text-white shadow-sm"><Sprout className="h-5 w-5" /></div><div className="min-w-0 flex-1"><CardTitle className="text-lg">Seedling catalogue</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Set up varieties and their usual selling prices.</p></div><span className="rounded-full border border-sky-600/20 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300">{(varietiesQuery.data ?? []).filter(v => Boolean(v.isActive)).length} active</span></div></CardHeader>
-          <CardContent className="space-y-4 pt-5">
+          <CardContent className="space-y-3 pt-4">
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-3"><div className="min-w-0"><p className="text-sm font-semibold">{(varietiesQuery.data ?? []).filter(v => Boolean(v.isActive)).length} active varieties</p><p className="text-xs text-muted-foreground">Manage names and default prices only when needed.</p></div><Button type="button" variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setCatalogueExpanded(value => !value)}>{catalogueExpanded ? "Hide catalogue" : "Manage catalogue"} <ChevronDown className={`h-4 w-4 transition-transform ${catalogueExpanded ? "rotate-180" : ""}`} /></Button></div>
+            {catalogueExpanded && <>
             <form onSubmit={createVariety} className="rounded-xl border border-dashed border-sky-600/30 bg-sky-500/[0.04] p-3"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Plus className="h-4 w-4 text-sky-600" /> Add a seedling variety</div><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_130px_auto]">
               <div className="space-y-1"><Label htmlFor="new-name">Variety name</Label><Input id="new-name" placeholder="e.g. Cabbage" value={newName} onChange={e => setNewName(e.target.value)} maxLength={80} required /></div>
               <div className="space-y-1"><Label htmlFor="new-price">Default price (KES)</Label><Input id="new-price" type="number" min="0" step="0.01" value={newPrice} onChange={e => setNewPrice(e.target.value)} required /></div>
@@ -506,6 +538,7 @@ export default function NurseryRegister() {
               </div>
               {filteredCatalogue.length > catalogueLimit && <Button type="button" variant="outline" className="w-full gap-2" onClick={() => setCatalogueLimit(limit => limit + 12)}>Show {Math.min(12, filteredCatalogue.length - catalogueLimit)} more varieties <ChevronDown className="h-4 w-4" /></Button>}
             </div>
+            </>}
           </CardContent>
         </Card>
       </div>
