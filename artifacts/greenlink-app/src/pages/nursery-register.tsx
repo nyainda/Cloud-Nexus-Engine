@@ -98,7 +98,7 @@ export default function NurseryRegister() {
     }
   }
 
-  async function createVariety(event: React.FormEvent) {
+  async function createVariety(event: FormEvent) {
     event.preventDefault();
     if (!newName.trim()) { toast.error("Enter a variety name."); return; }
     setAddingVariety(true);
