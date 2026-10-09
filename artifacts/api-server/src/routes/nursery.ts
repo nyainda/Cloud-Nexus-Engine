@@ -159,6 +159,14 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   }
 
   statements.push(c.env.DB.prepare(
+    `INSERT INTO nursery_sale_entries
+      (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)`
+  ).bind(crypto.randomUUID(), requestId, shopId, businessDate, variety.id, variety.name,
+    customerName, customerPhone, quantity, unitPriceCents, totalCents, paymentMethod, debtId, now, requestId, shopId));
+
+  statements.push(c.env.DB.prepare(
     "INSERT OR IGNORE INTO nursery_entry_requests (id, shop_id, created_at, debt_id) VALUES (?, ?, ?, ?)"
   ).bind(requestId, shopId, now, debtId));
   await c.env.DB.batch(statements);
@@ -197,6 +205,29 @@ nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
   return c.json({ rows: rows.results ?? [], summary });
 });
 
+
+
+nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  const limit = Math.min(500, Math.max(1, Number(c.req.query("limit") ?? 200) || 200));
+  if (!validDate(from) || !validDate(to) || from > to) {
+    return c.json({ error: "Choose a valid date range." }, 400);
+  }
+  const rows = await c.env.DB.prepare(
+    `SELECT id, request_id AS requestId, business_date AS businessDate,
+      variety_name AS varietyName, customer_name AS customerName,
+      customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents,
+      total_amount_cents AS totalAmountCents, payment_method AS paymentMethod,
+      debt_id AS debtId, created_at AS createdAt
+     FROM nursery_sale_entries
+     WHERE shop_id = ? AND business_date >= ? AND business_date <= ?
+     ORDER BY business_date DESC, created_at DESC
+     LIMIT ?`
+  ).bind(shopId, from, to, limit).all();
+  return c.json({ rows: rows.results ?? [] });
+});
 
 nurseryRouter.get("/nursery/customer-insights", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
