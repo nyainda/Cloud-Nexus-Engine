@@ -13,6 +13,7 @@ const BOOTSTRAP_MARKER = "schema-bootstrap-v2";
 const QUOTATION_INVOICE_MARKER = "quotation-invoice-v1";
 const NURSERY_REGISTER_MARKER = "nursery-register-v1";
 const NURSERY_CUSTOMER_MARKER = "nursery-customer-credit-v1";
+const NURSERY_ENTRIES_MARKER = "nursery-individual-entries-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
@@ -130,6 +131,18 @@ async function ensureNurseryCustomerCredit(db: D1Database): Promise<void> {
   ]);
 }
 
+
+async function ensureNurseryIndividualEntries(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_ENTRIES_MARKER).first<{ key: string }>();
+  if (marker) return;
+  await db.batch([
+    db.prepare("CREATE TABLE IF NOT EXISTS nursery_sale_entries (id TEXT PRIMARY KEY, request_id TEXT NOT NULL, shop_id TEXT NOT NULL, business_date TEXT NOT NULL, variety_id TEXT NOT NULL, variety_name TEXT NOT NULL, customer_name TEXT NOT NULL DEFAULT '', customer_phone TEXT NOT NULL DEFAULT '', quantity INTEGER NOT NULL CHECK(quantity > 0), unit_price_cents INTEGER NOT NULL, total_amount_cents INTEGER NOT NULL, payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')), debt_id TEXT, created_at TEXT NOT NULL, UNIQUE(shop_id, request_id))"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_entries_shop_date ON nursery_sale_entries(shop_id, business_date, created_at DESC)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)").bind(NURSERY_ENTRIES_MARKER, new Date().toISOString()),
+  ]);
+}
+
 async function bootstrapD1(db: D1Database): Promise<void> {
   if (bootstrapped) return;
 
@@ -157,6 +170,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     if (!invoiceMarker) await ensureQuotationInvoiceColumns(db);
     await ensureNurseryRegister(db);
     await ensureNurseryCustomerCredit(db);
+    await ensureNurseryIndividualEntries(db);
     bootstrapped = true;
     return;
   }
@@ -339,6 +353,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   await ensureQuotationInvoiceColumns(db);
   await ensureNurseryRegister(db);
   await ensureNurseryCustomerCredit(db);
+  await ensureNurseryIndividualEntries(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup
