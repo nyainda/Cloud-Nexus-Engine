@@ -42,6 +42,7 @@ const InvoiceHistory = lazy(() => import("@/pages/invoice-history"));
 const SupplierDetail = lazy(() => import("@/pages/supplier-detail"));
 const Quotations = lazy(() => import("@/pages/quotations"));
 const Customers = lazy(() => import("@/pages/customers"));
+const NurseryRegister = lazy(() => import("@/pages/nursery-register"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
 const queryClient = new QueryClient({
@@ -344,6 +345,7 @@ function AppRoutes() {
                 <Route path="/suppliers/:supplierId" component={SupplierDetail} />
                 <Route path="/quotations" component={Quotations} />
                 <Route path="/customers" component={Customers} />
+                <Route path="/nursery" component={NurseryRegister} />
                 <Route component={NotFound} />
               </Switch>
             </Suspense>
