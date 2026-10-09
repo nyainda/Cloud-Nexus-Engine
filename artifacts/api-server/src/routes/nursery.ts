@@ -269,10 +269,8 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   if (old.debtId) {
     oldDebt = await c.env.DB.prepare("SELECT amount_paid, total_amount FROM debts WHERE id = ? AND shop_id = ?")
       .bind(old.debtId, shopId).first<{ amount_paid: number; total_amount: number }>();
-    if (oldDebt && Number(oldDebt.amount_paid) > 0 &&
-        (paymentMethod !== "credit" || Math.round(unitPrice * 100) * quantity !== old.totalAmountCents ||
-         customerName !== old.customerName || customerPhone !== old.customerPhone)) {
-      return c.json({ error: "This credit sale already has a payment recorded. Settle or reconcile its debt before changing its amount or customer." }, 409);
+    if (oldDebt && Number(oldDebt.amount_paid) > 0) {
+      return c.json({ error: "This credit sale already has a payment recorded. Reconcile the customer debt before editing this sale." }, 409);
     }
   }
 
@@ -297,7 +295,6 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
       "INSERT INTO nursery_sale_entries (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, request_id) DO UPDATE SET business_date = excluded.business_date, variety_id = excluded.variety_id, variety_name = excluded.variety_name, customer_name = excluded.customer_name, customer_phone = excluded.customer_phone, quantity = excluded.quantity, unit_price_cents = excluded.unit_price_cents, total_amount_cents = excluded.total_amount_cents, payment_method = excluded.payment_method, debt_id = excluded.debt_id"
     ).bind(old.id, old.requestId, shopId, businessDate, variety.id, variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, paymentMethod === "credit" ? old.debtId : null, old.createdAt ?? now),
   ];
-  statements.push(...adjustNurseryAggregateStatements(c.env.DB, shopId, nextAggregate, 1, now).slice(2));
 
   if (old.debtId && paymentMethod !== "credit") {
     statements.push(c.env.DB.prepare("DELETE FROM debts WHERE id = ? AND shop_id = ? AND amount_paid = 0").bind(old.debtId, shopId));
