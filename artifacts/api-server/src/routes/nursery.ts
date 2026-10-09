@@ -12,7 +12,7 @@ function validDate(value: string): boolean {
 nurseryRouter.get("/nursery/varieties", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
   const rows = await c.env.DB.prepare(
-    "SELECT id, name, default_price AS defaultPrice, is_active AS isActive, created_at AS createdAt FROM nursery_varieties WHERE shop_id = ? ORDER BY is_active DESC, name COLLATE NOCASE"
+    "SELECT id, name, (default_price / 100.0) AS defaultPrice, is_active AS isActive, created_at AS createdAt FROM nursery_varieties WHERE shop_id = ? ORDER BY is_active DESC, name COLLATE NOCASE"
   ).bind(shopId).all();
   return c.json(rows.results ?? []);
 });
