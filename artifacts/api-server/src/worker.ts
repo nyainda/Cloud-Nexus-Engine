@@ -12,6 +12,7 @@ let bootstrapped = false;
 const BOOTSTRAP_MARKER = "schema-bootstrap-v2";
 const QUOTATION_INVOICE_MARKER = "quotation-invoice-v1";
 const NURSERY_REGISTER_MARKER = "nursery-register-v1";
+const NURSERY_CUSTOMER_MARKER = "nursery-customer-credit-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
@@ -75,6 +76,60 @@ async function ensureNurseryRegister(db: D1Database): Promise<void> {
     .bind(NURSERY_REGISTER_MARKER, new Date().toISOString()).run();
 }
 
+/** Extend nursery reporting with optional customer summaries and credit sales. */
+async function ensureNurseryCustomerCredit(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_CUSTOMER_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  // Rebuild the compact aggregate table to add the credit payment category.
+  // The previous table contains aggregates only, so copying it preserves every
+  // historical quantity and amount without expanding old records.
+  await db.batch([
+    db.prepare("ALTER TABLE nursery_daily_sales RENAME TO nursery_daily_sales_v1"),
+    db.prepare(`CREATE TABLE nursery_daily_sales (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      business_date TEXT NOT NULL,
+      variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL,
+      payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0),
+      total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, variety_id, unit_price_cents, payment_method)
+    )`),
+    db.prepare(`INSERT INTO nursery_daily_sales
+      (id, shop_id, business_date, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at)
+      SELECT id, shop_id, business_date, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at
+      FROM nursery_daily_sales_v1`),
+    db.prepare("DROP TABLE nursery_daily_sales_v1"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_sales_shop_date ON nursery_daily_sales(shop_id, business_date)"),
+    db.prepare("ALTER TABLE nursery_entry_requests ADD COLUMN debt_id TEXT"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS nursery_customer_daily_sales (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      business_date TEXT NOT NULL,
+      customer_key TEXT NOT NULL,
+      customer_name TEXT NOT NULL,
+      customer_phone TEXT NOT NULL DEFAULT '',
+      variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL,
+      payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0),
+      total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, customer_key, variety_id, unit_price_cents, payment_method)
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_customer_sales_shop_date ON nursery_customer_daily_sales(shop_id, business_date)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_customer_sales_shop_customer ON nursery_customer_daily_sales(shop_id, customer_key, business_date)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(NURSERY_CUSTOMER_MARKER, new Date().toISOString()),
+  ]);
+}
+
 async function bootstrapD1(db: D1Database): Promise<void> {
   if (bootstrapped) return;
 
@@ -101,6 +156,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       .first<{ key: string }>();
     if (!invoiceMarker) await ensureQuotationInvoiceColumns(db);
     await ensureNurseryRegister(db);
+    await ensureNurseryCustomerCredit(db);
     bootstrapped = true;
     return;
   }
@@ -282,6 +338,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   // quotation-table repair above, which may recreate the table.
   await ensureQuotationInvoiceColumns(db);
   await ensureNurseryRegister(db);
+  await ensureNurseryCustomerCredit(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup
