@@ -11,6 +11,7 @@ const SHOP_B_ID = "shop-sunrise";
 let bootstrapped = false;
 const BOOTSTRAP_MARKER = "schema-bootstrap-v2";
 const QUOTATION_INVOICE_MARKER = "quotation-invoice-v1";
+const NURSERY_REGISTER_MARKER = "nursery-register-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
@@ -29,6 +30,49 @@ async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
     .prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
     .bind(QUOTATION_INVOICE_MARKER, new Date().toISOString())
     .run();
+}
+
+/** One-time nursery register schema. The durable marker prevents DDL on cold starts. */
+async function ensureNurseryRegister(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_REGISTER_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS nursery_varieties (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      default_price INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, name)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_daily_sales (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      business_date TEXT NOT NULL,
+      variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL,
+      payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0),
+      total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, variety_id, unit_price_cents, payment_method)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_entry_requests (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_nursery_sales_shop_date ON nursery_daily_sales(shop_id, business_date)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_varieties_shop_active ON nursery_varieties(shop_id, is_active, name)",
+  ];
+  await db.batch(statements.map(statement => db.prepare(statement)));
+  await db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+    .bind(NURSERY_REGISTER_MARKER, new Date().toISOString()).run();
 }
 
 async function bootstrapD1(db: D1Database): Promise<void> {
@@ -56,6 +100,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       .bind(QUOTATION_INVOICE_MARKER)
       .first<{ key: string }>();
     if (!invoiceMarker) await ensureQuotationInvoiceColumns(db);
+    await ensureNurseryRegister(db);
     bootstrapped = true;
     return;
   }
@@ -236,6 +281,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   // Invoice issuance is an additive migration; keep this after the legacy
   // quotation-table repair above, which may recreate the table.
   await ensureQuotationInvoiceColumns(db);
+  await ensureNurseryRegister(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup
@@ -291,6 +337,11 @@ async function pruneOldData(db: D1Database): Promise<Record<string, number>> {
   const results: Record<string, number> = {};
 
   const steps: Array<{ name: string; sql: string; params: string[] }> = [
+    {
+      name: "nursery_entry_requests",
+      sql: "DELETE FROM nursery_entry_requests WHERE created_at < ?",
+      params: [ago(30)],
+    },
     {
       name: "audit_log",
       sql: "DELETE FROM audit_log WHERE created_at < ?",
