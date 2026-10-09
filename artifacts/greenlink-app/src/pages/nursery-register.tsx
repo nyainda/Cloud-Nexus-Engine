@@ -113,7 +113,7 @@ export default function NurseryRegister() {
     enabled: !!shopId && !!from && !!to && from <= to,
   });
   const reportQuery = useQuery({
-    queryKey: ["/api/nursery/report", shopId, from, to, reportPage, reportPageSize],
+    queryKey: ["/api/nursery/report", shopId, from, to, businessDate, reportPage, reportPageSize],
     queryFn: () => customFetch(`/api/nursery/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&businessDate=${encodeURIComponent(businessDate)}&page=${reportPage}&pageSize=${reportPageSize}`) as Promise<ReportData>,
     enabled: !!shopId && !!from && !!to && from <= to,
     placeholderData: previous => previous,
