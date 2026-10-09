@@ -51,17 +51,18 @@ const KES = (n: number) =>
   "KES " + n.toLocaleString("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
 const STATUS_META = {
-  draft:    { label: "Draft",    color: "text-zinc-400 bg-zinc-400/10 border-zinc-400/20" },
-  sent:     { label: "Sent",     color: "text-blue-400 bg-blue-400/10 border-blue-400/20" },
-  accepted: { label: "Accepted", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20" },
-  rejected: { label: "Rejected", color: "text-red-400 bg-red-400/10 border-red-400/20" },
-  expired:  { label: "Expired",  color: "text-amber-400 bg-amber-400/10 border-amber-400/20" },
+  draft:    { label: "Draft",    color: "text-zinc-300 bg-zinc-400/[0.08] border-zinc-400/20", dot: "bg-zinc-400" },
+  sent:     { label: "Sent",     color: "text-sky-200 bg-sky-300/[0.08] border-sky-300/20", dot: "bg-sky-300" },
+  accepted: { label: "Accepted", color: "text-emerald-200 bg-emerald-300/[0.08] border-emerald-300/20", dot: "bg-emerald-300" },
+  rejected: { label: "Rejected", color: "text-rose-200 bg-rose-300/[0.08] border-rose-300/20", dot: "bg-rose-300" },
+  expired:  { label: "Expired",  color: "text-amber-200 bg-amber-300/[0.08] border-amber-300/20", dot: "bg-amber-300" },
 } as const;
 
 function StatusBadge({ status }: { status: Quotation["status"] }) {
   const m = STATUS_META[status];
   return (
-    <span className={cn("inline-flex items-center text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border", m.color)}>
+    <span className={cn("inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide px-2 py-1 rounded-md border", m.color)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", m.dot)} />
       {m.label}
     </span>
   );
@@ -1286,187 +1287,152 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <div className="bg-card border border-border rounded-2xl overflow-hidden hover:border-primary/20 transition-all group">
-      {/* Top lime accent on hover */}
-      <div className="h-0.5 bg-primary/0 group-hover:bg-primary/60 transition-colors" />
-
-      {/* Main row */}
-      <div className="px-4 py-3.5">
-        {/* Header row: quote# + status + amount */}
-        <div className="flex items-start justify-between gap-3 mb-2.5">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className="text-sm font-black text-primary font-mono tracking-tight">{q.quoteNumber}</span>
-              <StatusBadge status={q.status} />
-              {q.invoiceNumber && (
-                <span data-testid={`text-invoice-number-${q.id}`} className="text-[9px] font-black text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-1.5 py-0.5 rounded-full">
-                  {q.invoiceNumber}
-                </span>
-              )}
-              {q.validUntil && new Date(q.validUntil) < new Date() && q.status !== "expired" && q.status !== "rejected" && q.status !== "accepted" && (
-                <span className="text-[9px] font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-full border border-amber-400/20">OVERDUE</span>
-              )}
-            </div>
-            <p className="text-sm font-bold text-foreground truncate leading-tight">{q.customerName}</p>
-            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-              {q.customerPhone && <span className="text-[11px] text-muted-foreground/50 font-mono">{q.customerPhone}</span>}
-              <span className="text-[11px] text-muted-foreground/35">
-                {format(new Date(q.createdAt), "dd MMM yyyy")}
-                {q.validUntil && ` · Valid till ${format(new Date(q.validUntil), "dd MMM")}`}
+    <article className="quotation-card group overflow-hidden rounded-xl border border-border/80 bg-card transition-colors duration-200 hover:border-primary/30">
+      <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(138px,.9fr)_minmax(240px,1.15fr)] gap-x-5 gap-y-3 px-4 py-3.5 max-xl:grid-cols-[minmax(0,1fr)_auto] max-xl:gap-x-3">
+        <div className="min-w-0">
+          <div className="mb-1.5 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[11px] font-semibold tracking-tight text-primary">{q.quoteNumber}</span>
+            <StatusBadge status={q.status} />
+            {q.invoiceNumber && (
+              <span data-testid={`text-invoice-number-${q.id}`} className="rounded-md border border-emerald-400/20 bg-emerald-400/[0.07] px-2 py-1 font-mono text-[9px] font-medium text-emerald-400">
+                {q.invoiceNumber}
               </span>
-            </div>
+            )}
+            {q.validUntil && new Date(q.validUntil) < new Date() && q.status !== "expired" && q.status !== "rejected" && q.status !== "accepted" && (
+              <span className="rounded-md border border-amber-400/20 bg-amber-400/[0.08] px-2 py-1 text-[9px] font-bold text-amber-400">Overdue</span>
+            )}
           </div>
-          <div className="text-right shrink-0">
-            <p className="text-base font-black text-primary font-mono">{KES(q.total)}</p>
-            <p className="text-[10px] text-muted-foreground/40 mt-0.5">
-              {q.items.length} item{q.items.length !== 1 ? "s" : ""}
-              {q.discountAmount > 0 && ` · −${KES(q.discountAmount)}`}
-            </p>
+          <p className="truncate text-sm font-semibold tracking-tight text-foreground">{q.customerName}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground">
+            {q.customerPhone && <span className="font-mono">{q.customerPhone}</span>}
+            <span className="text-muted-foreground/50">/</span>
+            <span>{format(new Date(q.createdAt), "dd MMM yyyy")}</span>
+            {q.validUntil && <span className="text-muted-foreground/70">Due {format(new Date(q.validUntil), "dd MMM")}</span>}
           </div>
         </div>
 
-        {/* Action bar */}
-        <div className="flex items-center gap-1 pt-2 border-t border-border/30 flex-wrap">
-          {/* Convert to Sale — primary action, lime pill */}
+        <div className="flex flex-col justify-center border-l border-border/70 pl-5 max-xl:col-start-2 max-xl:row-start-1 max-xl:border-0 max-xl:pl-0 max-xl:text-right">
+          <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Quote total</span>
+          <span className="mt-1 font-mono text-base font-bold tracking-tight text-foreground">{KES(q.total)}</span>
+          <span className="mt-1 text-[10px] text-muted-foreground">
+            {q.items.length} item{q.items.length !== 1 ? "s" : ""}
+            {q.discountAmount > 0 && ` · −${KES(q.discountAmount)}`}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-1.5 border-l border-border/70 pl-4 max-xl:col-span-2 max-xl:justify-start max-xl:border-0 max-xl:border-t max-xl:pt-2.5 max-xl:pl-0">
           <button
+            type="button"
             onClick={onConvertToSale}
             title="Load items into POS cart"
-            className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary hover:text-primary-foreground text-[10px] font-black transition-all"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary/25 bg-primary/10 px-2.5 text-[10px] font-bold text-primary transition-colors hover:bg-primary/20"
           >
-            <ShoppingCart className="h-3 w-3" />
-            <span>Sell</span>
+            <ShoppingCart className="h-3.5 w-3.5" /> Sell
           </button>
-
           <button
+            type="button"
             data-testid={`button-invoice-${q.id}`}
             onClick={onInvoice}
             disabled={invoiceBusy}
             title={q.invoiceNumber ? "Download issued invoice" : q.status === "accepted" ? "Issue an invoice from this accepted quotation" : "Accept this quotation and issue its invoice"}
-            className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 text-[10px] font-black transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 text-[10px] font-bold text-emerald-400 transition-colors hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {invoiceBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-            <span>{invoiceBusy ? "Issuing…" : q.invoiceNumber ? "Invoice PDF" : q.status === "accepted" ? "Make invoice" : "Accept & invoice"}</span>
+            {invoiceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+            {invoiceBusy ? "Issuing…" : q.invoiceNumber ? "Invoice PDF" : q.status === "accepted" ? "Make invoice" : "Accept & invoice"}
           </button>
-
           <button
-            onClick={() => setExpanded(v => !v)}
-            className="h-7 px-2 flex items-center gap-1 rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors text-[10px] font-semibold"
+            type="button"
+            onClick={() => setExpanded(value => !value)}
+            aria-expanded={expanded}
+            className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[10px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             {expanded ? "Hide" : "Items"}
           </button>
-
-          <div className="flex-1" />
-
+          <span className="mx-0.5 h-4 w-px bg-border max-xl:hidden" />
           <button
+            type="button"
             onClick={() => shareWhatsApp(q, shop, q.invoiceNumber ? "invoice" : "quotation")}
-            className="h-7 w-7 flex items-center justify-center rounded-lg text-[#25D366] hover:bg-[#25D366]/10 transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#25D366] transition-colors hover:bg-[#25D366]/10"
             title={q.invoiceNumber ? "Share invoice via WhatsApp" : "Share quotation via WhatsApp"}
+            aria-label={q.invoiceNumber ? "Share invoice via WhatsApp" : "Share quotation via WhatsApp"}
           >
-            <MessageCircle className="h-3.5 w-3.5" />
+            <MessageCircle className="h-4 w-4" />
           </button>
-          <button
-            onClick={onDownloadPdf}
-            className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/60 hover:text-primary hover:bg-primary/10 transition-colors"
-            title="Download PDF"
-          >
-            <Download className="h-3.5 w-3.5" />
+          <button type="button" onClick={onDownloadPdf} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-primary" title="Download PDF" aria-label="Download PDF">
+            <Download className="h-4 w-4" />
           </button>
-          <button
-            onClick={onPrint}
-            className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/60 hover:text-foreground hover:bg-muted/60 transition-colors"
-            title="Preview"
-          >
-            <Eye className="h-3.5 w-3.5" />
+          <button type="button" onClick={onPrint} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" title="Preview" aria-label="Preview quotation">
+            <Eye className="h-4 w-4" />
           </button>
           {!q.invoiceNumber && (
-            <button
-              onClick={onEdit}
-              className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/60 hover:text-primary hover:bg-primary/10 transition-colors"
-              title="Edit"
-              data-testid={`button-edit-quotation-${q.id}`}
-            >
-              <Edit2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-          {/* Status menu */}
-          {!q.invoiceNumber && <div className="relative">
-            <button
-              onClick={() => setMenuOpen(v => !v)}
-              className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
-              title="Change status"
-            >
-              <MoreVertical className="h-3.5 w-3.5" />
-            </button>
-            {menuOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-xl shadow-2xl z-40 overflow-hidden">
-                  <div className="px-3 py-2 border-b border-border/40">
-                    <p className="text-[10px] font-black text-muted-foreground/40 uppercase tracking-wider">Change Status</p>
-                  </div>
-                  {(["draft", "sent", "accepted", "rejected", "expired"] as const).filter(s => s !== q.status).map(s => (
-                    <button
-                      key={s}
-                      onClick={() => { onStatusChange(s); setMenuOpen(false); }}
-                      className="w-full text-left px-3 py-2 text-xs font-semibold hover:bg-muted/60 flex items-center gap-2.5 border-b border-border/20 last:border-0"
-                    >
-                      <span className={cn("w-2 h-2 rounded-full shrink-0",
-                        s === "accepted" ? "bg-emerald-400" :
-                        s === "sent" ? "bg-blue-400" :
-                        s === "rejected" ? "bg-red-400" :
-                        s === "expired" ? "bg-amber-400" : "bg-zinc-400"
-                      )} />
-                      Mark as {STATUS_META[s].label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>}
-          {!q.invoiceNumber && (
-            <button
-              onClick={onDelete}
-              className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-              title="Delete quotation"
-              data-testid={`button-delete-quotation-${q.id}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            <>
+              <button type="button" onClick={onEdit} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary" title="Edit" aria-label="Edit quotation" data-testid={`button-edit-quotation-${q.id}`}>
+                <Edit2 className="h-4 w-4" />
+              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen(value => !value)}
+                  className={cn("flex h-8 w-8 items-center justify-center rounded-lg transition-colors", menuOpen ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
+                  title="Change status"
+                  aria-label="Change quotation status"
+                  aria-expanded={menuOpen}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </button>
+                {menuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+                    <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-2xl">
+                      <p className="border-b border-border/60 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Change status</p>
+                      {(["draft", "sent", "accepted", "rejected", "expired"] as const).filter(status => status !== q.status).map(status => (
+                        <button key={status} type="button" onClick={() => { onStatusChange(status); setMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[11px] font-medium text-foreground transition-colors hover:bg-muted">
+                          <span className={cn("h-1.5 w-1.5 rounded-full", status === "accepted" ? "bg-emerald-400" : status === "sent" ? "bg-sky-400" : status === "rejected" ? "bg-rose-400" : status === "expired" ? "bg-amber-400" : "bg-zinc-400")} />
+                          Mark as {STATUS_META[status].label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              <button type="button" onClick={onDelete} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" title="Delete quotation" aria-label="Delete quotation" data-testid={`button-delete-quotation-${q.id}`}>
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {/* Expanded items */}
       {expanded && (
-        <div className="border-t border-border/40 bg-muted/10">
-          <div className="px-4 py-1.5 grid grid-cols-[1fr_auto_auto_auto] gap-x-4 text-[9px] font-black uppercase tracking-widest text-muted-foreground/30 border-b border-border/20">
-            <span>Product</span><span className="text-right">Qty</span><span className="text-right">Unit Price</span><span className="text-right">Total</span>
+        <div className="border-t border-border/70 bg-muted/20">
+          <div className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] gap-3 border-b border-border/50 px-4 py-2 text-[9px] font-semibold uppercase tracking-widest text-muted-foreground max-sm:grid-cols-[minmax(0,1fr)_40px_86px]">
+            <span>Product</span><span className="text-right">Qty</span><span className="text-right max-sm:hidden">Unit price</span><span className="text-right">Line total</span>
           </div>
-          {q.items.map((item, i) => (
-            <div key={i} className="px-4 py-2.5 grid grid-cols-[1fr_auto_auto_auto] gap-x-4 items-center border-b border-border/15 last:border-0">
+          {q.items.map((item, index) => (
+            <div key={`${q.id}-${index}`} className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] items-center gap-3 border-b border-border/40 px-4 py-2.5 last:border-0 max-sm:grid-cols-[minmax(0,1fr)_40px_86px]">
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-foreground truncate">{item.productName}</p>
-                <p className="text-[10px] text-muted-foreground/40 mt-0.5">{item.unit}</p>
+                <p className="truncate text-[11px] font-medium text-foreground">{item.productName}</p>
+                <p className="mt-0.5 text-[9px] text-muted-foreground">{item.unit}</p>
               </div>
-              <span className="text-xs font-mono text-muted-foreground text-right">{item.qty}</span>
-              <span className="text-xs font-mono text-muted-foreground/60 text-right">{KES(item.unitPrice)}</span>
-              <span className="text-xs font-black font-mono text-foreground text-right">{KES(item.total)}</span>
+              <span className="text-right font-mono text-[10px] text-muted-foreground">{item.qty}</span>
+              <span className="text-right font-mono text-[10px] text-muted-foreground max-sm:hidden">{KES(item.unitPrice)}</span>
+              <span className="text-right font-mono text-[10px] font-semibold text-foreground">{KES(item.total)}</span>
             </div>
           ))}
           {q.discountAmount > 0 && (
-            <div className="px-4 py-2 flex justify-between text-xs border-t border-border/20 bg-muted/20">
-              <span className="text-muted-foreground/50">Discount applied</span>
-              <span className="font-mono font-bold text-red-400">−{KES(q.discountAmount)}</span>
+            <div className="flex justify-between border-t border-border/50 px-4 py-2 text-[10px]">
+              <span className="text-muted-foreground">Discount applied</span>
+              <span className="font-mono font-semibold text-rose-400">−{KES(q.discountAmount)}</span>
             </div>
           )}
-          <div className="px-4 py-2.5 flex justify-between items-center bg-primary/5 border-t border-primary/10">
-            <span className="text-[10px] font-black text-primary/60 uppercase tracking-wider">Total</span>
-            <span className="text-sm font-black font-mono text-primary">{KES(q.total)}</span>
+          <div className="flex items-center justify-between border-t border-primary/15 bg-primary/5 px-4 py-2.5">
+            <span className="text-[9px] font-bold uppercase tracking-widest text-primary/70">Total</span>
+            <span className="font-mono text-xs font-bold text-primary">{KES(q.total)}</span>
           </div>
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -1637,158 +1603,184 @@ export default function Quotations() {
 
   // List view
   const TABS: { id: StatusFilter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "draft", label: "Drafts" },
+    { id: "all", label: "All quotes" },
+    { id: "draft", label: "Draft" },
     { id: "sent", label: "Sent" },
     { id: "accepted", label: "Accepted" },
     { id: "rejected", label: "Rejected" },
+    { id: "expired", label: "Expired" },
   ];
 
   const draftCount = counts["draft"] ?? 0;
-  const acceptedCount = counts["accepted"] ?? 0;
   const totalValue = filtered.reduce((s, q) => s + q.total, 0);
   const acceptedValue = quoteList.filter(q => q.status === "accepted").reduce((s, q) => s + q.total, 0);
+  const openCount = (counts["draft"] ?? 0) + (counts["sent"] ?? 0);
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header */}
-      <div className="px-4 pt-4 pb-3 border-b border-border shrink-0">
-        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-          <div>
-            <h1 className="text-lg font-black text-foreground font-display tracking-tight">Quotations</h1>
-            <p className="text-[11px] text-muted-foreground/50">
-              {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""}
-              {filtered.length !== quoteList.length ? ` · ${filtered.length} shown` : ""}
+      <div className="w-full max-w-[1480px] mx-auto px-4 sm:px-5 pt-5 pb-4 border-b border-border/70 shrink-0">
+        <div className="flex items-center justify-between gap-4 max-sm:items-start max-sm:flex-col">
+          <div className="min-w-0">
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className="h-px w-5 bg-primary/70" />
+              <span className="text-[9px] font-bold uppercase tracking-[.18em] text-primary/80">Sales desk</span>
+            </div>
+            <h1 className="font-display text-2xl font-semibold leading-none tracking-tight text-foreground">Quotations</h1>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""} on file
+              {filtered.length !== quoteList.length && ` · ${filtered.length} shown`}
+              <span className="mx-2 text-muted-foreground/50">/</span>
+              <span>Prepared for a busy counter.</span>
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2 max-sm:w-full max-sm:justify-end">
             {draftCount > 0 && (
               <button
+                type="button"
                 onClick={handleClearDrafts}
                 disabled={clearingDrafts}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-destructive/10 text-destructive border border-destructive/20 text-xs font-bold hover:bg-destructive/20 disabled:opacity-50 transition-colors"
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/[0.06] px-3 text-[11px] font-semibold text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {clearingDrafts ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                Clear {draftCount} Draft{draftCount !== 1 ? "s" : ""}
+                Clear {draftCount} draft{draftCount !== 1 ? "s" : ""}
               </button>
             )}
             <button
+              type="button"
               onClick={() => { setEditTarget(null); setView("builder"); }}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-black hover:bg-primary/90 transition-colors"
+              className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-[11px] font-bold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
             >
-              <Plus className="h-3.5 w-3.5" /> New Quote
+              <Plus className="h-3.5 w-3.5" /> New quote
             </button>
           </div>
         </div>
 
-        {/* Stats row */}
         {quoteList.length > 0 && (
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            <div className="bg-muted/30 rounded-xl px-3 py-2 border border-border/40">
-              <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground/40 mb-0.5">Total Value</p>
-              <p className="text-sm font-black text-foreground font-mono">{KES(totalValue)}</p>
+          <div className="mt-5 grid grid-cols-3 overflow-hidden rounded-xl border border-border/70 bg-card">
+            <div className="px-3 py-3 sm:px-4">
+              <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Value in view</p>
+              <p className="mt-1.5 truncate font-mono text-xs font-semibold tracking-tight text-foreground sm:text-base">{KES(totalValue)}</p>
             </div>
-            <div className="bg-emerald-500/5 rounded-xl px-3 py-2 border border-emerald-500/15">
-              <p className="text-[9px] font-black uppercase tracking-wider text-emerald-500/60 mb-0.5">Accepted</p>
-              <p className="text-sm font-black text-emerald-400 font-mono">{KES(acceptedValue)}</p>
+            <div className="border-l border-border/70 px-3 py-3 sm:px-4">
+              <p className="text-[9px] font-semibold uppercase tracking-widest text-emerald-500/80">Accepted value</p>
+              <p className="mt-1.5 truncate font-mono text-xs font-semibold tracking-tight text-emerald-500 sm:text-base">{KES(acceptedValue)}</p>
             </div>
-            <div className="bg-primary/5 rounded-xl px-3 py-2 border border-primary/15">
-              <p className="text-[9px] font-black uppercase tracking-wider text-primary/50 mb-0.5">Open</p>
-              <p className="text-sm font-black text-primary font-mono">{(counts["draft"] ?? 0) + (counts["sent"] ?? 0)}</p>
+            <div className="border-l border-border/70 px-3 py-3 sm:px-4">
+              <p className="text-[9px] font-semibold uppercase tracking-widest text-primary/80">Open quotes</p>
+              <p className="mt-1.5 font-mono text-xs font-semibold tracking-tight text-primary sm:text-base">
+                {openCount}<span className="ml-1.5 font-sans text-[10px] font-normal text-muted-foreground">to follow up</span>
+              </p>
             </div>
           </div>
         )}
 
-        {/* Search */}
-        <div className="relative mb-3">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40 pointer-events-none" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search by customer name or quote number…"
-            className="w-full h-9 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:ring-1 focus:ring-primary/30"
-          />
-          {search && (
-            <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-full bg-muted-foreground/20 hover:bg-muted-foreground/30">
-              <X className="h-2.5 w-2.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-
-        {/* Status tabs */}
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
-          {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setFilter(tab.id)}
-              className={cn(
-                "flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black whitespace-nowrap transition-all shrink-0",
-                filter === tab.id
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted/40 text-muted-foreground hover:bg-muted/70"
-              )}
-            >
-              {tab.label}
-              {(counts[tab.id] ?? 0) > 0 && (
-                <span className={cn(
-                  "text-[9px] font-black px-1 py-0.5 rounded-full min-w-[16px] text-center",
-                  filter === tab.id ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground/60"
-                )}>{counts[tab.id]}</span>
-              )}
-            </button>
-          ))}
+        <div className="mt-4 flex items-center gap-3 max-lg:flex-col max-lg:items-stretch">
+          <label className="relative block min-w-0 flex-1">
+            <span className="sr-only">Search quotations</span>
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              placeholder="Find a customer or quote number"
+              className="h-10 w-full rounded-lg border border-border bg-card pl-9 pr-10 text-xs text-foreground outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10 placeholder:text-muted-foreground/70"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </label>
+          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 no-scrollbar max-lg:w-full" role="group" aria-label="Filter quotations by status">
+            {TABS.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setFilter(tab.id)}
+                aria-pressed={filter === tab.id}
+                className={cn(
+                  "flex h-9 shrink-0 items-center gap-2 rounded-lg border px-2.5 text-[10px] font-semibold whitespace-nowrap transition-colors",
+                  filter === tab.id
+                    ? "border-primary/25 bg-primary/10 text-primary"
+                    : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                )}
+              >
+                {tab.label}
+                {(counts[tab.id] ?? 0) > 0 && (
+                  <span className={cn("font-mono text-[9px]", filter === tab.id ? "text-primary/80" : "text-muted-foreground/70")}>
+                    {String(counts[tab.id]).padStart(2, "0")}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-full gap-3">
             <Loader2 className="h-6 w-6 text-primary animate-spin" />
-            <p className="text-sm text-muted-foreground/50">Loading quotations…</p>
+            <p className="text-sm text-muted-foreground">Loading quotations…</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-muted/20 flex items-center justify-center">
-              <FileText className="h-7 w-7 text-muted-foreground/20" />
+          <div className="mx-auto flex h-full min-h-[260px] w-full max-w-[1480px] flex-col items-center justify-center px-6 py-12 text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-primary/15 bg-primary/5 text-primary/70">
+              <FileText className="h-5 w-5" />
             </div>
-            <div>
-              <p className="text-sm font-bold text-foreground">
-                {search || filter !== "all" ? "No matching quotations" : "No quotations yet"}
-              </p>
-              <p className="text-xs text-muted-foreground/40 mt-1">
-                {search || filter !== "all"
-                  ? "Try a different filter or clear search"
-                  : "Create your first quote to get started"}
-              </p>
-            </div>
-            {!search && filter === "all" && (
+            <p className="text-sm font-semibold text-foreground">
+              {search || filter !== "all" ? "No matching quotations" : "No quotations yet"}
+            </p>
+            <p className="mt-1 max-w-[300px] text-xs leading-relaxed text-muted-foreground">
+              {search || filter !== "all"
+                ? "Try another customer name, quote number, or status."
+                : "Create a quote to start a customer conversation."}
+            </p>
+            {(search || filter !== "all") ? (
+              <button type="button" onClick={() => { setSearch(""); setFilter("all"); }} className="mt-3 text-xs font-semibold text-primary transition-colors hover:text-primary/80">
+                Clear search and filters
+              </button>
+            ) : (
               <button
+                type="button"
                 onClick={() => { setEditTarget(null); setView("builder"); }}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-black hover:bg-primary/90 transition-colors"
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90"
               >
-                <Plus className="h-4 w-4" /> Create First Quote
+                <Plus className="h-4 w-4" /> Create first quote
               </button>
             )}
           </div>
         ) : (
-          <div className="p-4 space-y-3">
-            {filtered.map(q => (
-              <QuotationCard
-                key={q.id}
-                q={q}
-                shop={shop}
-                onEdit={() => { setEditTarget(q); setView("builder"); }}
-                onPrint={() => { setPrintTarget(q); setView("print"); }}
-                onStatusChange={(s) => handleStatusChange(q, s)}
-                onDelete={() => handleDelete(q)}
-                onDownloadPdf={() => downloadPdf(q, shop)}
-                onConvertToSale={() => handleConvertToSale(q)}
-                onInvoice={() => { void handleInvoice(q); }}
-                invoiceBusy={invoiceBusyId === q.id}
-              />
-            ))}
-          </div>
+          <section className="mx-auto w-full max-w-[1480px] px-4 py-4 sm:px-5" aria-label="Quotation list">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+                {filter === "all" ? "Recent quotations" : `${STATUS_META[filter].label} quotations`}
+                <span className="ml-2 font-mono font-medium tracking-normal text-muted-foreground/70">{String(filtered.length).padStart(2, "0")}</span>
+              </p>
+              {search && <p className="max-w-[55%] truncate text-[10px] text-muted-foreground">Matching “{search}”</p>}
+            </div>
+            <div className="space-y-2">
+              {filtered.map(q => (
+                <QuotationCard
+                  key={q.id}
+                  q={q}
+                  shop={shop}
+                  onEdit={() => { setEditTarget(q); setView("builder"); }}
+                  onPrint={() => { setPrintTarget(q); setView("print"); }}
+                  onStatusChange={(s) => handleStatusChange(q, s)}
+                  onDelete={() => handleDelete(q)}
+                  onDownloadPdf={() => downloadPdf(q, shop)}
+                  onConvertToSale={() => handleConvertToSale(q)}
+                  onInvoice={() => { void handleInvoice(q); }}
+                  invoiceBusy={invoiceBusyId === q.id}
+                />
+              ))}
+            </div>
+          </section>
         )}
       </div>
     </div>

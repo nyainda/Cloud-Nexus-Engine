@@ -915,6 +915,114 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
   );
 });
 
+// Adds money straight to a customer's stored credit (their overpayment
+// balance), for when a customer who already has credit keeps topping up, or
+// pays in advance. /debts/customer-payment can't do this: it only pays down
+// OUTSTANDING debts and rejects a customer who owes nothing. Credit lives as
+// a negative balance on a debt row, so a top-up deepens that same row the way
+// an overpayment already does — and the next credit sale or "Mark Paid"
+// picks it up automatically through getCustomerCreditSources().
+debtsRouter.post("/debts/customer-credit", requireAuth, async (c) => {
+  const body = await c.req.json<{
+    shopId: string;
+    customerName: string;
+    amount: number;
+    recordedBy?: string;
+    note?: string | null;
+    requestId?: string;
+  }>();
+  const db = createDb(c.env.DB);
+  const amount = money(Number(body.amount));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return c.json({ error: "Top-up amount must be greater than zero" }, 400);
+  }
+  const session = c.get("session");
+  if (body.shopId !== session.shopId) throw new HTTPException(403, { message: "Forbidden" });
+
+  // Idempotency: the client sends a requestId (reused as the payment id) so an
+  // offline-queue replay or double tap can't add the same money twice.
+  const requestId = typeof body.requestId === "string" && /^[A-Za-z0-9-]{8,64}$/.test(body.requestId)
+    ? body.requestId : null;
+  if (requestId) {
+    const prior = await db.select().from(debtPayments).where(eq(debtPayments.id, requestId)).get();
+    if (prior) {
+      const priorDebt = await db.select().from(debts).where(eq(debts.id, prior.debtId)).get();
+      if (!priorDebt || priorDebt.shopId !== body.shopId) {
+        return c.json({ error: "requestId already in use" }, 409);
+      }
+      return c.json({ duplicate: true, payment: prior, debt: priorDebt, creditBalance: creditBalance(priorDebt) }, 200);
+    }
+  }
+
+  const customerName = normalizeCustomerName(body.customerName);
+  const creditSources = await getCustomerCreditSources(db, body.shopId, customerName);
+
+  // Prefer the customer's existing credit row. With none, a customer who is
+  // fully settled can still prepay: park it on their newest paid debt. A
+  // customer who still owes money should pay that down instead, not hide cash
+  // as credit next to an open balance.
+  let target: (typeof creditSources)[number] | undefined = creditSources[creditSources.length - 1];
+  if (!target) {
+    const outstanding = await getCustomerOutstandingDebts(db, body.shopId, customerName);
+    if (outstanding.length > 0) {
+      return c.json({
+        error: "This customer still owes money — record a payment against their debts instead of a credit top-up",
+      }, 409);
+    }
+    const key = customerNameKey(customerName);
+    const rows = await db.select().from(debts).where(eq(debts.shopId, body.shopId)).all();
+    target = rows
+      .filter((r) => customerNameKey(r.customerName) === key && r.status === "paid")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (!target) return c.json({ error: "No debt record found for this customer" }, 404);
+  }
+
+  const now = new Date().toISOString();
+  const paymentId = requestId ?? crypto.randomUUID();
+  const note = body.note?.trim() || "Credit top-up";
+
+  // balance moves relative to its CURRENT value (not total - amount_paid):
+  // spending credit only ever adjusts balance, so recomputing from
+  // amount_paid here would hand back credit the customer already used.
+  await db.batch([
+    db
+      .update(debts)
+      .set({
+        amountPaid: sql`amount_paid + ${amount}`,
+        balance: sql`balance - ${amount}`,
+      })
+      .where(eq(debts.id, target.id)),
+    db.insert(debtPayments).values({
+      id: paymentId,
+      debtId: target.id,
+      amount,
+      recordedBy: body.recordedBy ?? session.userName ?? null,
+      paidAt: now,
+      paymentType: "payment",
+      reversalOfId: null,
+      note,
+    }),
+  ] as unknown as Parameters<typeof db.batch>[0]);
+
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    shopId: body.shopId,
+    action: "debt_credit_topup",
+    entityType: "debt",
+    entityId: target.id,
+    oldValueJson: JSON.stringify({ balance: target.balance }),
+    newValueJson: JSON.stringify({ amount, paymentId }),
+    performedBy: session.userName ?? "Owner",
+    createdAt: now,
+  });
+
+  await kvDel(c.env.SESSIONS, CK.debts(body.shopId), CK.dashboard(body.shopId, now.slice(0, 10)));
+
+  const updated = await db.select().from(debts).where(eq(debts.id, target.id)).get();
+  const payment = await db.select().from(debtPayments).where(eq(debtPayments.id, paymentId)).get();
+  return c.json({ customerName, creditAdded: amount, creditBalance: creditBalance(updated!), debt: updated, payment }, 201);
+});
+
 // Corrections never delete financial history. Instead, an owner creates a
 // linked reversal entry that restores the balance and leaves both events visible.
 debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requireOwner, async (c) => {
@@ -955,11 +1063,14 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
     note: reason,
   });
 
+  // balance moves relative to its CURRENT value. Recomputing it from
+  // total - amount_paid would hand back credit the customer already spent
+  // (credit use only ever adjusts balance), e.g. when undoing a credit top-up.
   await db.update(debts).set({
     amountPaid: sql`MAX(0, amount_paid - ${original.amount})`,
-    balance: sql`total_amount - MAX(0, amount_paid - ${original.amount})`,
-    status: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) = 0 THEN 'unpaid' WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN 'paid' ELSE 'partial' END`,
-    paidAt: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN paid_at ELSE NULL END`,
+    balance: sql`balance + ${original.amount}`,
+    status: sql`CASE WHEN balance + ${original.amount} <= 0.005 THEN 'paid' WHEN MAX(0, amount_paid - ${original.amount}) = 0 THEN 'unpaid' ELSE 'partial' END`,
+    paidAt: sql`CASE WHEN balance + ${original.amount} <= 0.005 THEN paid_at ELSE NULL END`,
   }).where(eq(debts.id, debtId));
 
   await db.insert(auditLog).values({

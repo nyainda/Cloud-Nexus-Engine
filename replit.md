@@ -97,6 +97,7 @@ Re-seeds both shops with 2,583 clean products from the Excel file. Cleaning rule
 ## User preferences
 
 - No Replit-specific services — Cloudflare Workers (D1, R2, KV) only
+- Preserve Cloudflare free-tier capacity: analytics must not poll in the background; full-catalog and detailed breakdown reads should load only when requested
 - Premium dark design: #0A0A0A background, Electric Lime #C8FF00 accent
 - Fonts: Clash Display (headings), Syne, DM Sans (body), JetBrains Mono (numbers/prices)
 - Mobile-first PWA
