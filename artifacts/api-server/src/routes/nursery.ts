@@ -68,6 +68,31 @@ nurseryRouter.patch("/nursery/varieties/:id", requireAuth, async (c) => {
   return c.json(row);
 });
 
+nurseryRouter.delete("/nursery/varieties/:id", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const id = c.req.param("id");
+  const variety = await c.env.DB.prepare(
+    "SELECT id FROM nursery_varieties WHERE id = ? AND shop_id = ?"
+  ).bind(id, shopId).first<{ id: string }>();
+  if (!variety) return c.json({ error: "Variety not found." }, 404);
+
+  // Keep historical reports and sale entries intact: used varieties are archived,
+  // while varieties with no recorded sales can be permanently removed.
+  const [daily, customerDaily, entries] = await Promise.all([
+    c.env.DB.prepare("SELECT 1 AS found FROM nursery_daily_sales WHERE shop_id = ? AND variety_id = ? LIMIT 1").bind(shopId, id).first(),
+    c.env.DB.prepare("SELECT 1 AS found FROM nursery_customer_daily_sales WHERE shop_id = ? AND variety_id = ? LIMIT 1").bind(shopId, id).first(),
+    c.env.DB.prepare("SELECT 1 AS found FROM nursery_sale_entries WHERE shop_id = ? AND variety_id = ? LIMIT 1").bind(shopId, id).first(),
+  ]);
+  if (daily || customerDaily || entries) {
+    await c.env.DB.prepare("UPDATE nursery_varieties SET is_active = 0, updated_at = ? WHERE id = ? AND shop_id = ?")
+      .bind(new Date().toISOString(), id, shopId).run();
+    return c.json({ deleted: false, archived: true });
+  }
+
+  await c.env.DB.prepare("DELETE FROM nursery_varieties WHERE id = ? AND shop_id = ?").bind(id, shopId).run();
+  return c.json({ deleted: true, archived: false });
+});
+
 nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
   const body = await c.req.json<{
