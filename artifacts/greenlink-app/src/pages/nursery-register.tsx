@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { customFetch } from "@workspace/api-client-react";
@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
+import { loadCachedNurseryVarieties, saveNurseryVarietiesToCache } from "@/lib/nursery-db";
 import { CustomerAutocomplete, type SelectedCustomer } from "@/components/customer-autocomplete";
-import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight } from "lucide-react";
+import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 type Variety = { id: string; name: string; defaultPrice: number; isActive: number | boolean };
@@ -52,6 +53,10 @@ export default function NurseryRegister() {
   const [newPrice, setNewPrice] = useState("0");
   const [saving, setSaving] = useState(false);
   const [addingVariety, setAddingVariety] = useState(false);
+  const [editingVarietyId, setEditingVarietyId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [editingPrice, setEditingPrice] = useState("");
+  const [busyVarietyId, setBusyVarietyId] = useState<string | null>(null);
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
 
   const varietiesQuery = useQuery({
@@ -59,6 +64,23 @@ export default function NurseryRegister() {
     queryFn: () => customFetch("/api/nursery/varieties") as Promise<Variety[]>,
     enabled: !!shopId,
   });
+
+  // Seed the catalogue from IndexedDB immediately, then let the API reconcile it.
+  useEffect(() => {
+    if (!shopId) return;
+    let cancelled = false;
+    loadCachedNurseryVarieties(shopId).then((cached) => {
+      if (cancelled || !cached.length) return;
+      if (!qc.getQueryData<Variety[]>(["/api/nursery/varieties", shopId])) {
+        qc.setQueryData(["/api/nursery/varieties", shopId], cached);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [shopId, qc]);
+
+  useEffect(() => {
+    if (varietiesQuery.data) void saveNurseryVarietiesToCache(shopId, varietiesQuery.data);
+  }, [shopId, varietiesQuery.data]);
   const individualEntriesQuery = useQuery({
     queryKey: ["/api/nursery/entries", shopId, from, to],
     queryFn: () => customFetch("/api/nursery/entries?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&limit=300") as Promise<{ rows: IndividualSaleEntry[] }>,
@@ -125,33 +147,129 @@ export default function NurseryRegister() {
 
   async function createVariety(event: FormEvent) {
     event.preventDefault();
-    if (!newName.trim()) { toast.error("Enter a variety name."); return; }
+    const name = newName.trim().replace(/\\s+/g, " ");
+    const price = Number(newPrice);
+    if (!name) { toast.error("Enter a variety name."); return; }
+    if (!Number.isFinite(price) || price < 0 || price > 1000000) { toast.error("Enter a valid price."); return; }
+    const key = ["/api/nursery/varieties", shopId] as const;
+    const previous = qc.getQueryData<Variety[]>(key) ?? [];
+    const tempId = "local-" + crypto.randomUUID();
+    const optimistic: Variety = { id: tempId, name, defaultPrice: price, isActive: 1 };
+    const next = [optimistic, ...previous];
+    qc.setQueryData(key, next);
+    void saveNurseryVarietiesToCache(shopId, next);
+    setNewName("");
+    setNewPrice("0");
+    setVarietyId(tempId);
+    setUnitPrice(String(price));
     setAddingVariety(true);
     try {
       const created = await customFetch("/api/nursery/varieties", {
         method: "POST",
-        body: JSON.stringify({ name: newName.trim(), defaultPrice: Number(newPrice) }),
+        body: JSON.stringify({ name, defaultPrice: price }),
       }) as Variety;
-      setNewName("");
-      setNewPrice("0");
+      const current = qc.getQueryData<Variety[]>(key) ?? [];
+      const reconciled = current.some(v => v.id === tempId)
+        ? current.map(v => v.id === tempId ? created : v)
+        : [created, ...current.filter(v => v.id !== created.id)];
+      qc.setQueryData(key, reconciled);
+      void saveNurseryVarietiesToCache(shopId, reconciled);
       setVarietyId(created.id);
       setUnitPrice(String(created.defaultPrice));
-      await qc.invalidateQueries({ queryKey: ["/api/nursery/varieties", shopId] });
       toast.success("Seedling variety added.");
     } catch (error: any) {
-      toast.error(error?.message || "Could not add variety.");
+      qc.setQueryData(key, previous);
+      void saveNurseryVarietiesToCache(shopId, previous);
+      if (varietyId === tempId) setVarietyId(previous.find(v => Boolean(v.isActive))?.id ?? "");
+      toast.error(error?.message || "Could not add variety. The local change was reverted.");
     } finally { setAddingVariety(false); }
   }
 
-  async function toggleVariety(variety: Variety) {
+  function beginEditVariety(variety: Variety) {
+    setEditingVarietyId(variety.id);
+    setEditingName(variety.name);
+    setEditingPrice(String(variety.defaultPrice));
+  }
+
+  async function saveVarietyEdit(variety: Variety) {
+    const name = editingName.trim().replace(/\\s+/g, " ");
+    const price = Number(editingPrice);
+    if (!name || name.length > 80) { toast.error("Variety name must be 1–80 characters."); return; }
+    if (!Number.isFinite(price) || price < 0 || price > 1000000) { toast.error("Enter a valid price."); return; }
+    const key = ["/api/nursery/varieties", shopId] as const;
+    const previous = qc.getQueryData<Variety[]>(key) ?? [];
+    const optimistic = previous.map(v => v.id === variety.id ? { ...v, name, defaultPrice: price } : v);
+    qc.setQueryData(key, optimistic);
+    void saveNurseryVarietiesToCache(shopId, optimistic);
+    setEditingVarietyId(null);
+    setBusyVarietyId(variety.id);
     try {
-      await customFetch(`/api/nursery/varieties/${variety.id}`, {
+      const updated = await customFetch(`/api/nursery/varieties/${encodeURIComponent(variety.id)}`, {
         method: "PATCH",
-        body: JSON.stringify({ isActive: !Boolean(variety.isActive) }),
-      });
-      await qc.invalidateQueries({ queryKey: ["/api/nursery/varieties", shopId] });
-      toast.success(Boolean(variety.isActive) ? "Variety archived." : "Variety reactivated.");
-    } catch (error: any) { toast.error(error?.message || "Could not update variety."); }
+        body: JSON.stringify({ name, defaultPrice: price }),
+      }) as Variety;
+      const current = qc.getQueryData<Variety[]>(key) ?? [];
+      const reconciled = current.map(v => v.id === variety.id ? updated : v);
+      qc.setQueryData(key, reconciled);
+      void saveNurseryVarietiesToCache(shopId, reconciled);
+      toast.success("Variety updated.");
+    } catch (error: any) {
+      qc.setQueryData(key, previous);
+      void saveNurseryVarietiesToCache(shopId, previous);
+      toast.error(error?.message || "Could not update variety. The local change was reverted.");
+    } finally { setBusyVarietyId(null); }
+  }
+
+  async function toggleVariety(variety: Variety) {
+    const key = ["/api/nursery/varieties", shopId] as const;
+    const previous = qc.getQueryData<Variety[]>(key) ?? [];
+    const isActive = !Boolean(variety.isActive);
+    const optimistic = previous.map(v => v.id === variety.id ? { ...v, isActive: isActive ? 1 : 0 } : v);
+    qc.setQueryData(key, optimistic);
+    void saveNurseryVarietiesToCache(shopId, optimistic);
+    setBusyVarietyId(variety.id);
+    try {
+      const updated = await customFetch(`/api/nursery/varieties/${encodeURIComponent(variety.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive }),
+      }) as Variety;
+      const current = qc.getQueryData<Variety[]>(key) ?? [];
+      const reconciled = current.map(v => v.id === variety.id ? updated : v);
+      qc.setQueryData(key, reconciled);
+      void saveNurseryVarietiesToCache(shopId, reconciled);
+      toast.success(isActive ? "Variety restored." : "Variety archived.");
+    } catch (error: any) {
+      qc.setQueryData(key, previous);
+      void saveNurseryVarietiesToCache(shopId, previous);
+      toast.error(error?.message || "Could not update variety. The local change was reverted.");
+    } finally { setBusyVarietyId(null); }
+  }
+
+  async function deleteVariety(variety: Variety) {
+    const key = ["/api/nursery/varieties", shopId] as const;
+    const previous = qc.getQueryData<Variety[]>(key) ?? [];
+    const remaining = previous.filter(v => v.id !== variety.id);
+    qc.setQueryData(key, remaining);
+    void saveNurseryVarietiesToCache(shopId, remaining);
+    if (varietyId === variety.id) {
+      setVarietyId(remaining.find(v => Boolean(v.isActive))?.id ?? "");
+      setUnitPrice("");
+    }
+    setBusyVarietyId(variety.id);
+    try {
+      const result = await customFetch(`/api/nursery/varieties/${encodeURIComponent(variety.id)}`, { method: "DELETE" }) as { deleted?: boolean; archived?: boolean };
+      const current = qc.getQueryData<Variety[]>(key) ?? [];
+      const finalRows = result.archived
+        ? [...current, { ...variety, isActive: 0 }]
+        : current.filter(v => v.id !== variety.id);
+      qc.setQueryData(key, finalRows);
+      void saveNurseryVarietiesToCache(shopId, finalRows);
+      toast.success(result.archived ? "This variety has sales history, so it was archived to preserve reports." : "Variety deleted.");
+    } catch (error: any) {
+      qc.setQueryData(key, previous);
+      void saveNurseryVarietiesToCache(shopId, previous);
+      toast.error(error?.message || "Could not delete variety. The local change was reverted.");
+    } finally { setBusyVarietyId(null); }
   }
 
   function choosePeriod(period: "day" | "week" | "month") {
@@ -257,9 +375,23 @@ export default function NurseryRegister() {
             </div></form>
             <div className="space-y-2">
               {(varietiesQuery.data ?? []).length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Add cabbage, spinach or any seedling varieties sold by this shop.</p>}
-              {(varietiesQuery.data ?? []).map(v => <div key={v.id} className="group flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3 transition-colors hover:border-sky-600/30 hover:bg-sky-500/[0.03]">
-                <div className="min-w-0"><p className="truncate font-semibold">{v.name}</p><p className="text-sm text-muted-foreground">Default: {formatKES(v.defaultPrice)} each · {Boolean(v.isActive) ? "Active" : "Archived"}</p></div>
-                <Button type="button" variant="outline" size="sm" onClick={() => toggleVariety(v)} className="shrink-0 gap-1"><Archive className="h-3.5 w-3.5" />{Boolean(v.isActive) ? "Archive" : "Restore"}</Button>
+              {(varietiesQuery.data ?? []).map(v => <div key={v.id} className="group rounded-xl border border-border bg-card p-3 transition-colors hover:border-sky-600/30 hover:bg-sky-500/[0.03]">
+                {editingVarietyId === v.id ? (
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px_auto]">
+                    <div className="space-y-1"><Label htmlFor={`edit-name-${v.id}`}>Variety name</Label><Input id={`edit-name-${v.id}`} value={editingName} onChange={e => setEditingName(e.target.value)} maxLength={80} autoFocus /></div>
+                    <div className="space-y-1"><Label htmlFor={`edit-price-${v.id}`}>Default price (KES)</Label><Input id={`edit-price-${v.id}`} type="number" min="0" step="0.01" value={editingPrice} onChange={e => setEditingPrice(e.target.value)} /></div>
+                    <div className="flex items-end gap-1"><Button type="button" size="sm" disabled={busyVarietyId === v.id} onClick={() => saveVarietyEdit(v)} className="gap-1"><Save className="h-3.5 w-3.5" /> Save</Button><Button type="button" size="icon" variant="ghost" aria-label="Cancel editing" onClick={() => setEditingVarietyId(null)}><X className="h-4 w-4" /></Button></div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1"><p className="truncate font-semibold">{v.name}</p><p className="text-sm text-muted-foreground">Default: {formatKES(v.defaultPrice)} each · {Boolean(v.isActive) ? "Active" : "Archived"}</p></div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Button type="button" variant="outline" size="sm" disabled={busyVarietyId === v.id || v.id.startsWith("local-")} onClick={() => beginEditVariety(v)} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</Button>
+                      <Button type="button" variant="outline" size="sm" disabled={busyVarietyId === v.id || v.id.startsWith("local-")} onClick={() => toggleVariety(v)} className="gap-1"><Archive className="h-3.5 w-3.5" />{Boolean(v.isActive) ? "Archive" : "Restore"}</Button>
+                      <Button type="button" variant="destructive" size="sm" disabled={busyVarietyId === v.id || v.id.startsWith("local-")} onClick={() => { if (window.confirm(`Delete ${v.name}? Varieties with sales history will be archived instead.`)) void deleteVariety(v); }} className="gap-1"><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
+                    </div>
+                  </div>
+                )}
               </div>)}
             </div>
           </CardContent>
