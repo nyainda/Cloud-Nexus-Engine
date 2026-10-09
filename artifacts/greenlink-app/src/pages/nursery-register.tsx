@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
 import { loadCachedNurseryVarieties, saveNurseryVarietiesToCache } from "@/lib/nursery-db";
 import { CustomerAutocomplete, type SelectedCustomer } from "@/components/customer-autocomplete";
-import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2 } from "lucide-react";
+import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign } from "lucide-react";
 import { toast } from "sonner";
 
 type Variety = { id: string; name: string; defaultPrice: number; isActive: number | boolean };
@@ -60,6 +60,8 @@ export default function NurseryRegister() {
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
   const [saleEdit, setSaleEdit] = useState({ businessDate: "", varietyId: "", quantity: "", unitPrice: "", paymentMethod: "cash" as "cash" | "mpesa" | "credit", customerName: "", customerPhone: "" });
   const [busySaleId, setBusySaleId] = useState<string | null>(null);
+  const [saleSearch, setSaleSearch] = useState("");
+  const [salePaymentFilter, setSalePaymentFilter] = useState<"all" | "cash" | "mpesa" | "credit">("all");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
 
   const varietiesQuery = useQuery({
@@ -104,6 +106,20 @@ export default function NurseryRegister() {
   const selectedVariety = varieties.find(v => v.id === varietyId) ?? varieties[0];
   const report = reportQuery.data;
   const reportRows = report?.rows ?? [];
+  const individualEntries = individualEntriesQuery.data?.rows ?? [];
+  const filteredIndividualEntries = useMemo(() => {
+    const needle = saleSearch.trim().toLocaleLowerCase();
+    return individualEntries.filter(entry => {
+      const matchesPayment = salePaymentFilter === "all" || entry.paymentMethod === salePaymentFilter;
+      const matchesSearch = !needle || [entry.varietyName, entry.customerName, entry.customerPhone, entry.businessDate].some(value => String(value ?? "").toLocaleLowerCase().includes(needle));
+      return matchesPayment && matchesSearch;
+    });
+  }, [individualEntries, saleSearch, salePaymentFilter]);
+  const individualSaleSummary = useMemo(() => individualEntries.reduce((sum, entry) => ({
+    quantity: sum.quantity + Number(entry.quantity || 0),
+    totalCents: sum.totalCents + Number(entry.totalAmountCents || 0),
+    creditCents: sum.creditCents + (entry.paymentMethod === "credit" ? Number(entry.totalAmountCents || 0) : 0),
+  }), { quantity: 0, totalCents: 0, creditCents: 0 }), [individualEntries]);
   const dateRows = useMemo(() => reportRows.filter(row => row.businessDate === businessDate), [reportRows, businessDate]);
   const todaySummary = useMemo(() => dateRows.reduce((sum, row) => ({
     quantity: sum.quantity + Number(row.quantity || 0),
@@ -506,49 +522,99 @@ export default function NurseryRegister() {
       </Card>
 
 
-      <Card>
-        <CardHeader className="border-b border-border/70 bg-muted/20">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <Card className="overflow-hidden border-border/80 shadow-sm">
+        <CardHeader className="border-b border-border/70 bg-gradient-to-br from-primary/[0.07] via-background to-sky-500/[0.06] pb-5">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-start gap-3">
-              <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-600 dark:text-indigo-300"><ClipboardList className="h-5 w-5" /></div>
-              <div><CardTitle>Individual sales</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Edit or remove an entry; linked summaries refresh from the corrected record.</p></div>
+              <div className="rounded-2xl border border-primary/15 bg-primary/10 p-3 text-primary shadow-sm"><ReceiptText className="h-5 w-5" /></div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2"><CardTitle className="text-xl tracking-tight">Individual sales</CardTitle><span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">SALE LEDGER</span></div>
+                <p className="mt-1 max-w-2xl text-sm font-normal leading-relaxed text-muted-foreground">Review every seedling transaction, correct mistakes, and keep reports and customer balances in sync.</p>
+              </div>
             </div>
-            <span className="w-fit rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground">{individualEntriesQuery.data?.rows?.length ?? 0} entries shown</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="rounded-xl border border-border/80 bg-background/80 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Transactions</p>
+                <p className="mt-0.5 text-lg font-bold tabular-nums">{individualEntries.length.toLocaleString()}</p>
+              </div>
+              <div className="rounded-xl border border-border/80 bg-background/80 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Seedlings sold</p>
+                <p className="mt-0.5 text-lg font-bold tabular-nums">{individualSaleSummary.quantity.toLocaleString()}</p>
+              </div>
+              <div className="rounded-xl border border-border/80 bg-background/80 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Recorded value</p>
+                <p className="mt-0.5 text-lg font-bold tabular-nums">{formatKES(cents(individualSaleSummary.totalCents))}</p>
+              </div>
+            </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-4">
-          {editingSaleId && <form onSubmit={saveSaleEdit} className="mb-4 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.04] p-4">
-            <div className="mb-3 flex items-center justify-between gap-2"><div><p className="font-semibold">Edit sale entry</p><p className="text-xs text-muted-foreground">Changes update the report and customer aggregates.</p></div><Button type="button" variant="ghost" size="icon" aria-label="Cancel sale edit" onClick={() => setEditingSaleId(null)}><X className="h-4 w-4" /></Button></div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="space-y-1"><Label htmlFor="sale-edit-date">Sale date</Label><Input id="sale-edit-date" type="date" value={saleEdit.businessDate} onChange={e => setSaleEdit(s => ({ ...s, businessDate: e.target.value }))} required /></div>
-              <div className="space-y-1"><Label htmlFor="sale-edit-variety">Variety</Label><select id="sale-edit-variety" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={saleEdit.varietyId} onChange={e => setSaleEdit(s => ({ ...s, varietyId: e.target.value }))} required>{(varietiesQuery.data ?? []).map(v => <option key={v.id} value={v.id}>{v.name}{Boolean(v.isActive) ? "" : " (archived)"}</option>)}</select></div>
-              <div className="space-y-1"><Label htmlFor="sale-edit-qty">Quantity</Label><Input id="sale-edit-qty" type="number" min="1" step="1" value={saleEdit.quantity} onChange={e => setSaleEdit(s => ({ ...s, quantity: e.target.value }))} required /></div>
-              <div className="space-y-1"><Label htmlFor="sale-edit-price">Unit price (KES)</Label><Input id="sale-edit-price" type="number" min="0" step="0.01" value={saleEdit.unitPrice} onChange={e => setSaleEdit(s => ({ ...s, unitPrice: e.target.value }))} required /></div>
-              <div className="space-y-1"><Label htmlFor="sale-edit-payment">Payment method</Label><select id="sale-edit-payment" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={saleEdit.paymentMethod} onChange={e => setSaleEdit(s => ({ ...s, paymentMethod: e.target.value as "cash" | "mpesa" | "credit" }))}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="credit">Credit</option></select></div>
-              <div className="space-y-1"><Label htmlFor="sale-edit-customer">Customer name</Label><Input id="sale-edit-customer" value={saleEdit.customerName} onChange={e => setSaleEdit(s => ({ ...s, customerName: e.target.value }))} maxLength={120} placeholder="Walk-in customer if blank" /></div>
-              <div className="space-y-1"><Label htmlFor="sale-edit-phone">Customer phone</Label><Input id="sale-edit-phone" type="tel" value={saleEdit.customerPhone} onChange={e => setSaleEdit(s => ({ ...s, customerPhone: e.target.value }))} maxLength={40} /></div>
+        <CardContent className="space-y-4 p-4 sm:p-5">
+          <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/20 p-3 sm:grid-cols-[minmax(0,1fr)_190px_auto] sm:items-center">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={saleSearch} onChange={e => setSaleSearch(e.target.value)} placeholder="Search customer, phone, seedling or date…" aria-label="Search individual sales" className="h-10 border-border/80 bg-background pl-9" />
             </div>
-            {saleEdit.paymentMethod === "credit" && <p className="mt-2 text-xs text-violet-700 dark:text-violet-300">Credit entries require a customer and positive price. Sales with payments already recorded must be reconciled in Debts before editing or deleting.</p>}
-            <div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => setEditingSaleId(null)}>Cancel</Button><Button type="submit" disabled={busySaleId === editingSaleId} className="gap-1"><Save className="h-4 w-4" /> Save changes</Button></div>
+            <div className="relative">
+              <SlidersHorizontal className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <select aria-label="Filter by payment method" value={salePaymentFilter} onChange={e => setSalePaymentFilter(e.target.value as typeof salePaymentFilter)} className="h-10 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+                <option value="all">All payment methods</option><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="credit">Credit</option>
+              </select>
+            </div>
+            <Button type="button" variant="ghost" size="sm" onClick={() => { setSaleSearch(""); setSalePaymentFilter("all"); }} disabled={!saleSearch && salePaymentFilter === "all"} className="h-10">Clear filters</Button>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <p>Showing <span className="font-semibold text-foreground">{filteredIndividualEntries.length.toLocaleString()}</span> of {individualEntries.length.toLocaleString()} loaded transactions</p>
+            <p className="inline-flex items-center gap-1.5"><CircleDollarSign className="h-3.5 w-3.5" /> Credit sales value: <span className="font-semibold text-foreground">{formatKES(cents(individualSaleSummary.creditCents))}</span></p>
+          </div>
+          {editingSaleId && <form onSubmit={saveSaleEdit} className="rounded-2xl border border-primary/30 bg-primary/[0.04] p-4 shadow-sm sm:p-5">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3"><div className="rounded-xl bg-primary/10 p-2 text-primary"><Pencil className="h-4 w-4" /></div><div><p className="font-semibold">Edit sale entry</p><p className="mt-0.5 text-sm text-muted-foreground">Save corrections to update the related summaries.</p></div></div>
+              <Button type="button" variant="ghost" size="icon" aria-label="Cancel sale edit" onClick={() => setEditingSaleId(null)}><X className="h-4 w-4" /></Button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-date">Sale date</Label><Input id="sale-edit-date" type="date" value={saleEdit.businessDate} onChange={e => setSaleEdit(s => ({ ...s, businessDate: e.target.value }))} required /></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-variety">Seedling variety</Label><select id="sale-edit-variety" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.varietyId} onChange={e => setSaleEdit(s => ({ ...s, varietyId: e.target.value }))} required>{(varietiesQuery.data ?? []).map(v => <option key={v.id} value={v.id}>{v.name}{Boolean(v.isActive) ? "" : " (archived)"}</option>)}</select></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-qty">Quantity</Label><Input id="sale-edit-qty" type="number" min="1" step="1" value={saleEdit.quantity} onChange={e => setSaleEdit(s => ({ ...s, quantity: e.target.value }))} required /></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-price">Unit price (KES)</Label><Input id="sale-edit-price" type="number" min="0" step="0.01" value={saleEdit.unitPrice} onChange={e => setSaleEdit(s => ({ ...s, unitPrice: e.target.value }))} required /></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-payment">Payment method</Label><select id="sale-edit-payment" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.paymentMethod} onChange={e => setSaleEdit(s => ({ ...s, paymentMethod: e.target.value as "cash" | "mpesa" | "credit" }))}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="credit">Credit</option></select></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-customer">Customer name</Label><Input id="sale-edit-customer" value={saleEdit.customerName} onChange={e => setSaleEdit(s => ({ ...s, customerName: e.target.value }))} maxLength={120} placeholder="Walk-in customer if blank" /></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-phone">Customer phone</Label><Input id="sale-edit-phone" type="tel" value={saleEdit.customerPhone} onChange={e => setSaleEdit(s => ({ ...s, customerPhone: e.target.value }))} maxLength={40} /></div>
+            </div>
+            {saleEdit.paymentMethod === "credit" && <p className="mt-3 rounded-xl bg-violet-500/10 px-3 py-2.5 text-sm text-violet-800 dark:text-violet-200">Credit entries require a customer and positive price. Sales with payments already recorded must be reconciled in Debts before editing or deleting.</p>}
+            <div className="mt-4 flex flex-col-reverse gap-2 border-t border-border/70 pt-4 sm:flex-row sm:justify-end"><Button type="button" variant="outline" onClick={() => setEditingSaleId(null)}>Cancel</Button><Button type="submit" disabled={busySaleId === editingSaleId} className="gap-2"><Save className="h-4 w-4" /> Save changes</Button></div>
           </form>}
-          {individualEntriesQuery.isLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading individual sales…</p>
-            : individualEntriesQuery.isError ? <p className="py-8 text-center text-sm text-destructive">Could not load individual sales. Refresh and try again.</p>
-            : !individualEntriesQuery.data?.rows?.length ? <div className="rounded-xl border border-dashed p-8 text-center"><ClipboardList className="mx-auto h-8 w-8 text-muted-foreground/60" /><p className="mt-2 font-medium">No individual entries in this period</p><p className="mt-1 text-sm text-muted-foreground">New sales will appear here after this feature is deployed. Older records remain available in the aggregated sales report.</p></div>
-            : <div className="overflow-x-auto">
-              <table className="w-full min-w-[850px] text-left text-sm">
-                <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Date / time</th><th className="px-3 py-3">Seedlings / customer</th><th className="px-3 py-3 text-right">Quantity</th><th className="px-3 py-3 text-right">Unit price</th><th className="px-3 py-3">Payment</th><th className="px-3 py-3 text-right">Sale total</th><th className="px-3 py-3">Actions</th></tr></thead>
-                <tbody>{individualEntriesQuery.data.rows.map((entry) => <tr key={entry.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
-                  <td className="whitespace-nowrap px-3 py-3"><p>{entry.businessDate}</p><p className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></td>
-                  <td className="px-3 py-3"><p className="font-semibold">{entry.varietyName}</p><p className="text-xs text-muted-foreground">{entry.customerName || "Walk-in customer"}{entry.customerPhone ? " · " + entry.customerPhone : ""}</p></td>
-                  <td className="px-3 py-3 text-right font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{formatKES(cents(entry.unitPriceCents))}</td>
-                  <td className="px-3 py-3"><span className={"inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span></td>
-                  <td className="px-3 py-3 text-right font-bold tabular-nums">{formatKES(cents(entry.totalAmountCents))}</td>
-                  <td className="px-3 py-3"><div className="flex items-center gap-1.5"><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</Button><Button type="button" variant="destructive" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm(`Delete this ${entry.varietyName} sale for ${formatKES(cents(entry.totalAmountCents))}? The totals will be adjusted.`)) void deleteSale(entry); }} className="gap-1"><Trash2 className="h-3.5 w-3.5" /> Delete</Button></div></td>
-                </tr>)}</tbody>
-              </table>
-            </div>}
-          <p className="mt-3 text-xs text-muted-foreground">Showing up to 300 individual entries for the selected date range. Use the report date filters to narrow the list.</p>
+          {individualEntriesQuery.isLoading ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{[0,1,2].map(item => <div key={item} className="h-36 animate-pulse rounded-2xl border bg-muted/40" />)}</div>
+            : individualEntriesQuery.isError ? <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center"><p className="font-medium text-destructive">Could not load individual sales</p><p className="mt-1 text-sm text-muted-foreground">Check your connection and try refreshing.</p><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void individualEntriesQuery.refetch()}><RefreshCw className="mr-2 h-4 w-4" /> Try again</Button></div>
+            : !filteredIndividualEntries.length ? <div className="rounded-2xl border border-dashed border-border p-8 text-center sm:p-12"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground"><ClipboardList className="h-6 w-6" /></div><p className="mt-3 font-semibold">{individualEntries.length ? "No matching sales found" : "No individual entries in this period"}</p><p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">{individualEntries.length ? "Try another search term or clear the payment filter." : "New sales will appear here once recorded. Older records remain available in the aggregated sales report."}</p>{(saleSearch || salePaymentFilter !== "all") && <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setSaleSearch(""); setSalePaymentFilter("all"); }}>Clear filters</Button>}</div>
+            : <>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {filteredIndividualEntries.map(entry => <div key={entry.id} className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card p-4 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
+                  <div className={"absolute inset-x-0 top-0 h-1 " + (entry.paymentMethod === "cash" ? "bg-amber-500" : entry.paymentMethod === "mpesa" ? "bg-sky-500" : "bg-violet-500")} />
+                  <div className="flex items-start justify-between gap-3 pt-1">
+                    <div className="flex min-w-0 items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Sprout className="h-5 w-5" /></div><div className="min-w-0"><p className="truncate font-semibold">{entry.varietyName}</p><p className="mt-0.5 text-xs text-muted-foreground">{entry.businessDate} · {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></div></div>
+                    <span className={"shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span>
+                  </div>
+                  <div className="mt-4 rounded-xl bg-muted/40 p-3"><p className="text-xs text-muted-foreground">Sale total</p><p className="mt-0.5 text-2xl font-bold tracking-tight tabular-nums">{formatKES(cents(entry.totalAmountCents))}</p><div className="mt-2 flex items-center justify-between gap-2 border-t border-border/70 pt-2 text-sm"><span className="text-muted-foreground">Quantity</span><span className="font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()} seedlings</span></div><div className="mt-1 flex items-center justify-between gap-2 text-sm"><span className="text-muted-foreground">Unit price</span><span className="font-medium tabular-nums">{formatKES(cents(entry.unitPriceCents))}</span></div></div>
+                  <div className="mt-3 min-w-0"><p className="truncate text-sm font-medium">{entry.customerName || "Walk-in customer"}</p><p className="truncate text-xs text-muted-foreground">{entry.customerPhone || "No phone recorded"}</p></div>
+                  <div className="mt-4 flex gap-2 border-t border-border/70 pt-3"><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="flex-1 gap-1.5"><Pencil className="h-3.5 w-3.5" /> Edit sale</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Delete</span></Button></div>
+                </div>)}
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-border/70">
+                <table className="w-full min-w-[850px] text-left text-sm">
+                  <thead className="bg-muted/40"><tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground"><th className="px-4 py-3">Date / time</th><th className="px-4 py-3">Seedlings / customer</th><th className="px-4 py-3 text-right">Quantity</th><th className="px-4 py-3 text-right">Unit price</th><th className="px-4 py-3">Payment</th><th className="px-4 py-3 text-right">Sale total</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
+                  <tbody>{filteredIndividualEntries.map(entry => <tr key={entry.id} className="border-b border-border/60 last:border-0 transition-colors hover:bg-muted/30">
+                    <td className="whitespace-nowrap px-4 py-3.5"><p className="font-medium">{entry.businessDate}</p><p className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></td>
+                    <td className="px-4 py-3.5"><p className="font-semibold">{entry.varietyName}</p><p className="text-xs text-muted-foreground">{entry.customerName || "Walk-in customer"}{entry.customerPhone ? " · " + entry.customerPhone : ""}</p></td>
+                    <td className="px-4 py-3.5 text-right font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()}</td>
+                    <td className="px-4 py-3.5 text-right tabular-nums">{formatKES(cents(entry.unitPriceCents))}</td>
+                    <td className="px-4 py-3.5"><span className={"inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span></td>
+                    <td className="px-4 py-3.5 text-right font-bold tabular-nums">{formatKES(cents(entry.totalAmountCents))}</td>
+                    <td className="px-4 py-3.5"><div className="flex justify-end gap-1.5"><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</Button><Button type="button" variant="ghost" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /> Delete</Button></div></td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
+            </>}
+          <p className="border-t border-border/70 pt-3 text-xs leading-relaxed text-muted-foreground">Showing up to 300 individual entries for the selected date range. Search and payment filters affect this ledger only; saved edits and deletions also refresh the sales report, customer insights, and debt records. Nursery sales remain separate from normal POS inventory deductions.</p>
         </CardContent>
       </Card>
 
