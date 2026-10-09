@@ -282,10 +282,6 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
     paymentMethod: old.paymentMethod, quantity: old.quantity, totalAmountCents: old.totalAmountCents,
     customerName: old.customerName, customerPhone: old.customerPhone,
   };
-  const nextAggregate = {
-    businessDate, varietyId: variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents,
-    customerName, customerPhone,
-  };
   const statements = [
     ...adjustNurseryAggregateStatements(c.env.DB, shopId, oldAggregate, -1, now),
     c.env.DB.prepare(
