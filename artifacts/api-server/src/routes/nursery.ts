@@ -219,7 +219,7 @@ function adjustNurseryAggregateStatements(
       "DELETE FROM nursery_daily_sales WHERE shop_id = ? AND business_date = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity <= 0"
     ).bind(shopId, sale.businessDate, sale.varietyId, sale.unitPriceCents, sale.paymentMethod),
   ];
-  const customerKey = sale.customerName.trim().toLocaleLowerCase().replace(/\\s+/g, " ");
+  const customerKey = sale.customerName.trim().toLocaleLowerCase().replace(/\s+/g, " ");
   if (customerKey) {
     statements.push(db.prepare(
       "UPDATE nursery_customer_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND customer_key = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ?"
@@ -242,7 +242,7 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   const quantity = Number(body.quantity);
   const unitPrice = Number(body.unitPrice);
   const paymentMethod = body.paymentMethod ?? "";
-  const customerName = body.customerName?.trim().replace(/\\s+/g, " ") ?? "";
+  const customerName = body.customerName?.trim().replace(/\s+/g, " ") ?? "";
   const customerPhone = body.customerPhone?.trim() ?? "";
   if (!validDate(businessDate) || !body.varietyId || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 10000000 ||
       !Number.isFinite(unitPrice) || unitPrice < 0 || unitPrice > 1000000 || !paymentMethods.has(paymentMethod) ||
@@ -311,7 +311,7 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   }
 
   if (customerName) {
-    const customerKey = customerName.toLocaleLowerCase().replace(/\\s+/g, " ");
+    const customerKey = customerName.toLocaleLowerCase().replace(/\s+/g, " ");
     statements.push(c.env.DB.prepare(
       "INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at) SELECT ?, ?, ?, ?, NULL, NULL, NULL, ? WHERE NOT EXISTS (SELECT 1 FROM customers WHERE shop_id = ? AND lower(trim(name)) = ?)"
     ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, shopId, customerKey));
