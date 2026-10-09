@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { customFetch } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -71,7 +72,7 @@ export default function NurseryRegister() {
     mpesaCents: sum.mpesaCents + (row.paymentMethod === "mpesa" ? Number(row.totalAmountCents || 0) : 0),
   }), { quantity: 0, revenueCents: 0, cashCents: 0, mpesaCents: 0 }), [dateRows]);
 
-  async function saveEntry(event: React.FormEvent) {
+  async function saveEntry(event: FormEvent) {
     event.preventDefault();
     if (!selectedVariety) { toast.error("Add a seedling variety first."); return; }
     if (!navigator.onLine) { toast.error("Connect to the internet before saving. Nursery entries are not queued offline yet."); return; }
