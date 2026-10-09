@@ -338,6 +338,11 @@ async function pruneOldData(db: D1Database): Promise<Record<string, number>> {
 
   const steps: Array<{ name: string; sql: string; params: string[] }> = [
     {
+      name: "nursery_entry_requests",
+      sql: "DELETE FROM nursery_entry_requests WHERE created_at < ?",
+      params: [ago(30)],
+    },
+    {
       name: "audit_log",
       sql: "DELETE FROM audit_log WHERE created_at < ?",
       params: [ago(365)],
