@@ -23,8 +23,9 @@ type ReportData = {
   page: number;
   pageSize: number;
   summary: { totalSeedlings: number; totalRevenueCents: number; cashCents: number; mpesaCents: number; creditCents: number };
+  dailySummary: { totalSeedlings: number; totalRevenueCents: number; cashCents: number; mpesaCents: number; creditCents: number };
 };
-type EntriesData = { rows: IndividualSaleEntry[]; total: number; page: number; pageSize: number };
+type EntriesData = { rows: IndividualSaleEntry[]; total: number; page: number; pageSize: number; summary: { quantity: number; totalCents: number; creditCents: number } };
 
 function localDate(date = new Date()) {
   const year = date.getFullYear();
@@ -113,7 +114,7 @@ export default function NurseryRegister() {
   });
   const reportQuery = useQuery({
     queryKey: ["/api/nursery/report", shopId, from, to, reportPage, reportPageSize],
-    queryFn: () => customFetch(`/api/nursery/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&page=${reportPage}&pageSize=${reportPageSize}`) as Promise<ReportData>,
+    queryFn: () => customFetch(`/api/nursery/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&businessDate=${encodeURIComponent(businessDate)}&page=${reportPage}&pageSize=${reportPageSize}`) as Promise<ReportData>,
     enabled: !!shopId && !!from && !!to && from <= to,
     placeholderData: previous => previous,
   });
@@ -149,19 +150,15 @@ export default function NurseryRegister() {
   const individualTotal = individualEntriesQuery.data?.total ?? 0;
   const individualPageCount = Math.max(1, Math.ceil(individualTotal / salesPageSize));
   const filteredIndividualEntries = individualEntries;
-  const individualSaleSummary = useMemo(() => individualEntries.reduce((sum, entry) => ({
-    quantity: sum.quantity + Number(entry.quantity || 0),
-    totalCents: sum.totalCents + Number(entry.totalAmountCents || 0),
-    creditCents: sum.creditCents + (entry.paymentMethod === "credit" ? Number(entry.totalAmountCents || 0) : 0),
-  }), { quantity: 0, totalCents: 0, creditCents: 0 }), [individualEntries]);
-  const dateRows = useMemo(() => reportRows.filter(row => row.businessDate === businessDate), [reportRows, businessDate]);
-  const todaySummary = useMemo(() => dateRows.reduce((sum, row) => ({
-    quantity: sum.quantity + Number(row.quantity || 0),
-    revenueCents: sum.revenueCents + Number(row.totalAmountCents || 0),
-    cashCents: sum.cashCents + (row.paymentMethod === "cash" ? Number(row.totalAmountCents || 0) : 0),
-    mpesaCents: sum.mpesaCents + (row.paymentMethod === "mpesa" ? Number(row.totalAmountCents || 0) : 0),
-    creditCents: sum.creditCents + (row.paymentMethod === "credit" ? Number(row.totalAmountCents || 0) : 0),
-  }), { quantity: 0, revenueCents: 0, cashCents: 0, mpesaCents: 0, creditCents: 0 }), [dateRows]);
+  const individualSaleSummary = individualEntriesQuery.data?.summary ?? { quantity: 0, totalCents: 0, creditCents: 0 };
+  const daily = report?.dailySummary;
+  const todaySummary = {
+    quantity: Number(daily?.totalSeedlings ?? 0),
+    revenueCents: Number(daily?.totalRevenueCents ?? 0),
+    cashCents: Number(daily?.cashCents ?? 0),
+    mpesaCents: Number(daily?.mpesaCents ?? 0),
+    creditCents: Number(daily?.creditCents ?? 0),
+  };
 
   async function saveEntry(event: FormEvent) {
     event.preventDefault();
