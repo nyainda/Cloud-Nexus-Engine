@@ -45,6 +45,7 @@ function mutationTypeLabel(type: QueuedMutation["type"]) {
   if (type === "restock") return "Restock";
   if (type === "debt_payment") return "Debt Payment";
   if (type === "customer_debt_payment") return "Debt Payment (all debts)";
+  if (type === "customer_credit_topup") return "Credit Top-up";
   return type;
 }
 function mutationTypeIcon(type: QueuedMutation["type"]) {
@@ -52,6 +53,7 @@ function mutationTypeIcon(type: QueuedMutation["type"]) {
   if (type === "restock") return Package;
   if (type === "debt_payment") return Banknote;
   if (type === "customer_debt_payment") return Banknote;
+  if (type === "customer_credit_topup") return Banknote;
   return CloudUpload;
 }
 
