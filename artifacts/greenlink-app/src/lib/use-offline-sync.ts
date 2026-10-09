@@ -79,6 +79,11 @@ async function processMutation(
         method: "POST",
         body: JSON.stringify(payload),
       });
+    } else if (m.type === "customer_credit_topup") {
+      await customFetch("/api/debts/customer-credit", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
     }
     await deleteMutation(m.id);
     return { ok: true };

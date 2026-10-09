@@ -475,6 +475,138 @@ function PaymentDialog({ debt }: { debt: any }) {
   );
 }
 
+// ─── Add credit (top-up) dialog ────────────────────────────────────────────────
+// Lets the shop add money to a customer who already holds credit (overpayment)
+// without needing an open debt. The server deepens their existing credit row;
+// we mirror that choice (last credit row by createdAt) for the optimistic patch.
+function AddCreditDialog({ customerName, currentCredit }: { customerName: string; currentCredit: number }) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const qc = useQueryClient();
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const userName = localStorage.getItem("greenlink_userName") || "";
+  const entered = Number(amount) || 0;
+
+  const handleAdd = async () => {
+    if (entered <= 0 || submitting) return;
+    setSubmitting(true);
+    const exactKey = getListDebtsQueryKey({ shopId });
+    const snapshot = qc.getQueryData(exactKey);
+    const paidAt = new Date().toISOString();
+    const requestId = crypto.randomUUID();
+    const payload = {
+      shopId,
+      customerName,
+      amount: entered,
+      recordedBy: userName,
+      note: note.trim() || null,
+      requestId,
+    };
+
+    qc.cancelQueries({ queryKey: exactKey });
+    const cached = qc.getQueryData(exactKey);
+    const creditRows = Array.isArray(cached)
+      ? (cached as any[])
+          .filter((d) => sameCustomer(d.customerName, customerName) && debtCredit(d) > 0)
+          .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+      : [];
+    const target = creditRows[creditRows.length - 1];
+    if (target) {
+      patchDebtCaches(qc, shopId, target.id, (current) => applyDebtPayment(current, entered, paidAt));
+      patchCustomerProfileCaches(qc, shopId, target.id, (current) => applyDebtPayment(current, entered, paidAt));
+    }
+    patchCustomerListCaches(qc, customerName, (customer) => ({
+      ...customer,
+      totalCredit: Math.max(0, Number(customer.totalCredit || 0) + entered),
+    }));
+
+    setOpen(false);
+    setAmount("");
+    setNote("");
+
+    if (!navigator.onLine) {
+      try {
+        await enqueueMutation("customer_credit_topup", shopId, payload);
+        toast.success("Top-up saved offline — will sync on reconnect");
+      } catch {
+        qc.setQueryData(exactKey, snapshot);
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        toast.error("Could not save offline top-up — please retry");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    toast.success(`${formatKES(entered)} added to ${toTitleCase(customerName)}'s credit`);
+    customFetch("/api/debts/customer-credit", { method: "POST", body: JSON.stringify(payload) })
+      .then(() => {
+        qc.invalidateQueries({ queryKey: exactKey });
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      })
+      .catch(() => {
+        qc.setQueryData(exactKey, snapshot);
+        qc.invalidateQueries({ queryKey: exactKey });
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        toast.error("Top-up failed — please retry");
+      })
+      .finally(() => setSubmitting(false));
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setAmount(""); setNote(""); } }}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-7 text-[11px] px-2 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10">
+          <Wallet className="w-3 h-3 mr-1" />Add credit
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Add credit</DialogTitle>
+        </DialogHeader>
+        <div className="bg-muted/40 rounded-xl p-4 border border-border">
+          <p className="font-bold text-foreground">{toTitleCase(customerName)}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Current credit: <span className="text-emerald-400 font-bold font-mono">{formatKES(currentCredit)}</span>
+          </p>
+        </div>
+        <div className="space-y-3">
+          <Label className="text-xs uppercase tracking-wider font-bold">Amount to add (KES)</Label>
+          <Input
+            type="number"
+            className="h-14 text-2xl font-bold font-mono text-center"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0"
+            autoFocus
+          />
+          <div className="grid grid-cols-4 gap-2">
+            {[100, 500, 1000, 5000].map((v) => (
+              <Button key={v} variant="outline" size="sm" className="h-9 text-xs font-semibold font-mono" onClick={() => setAmount(String((Number(amount) || 0) + v))}>
+                +{v}
+              </Button>
+            ))}
+          </div>
+          <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) e.g. M-Pesa top-up" maxLength={120} />
+          {entered > 0 && (
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-400">
+              New credit balance: <strong className="font-mono">{formatKES(currentCredit + entered)}</strong>
+            </div>
+          )}
+        </div>
+        <DialogFooter className="mt-4">
+          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={handleAdd} disabled={entered <= 0 || submitting} className="px-8 min-w-[140px]">
+            Add credit
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Mark as Paid button ───────────────────────────────────────────────────────
 function MarkPaidButton({ debt }: { debt: any }) {
   const [loading, setLoading] = useState(false);
@@ -1351,6 +1483,11 @@ function CustomerGroupRow({
           {group.totalCredit > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(group.totalCredit)} credit</p>}
         </div>
         <span className={cn("hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusCss)}>{statusLabel}</span>
+        {group.totalCredit > 0 && (
+          <span onClick={(e) => e.stopPropagation()} className="shrink-0">
+            <AddCreditDialog customerName={group.customerName} currentCredit={group.totalCredit} />
+          </span>
+        )}
         <CustomerDownloadButton group={group} />
         <ChevronDown className={cn("h-4 w-4 text-muted-foreground/40 transition-transform shrink-0", expanded && "rotate-180 text-primary")} />
       </div>
