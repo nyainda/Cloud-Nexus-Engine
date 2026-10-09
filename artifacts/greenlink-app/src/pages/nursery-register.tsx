@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
 import { loadCachedNurseryVarieties, saveNurseryVarietiesToCache } from "@/lib/nursery-db";
 import { CustomerAutocomplete, type SelectedCustomer } from "@/components/customer-autocomplete";
-import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign } from "lucide-react";
+import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 
 type Variety = { id: string; name: string; defaultPrice: number; isActive: number | boolean };
@@ -60,6 +60,9 @@ export default function NurseryRegister() {
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
   const [saleEdit, setSaleEdit] = useState({ businessDate: "", varietyId: "", quantity: "", unitPrice: "", paymentMethod: "cash" as "cash" | "mpesa" | "credit", customerName: "", customerPhone: "" });
   const [busySaleId, setBusySaleId] = useState<string | null>(null);
+  const [catalogueSearch, setCatalogueSearch] = useState("");
+  const [catalogueStatus, setCatalogueStatus] = useState<"active" | "archived" | "all">("active");
+  const [catalogueLimit, setCatalogueLimit] = useState(12);
   const [saleSearch, setSaleSearch] = useState("");
   const [salePaymentFilter, setSalePaymentFilter] = useState<"all" | "cash" | "mpesa" | "credit">("all");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
@@ -103,6 +106,14 @@ export default function NurseryRegister() {
   });
 
   const varieties = (varietiesQuery.data ?? []).filter(v => Boolean(v.isActive));
+  const filteredCatalogue = useMemo(() => {
+    const needle = catalogueSearch.trim().toLocaleLowerCase();
+    return (varietiesQuery.data ?? [])
+      .filter(v => catalogueStatus === "all" || (catalogueStatus === "active" ? Boolean(v.isActive) : !Boolean(v.isActive)))
+      .filter(v => !needle || v.name.toLocaleLowerCase().includes(needle))
+      .sort((a, b) => Number(Boolean(b.isActive)) - Number(Boolean(a.isActive)) || a.name.localeCompare(b.name));
+  }, [varietiesQuery.data, catalogueSearch, catalogueStatus]);
+  const visibleCatalogue = filteredCatalogue.slice(0, catalogueLimit);
   const selectedVariety = varieties.find(v => v.id === varietyId) ?? varieties[0];
   const report = reportQuery.data;
   const reportRows = report?.rows ?? [];
@@ -451,9 +462,30 @@ export default function NurseryRegister() {
               <div className="space-y-1"><Label htmlFor="new-price">Default price (KES)</Label><Input id="new-price" type="number" min="0" step="0.01" value={newPrice} onChange={e => setNewPrice(e.target.value)} required /></div>
               <div className="flex items-end"><Button type="submit" disabled={addingVariety} className="w-full gap-1 bg-sky-600 text-white hover:bg-sky-700"><Plus className="h-4 w-4" /> Add</Button></div>
             </div></form>
-            <div className="space-y-2">
-              {(varietiesQuery.data ?? []).length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Add cabbage, spinach or any seedling varieties sold by this shop.</p>}
-              {(varietiesQuery.data ?? []).map(v => <div key={v.id} className="group rounded-xl border border-border bg-card p-3 transition-colors hover:border-sky-600/30 hover:bg-sky-500/[0.03]">
+            <div className="space-y-3">
+              <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="relative min-w-0 flex-1">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input value={catalogueSearch} onChange={e => { setCatalogueSearch(e.target.value); setCatalogueLimit(12); }} placeholder="Find a seedling variety…" aria-label="Search seedling catalogue" className="h-10 bg-background pl-9" />
+                  </div>
+                  <div className="relative sm:w-44">
+                    <SlidersHorizontal className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <select aria-label="Filter seedling varieties" value={catalogueStatus} onChange={e => { setCatalogueStatus(e.target.value as typeof catalogueStatus); setCatalogueLimit(12); }} className="h-10 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+                      <option value="active">Active varieties</option><option value="archived">Archived varieties</option><option value="all">All varieties</option>
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <p>Showing <span className="font-semibold text-foreground">{Math.min(catalogueLimit, filteredCatalogue.length)}</span> of <span className="font-semibold text-foreground">{filteredCatalogue.length}</span> {catalogueStatus === "all" ? "varieties" : catalogueStatus + " varieties"}</p>
+                  {(catalogueSearch || catalogueStatus !== "active") && <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setCatalogueSearch(""); setCatalogueStatus("active"); setCatalogueLimit(12); }}>Reset filters</Button>}
+                </div>
+              </div>
+              {(varietiesQuery.data ?? []).length === 0 && <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">Add cabbage, spinach or any seedling varieties sold by this shop.</p>}
+              {(varietiesQuery.data ?? []).length > 0 && filteredCatalogue.length === 0 && <div className="rounded-xl border border-dashed p-6 text-center"><Sprout className="mx-auto h-6 w-6 text-muted-foreground/60" /><p className="mt-2 text-sm font-medium">No varieties match this view</p><p className="mt-1 text-xs text-muted-foreground">Try another search or switch the status filter.</p></div>}
+              <div className="grid gap-2 sm:grid-cols-2">
+              {visibleCatalogue.map(v => <div key={v.id} className="group rounded-xl border border-border bg-card p-3 transition-colors hover:border-sky-600/30 hover:bg-sky-500/[0.03]">
                 {editingVarietyId === v.id ? (
                   <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px_auto]">
                     <div className="space-y-1"><Label htmlFor={`edit-name-${v.id}`}>Variety name</Label><Input id={`edit-name-${v.id}`} value={editingName} onChange={e => setEditingName(e.target.value)} maxLength={80} autoFocus /></div>
@@ -471,6 +503,8 @@ export default function NurseryRegister() {
                   </div>
                 )}
               </div>)}
+              </div>
+              {filteredCatalogue.length > catalogueLimit && <Button type="button" variant="outline" className="w-full gap-2" onClick={() => setCatalogueLimit(limit => limit + 12)}>Show {Math.min(12, filteredCatalogue.length - catalogueLimit)} more varieties <ChevronDown className="h-4 w-4" /></Button>}
             </div>
           </CardContent>
         </Card>
