@@ -60,7 +60,7 @@ nurseryRouter.patch("/nursery/varieties/:id", requireAuth, async (c) => {
       .bind(body.isActive ? 1 : 0, new Date().toISOString(), id, shopId).run();
   }
   const row = await c.env.DB.prepare(
-    "SELECT id, name, default_price AS defaultPrice, is_active AS isActive, created_at AS createdAt FROM nursery_varieties WHERE id = ? AND shop_id = ?"
+    "SELECT id, name, (default_price / 100.0) AS defaultPrice, is_active AS isActive, created_at AS createdAt FROM nursery_varieties WHERE id = ? AND shop_id = ?"
   ).bind(id, shopId).first();
   if (!row) return c.json({ error: "Variety not found." }, 404);
   return c.json(row);
