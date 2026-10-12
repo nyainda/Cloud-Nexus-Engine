@@ -2431,12 +2431,8 @@ export default function Debts() {
 
   const qc = useQueryClient();
 
-  // No timed polling here: every debt-changing action on this page (payments,
-  // new debt from a sale, edits) already calls invalidateQueries with this
-  // exact key, so React Query refetches right when something actually
-  // changes. We also refetch on window focus / remount, so switching back
-  // to this tab after a while still shows fresh data — we just don't pay
-  // for a D1 read every 5 seconds while nobody is looking, foreground or not.
+  // Invalidate handles writes on this device; polling makes updates from other
+  // devices visible without requiring a page change or cache clear.
   const { data: allDebts, isLoading } = useListDebts(
     { shopId },
     {
@@ -2446,7 +2442,7 @@ export default function Debts() {
         staleTime: 15_000,
         refetchOnWindowFocus: true,
         refetchOnMount: true,
-        refetchInterval: false,
+        refetchInterval: 30_000,
         refetchIntervalInBackground: false,
       },
     }

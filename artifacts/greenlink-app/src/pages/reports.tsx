@@ -666,8 +666,6 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
     enabled: !!shopId && !!submittedSearch,
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
     retry: false,
   });
 

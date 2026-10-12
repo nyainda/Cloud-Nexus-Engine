@@ -488,8 +488,11 @@ app.use("*", async (c, next) => {
     const isPublic = urlPath === "/api/shops" || urlPath.startsWith("/api/healthz");
     if (isPublic) {
       c.res.headers.set("Cache-Control", "public, max-age=120, stale-while-revalidate=300");
-    } else if (c.res.status < 400) {
-      c.res.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+    } else {
+      // Authenticated data is mutable and shared across devices. Letting a
+      // browser/PWA reuse a cached GET here can conceal a completed write even
+      // when the next request reaches the Worker.
+      c.res.headers.set("Cache-Control", "private, no-store");
     }
   } else {
     c.res.headers.set("Cache-Control", "no-store");

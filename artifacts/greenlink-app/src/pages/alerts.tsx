@@ -200,23 +200,22 @@ export default function Alerts() {
     }
   };
 
-  // Notifications are fetched when Alerts opens or when the user refreshes.
-  // They are low priority, so avoid a recurring D1 read while this screen stays open.
+  // Keep alert data fresh when another device creates or clears a notification.
   const { data: notifications, isLoading: notifsLoading, refetch } = useListNotifications(
-    { shopId }, { query: { enabled: !!shopId, refetchInterval: false } as any }
+    { shopId }, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
   );
 
   const { data: productsData, isLoading: productsLoading } = useListProducts(
-    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 1_800_000, refetchInterval: 1_800_000, refetchIntervalInBackground: false } as any }
+    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 15_000, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
   );
 
   const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any });
 
   // limit is not in the OpenAPI spec for GET /debts — omit it; backend returns all debts for the shop.
-  // Debt-changing actions elsewhere already invalidate this query key, so we don't
-  // need a timed poll here — refetch on focus/mount is enough for a summary badge.
+  // Local mutations invalidate this query, and polling keeps the badge current
+  // when a debt changes on another device.
   const { data: debtsData } = useListDebts(
-    { shopId }, { query: { enabled: !!shopId && isOwner, staleTime: 30_000, refetchOnWindowFocus: true, refetchInterval: false, refetchIntervalInBackground: false } as any }
+    { shopId }, { query: { enabled: !!shopId && isOwner, staleTime: 15_000, refetchOnWindowFocus: true, refetchInterval: 30_000, refetchIntervalInBackground: false } as any }
   );
 
   const markRead = useMarkNotificationRead();

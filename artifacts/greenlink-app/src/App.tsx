@@ -64,10 +64,12 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      refetchOnWindowFocus: false,  // POS: tab switches must never fire background requests
-      refetchOnReconnect: false,    // reconnect refetch disabled — mutations invalidate cache explicitly
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
       refetchOnMount: true,
-      staleTime: 5 * 60_000,        // 5 min — matches KV cache TTL; mutations invalidate immediately
+      staleTime: 15_000,
+      refetchInterval: 60_000,
+      refetchIntervalInBackground: false,
       gcTime: 30 * 60_000,          // 30 min in memory
     },
   },
@@ -234,7 +236,8 @@ function AuthGuard({ children }: { children: ReactNode }) {
   // ── Session validation — online only ───────────────────────────────────────
   // When the device is offline there is no point hitting the network:
   //  • We can't reach the CF Worker anyway → guaranteed TypeError
-  //  • The 5-second NetworkFirst SW timeout causes a visible hang
+  //  • API requests fail while offline; the service worker no longer serves
+  //    stale API responses as a substitute for current server data
   //  • The retry/error path can incorrectly land in the "no session" branch
   //    if the error object shape is unexpected, logging the user out.
   // Solution: disable the query while offline and re-enable when back online.

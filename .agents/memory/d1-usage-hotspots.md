@@ -5,11 +5,11 @@ description: The production usage pattern to check before changing GreenLink per
 
 Production D1 pressure should be diagnosed with `wrangler d1 insights`, not inferred from table row counts alone. The catalog endpoint can dominate free-tier consumption because each full product-list request scans the active catalog, and a separate count query doubles that scan. Normal sale writes (sale, line items, stock movement, product stock update, and occasional low-stock alert) are comparatively small at the current shop volume.
 
-The user requires Cloudflare/D1 usage to stay within the free tier. Avoid adding unsolicited polling, refetches, retries, or unbounded reads for dashboard and search features.
+The user requires Cloudflare/D1 usage to stay within the free tier and wants shared sales, debt, and inventory changes to appear across devices without clearing caches. Balance freshness against reads: use bounded refreshes for important shared data, not rapid full-catalog or report scans.
 
 **Why:** The user explicitly asked to avoid database spikes and remain on the free tier.
 
-**How to apply:** Prefer explicit user-submitted searches, bounded client caching, and no focus/reconnect refetches; assess backend read volume before adding report queries or deploying Worker changes.
+**How to apply:** Remove stale browser/service-worker reuse for mutable API data, refresh shared lists on focus/reconnect, and keep polling conservative. Check D1 Insights before increasing full-catalog or report request frequency.
 
 **Why:** A prior production snapshot looked like a write problem because sales touch several tables, but Cloudflare's ranked metrics showed repeated product reads were the larger quota risk. Removing unnecessary count scans preserved the API total while cutting that repeated read work.
 

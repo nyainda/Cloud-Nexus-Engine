@@ -870,8 +870,8 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
     query: {
       enabled: !!shopId,
       queryKey: getListProductsQueryKey(productParams),
-      staleTime: 1_800_000,
-      refetchInterval: 1_800_000,
+      staleTime: 15_000,
+      refetchInterval: 60_000,
       refetchIntervalInBackground: false,
     },
   });
