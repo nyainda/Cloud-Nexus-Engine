@@ -495,7 +495,9 @@ export default function NurseryRegister() {
             </form>
           </CardContent>
         </Card>
+      </TabsContent>
 
+      <TabsContent value="catalogue" className="mt-5 space-y-4 focus-visible:outline-none">
         <Card>
           <CardHeader className="rounded-t-xl border-b border-sky-500/15 bg-gradient-to-r from-sky-500/10 via-sky-500/5 to-transparent pb-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-sky-600 p-2.5 text-white shadow-sm"><Sprout className="h-5 w-5" /></div><div className="min-w-0 flex-1"><CardTitle className="text-lg">Seedling catalogue</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Set up varieties and their usual selling prices.</p></div><span className="rounded-full border border-sky-600/20 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300">{(varietiesQuery.data ?? []).filter(v => Boolean(v.isActive)).length} active</span></div></CardHeader>
           <CardContent className="space-y-3 pt-4">
@@ -555,9 +557,10 @@ export default function NurseryRegister() {
             </>}
           </CardContent>
         </Card>
-      </div>
+      </TabsContent>
 
 
+      <TabsContent value="insights" className="mt-5 space-y-4 focus-visible:outline-none">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5 text-emerald-600" /> Customer buying insights</CardTitle>
@@ -601,8 +604,10 @@ export default function NurseryRegister() {
             })()}
         </CardContent>
       </Card>
+      </TabsContent>
 
 
+      <TabsContent value="sales" className="mt-5 space-y-4 focus-visible:outline-none">
       <Card className="overflow-hidden border-border/80 shadow-sm">
         <CardHeader className="border-b border-border/70 bg-gradient-to-br from-primary/[0.07] via-background to-sky-500/[0.06] pb-5">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -705,7 +710,9 @@ export default function NurseryRegister() {
           <p className="border-t border-border/70 pt-3 text-xs leading-relaxed text-muted-foreground">Only 25 individual transactions are fetched per page. Search and payment filters run in D1, while saved edits and deletions refresh the sales report, customer insights, and debt records. Nursery sales remain separate from normal POS inventory deductions.</p>
         </CardContent>
       </Card>
+      </TabsContent>
 
+      <TabsContent value="reports" className="mt-5 space-y-4 focus-visible:outline-none">
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -739,6 +746,8 @@ export default function NurseryRegister() {
           <p className="mt-3 text-xs text-muted-foreground">Report rows are aggregated and paginated in D1; the summary totals still cover the full selected date range. Named customer purchases are also summarized by customer and variety; credit sales create a linked customer debt.</p>
         </CardContent>
       </Card>
+      </TabsContent>
     </div>
+    </Tabs>
   );
 }
