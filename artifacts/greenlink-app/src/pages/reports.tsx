@@ -16,7 +16,7 @@ import {
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
   ClipboardCheck, X, Share2, Check, CheckCheck, Wallet, ReceiptText, Ban,
   Download, Calendar, ChevronDown, ChevronUp, FileText, Search, SearchX,
-  RefreshCw,
+  RefreshCw, Sprout,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
@@ -544,6 +544,30 @@ interface MonthlySalesResponse {
   totalProfit: number;
   totalSalesCount: number;
   monthlyBreakdown: { month: number; revenue: number; profit: number; salesCount: number }[];
+}
+
+type NurserySalesBucket = "day" | "month";
+
+interface NurserySalesRow {
+  period: string;
+  seedlingsSold: number;
+  totalRevenueCents: number;
+  cashCents: number;
+  mpesaCents: number;
+  creditCents: number;
+}
+
+interface NurserySalesResponse {
+  from: string;
+  to: string;
+  bucket: NurserySalesBucket;
+  rows: NurserySalesRow[];
+}
+
+function dateRangeDayCount(from: string, to: string): number {
+  const fromTime = Date.parse(`${from}T00:00:00Z`);
+  const toTime = Date.parse(`${to}T00:00:00Z`);
+  return Math.floor((toTime - fromTime) / 86_400_000) + 1;
 }
 
 function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, changePct }: {
@@ -1077,6 +1101,7 @@ export default function Reports() {
     : getDateRange(quickRange);
 
   const isToday = dateRange.from === today && dateRange.to === today;
+  const nurseryBucket: NurserySalesBucket = dateRangeDayCount(dateRange.from, dateRange.to) > 45 ? "month" : "day";
 
   const { data: voidedSales, refetch: refetchVoidedSales } = useQuery({
     queryKey: ["voided-sales", shopId, dateRange.from],
@@ -1143,6 +1168,38 @@ export default function Reports() {
     gcTime: GC,
   });
 
+  const {
+    data: nurserySales,
+    isLoading: nurserySalesLoading,
+    isError: nurserySalesError,
+    refetch: refetchNurserySales,
+  } = useQuery<NurserySalesResponse>({
+    queryKey: ["nursery-analytics-sales", shopId, dateRange.from, dateRange.to, nurseryBucket],
+    queryFn: () => customFetch<NurserySalesResponse>(
+      `/api/nursery/analytics?from=${encodeURIComponent(dateRange.from)}&to=${encodeURIComponent(dateRange.to)}&bucket=${nurseryBucket}`,
+    ),
+    enabled: !!shopId,
+    staleTime: STALE,
+    gcTime: GC,
+  });
+
+  const nurserySalesTotals = useMemo(() => (nurserySales?.rows ?? []).reduce((totals, row) => ({
+    seedlingsSold: totals.seedlingsSold + Number(row.seedlingsSold || 0),
+    totalRevenueCents: totals.totalRevenueCents + Number(row.totalRevenueCents || 0),
+    cashCents: totals.cashCents + Number(row.cashCents || 0),
+    mpesaCents: totals.mpesaCents + Number(row.mpesaCents || 0),
+    creditCents: totals.creditCents + Number(row.creditCents || 0),
+  }), { seedlingsSold: 0, totalRevenueCents: 0, cashCents: 0, mpesaCents: 0, creditCents: 0 }), [nurserySales?.rows]);
+
+  const nurserySalesChartData = useMemo(() => (nurserySales?.rows ?? []).map(row => {
+    const dateForLabel = nurseryBucket === "month" ? `${row.period}-01` : row.period;
+    return {
+      ...row,
+      revenue: Number(row.totalRevenueCents || 0) / 100,
+      label: format(new Date(`${dateForLabel}T12:00:00`), nurseryBucket === "month" ? "MMM yy" : "d MMM"),
+    };
+  }), [nurserySales?.rows, nurseryBucket]);
+
   const monthlySalesChartData = monthlySales?.monthlyBreakdown.map((month) => ({
     ...month,
     monthLabel: MONTH_LABELS[month.month - 1],
@@ -1160,6 +1217,7 @@ export default function Reports() {
         ...(showSalesDetails ? [refetchTopProducts(), refetchCategoryData()] : []),
         ...(showInventoryDetails ? [refetchProductsData()] : []),
         ...(showMonthlySales ? [refetchMonthlySales()] : []),
+        refetchNurserySales(),
       ]);
       setLastManualRefreshAt(Date.now());
     } finally {
@@ -1353,6 +1411,96 @@ export default function Reports() {
             changePct={cashCollectedChangePct}
           />
         </div>
+
+        <Card className="reports-nursery shadow-none" data-testid="card-nursery-analytics">
+          <CardHeader className="flex-row items-start justify-between gap-3 pb-2 pt-4 px-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="mt-0.5 rounded-lg border border-primary/20 bg-primary/10 p-2 text-primary">
+                <Sprout className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="text-sm font-bold">Nursery plant sales</CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {dateRange.from === dateRange.to ? format(new Date(`${dateRange.from}T12:00:00`), "d MMM yyyy") : `${format(new Date(`${dateRange.from}T12:00:00`), "d MMM yyyy")} – ${format(new Date(`${dateRange.to}T12:00:00`), "d MMM yyyy")}`}
+                </p>
+              </div>
+            </div>
+            <Badge variant="outline" className="shrink-0 border-border text-muted-foreground">
+              {nurseryBucket === "month" ? "Monthly view" : "Daily view"}
+            </Badge>
+          </CardHeader>
+          <CardContent className="space-y-4 px-4 pb-4">
+            {nurserySalesLoading && !nurserySales ? (
+              <div className="space-y-3" aria-label="Loading nursery analytics">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <Skeleton className="h-20 rounded-xl" />
+                  <Skeleton className="h-20 rounded-xl" />
+                  <Skeleton className="col-span-2 h-20 rounded-xl sm:col-span-1" />
+                </div>
+                <Skeleton className="h-48 rounded-xl" />
+              </div>
+            ) : nurserySalesError && !nurserySales ? (
+              <div className="flex flex-col items-center gap-3 py-8 text-center">
+                <p className="text-sm text-destructive">Nursery sales could not be loaded.</p>
+                <Button data-testid="button-retry-nursery-analytics" type="button" size="sm" variant="outline" onClick={() => void refetchNurserySales()}>Try again</Button>
+              </div>
+            ) : nurserySales ? (
+              <>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <div className="min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Plant sales value</p>
+                    <p data-testid="text-nursery-analytics-revenue" className="mt-1 truncate text-lg font-bold tabular-nums text-primary">{formatKES(nurserySalesTotals.totalRevenueCents / 100)}</p>
+                  </div>
+                  <div className="min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Plants sold</p>
+                    <p data-testid="text-nursery-analytics-seedlings" className="mt-1 text-lg font-bold tabular-nums">{nurserySalesTotals.seedlingsSold.toLocaleString()}</p>
+                  </div>
+                  <div className="col-span-2 min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3 sm:col-span-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Received · On credit</p>
+                    <p data-testid="text-nursery-analytics-payments" className="mt-1 truncate text-sm font-bold tabular-nums">
+                      {formatKES((nurserySalesTotals.cashCents + nurserySalesTotals.mpesaCents) / 100)}
+                      <span className="px-1.5 text-muted-foreground">·</span>
+                      {formatKES(nurserySalesTotals.creditCents / 100)}
+                    </p>
+                  </div>
+                </div>
+                {nurserySalesChartData.length === 0 ? (
+                  <p data-testid="text-nursery-analytics-empty" className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No nursery plant sales in this period.</p>
+                ) : (
+                  <div className="h-52 sm:h-60" aria-label={nurseryBucket === "month" ? "Monthly nursery plant sales chart" : "Daily nursery plant sales chart"}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={nurserySalesChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="label"
+                          interval={nurserySalesChartData.length > 14 ? "preserveStartEnd" : 0}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          width={48}
+                          tickFormatter={value => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : String(value)}
+                          tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [formatKES(value), "Plant sales"]}
+                          contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
+                        />
+                        <Bar dataKey="revenue" name="Plant sales" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Sales value includes credit transactions. Received is cash plus M-Pesa; credit is shown separately. Nursery sales remain separate from POS inventory and gross-profit figures.
+                </p>
+              </>
+            ) : null}
+          </CardContent>
+        </Card>
 
         <div className="reports-insight-controls" aria-label="Optional analytics details">
           <button

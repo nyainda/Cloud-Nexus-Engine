@@ -674,6 +674,36 @@ nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
 
 
 
+nurseryRouter.get("/nursery/analytics", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  const bucket = c.req.query("bucket") ?? "day";
+
+  if (!validDate(from) || !validDate(to) || from > to) {
+    return c.json({ error: "Choose a valid analytics date range." }, 400);
+  }
+  if (bucket !== "day" && bucket !== "month") {
+    return c.json({ error: "Choose a daily or monthly analytics view." }, 400);
+  }
+
+  const periodExpression = bucket === "month" ? "substr(business_date, 1, 7)" : "business_date";
+  const rows = await c.env.DB.prepare(
+    `SELECT ${periodExpression} AS period,
+      COALESCE(SUM(quantity), 0) AS seedlingsSold,
+      COALESCE(SUM(total_amount_cents), 0) AS totalRevenueCents,
+      COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN total_amount_cents ELSE 0 END), 0) AS cashCents,
+      COALESCE(SUM(CASE WHEN payment_method = 'mpesa' THEN total_amount_cents ELSE 0 END), 0) AS mpesaCents,
+      COALESCE(SUM(CASE WHEN payment_method = 'credit' THEN total_amount_cents ELSE 0 END), 0) AS creditCents
+     FROM nursery_daily_sales
+     WHERE shop_id = ? AND business_date >= ? AND business_date <= ?
+     GROUP BY ${periodExpression}
+     ORDER BY period`
+  ).bind(shopId, from, to).all();
+
+  return c.json({ from, to, bucket, rows: rows.results ?? [] });
+});
+
 nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
   const from = c.req.query("from") ?? "";

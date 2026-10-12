@@ -254,69 +254,9 @@
   }
 }
 
-/* Nursery register: paper-led in light mode, graphite counter surface in dark mode. */
+/* Nursery register uses the same shared theme surfaces as the rest of the app. */
 .nursery-page {
   color: hsl(var(--foreground));
-  border-radius: 1.25rem;
-  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
-}
-
-.light .nursery-page {
-  --background: 42 33% 96%;
-  --foreground: 151 22% 15%;
-  --border: 145 13% 83%;
-  --input: 0 0% 100%;
-  --ring: 153 51% 34%;
-  --card: 0 0% 100%;
-  --card-foreground: 151 22% 15%;
-  --card-border: 145 13% 84%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 151 22% 15%;
-  --popover-border: 145 13% 84%;
-  --primary: 153 51% 31%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 146 19% 91%;
-  --secondary-foreground: 151 22% 15%;
-  --muted: 145 17% 92%;
-  --muted-foreground: 150 10% 38%;
-  --accent: 37 72% 88%;
-  --accent-foreground: 25 48% 23%;
-  --destructive: 2 63% 47%;
-  --destructive-foreground: 0 0% 100%;
-  background:
-    radial-gradient(ellipse at 92% 1%, hsl(43 75% 88% / .45), transparent 30rem),
-    hsl(var(--background));
-  border: 1px solid hsl(var(--border));
-  box-shadow: 0 12px 34px hsl(151 22% 15% / .07);
-}
-
-.dark .nursery-page {
-  --background: 150 11% 8%;
-  --foreground: 140 16% 91%;
-  --border: 145 10% 22%;
-  --input: 148 10% 13%;
-  --ring: 75 100% 50%;
-  --card: 150 9% 11%;
-  --card-foreground: 140 16% 91%;
-  --card-border: 145 10% 22%;
-  --popover: 150 9% 12%;
-  --popover-foreground: 140 16% 91%;
-  --popover-border: 145 10% 24%;
-  --primary: 75 100% 50%;
-  --primary-foreground: 150 20% 7%;
-  --secondary: 150 8% 17%;
-  --secondary-foreground: 140 16% 91%;
-  --muted: 150 8% 16%;
-  --muted-foreground: 145 9% 66%;
-  --accent: 150 11% 20%;
-  --accent-foreground: 75 80% 70%;
-  --destructive: 0 65% 57%;
-  --destructive-foreground: 0 0% 100%;
-  background:
-    radial-gradient(ellipse at 92% 1%, hsl(75 50% 19% / .17), transparent 31rem),
-    hsl(var(--background));
-  border: 1px solid hsl(var(--border));
-  box-shadow: 0 12px 34px hsl(0 0% 0% / .22);
 }
 
 .light .nursery-page input,
@@ -331,13 +271,6 @@
   color-scheme: dark;
 }
 
-.nursery-page input,
-.nursery-page select,
-.nursery-page textarea {
-  background-color: hsl(var(--input));
-  color: hsl(var(--foreground));
-}
-
 .nursery-page input[type="date"],
 .nursery-page input[type="month"] {
   min-height: 2.8rem;
@@ -346,44 +279,8 @@
   letter-spacing: .015em;
 }
 
-.nursery-page [role="tablist"] {
-  background: hsl(var(--muted) / .72);
-}
-
-.nursery-page [role="tab"][data-state="active"] {
-  background: hsl(var(--card));
-  color: hsl(var(--primary));
-  box-shadow: 0 1px 4px hsl(var(--foreground) / .12);
-}
-
 .nursery-date-field {
   display: grid;
   gap: .4rem;
   min-width: 0;
-}
-
-.nursery-date-field label {
-  color: hsl(var(--muted-foreground));
-  font-size: .72rem;
-  font-weight: 750;
-  letter-spacing: .075em;
-  text-transform: uppercase;
-}
-
-.nursery-date-card {
-  border: 1px solid hsl(var(--border));
-  border-radius: .9rem;
-  background: hsl(var(--card) / .92);
-  padding: .75rem;
-}
-
-.nursery-date-card:focus-within {
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 3px hsl(var(--ring) / .16);
-}
-
-@media (max-width: 640px) {
-  .nursery-page {
-    border-radius: .9rem;
-  }
 }

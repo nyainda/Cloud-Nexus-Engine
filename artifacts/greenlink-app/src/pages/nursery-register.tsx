@@ -430,15 +430,15 @@ export default function NurseryRegister() {
       </TabsList>
 
       <section aria-label="Date controls" className="grid gap-3 rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm sm:grid-cols-2 sm:p-4 lg:grid-cols-[minmax(170px,.7fr)_minmax(170px,.7fr)_minmax(180px,.8fr)_auto] lg:items-end">
-        <div className="nursery-date-field nursery-date-card">
+        <div className="nursery-date-field">
           <Label htmlFor="nursery-range-from">Period starts</Label>
           <Input data-testid="input-nursery-period-from" id="nursery-range-from" type="date" value={from} max={to || undefined} onChange={event => { setFrom(event.target.value); setReportPage(1); setSalesPage(1); }} />
         </div>
-        <div className="nursery-date-field nursery-date-card">
+        <div className="nursery-date-field">
           <Label htmlFor="nursery-range-to">Period ends</Label>
           <Input data-testid="input-nursery-period-to" id="nursery-range-to" type="date" value={to} min={from || undefined} onChange={event => { setTo(event.target.value); setReportPage(1); setSalesPage(1); }} />
         </div>
-        <div className="nursery-date-field nursery-date-card">
+        <div className="nursery-date-field">
           <Label htmlFor="business-date">Sale date</Label>
           <Input data-testid="input-nursery-sale-date" id="business-date" type="date" value={businessDate} onChange={event => { if (event.target.value) setBusinessDate(event.target.value); }} />
         </div>

@@ -28,6 +28,7 @@
 }
 
 .reports-kpi-card,
+.reports-content > .reports-nursery,
 .reports-content > .rounded-2xl,
 .reports-content > .reports-stock-alerts > *,
 .reports-content > .reports-trend,
@@ -39,6 +40,10 @@
 .reports-content > .reports-low-margin {
   min-width: 0;
   border-color: hsl(var(--border));
+}
+
+.reports-content > .reports-nursery {
+  grid-column: 1 / -1;
 }
 
 .reports-kpi-card {
