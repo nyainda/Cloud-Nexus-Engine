@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions, getListProductsQueryKey } from "@workspace/api-client-react";
 import { mergeWithMutationResults } from "@/lib/product-version-guard";
 import { loadCachedProducts, saveProductsToCache } from "@/lib/product-db";
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useRef, useState, lazy, Suspense, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { useGetSession } from "@workspace/api-client-react";
@@ -118,7 +119,6 @@ queryClient.getQueryCache().subscribe((event) => {
   }
 });
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? null;
 setBaseUrl(API_BASE);
 setAuthTokenGetter(() => localStorage.getItem("greenlink_token"));
 

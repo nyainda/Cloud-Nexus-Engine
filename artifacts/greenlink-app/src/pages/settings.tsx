@@ -5,6 +5,7 @@ import {
   useListAuditLog, getListSuppliersQueryKey
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { API_BASE } from "@/lib/api-base";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter
 } from "@/components/ui/dialog";
@@ -980,7 +981,7 @@ function BackupSection({ shopId }: { shopId: string }) {
     setDownloading(true);
     try {
       const token = localStorage.getItem("greenlink_token") || "";
-      const baseUrl = (window as any).__API_BASE_URL__ || "";
+      const baseUrl = API_BASE ?? "";
       const res = await fetch(`${baseUrl}/api/admin/export?shopId=${encodeURIComponent(shopId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
