@@ -13,57 +13,155 @@ function validDate(value: string): boolean {
 
 nurseryRouter.get("/nursery/varieties", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
-  const rows = await c.env.DB.prepare(
-    "SELECT id, name, (default_price / 100.0) AS defaultPrice, is_active AS isActive, created_at AS createdAt FROM nursery_varieties WHERE shop_id = ? ORDER BY is_active DESC, name COLLATE NOCASE"
-  ).bind(shopId).all();
-  return c.json(rows.results ?? []);
+  const hasPageParams = ["page", "pageSize", "search", "status", "category"].some(key => c.req.query(key) !== undefined);
+  const search = (c.req.query("search") ?? "").trim().slice(0, 80);
+  const status = c.req.query("status") ?? "all";
+  const category = (c.req.query("category") ?? "").trim().slice(0, 60);
+  if (!["active", "archived", "all"].includes(status)) {
+    return c.json({ error: "Choose a valid variety status." }, 400);
+  }
+
+  const page = Math.max(1, Math.floor(Number(c.req.query("page") ?? 1) || 1));
+  const pageSize = Math.min(100, Math.max(1, Math.floor(Number(c.req.query("pageSize") ?? 30) || 30)));
+  const offset = (page - 1) * pageSize;
+  const filters = ["shop_id = ?"];
+  const values: Array<string | number> = [shopId];
+  if (status !== "all") {
+    filters.push("is_active = ?");
+    values.push(status === "active" ? 1 : 0);
+  }
+  if (category) {
+    filters.push("category = ? COLLATE NOCASE");
+    values.push(category);
+  }
+  if (search) {
+    filters.push("name LIKE ? COLLATE NOCASE");
+    values.push(`${search}%`);
+  }
+  const where = filters.join(" AND ");
+  const [rows, count, categories] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, name, category, (default_price / 100.0) AS defaultPrice,
+        is_active AS isActive, created_at AS createdAt
+       FROM nursery_varieties WHERE ${where}
+       ORDER BY is_active DESC, name COLLATE NOCASE LIMIT ? OFFSET ?`
+    ).bind(...values, pageSize, offset).all(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS total FROM nursery_varieties WHERE ${where}`)
+      .bind(...values).first<{ total: number }>(),
+    c.env.DB.prepare(
+      "SELECT DISTINCT category FROM nursery_varieties WHERE shop_id = ? ORDER BY category COLLATE NOCASE"
+    ).bind(shopId).all<{ category: string }>(),
+  ]);
+  const result = {
+    rows: rows.results ?? [],
+    total: Number(count?.total ?? 0),
+    page,
+    pageSize,
+    categories: (categories.results ?? []).map(row => row.category),
+  };
+
+  // Keep the original unpaged response for older installed clients.
+  return c.json(hasPageParams ? result : result.rows);
 });
 
 nurseryRouter.post("/nursery/varieties", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
-  const body = await c.req.json<{ name?: string; defaultPrice?: number }>();
+  const body = await c.req.json<{ name?: string; category?: string; defaultPrice?: number }>();
   const name = body.name?.trim().replace(/\s+/g, " ");
+  const category = body.category?.trim().replace(/\s+/g, " ") || "Uncategorized";
   const price = Number(body.defaultPrice);
-  if (!name || name.length > 80 || !Number.isFinite(price) || price < 0 || price > 1000000) {
-    return c.json({ error: "Enter a variety name and a valid non-negative price." }, 400);
+  if (!name || name.length > 80 || category.length > 60 || !Number.isFinite(price) || price < 0 || price > 1000000) {
+    return c.json({ error: "Enter a variety name, category up to 60 characters, and a valid non-negative price." }, 400);
   }
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   try {
     await c.env.DB.prepare(
-      "INSERT INTO nursery_varieties (id, shop_id, name, default_price, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)"
-    ).bind(id, shopId, name, Math.round(price * 100), now, now).run();
+      "INSERT INTO nursery_varieties (id, shop_id, name, category, default_price, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+    ).bind(id, shopId, name, category, Math.round(price * 100), now, now).run();
   } catch {
     return c.json({ error: "A variety with that name may already exist in this shop." }, 409);
   }
-  return c.json({ id, name, defaultPrice: Math.round(price * 100) / 100, isActive: 1, createdAt: now }, 201);
+  return c.json({ id, name, category, defaultPrice: Math.round(price * 100) / 100, isActive: 1, createdAt: now }, 201);
+});
+
+nurseryRouter.get("/nursery/monthly-summary", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const month = c.req.query("month") ?? "";
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return c.json({ error: "Choose a valid month." }, 400);
+  }
+  const [year, monthNumber] = month.split("-").map(Number);
+  const from = `${month}-01`;
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const to = `${month}-${String(lastDay).padStart(2, "0")}`;
+
+  // This report reads the compact per-day aggregates, never the raw sale ledger.
+  const [categories, summary] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT COALESCE(NULLIF(TRIM(v.category), ''), 'Uncategorized') AS category,
+        SUM(s.quantity) AS seedlingsSold,
+        SUM(s.total_amount_cents) AS totalRevenueCents,
+        COUNT(DISTINCT v.id) AS varietyCount,
+        SUM(CASE WHEN s.payment_method = 'cash' THEN s.total_amount_cents ELSE 0 END) AS cashCents,
+        SUM(CASE WHEN s.payment_method = 'mpesa' THEN s.total_amount_cents ELSE 0 END) AS mpesaCents,
+        SUM(CASE WHEN s.payment_method = 'credit' THEN s.total_amount_cents ELSE 0 END) AS creditCents
+       FROM nursery_daily_sales s
+       JOIN nursery_varieties v ON v.id = s.variety_id AND v.shop_id = s.shop_id
+       WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?
+       GROUP BY v.category COLLATE NOCASE
+       ORDER BY seedlingsSold DESC, category COLLATE NOCASE`
+    ).bind(shopId, from, to).all(),
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(quantity), 0) AS seedlingsSold,
+        COALESCE(SUM(total_amount_cents), 0) AS totalRevenueCents
+       FROM nursery_daily_sales WHERE shop_id = ? AND business_date >= ? AND business_date <= ?`
+    ).bind(shopId, from, to).first(),
+  ]);
+  return c.json({ month, from, to, categories: categories.results ?? [], summary });
 });
 
 nurseryRouter.patch("/nursery/varieties/:id", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
   const id = c.req.param("id");
-  const body = await c.req.json<{ name?: string; defaultPrice?: number; isActive?: boolean }>();
+  const body = await c.req.json<{ name?: string; category?: string; defaultPrice?: number; isActive?: boolean }>();
+  const updates: string[] = [];
+  const values: Array<string | number> = [];
   if (body.name !== undefined) {
     const name = body.name.trim().replace(/\s+/g, " ");
     if (!name || name.length > 80) return c.json({ error: "Variety name must be 1–80 characters." }, 400);
-    try {
-      await c.env.DB.prepare("UPDATE nursery_varieties SET name = ?, updated_at = ? WHERE id = ? AND shop_id = ?")
-        .bind(name, new Date().toISOString(), id, shopId).run();
-    } catch { return c.json({ error: "A variety with that name may already exist." }, 409); }
+    updates.push("name = ?");
+    values.push(name);
+  }
+  if (body.category !== undefined) {
+    const category = body.category.trim().replace(/\s+/g, " ") || "Uncategorized";
+    if (category.length > 60) return c.json({ error: "Category names must be 1–60 characters." }, 400);
+    updates.push("category = ?");
+    values.push(category);
   }
   if (body.defaultPrice !== undefined) {
     const price = Number(body.defaultPrice);
     if (!Number.isFinite(price) || price < 0 || price > 1000000) return c.json({ error: "Enter a valid price." }, 400);
-    await c.env.DB.prepare("UPDATE nursery_varieties SET default_price = ?, updated_at = ? WHERE id = ? AND shop_id = ?")
-      .bind(Math.round(price * 100), new Date().toISOString(), id, shopId).run();
+    updates.push("default_price = ?");
+    values.push(Math.round(price * 100));
   }
   if (body.isActive !== undefined) {
-    await c.env.DB.prepare("UPDATE nursery_varieties SET is_active = ?, updated_at = ? WHERE id = ? AND shop_id = ?")
-      .bind(body.isActive ? 1 : 0, new Date().toISOString(), id, shopId).run();
+    updates.push("is_active = ?");
+    values.push(body.isActive ? 1 : 0);
   }
-  const row = await c.env.DB.prepare(
-    "SELECT id, name, (default_price / 100.0) AS defaultPrice, is_active AS isActive, created_at AS createdAt FROM nursery_varieties WHERE id = ? AND shop_id = ?"
-  ).bind(id, shopId).first();
+  if (!updates.length) return c.json({ error: "Choose at least one variety field to update." }, 400);
+  updates.push("updated_at = ?");
+  values.push(new Date().toISOString(), id, shopId);
+  let row;
+  try {
+    row = await c.env.DB.prepare(
+      `UPDATE nursery_varieties SET ${updates.join(", ")} WHERE id = ? AND shop_id = ?
+       RETURNING id, name, category, (default_price / 100.0) AS defaultPrice,
+         is_active AS isActive, created_at AS createdAt`
+    ).bind(...values).first();
+  } catch {
+    return c.json({ error: "A variety with that name may already exist." }, 409);
+  }
   if (!row) return c.json({ error: "Variety not found." }, 404);
   return c.json(row);
 });
@@ -91,6 +189,160 @@ nurseryRouter.delete("/nursery/varieties/:id", requireAuth, async (c) => {
 
   await c.env.DB.prepare("DELETE FROM nursery_varieties WHERE id = ? AND shop_id = ?").bind(id, shopId).run();
   return c.json({ deleted: true, archived: false });
+});
+
+nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const body = await c.req.json<{
+    businessDate?: string;
+    paymentMethod?: string;
+    customerName?: string;
+    customerPhone?: string;
+    items?: Array<{ requestId?: string; varietyId?: string; quantity?: number; unitPrice?: number }>;
+  }>();
+  const businessDate = body.businessDate ?? "";
+  const paymentMethod = body.paymentMethod ?? "";
+  const customerName = body.customerName?.trim().replace(/\s+/g, " ") ?? "";
+  const customerPhone = body.customerPhone?.trim() ?? "";
+  const items = body.items ?? [];
+  if (!validDate(businessDate) || !paymentMethods.has(paymentMethod) ||
+      customerName.length > 120 || customerPhone.length > 40 ||
+      (paymentMethod === "credit" && !customerName) ||
+      items.length < 1 || items.length > 18) {
+    return c.json({ error: "Check the sale date, customer and payment details. Save between 1 and 18 varieties at a time." }, 400);
+  }
+
+  const requestIds = new Set<string>();
+  for (const item of items) {
+    const quantity = Number(item.quantity);
+    const unitPrice = Number(item.unitPrice);
+    if (!/^[\w-]{8,80}$/.test(item.requestId ?? "") || requestIds.has(item.requestId ?? "") ||
+        !item.varietyId || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 10000000 ||
+        !Number.isFinite(unitPrice) || unitPrice < 0 || unitPrice > 1000000 ||
+        (paymentMethod === "credit" && unitPrice <= 0)) {
+      return c.json({ error: "Check every variety, request ID, quantity and unit price. Credit entries require a price above zero." }, 400);
+    }
+    requestIds.add(item.requestId!);
+  }
+
+  const requestIdList = [...requestIds];
+  const requestMarks = requestIdList.map(() => "?").join(", ");
+  const priorResult = await c.env.DB.prepare(
+    `SELECT id FROM nursery_entry_requests WHERE shop_id = ? AND id IN (${requestMarks})`
+  ).bind(shopId, ...requestIdList).all<{ id: string }>();
+  const priorIds = new Set((priorResult.results ?? []).map(row => row.id));
+  const newItems = items.filter(item => !priorIds.has(item.requestId!));
+  if (!newItems.length) {
+    return c.json({ ok: true, processedItems: items.length, duplicateItems: items.length });
+  }
+
+  const varietyIds = [...new Set(newItems.map(item => item.varietyId!))];
+  const varietyMarks = varietyIds.map(() => "?").join(", ");
+  const varietyResult = await c.env.DB.prepare(
+    `SELECT id, name FROM nursery_varieties WHERE shop_id = ? AND is_active = 1 AND id IN (${varietyMarks})`
+  ).bind(shopId, ...varietyIds).all<{ id: string; name: string }>();
+  const varietiesById = new Map((varietyResult.results ?? []).map(row => [row.id, row]));
+  if (varietiesById.size !== varietyIds.length) {
+    return c.json({ error: "Choose active seedling varieties belonging to this shop." }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const customerKey = customerName.toLocaleLowerCase().replace(/\s+/g, " ");
+  const statements = [] as D1PreparedStatement[];
+  if (customerName) {
+    statements.push(c.env.DB.prepare(
+      `INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at)
+       SELECT ?, ?, ?, ?, NULL, NULL, NULL, ?
+       WHERE NOT EXISTS (SELECT 1 FROM customers WHERE shop_id = ? AND lower(trim(name)) = ?)`
+    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, shopId, customerKey));
+  }
+
+  for (const item of newItems) {
+    const variety = varietiesById.get(item.varietyId!)!;
+    const quantity = Number(item.quantity);
+    const unitPriceCents = Math.round(Number(item.unitPrice) * 100);
+    const totalAmountCents = quantity * unitPriceCents;
+    const requestId = item.requestId!;
+    const debtId = paymentMethod === "credit" ? crypto.randomUUID() : null;
+    const sale = {
+      id: crypto.randomUUID(),
+      requestId,
+      shopId,
+      businessDate,
+      varietyId: variety.id,
+      varietyName: variety.name,
+      customerName,
+      customerPhone,
+      quantity,
+      unitPriceCents,
+      totalAmountCents,
+      paymentMethod,
+      debtId,
+      createdAt: now,
+    };
+
+    statements.push(c.env.DB.prepare(
+      `INSERT INTO nursery_daily_sales
+        (id, shop_id, business_date, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)
+       ON CONFLICT(shop_id, business_date, variety_id, unit_price_cents, payment_method)
+       DO UPDATE SET quantity = nursery_daily_sales.quantity + excluded.quantity,
+         total_amount_cents = nursery_daily_sales.total_amount_cents + excluded.total_amount_cents,
+         updated_at = excluded.updated_at`
+    ).bind(crypto.randomUUID(), shopId, businessDate, variety.id, unitPriceCents, paymentMethod,
+      quantity, totalAmountCents, now, now, requestId, shopId));
+
+    if (customerName) {
+      statements.push(c.env.DB.prepare(
+        `INSERT INTO nursery_customer_daily_sales
+          (id, shop_id, business_date, customer_key, customer_name, customer_phone, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)
+         ON CONFLICT(shop_id, business_date, customer_key, variety_id, unit_price_cents, payment_method)
+         DO UPDATE SET quantity = nursery_customer_daily_sales.quantity + excluded.quantity,
+           total_amount_cents = nursery_customer_daily_sales.total_amount_cents + excluded.total_amount_cents,
+           customer_name = excluded.customer_name,
+           customer_phone = CASE WHEN excluded.customer_phone != '' THEN excluded.customer_phone ELSE nursery_customer_daily_sales.customer_phone END,
+           updated_at = excluded.updated_at`
+      ).bind(crypto.randomUUID(), shopId, businessDate, customerKey, customerName, customerPhone,
+        variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents, now, now, requestId, shopId));
+    }
+
+    if (debtId) {
+      const unitPrice = unitPriceCents / 100;
+      const totalAmount = totalAmountCents / 100;
+      const itemsJson = JSON.stringify([{
+        productName: `Nursery seedlings — ${variety.name}`,
+        qty: quantity,
+        unitPrice,
+        totalPrice: totalAmount,
+      }]);
+      statements.push(c.env.DB.prepare(
+        `INSERT INTO debts
+          (id, shop_id, sale_id, customer_name, customer_phone, total_amount, amount_paid, balance, status, notes, items_json, paid_at, created_at)
+         SELECT ?, ?, NULL, ?, ?, ?, 0, ?, 'unpaid', ?, ?, NULL, ?
+         WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)`
+      ).bind(debtId, shopId, customerName, customerPhone, totalAmount, totalAmount,
+        "Nursery register credit sale", itemsJson, now, requestId, shopId));
+    }
+
+    statements.push(c.env.DB.prepare(
+      `INSERT INTO nursery_sale_entries
+        (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)`
+    ).bind(sale.id, requestId, shopId, businessDate, variety.id, variety.name,
+      customerName, customerPhone, quantity, unitPriceCents, totalAmountCents,
+      paymentMethod, debtId, now, requestId, shopId));
+
+    statements.push(c.env.DB.prepare(
+      "INSERT OR IGNORE INTO nursery_entry_requests (id, shop_id, created_at, debt_id) VALUES (?, ?, ?, ?)"
+    ).bind(requestId, shopId, now, debtId));
+  }
+
+  await c.env.DB.batch(statements);
+  return c.json({ ok: true, processedItems: items.length, duplicateItems: priorIds.size });
 });
 
 nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {

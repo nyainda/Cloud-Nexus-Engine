@@ -14,6 +14,7 @@ const QUOTATION_INVOICE_MARKER = "quotation-invoice-v1";
 const NURSERY_REGISTER_MARKER = "nursery-register-v1";
 const NURSERY_CUSTOMER_MARKER = "nursery-customer-credit-v1";
 const NURSERY_ENTRIES_MARKER = "nursery-individual-entries-v1";
+const NURSERY_CATEGORY_MARKER = "nursery-categories-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
@@ -45,6 +46,7 @@ async function ensureNurseryRegister(db: D1Database): Promise<void> {
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
       name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Uncategorized',
       default_price INTEGER NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -143,6 +145,29 @@ async function ensureNurseryIndividualEntries(db: D1Database): Promise<void> {
   ]);
 }
 
+/** Add shop-defined categories without rewriting historical sales aggregates. */
+async function ensureNurseryCategories(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_CATEGORY_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  try {
+    await db.prepare("ALTER TABLE nursery_varieties ADD COLUMN category TEXT NOT NULL DEFAULT 'Uncategorized'").run();
+  } catch {
+    // Newer installs create the column with the base table; older installs add it here.
+  }
+  const columns = await db.prepare("PRAGMA table_info(nursery_varieties)").all<{ name: string }>();
+  if (!(columns.results ?? []).some(column => column.name === "category")) {
+    throw new Error("Could not add nursery variety category column");
+  }
+  await db.batch([
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_varieties_shop_category ON nursery_varieties(shop_id, category COLLATE NOCASE)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_varieties_shop_name ON nursery_varieties(shop_id, name COLLATE NOCASE)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(NURSERY_CATEGORY_MARKER, new Date().toISOString()),
+  ]);
+}
+
 async function bootstrapD1(db: D1Database): Promise<void> {
   if (bootstrapped) return;
 
@@ -171,6 +196,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     await ensureNurseryRegister(db);
     await ensureNurseryCustomerCredit(db);
     await ensureNurseryIndividualEntries(db);
+    await ensureNurseryCategories(db);
     bootstrapped = true;
     return;
   }
@@ -354,6 +380,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   await ensureNurseryRegister(db);
   await ensureNurseryCustomerCredit(db);
   await ensureNurseryIndividualEntries(db);
+  await ensureNurseryCategories(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup

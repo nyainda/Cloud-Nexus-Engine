@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatKES } from "@/lib/format";
-import { loadCachedNurseryVarieties, saveNurseryVarietiesToCache } from "@/lib/nursery-db";
 import { CustomerAutocomplete, type SelectedCustomer } from "@/components/customer-autocomplete";
-import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign, ChevronDown, ShoppingCart } from "lucide-react";
+import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign, ChevronDown, ShoppingCart, BarChart3, Boxes, LayoutDashboard } from "lucide-react";
 import { toast } from "sonner";
 
-type Variety = { id: string; name: string; defaultPrice: number; isActive: number | boolean };
+type Variety = { id: string; name: string; category: string; defaultPrice: number; isActive: number | boolean };
+type VarietyListData = { rows: Variety[]; total: number; page: number; pageSize: number; categories: string[] };
 type ReportRow = {
   businessDate: string; varietyId: string; varietyName: string; unitPriceCents: number;
   paymentMethod: "cash" | "mpesa" | "credit"; quantity: number; totalAmountCents: number;
@@ -26,6 +27,9 @@ type ReportData = {
   dailySummary: { totalSeedlings: number; totalRevenueCents: number; cashCents: number; mpesaCents: number; creditCents: number };
 };
 type EntriesData = { rows: IndividualSaleEntry[]; total: number; page: number; pageSize: number; summary: { quantity: number; totalCents: number; creditCents: number } };
+type MonthlyCategory = { category: string; seedlingsSold: number; totalRevenueCents: number; varietyCount: number; cashCents: number; mpesaCents: number; creditCents: number };
+type MonthlySummaryData = { month: string; from: string; to: string; categories: MonthlyCategory[]; summary: { seedlingsSold: number; totalRevenueCents: number } };
+type NurseryTab = "overview" | "record" | "catalogue" | "insights" | "sales" | "reports";
 
 function localDate(date = new Date()) {
   const year = date.getFullYear();
@@ -42,106 +46,122 @@ function cents(value: number) { return value / 100; }
 type CustomerInsightRow = { customerKey: string; customerName: string; customerPhone: string; varietyName: string; quantity: number; totalAmountCents: number; lastPurchase: string };
 type IndividualSaleEntry = { id: string; requestId: string; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
 
+function useDebouncedValue<T>(value: T, delayMs = 250) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+function varietyListUrl({ status, search, category, page, pageSize }: { status: "active" | "archived" | "all"; search: string; category?: string; page: number; pageSize: number }) {
+  const params = new URLSearchParams({ status, page: String(page), pageSize: String(pageSize) });
+  if (search.trim()) params.set("search", search.trim());
+  if (category) params.set("category", category);
+  return `/api/nursery/varieties?${params.toString()}`;
+}
+
 export default function NurseryRegister() {
   const qc = useQueryClient();
   const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const [activeTab, setActiveTab] = useState<NurseryTab>("overview");
   const [businessDate, setBusinessDate] = useState(localDate());
   const [from, setFrom] = useState(localDate());
   const [to, setTo] = useState(localDate());
-  const [varietyId, setVarietyId] = useState("");
-  const [quantity, setQuantity] = useState("100");
-  const [unitPrice, setUnitPrice] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState(localDate().slice(0, 7));
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "mpesa" | "credit">("cash");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("0");
+  const [newCategory, setNewCategory] = useState("Uncategorized");
   const [saving, setSaving] = useState(false);
   const [addingVariety, setAddingVariety] = useState(false);
   const [editingVarietyId, setEditingVarietyId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [editingPrice, setEditingPrice] = useState("");
+  const [editingCategory, setEditingCategory] = useState("");
   const [busyVarietyId, setBusyVarietyId] = useState<string | null>(null);
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
   const [saleEdit, setSaleEdit] = useState({ businessDate: "", varietyId: "", quantity: "", unitPrice: "", paymentMethod: "cash" as "cash" | "mpesa" | "credit", customerName: "", customerPhone: "" });
+  const [saleEditSearch, setSaleEditSearch] = useState("");
   const [busySaleId, setBusySaleId] = useState<string | null>(null);
   const [catalogueSearch, setCatalogueSearch] = useState("");
   const [catalogueStatus, setCatalogueStatus] = useState<"active" | "archived" | "all">("active");
-  const [catalogueLimit, setCatalogueLimit] = useState(12);
-  const [catalogueExpanded, setCatalogueExpanded] = useState(false);
+  const [catalogueCategory, setCatalogueCategory] = useState("");
+  const [cataloguePage, setCataloguePage] = useState(1);
   const [productSearch, setProductSearch] = useState("");
-  const [cart, setCart] = useState<Array<{ varietyId: string; name: string; quantity: string; unitPrice: string }>>([]);
+  const [productCategory, setProductCategory] = useState("");
+  const [cart, setCart] = useState<Array<{ requestId: string; varietyId: string; name: string; quantity: string; unitPrice: string }>>([]);
   const [saleSearch, setSaleSearch] = useState("");
   const [salePaymentFilter, setSalePaymentFilter] = useState<"all" | "cash" | "mpesa" | "credit">("all");
   const [salesPage, setSalesPage] = useState(1);
   const [reportPage, setReportPage] = useState(1);
   const salesPageSize = 25;
   const reportPageSize = 20;
-  const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  const debouncedCatalogueSearch = useDebouncedValue(catalogueSearch);
+  const debouncedProductSearch = useDebouncedValue(productSearch);
+  const debouncedSaleSearch = useDebouncedValue(saleSearch);
+  const debouncedSaleEditSearch = useDebouncedValue(saleEditSearch);
 
-  const varietiesQuery = useQuery({
-    queryKey: ["/api/nursery/varieties", shopId],
-    queryFn: () => customFetch("/api/nursery/varieties") as Promise<Variety[]>,
-    enabled: !!shopId,
+  const catalogueQuery = useQuery({
+    queryKey: ["/api/nursery/varieties", shopId, "catalogue", catalogueStatus, catalogueCategory, debouncedCatalogueSearch, cataloguePage],
+    queryFn: () => customFetch(varietyListUrl({ status: catalogueStatus, category: catalogueCategory, search: debouncedCatalogueSearch, page: cataloguePage, pageSize: 30 })) as Promise<VarietyListData>,
+    enabled: !!shopId && activeTab === "catalogue",
+    placeholderData: previous => previous,
   });
-
-  // Seed the catalogue from IndexedDB immediately, then let the API reconcile it.
-  useEffect(() => {
-    if (!shopId) return;
-    let cancelled = false;
-    loadCachedNurseryVarieties(shopId).then((cached) => {
-      if (cancelled || !cached.length) return;
-      if (!qc.getQueryData<Variety[]>(["/api/nursery/varieties", shopId])) {
-        qc.setQueryData(["/api/nursery/varieties", shopId], cached);
-      }
-    });
-    return () => { cancelled = true; };
-  }, [shopId, qc]);
-
-  useEffect(() => {
-    if (varietiesQuery.data) void saveNurseryVarietiesToCache(shopId, varietiesQuery.data);
-  }, [shopId, varietiesQuery.data]);
+  const saleVarietiesQuery = useQuery({
+    queryKey: ["/api/nursery/varieties", shopId, "sale", productCategory, debouncedProductSearch],
+    queryFn: () => customFetch(varietyListUrl({ status: "active", category: productCategory, search: debouncedProductSearch, page: 1, pageSize: 10 })) as Promise<VarietyListData>,
+    enabled: !!shopId && activeTab === "record",
+    placeholderData: previous => previous,
+  });
+  const saleEditVarietiesQuery = useQuery({
+    queryKey: ["/api/nursery/varieties", shopId, "sale-edit", debouncedSaleEditSearch],
+    queryFn: () => customFetch(varietyListUrl({ status: "all", search: debouncedSaleEditSearch, page: 1, pageSize: 100 })) as Promise<VarietyListData>,
+    enabled: !!shopId && activeTab === "sales" && !!editingSaleId,
+    placeholderData: previous => previous,
+  });
   const individualEntriesQuery = useQuery({
-    queryKey: ["/api/nursery/entries", shopId, from, to, salesPage, salesPageSize, saleSearch, salePaymentFilter],
-    queryFn: () => customFetch("/api/nursery/entries?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&page=" + salesPage + "&pageSize=" + salesPageSize + "&search=" + encodeURIComponent(saleSearch.trim()) + "&payment=" + salePaymentFilter) as Promise<EntriesData>,
-    enabled: !!shopId && !!from && !!to && from <= to,
+    queryKey: ["/api/nursery/entries", shopId, from, to, salesPage, salesPageSize, debouncedSaleSearch, salePaymentFilter],
+    queryFn: () => customFetch("/api/nursery/entries?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&page=" + salesPage + "&pageSize=" + salesPageSize + "&search=" + encodeURIComponent(debouncedSaleSearch.trim()) + "&payment=" + salePaymentFilter) as Promise<EntriesData>,
+    enabled: !!shopId && activeTab === "sales" && !!from && !!to && from <= to,
     placeholderData: previous => previous,
   });
   const customerInsightsQuery = useQuery({
     queryKey: ["/api/nursery/customer-insights", shopId, from, to],
     queryFn: () => customFetch(`/api/nursery/customer-insights?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`) as Promise<{ rows: CustomerInsightRow[] }>,
-    enabled: !!shopId && !!from && !!to && from <= to,
+    enabled: !!shopId && activeTab === "insights" && !!from && !!to && from <= to,
   });
   const reportQuery = useQuery({
     queryKey: ["/api/nursery/report", shopId, from, to, businessDate, reportPage, reportPageSize],
     queryFn: () => customFetch(`/api/nursery/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&businessDate=${encodeURIComponent(businessDate)}&page=${reportPage}&pageSize=${reportPageSize}`) as Promise<ReportData>,
-    enabled: !!shopId && !!from && !!to && from <= to,
+    enabled: !!shopId && activeTab === "reports" && !!from && !!to && from <= to,
     placeholderData: previous => previous,
   });
+  const monthlySummaryQuery = useQuery({
+    queryKey: ["/api/nursery/monthly-summary", shopId, selectedMonth],
+    queryFn: () => customFetch(`/api/nursery/monthly-summary?month=${encodeURIComponent(selectedMonth)}`) as Promise<MonthlySummaryData>,
+    enabled: !!shopId && activeTab === "overview" && /^\d{4}-\d{2}$/.test(selectedMonth),
+  });
 
-  const varieties = (varietiesQuery.data ?? []).filter(v => Boolean(v.isActive));
-  const filteredCatalogue = useMemo(() => {
-    const needle = catalogueSearch.trim().toLocaleLowerCase();
-    return (varietiesQuery.data ?? [])
-      .filter(v => catalogueStatus === "all" || (catalogueStatus === "active" ? Boolean(v.isActive) : !Boolean(v.isActive)))
-      .filter(v => !needle || v.name.toLocaleLowerCase().includes(needle))
-      .sort((a, b) => Number(Boolean(b.isActive)) - Number(Boolean(a.isActive)) || a.name.localeCompare(b.name));
-  }, [varietiesQuery.data, catalogueSearch, catalogueStatus]);
-  const visibleCatalogue = filteredCatalogue.slice(0, catalogueLimit);
-  const matchingSaleVarieties = useMemo(() => {
-    const needle = productSearch.trim().toLocaleLowerCase();
-    return varieties.filter(v => !needle || v.name.toLocaleLowerCase().includes(needle)).slice(0, 8);
-  }, [varieties, productSearch]);
+  const varieties = saleVarietiesQuery.data?.rows ?? [];
+  const matchingSaleVarieties = varieties;
+  const catalogueRows = catalogueQuery.data?.rows ?? [];
+  const catalogueTotal = catalogueQuery.data?.total ?? 0;
+  const cataloguePageCount = Math.max(1, Math.ceil(catalogueTotal / 30));
+  const catalogueCategories = catalogueQuery.data?.categories ?? [];
+  const saleCategories = saleVarietiesQuery.data?.categories ?? [];
   const cartTotal = cart.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unitPrice) || 0), 0);
   function addToCart(variety: Variety) {
     setCart(current => {
       const existing = current.find(item => item.varietyId === variety.id);
       if (existing) return current.map(item => item.varietyId === variety.id ? { ...item, quantity: String((Number(item.quantity) || 0) + 1) } : item);
-      return [...current, { varietyId: variety.id, name: variety.name, quantity: "1", unitPrice: String(variety.defaultPrice) }];
+      return [...current, { requestId: crypto.randomUUID(), varietyId: variety.id, name: variety.name, quantity: "1", unitPrice: String(variety.defaultPrice) }];
     });
     setProductSearch("");
   }
-  const selectedVariety = varieties.find(v => v.id === varietyId) ?? varieties[0];
   const report = reportQuery.data;
   const reportRows = report?.rows ?? [];
   const reportTotal = report?.total ?? 0;
@@ -151,14 +171,7 @@ export default function NurseryRegister() {
   const individualPageCount = Math.max(1, Math.ceil(individualTotal / salesPageSize));
   const filteredIndividualEntries = individualEntries;
   const individualSaleSummary = individualEntriesQuery.data?.summary ?? { quantity: 0, totalCents: 0, creditCents: 0 };
-  const daily = report?.dailySummary;
-  const todaySummary = {
-    quantity: Number(daily?.totalSeedlings ?? 0),
-    revenueCents: Number(daily?.totalRevenueCents ?? 0),
-    cashCents: Number(daily?.cashCents ?? 0),
-    mpesaCents: Number(daily?.mpesaCents ?? 0),
-    creditCents: Number(daily?.creditCents ?? 0),
-  };
+  const monthSummary = monthlySummaryQuery.data?.summary ?? { seedlingsSold: 0, totalRevenueCents: 0 };
 
   async function saveEntry(event: FormEvent) {
     event.preventDefault();
@@ -170,32 +183,39 @@ export default function NurseryRegister() {
       toast.error("Check every cart line: quantity must be a positive whole number and each price must be valid."); return;
     }
     setSaving(true);
-    let savedCount = 0;
+    const savedRequestIds = new Set<string>();
     try {
-      for (const item of prepared) {
-        await customFetch("/api/nursery/entries", { method: "POST", body: JSON.stringify({
-          requestId: crypto.randomUUID(), businessDate, varietyId: item.varietyId, quantity: item.qty,
-          unitPrice: item.price, paymentMethod, customerName: customerName.trim() || undefined,
+      for (let start = 0; start < prepared.length; start += 18) {
+        const batch = prepared.slice(start, start + 18);
+        await customFetch("/api/nursery/entries/batch", { method: "POST", body: JSON.stringify({
+          businessDate,
+          paymentMethod,
+          customerName: customerName.trim() || undefined,
           customerPhone: customerPhone.trim() || undefined,
+          items: batch.map(item => ({ requestId: item.requestId, varietyId: item.varietyId, quantity: item.qty, unitPrice: item.price })),
         }) });
-        savedCount++;
+        const completed = new Set(batch.map(item => item.requestId));
+        completed.forEach(id => savedRequestIds.add(id));
+        setCart(current => current.filter(item => !completed.has(item.requestId)));
       }
-      toast.success(`Saved ${savedCount} item types (${prepared.reduce((sum, item) => sum + item.qty, 0).toLocaleString()} seedlings)`);
+      toast.success(`Saved ${prepared.length} item types (${prepared.reduce((sum, item) => sum + item.qty, 0).toLocaleString()} seedlings)`);
       setCart([]); setCustomerName(""); setCustomerPhone("");
-      await Promise.all([
+      await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
-        qc.invalidateQueries({ queryKey: ["/api/debts"] }), qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/debts"] }),
+        qc.invalidateQueries({ queryKey: ["/api/crm"] }),
       ]);
     } catch (error: any) {
-      if (savedCount > 0) {
-        setCart(current => current.filter(item => !prepared.slice(0, savedCount).some(done => done.varietyId === item.varietyId)));
-        toast.error(`Saved ${savedCount} item type(s), but another item failed. Remaining items are kept in the cart; check the register before retrying.`);
-        await Promise.all([
+      if (savedRequestIds.size > 0) {
+        toast.error(`Saved ${savedRequestIds.size} of ${prepared.length} varieties. The unsaved lines remain in the cart and are safe to retry.`);
+        await Promise.allSettled([
           qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
           qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
           qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
+          qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
           qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         ]);
       } else toast.error(error?.message || "Could not save the sale. Your cart is unchanged.");
@@ -205,40 +225,24 @@ export default function NurseryRegister() {
   async function createVariety(event: FormEvent) {
     event.preventDefault();
     const name = newName.trim().replace(/\\s+/g, " ");
+    const category = newCategory.trim().replace(/\\s+/g, " ") || "Uncategorized";
     const price = Number(newPrice);
-    if (!name) { toast.error("Enter a variety name."); return; }
+    if (!name || name.length > 80) { toast.error("Enter a variety name up to 80 characters."); return; }
+    if (category.length > 60) { toast.error("Category names must be 60 characters or fewer."); return; }
     if (!Number.isFinite(price) || price < 0 || price > 1000000) { toast.error("Enter a valid price."); return; }
-    const key = ["/api/nursery/varieties", shopId] as const;
-    const previous = qc.getQueryData<Variety[]>(key) ?? [];
-    const tempId = "local-" + crypto.randomUUID();
-    const optimistic: Variety = { id: tempId, name, defaultPrice: price, isActive: 1 };
-    const next = [optimistic, ...previous];
-    qc.setQueryData(key, next);
-    void saveNurseryVarietiesToCache(shopId, next);
-    setNewName("");
-    setNewPrice("0");
-    setVarietyId(tempId);
-    setUnitPrice(String(price));
     setAddingVariety(true);
     try {
-      const created = await customFetch("/api/nursery/varieties", {
+      await customFetch("/api/nursery/varieties", {
         method: "POST",
-        body: JSON.stringify({ name, defaultPrice: price }),
-      }) as Variety;
-      const current = qc.getQueryData<Variety[]>(key) ?? [];
-      const reconciled = current.some(v => v.id === tempId)
-        ? current.map(v => v.id === tempId ? created : v)
-        : [created, ...current.filter(v => v.id !== created.id)];
-      qc.setQueryData(key, reconciled);
-      void saveNurseryVarietiesToCache(shopId, reconciled);
-      setVarietyId(created.id);
-      setUnitPrice(String(created.defaultPrice));
+        body: JSON.stringify({ name, category, defaultPrice: price }),
+      });
+      setNewName("");
+      setNewPrice("0");
+      setCataloguePage(1);
+      await qc.invalidateQueries({ queryKey: ["/api/nursery/varieties", shopId] });
       toast.success("Seedling variety added.");
     } catch (error: any) {
-      qc.setQueryData(key, previous);
-      void saveNurseryVarietiesToCache(shopId, previous);
-      if (varietyId === tempId) setVarietyId(previous.find(v => Boolean(v.isActive))?.id ?? "");
-      toast.error(error?.message || "Could not add variety. The local change was reverted.");
+      toast.error(error?.message || "Could not add variety.");
     } finally { setAddingVariety(false); }
   }
 
@@ -246,91 +250,62 @@ export default function NurseryRegister() {
     setEditingVarietyId(variety.id);
     setEditingName(variety.name);
     setEditingPrice(String(variety.defaultPrice));
+    setEditingCategory(variety.category || "Uncategorized");
   }
 
   async function saveVarietyEdit(variety: Variety) {
     const name = editingName.trim().replace(/\\s+/g, " ");
+    const category = editingCategory.trim().replace(/\\s+/g, " ") || "Uncategorized";
     const price = Number(editingPrice);
     if (!name || name.length > 80) { toast.error("Variety name must be 1–80 characters."); return; }
+    if (category.length > 60) { toast.error("Category names must be 60 characters or fewer."); return; }
     if (!Number.isFinite(price) || price < 0 || price > 1000000) { toast.error("Enter a valid price."); return; }
-    const key = ["/api/nursery/varieties", shopId] as const;
-    const previous = qc.getQueryData<Variety[]>(key) ?? [];
-    const optimistic = previous.map(v => v.id === variety.id ? { ...v, name, defaultPrice: price } : v);
-    qc.setQueryData(key, optimistic);
-    void saveNurseryVarietiesToCache(shopId, optimistic);
-    setEditingVarietyId(null);
     setBusyVarietyId(variety.id);
     try {
-      const updated = await customFetch(`/api/nursery/varieties/${encodeURIComponent(variety.id)}`, {
+      await customFetch(`/api/nursery/varieties/${encodeURIComponent(variety.id)}`, {
         method: "PATCH",
-        body: JSON.stringify({ name, defaultPrice: price }),
-      }) as Variety;
-      const current = qc.getQueryData<Variety[]>(key) ?? [];
-      const reconciled = current.map(v => v.id === variety.id ? updated : v);
-      qc.setQueryData(key, reconciled);
-      void saveNurseryVarietiesToCache(shopId, reconciled);
+        body: JSON.stringify({ name, category, defaultPrice: price }),
+      });
+      setEditingVarietyId(null);
+      await Promise.allSettled([
+        qc.invalidateQueries({ queryKey: ["/api/nursery/varieties", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
+      ]);
       toast.success("Variety updated.");
     } catch (error: any) {
-      qc.setQueryData(key, previous);
-      void saveNurseryVarietiesToCache(shopId, previous);
-      toast.error(error?.message || "Could not update variety. The local change was reverted.");
+      toast.error(error?.message || "Could not update variety.");
     } finally { setBusyVarietyId(null); }
   }
 
   async function toggleVariety(variety: Variety) {
-    const key = ["/api/nursery/varieties", shopId] as const;
-    const previous = qc.getQueryData<Variety[]>(key) ?? [];
     const isActive = !Boolean(variety.isActive);
-    const optimistic = previous.map(v => v.id === variety.id ? { ...v, isActive: isActive ? 1 : 0 } : v);
-    qc.setQueryData(key, optimistic);
-    void saveNurseryVarietiesToCache(shopId, optimistic);
     setBusyVarietyId(variety.id);
     try {
-      const updated = await customFetch(`/api/nursery/varieties/${encodeURIComponent(variety.id)}`, {
+      await customFetch(`/api/nursery/varieties/${encodeURIComponent(variety.id)}`, {
         method: "PATCH",
         body: JSON.stringify({ isActive }),
-      }) as Variety;
-      const current = qc.getQueryData<Variety[]>(key) ?? [];
-      const reconciled = current.map(v => v.id === variety.id ? updated : v);
-      qc.setQueryData(key, reconciled);
-      void saveNurseryVarietiesToCache(shopId, reconciled);
+      });
+      await qc.invalidateQueries({ queryKey: ["/api/nursery/varieties", shopId] });
       toast.success(isActive ? "Variety restored." : "Variety archived.");
     } catch (error: any) {
-      qc.setQueryData(key, previous);
-      void saveNurseryVarietiesToCache(shopId, previous);
-      toast.error(error?.message || "Could not update variety. The local change was reverted.");
+      toast.error(error?.message || "Could not update variety.");
     } finally { setBusyVarietyId(null); }
   }
 
   async function deleteVariety(variety: Variety) {
-    const key = ["/api/nursery/varieties", shopId] as const;
-    const previous = qc.getQueryData<Variety[]>(key) ?? [];
-    const remaining = previous.filter(v => v.id !== variety.id);
-    qc.setQueryData(key, remaining);
-    void saveNurseryVarietiesToCache(shopId, remaining);
-    if (varietyId === variety.id) {
-      setVarietyId(remaining.find(v => Boolean(v.isActive))?.id ?? "");
-      setUnitPrice("");
-    }
     setBusyVarietyId(variety.id);
     try {
       const result = await customFetch(`/api/nursery/varieties/${encodeURIComponent(variety.id)}`, { method: "DELETE" }) as { deleted?: boolean; archived?: boolean };
-      const current = qc.getQueryData<Variety[]>(key) ?? [];
-      const finalRows = result.archived
-        ? [...current, { ...variety, isActive: 0 }]
-        : current.filter(v => v.id !== variety.id);
-      qc.setQueryData(key, finalRows);
-      void saveNurseryVarietiesToCache(shopId, finalRows);
+      await qc.invalidateQueries({ queryKey: ["/api/nursery/varieties", shopId] });
       toast.success(result.archived ? "This variety has sales history, so it was archived to preserve reports." : "Variety deleted.");
     } catch (error: any) {
-      qc.setQueryData(key, previous);
-      void saveNurseryVarietiesToCache(shopId, previous);
-      toast.error(error?.message || "Could not delete variety. The local change was reverted.");
+      toast.error(error?.message || "Could not delete variety.");
     } finally { setBusyVarietyId(null); }
   }
 
   function beginEditSale(entry: IndividualSaleEntry) {
     setEditingSaleId(entry.id);
+    setSaleEditSearch(entry.varietyName);
     setSaleEdit({ businessDate: entry.businessDate, varietyId: entry.varietyId, quantity: String(entry.quantity), unitPrice: String(cents(entry.unitPriceCents)), paymentMethod: entry.paymentMethod, customerName: entry.customerName || "", customerPhone: entry.customerPhone || "" });
   }
 
@@ -339,7 +314,7 @@ export default function NurseryRegister() {
     if (!editingSaleId) return;
     const quantity = Number(saleEdit.quantity);
     const unitPrice = Number(saleEdit.unitPrice);
-    const variety = (varietiesQuery.data ?? []).find(v => v.id === saleEdit.varietyId);
+    const variety = (saleEditVarietiesQuery.data?.rows ?? []).find(v => v.id === saleEdit.varietyId);
     if (!saleEdit.businessDate || !variety || !Number.isSafeInteger(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) { toast.error("Check the date, variety, quantity and price."); return; }
     if (saleEdit.paymentMethod === "credit" && (!saleEdit.customerName.trim() || unitPrice <= 0)) { toast.error("Credit sales need a customer name and a price above zero."); return; }
     const key = ["/api/nursery/entries", shopId, from, to] as const;
@@ -353,10 +328,11 @@ export default function NurseryRegister() {
     try {
       await customFetch(`/api/nursery/entries/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ ...saleEdit, quantity, unitPrice, customerName: saleEdit.customerName.trim(), customerPhone: saleEdit.customerPhone.trim() }) });
       toast.success("Sale updated. Reports and customer summaries are being refreshed.");
-      await Promise.all([
+      await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
       ]);
@@ -375,10 +351,11 @@ export default function NurseryRegister() {
       await customFetch(`/api/nursery/entries/${encodeURIComponent(entry.id)}`, { method: "DELETE" });
       if (editingSaleId === entry.id) setEditingSaleId(null);
       toast.success("Sale deleted. Totals and customer summaries are being refreshed.");
-      await Promise.all([
+      await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
       ]);
@@ -397,6 +374,7 @@ export default function NurseryRegister() {
   }
 
   return (
+    <Tabs value={activeTab} onValueChange={value => setActiveTab(value as NurseryTab)}>
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 pb-10 md:p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
@@ -413,30 +391,60 @@ export default function NurseryRegister() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-600"><Leaf className="h-5 w-5" /></div>
-          <div><p className="text-xs text-muted-foreground">Seedlings sold that day</p><p className="text-2xl font-bold tabular-nums">{todaySummary.quantity.toLocaleString()}</p></div>
-        </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Banknote className="h-5 w-5" /></div>
-          <div><p className="text-xs text-muted-foreground">Daily sales total</p><p className="text-2xl font-bold tabular-nums">{formatKES(cents(todaySummary.revenueCents))}</p></div>
-        </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <div className="rounded-xl bg-amber-500/10 p-2.5 text-amber-600"><Banknote className="h-5 w-5" /></div>
-          <div><p className="text-xs text-muted-foreground">Cash</p><p className="text-xl font-bold tabular-nums">{formatKES(cents(todaySummary.cashCents))}</p></div>
-        </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <div className="rounded-xl bg-sky-500/10 p-2.5 text-sky-600"><Smartphone className="h-5 w-5" /></div>
-          <div><p className="text-xs text-muted-foreground">M-Pesa</p><p className="text-xl font-bold tabular-nums">{formatKES(cents(todaySummary.mpesaCents))}</p></div>
-        </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <div className="rounded-xl bg-violet-500/10 p-2.5 text-violet-600"><CreditCard className="h-5 w-5" /></div>
-          <div><p className="text-xs text-muted-foreground">Sold on credit</p><p className="text-xl font-bold tabular-nums">{formatKES(cents(todaySummary.creditCents))}</p></div>
-        </CardContent></Card>
-      </div>
+      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 sm:grid-cols-3 lg:grid-cols-6">
+        <TabsTrigger value="overview" className="gap-2 py-2.5"><LayoutDashboard className="h-4 w-4" />Overview</TabsTrigger>
+        <TabsTrigger value="record" className="gap-2 py-2.5"><PackagePlus className="h-4 w-4" />Record sale</TabsTrigger>
+        <TabsTrigger value="catalogue" className="gap-2 py-2.5"><Boxes className="h-4 w-4" />Varieties</TabsTrigger>
+        <TabsTrigger value="insights" className="gap-2 py-2.5"><Users className="h-4 w-4" />Customers</TabsTrigger>
+        <TabsTrigger value="sales" className="gap-2 py-2.5"><ReceiptText className="h-4 w-4" />Sales history</TabsTrigger>
+        <TabsTrigger value="reports" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" />Reports</TabsTrigger>
+      </TabsList>
 
-      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+      <TabsContent value="overview" className="mt-5 space-y-5 focus-visible:outline-none">
+        <div className="grid gap-3 sm:grid-cols-[minmax(180px,0.7fr)_1fr_1fr_auto]">
+          <Card><CardContent className="flex h-full flex-col justify-center gap-2 p-4">
+            <Label htmlFor="nursery-month" className="text-xs text-muted-foreground">Monthly view</Label>
+            <Input id="nursery-month" type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)} className="h-10" />
+          </CardContent></Card>
+          <Card><CardContent className="flex items-center gap-3 p-4">
+            <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Leaf className="h-5 w-5" /></div>
+            <div><p className="text-xs text-muted-foreground">Seedlings sold</p><p className="text-2xl font-bold tabular-nums">{Number(monthSummary.seedlingsSold).toLocaleString()}</p></div>
+          </CardContent></Card>
+          <Card><CardContent className="flex items-center gap-3 p-4">
+            <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-600"><Banknote className="h-5 w-5" /></div>
+            <div><p className="text-xs text-muted-foreground">Sales value</p><p className="text-2xl font-bold tabular-nums">{formatKES(cents(Number(monthSummary.totalRevenueCents)))}</p></div>
+          </CardContent></Card>
+          <Button type="button" variant="outline" className="h-auto min-h-14 gap-2 self-stretch" onClick={() => void monthlySummaryQuery.refetch()} disabled={monthlySummaryQuery.isFetching}>
+            <RefreshCw className={`h-4 w-4 ${monthlySummaryQuery.isFetching ? "animate-spin" : ""}`} /> Refresh
+          </Button>
+        </div>
+
+        <Card className="overflow-hidden">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-border/70">
+            <div><CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-primary" />Monthly sales by category</CardTitle><p className="mt-1 text-sm text-muted-foreground">Totals use each variety’s current shop-defined category.</p></div>
+            <Button type="button" variant="outline" size="sm" className="shrink-0 gap-2" onClick={() => setActiveTab("catalogue")}><Boxes className="h-4 w-4" /> Manage categories</Button>
+          </CardHeader>
+          <CardContent className="p-0">
+            {monthlySummaryQuery.isLoading ? <p className="p-8 text-center text-sm text-muted-foreground">Loading this month’s nursery totals…</p>
+              : monthlySummaryQuery.isError ? <div className="p-8 text-center"><p className="font-medium text-destructive">Could not load monthly totals</p><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void monthlySummaryQuery.refetch()}>Try again</Button></div>
+              : !(monthlySummaryQuery.data?.categories.length) ? <p className="p-8 text-center text-sm text-muted-foreground">No nursery sales have been recorded for this month.</p>
+              : <div className="overflow-x-auto">
+                <table className="w-full min-w-[700px] text-left text-sm">
+                  <thead><tr className="border-b border-border bg-muted/20 text-xs uppercase tracking-wide text-muted-foreground"><th className="px-4 py-3">Category</th><th className="px-4 py-3 text-right">Varieties</th><th className="px-4 py-3 text-right">Plants sold</th><th className="px-4 py-3 text-right">Sales value</th><th className="px-4 py-3">Payment mix</th></tr></thead>
+                  <tbody>{monthlySummaryQuery.data.categories.map(category => <tr key={category.category} className="border-b border-border/60 last:border-0 hover:bg-muted/20">
+                    <td className="px-4 py-3.5 font-semibold">{category.category}</td>
+                    <td className="px-4 py-3.5 text-right tabular-nums">{Number(category.varietyCount).toLocaleString()}</td>
+                    <td className="px-4 py-3.5 text-right font-semibold tabular-nums">{Number(category.seedlingsSold).toLocaleString()}</td>
+                    <td className="px-4 py-3.5 text-right font-semibold tabular-nums">{formatKES(cents(Number(category.totalRevenueCents)))}</td>
+                    <td className="px-4 py-3.5 text-xs text-muted-foreground">Cash {formatKES(cents(Number(category.cashCents)))} · M-Pesa {formatKES(cents(Number(category.mpesaCents)))} · Credit {formatKES(cents(Number(category.creditCents)))}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>}
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="record" className="mt-5 space-y-4 focus-visible:outline-none">
         <Card>
           <CardHeader className="rounded-t-xl border-b border-emerald-500/15 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent pb-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-emerald-600 p-2.5 text-white shadow-sm"><PackagePlus className="h-5 w-5" /></div><div className="min-w-0 flex-1"><CardTitle className="text-lg">New seedling sale</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Enter the quantity, price and how the customer paid.</p></div><span className="rounded-full border border-emerald-600/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">Sales entry</span></div></CardHeader>
           <CardContent className="space-y-4 pt-5">
