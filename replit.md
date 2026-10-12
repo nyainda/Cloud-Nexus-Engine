@@ -17,6 +17,7 @@ A mobile-first PWA for two Kenyan agrochemical/farm supply retail shops — PIN-
 
 - Local dev: `wrangler dev` binds to port 8080. Vite proxy forwards `/api/*` → `localhost:8080`.
 - Production: Vercel frontend sets `VITE_API_BASE_URL=https://greenlink-pos-api.bruce42oyugi.workers.dev`.
+- Do not treat a Replit preview as the production app. Use the Vercel frontend and Cloudflare Worker/D1 for production; start a Replit app preview only when explicitly requested.
 - The Node.js entry (`src/index.ts`) is kept for reference only — it is NOT used.
 - **Never add raw `fetch()` calls** in frontend pages. Always use:
   1. Generated hooks from `@workspace/api-client-react` (preferred — auto baseUrl + auth)
