@@ -30,6 +30,10 @@ type EntriesData = { rows: IndividualSaleEntry[]; total: number; page: number; p
 type MonthlyCategory = { category: string; seedlingsSold: number; totalRevenueCents: number; varietyCount: number; cashCents: number; mpesaCents: number; creditCents: number };
 type MonthlySummaryData = { month: string; from: string; to: string; categories: MonthlyCategory[]; summary: { seedlingsSold: number; totalRevenueCents: number } };
 type NurseryTab = "overview" | "record" | "catalogue" | "insights" | "sales" | "reports";
+const nurseryQueryOptions = {
+  staleTime: 60_000,
+  refetchInterval: false,
+} as const;
 
 function localDate(date = new Date()) {
   const year = date.getFullYear();
@@ -41,6 +45,11 @@ function addDays(date: string, amount: number) {
   const parsed = new Date(date + "T12:00:00");
   parsed.setDate(parsed.getDate() + amount);
   return localDate(parsed);
+}
+function formatBusinessDate(date: string) {
+  if (!date) return "—";
+  const parsed = new Date(`${date}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? date : parsed.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 function cents(value: unknown) {
   const amount = Number(value ?? 0);
@@ -114,40 +123,47 @@ export default function NurseryRegister() {
     queryFn: () => customFetch(varietyListUrl({ status: catalogueStatus, category: catalogueCategory, search: debouncedCatalogueSearch, page: cataloguePage, pageSize: 30 })) as Promise<VarietyListData>,
     enabled: !!shopId && activeTab === "catalogue",
     placeholderData: previous => previous,
+    ...nurseryQueryOptions,
   });
   const saleVarietiesQuery = useQuery({
     queryKey: ["/api/nursery/varieties", shopId, "sale", productCategory, debouncedProductSearch],
     queryFn: () => customFetch(varietyListUrl({ status: "active", category: productCategory, search: debouncedProductSearch, page: 1, pageSize: 10 })) as Promise<VarietyListData>,
     enabled: !!shopId && activeTab === "record",
     placeholderData: previous => previous,
+    ...nurseryQueryOptions,
   });
   const saleEditVarietiesQuery = useQuery({
     queryKey: ["/api/nursery/varieties", shopId, "sale-edit", debouncedSaleEditSearch],
     queryFn: () => customFetch(varietyListUrl({ status: "all", search: debouncedSaleEditSearch, page: 1, pageSize: 100 })) as Promise<VarietyListData>,
     enabled: !!shopId && activeTab === "sales" && !!editingSaleId,
     placeholderData: previous => previous,
+    ...nurseryQueryOptions,
   });
   const individualEntriesQuery = useQuery({
     queryKey: ["/api/nursery/entries", shopId, from, to, salesPage, salesPageSize, debouncedSaleSearch, salePaymentFilter],
     queryFn: () => customFetch("/api/nursery/entries?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&page=" + salesPage + "&pageSize=" + salesPageSize + "&search=" + encodeURIComponent(debouncedSaleSearch.trim()) + "&payment=" + salePaymentFilter) as Promise<EntriesData>,
     enabled: !!shopId && activeTab === "sales" && !!from && !!to && from <= to,
     placeholderData: previous => previous,
+    ...nurseryQueryOptions,
   });
   const customerInsightsQuery = useQuery({
     queryKey: ["/api/nursery/customer-insights", shopId, from, to],
     queryFn: () => customFetch(`/api/nursery/customer-insights?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`) as Promise<{ rows: CustomerInsightRow[] }>,
     enabled: !!shopId && activeTab === "insights" && !!from && !!to && from <= to,
+    ...nurseryQueryOptions,
   });
   const reportQuery = useQuery({
     queryKey: ["/api/nursery/report", shopId, from, to, businessDate, reportPage, reportPageSize],
     queryFn: () => customFetch(`/api/nursery/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&businessDate=${encodeURIComponent(businessDate)}&page=${reportPage}&pageSize=${reportPageSize}`) as Promise<ReportData>,
     enabled: !!shopId && activeTab === "reports" && !!from && !!to && from <= to,
     placeholderData: previous => previous,
+    ...nurseryQueryOptions,
   });
   const monthlySummaryQuery = useQuery({
     queryKey: ["/api/nursery/monthly-summary", shopId, selectedMonth],
     queryFn: () => customFetch(`/api/nursery/monthly-summary?month=${encodeURIComponent(selectedMonth)}`) as Promise<MonthlySummaryData>,
     enabled: !!shopId && activeTab === "overview" && /^\d{4}-\d{2}$/.test(selectedMonth),
+    ...nurseryQueryOptions,
   });
 
   const varieties = saleVarietiesQuery.data?.rows ?? [];
@@ -178,6 +194,13 @@ export default function NurseryRegister() {
   const filteredIndividualEntries = individualEntries;
   const individualSaleSummary = individualEntriesQuery.data?.summary ?? { quantity: 0, totalCents: 0, creditCents: 0 };
   const monthSummary = monthlySummaryQuery.data?.summary ?? { seedlingsSold: 0, totalRevenueCents: 0 };
+  const monthCategories = monthlySummaryQuery.data?.categories ?? [];
+  const monthPaymentTotals = monthCategories.reduce((totals, category) => ({
+    cash: totals.cash + Number(category.cashCents || 0),
+    mpesa: totals.mpesa + Number(category.mpesaCents || 0),
+    credit: totals.credit + Number(category.creditCents || 0),
+  }), { cash: 0, mpesa: 0, credit: 0 });
+  const topMonthCategory = monthCategories[0];
 
   async function saveEntry(event: FormEvent) {
     event.preventDefault();
@@ -381,19 +404,19 @@ export default function NurseryRegister() {
 
   return (
     <Tabs value={activeTab} onValueChange={value => setActiveTab(value as NurseryTab)}>
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 pb-10 md:p-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="nursery-page mx-auto w-full max-w-[1440px] space-y-5 p-3 pb-8 sm:p-5 lg:p-7">
+      <div className="flex flex-col gap-4 border-b border-border/80 pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
-          <div className="rounded-2xl bg-emerald-500/10 p-3 text-emerald-600"><Sprout className="h-7 w-7" /></div>
+          <div className="rounded-2xl bg-primary p-3 text-primary-foreground shadow-sm"><Sprout className="h-7 w-7" /></div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Nursery Sales Register</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Record seedling quantities and track cash and M-Pesa totals. No stock is deducted.</p>
+            <p className="mb-1 text-[11px] font-bold uppercase tracking-[.18em] text-primary">GreenLink · Nursery</p>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Sales register</h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Record seedling sales and follow the money. Nursery sales never deduct POS stock.</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm">
-          <CalendarDays className="h-4 w-4 text-muted-foreground" />
-          <Label htmlFor="business-date" className="whitespace-nowrap">Sales date</Label>
-          <Input id="business-date" type="date" className="w-auto" value={businessDate} onChange={e => { setBusinessDate(e.target.value); setFrom(e.target.value); setTo(e.target.value); }} />
+        <div className="flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/[.06] px-4 py-3 sm:min-w-[245px]">
+          <CalendarDays className="h-5 w-5 shrink-0 text-primary" />
+          <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-muted-foreground">Working sales date</p><p className="mt-0.5 text-base font-bold tabular-nums">{businessDate ? new Date(`${businessDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" }) : "Choose a date"}</p></div>
         </div>
       </div>
 
@@ -406,27 +429,79 @@ export default function NurseryRegister() {
         <TabsTrigger value="reports" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" />Reports</TabsTrigger>
       </TabsList>
 
+      <section aria-label="Date controls" className="grid gap-3 rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm sm:grid-cols-2 sm:p-4 lg:grid-cols-[minmax(170px,.7fr)_minmax(170px,.7fr)_minmax(180px,.8fr)_auto] lg:items-end">
+        <div className="nursery-date-field nursery-date-card">
+          <Label htmlFor="nursery-range-from">Period starts</Label>
+          <Input data-testid="input-nursery-period-from" id="nursery-range-from" type="date" value={from} max={to || undefined} onChange={event => { setFrom(event.target.value); setReportPage(1); setSalesPage(1); }} />
+        </div>
+        <div className="nursery-date-field nursery-date-card">
+          <Label htmlFor="nursery-range-to">Period ends</Label>
+          <Input data-testid="input-nursery-period-to" id="nursery-range-to" type="date" value={to} min={from || undefined} onChange={event => { setTo(event.target.value); setReportPage(1); setSalesPage(1); }} />
+        </div>
+        <div className="nursery-date-field nursery-date-card">
+          <Label htmlFor="business-date">Sale date</Label>
+          <Input data-testid="input-nursery-sale-date" id="business-date" type="date" value={businessDate} onChange={event => { if (event.target.value) setBusinessDate(event.target.value); }} />
+        </div>
+        <div className="flex min-w-0 flex-wrap gap-2 lg:justify-end">
+          <span className="w-full self-end text-[11px] font-semibold uppercase tracking-[.1em] text-muted-foreground lg:w-auto lg:pr-1">Quick period</span>
+          {(["day", "week", "month"] as const).map(period => <Button key={period} data-testid={`button-period-${period}`} type="button" size="sm" variant="outline" className="flex-1 sm:flex-none" onClick={() => { choosePeriod(period); setReportPage(1); setSalesPage(1); }}>
+            {period === "day" ? "Day" : period === "week" ? "This week" : "This month"}
+          </Button>)}
+        </div>
+        {from && to && from > to && <p role="alert" className="text-xs font-medium text-destructive sm:col-span-2 lg:col-span-4">Start date must be on or before the end date.</p>}
+      </section>
+
       <TabsContent value="overview" className="mt-5 space-y-5 focus-visible:outline-none">
-        <div className="grid gap-3 sm:grid-cols-[minmax(180px,0.7fr)_1fr_1fr_auto]">
-          <Card><CardContent className="flex h-full flex-col justify-center gap-2 p-4">
-            <Label htmlFor="nursery-month" className="text-xs text-muted-foreground">Monthly view</Label>
-            <Input id="nursery-month" type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)} className="h-10" />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.1fr_1fr_1fr_1fr_auto]">
+          <Card className="border-primary/20 bg-primary/[.04]"><CardContent className="flex h-full min-h-[116px] flex-col justify-center gap-2 p-4">
+            <Label htmlFor="nursery-month" className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Monthly activity</Label>
+            <Input data-testid="input-nursery-month" id="nursery-month" type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)} className="h-11 bg-card text-base font-bold" />
           </CardContent></Card>
-          <Card><CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Leaf className="h-5 w-5" /></div>
-            <div><p className="text-xs text-muted-foreground">Seedlings sold</p><p className="text-2xl font-bold tabular-nums">{Number(monthSummary.seedlingsSold).toLocaleString()}</p></div>
+          <Card><CardContent className="flex h-full min-h-[116px] items-center gap-3 p-4">
+            <div className="rounded-xl bg-primary/10 p-3 text-primary"><Leaf className="h-5 w-5" /></div>
+            <div><p className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Seedlings sold</p><p data-testid="text-month-seedlings" className="mt-1 text-2xl font-bold tabular-nums">{Number(monthSummary.seedlingsSold).toLocaleString()}</p><p className="mt-0.5 text-xs text-muted-foreground">for selected month</p></div>
           </CardContent></Card>
-          <Card><CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-600"><Banknote className="h-5 w-5" /></div>
-            <div><p className="text-xs text-muted-foreground">Sales value</p><p className="text-2xl font-bold tabular-nums">{formatKES(cents(Number(monthSummary.totalRevenueCents)))}</p></div>
+          <Card><CardContent className="flex h-full min-h-[116px] items-center gap-3 p-4">
+            <div className="rounded-xl bg-amber-500/10 p-3 text-amber-700"><Banknote className="h-5 w-5" /></div>
+            <div><p className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Sales value</p><p data-testid="text-month-revenue" className="mt-1 text-2xl font-bold tabular-nums">{formatKES(cents(Number(monthSummary.totalRevenueCents)))}</p><p className="mt-0.5 text-xs text-muted-foreground">recorded revenue</p></div>
           </CardContent></Card>
-          <Button type="button" variant="outline" className="h-auto min-h-14 gap-2 self-stretch" onClick={() => void monthlySummaryQuery.refetch()} disabled={monthlySummaryQuery.isFetching}>
+          <Card><CardContent className="flex h-full min-h-[116px] items-center gap-3 p-4">
+            <div className="rounded-xl bg-sky-500/10 p-3 text-sky-700"><Boxes className="h-5 w-5" /></div>
+            <div><p className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Categories selling</p><p className="mt-1 text-2xl font-bold tabular-nums">{monthCategories.length}</p><p className="mt-0.5 truncate text-xs text-muted-foreground">{topMonthCategory ? `Leading · ${topMonthCategory.category}` : "No sales in this month"}</p></div>
+          </CardContent></Card>
+          <Button data-testid="button-refresh-month-summary" type="button" variant="outline" className="h-auto min-h-14 gap-2 self-stretch sm:col-span-2 xl:col-span-1" onClick={() => void monthlySummaryQuery.refetch()} disabled={monthlySummaryQuery.isFetching}>
             <RefreshCw className={`h-4 w-4 ${monthlySummaryQuery.isFetching ? "animate-spin" : ""}`} /> Refresh
           </Button>
         </div>
 
+        <Card className="overflow-hidden border-primary/15">
+          <CardHeader className="flex flex-col gap-3 border-b border-border/70 pb-4 sm:flex-row sm:items-center sm:justify-between">
+            <div><p className="text-xs font-bold uppercase tracking-[.14em] text-primary">At a glance</p><CardTitle className="mt-1 text-xl">Where sales landed</CardTitle><p className="mt-1 text-sm text-muted-foreground">Payment totals for the selected month, based on recorded sales.</p></div>
+            <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+              <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-amber-500" />Cash <b className="tabular-nums">{formatKES(cents(monthPaymentTotals.cash))}</b></span>
+              <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-sky-500" />M-Pesa <b className="tabular-nums">{formatKES(cents(monthPaymentTotals.mpesa))}</b></span>
+              <span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-violet-500" />Credit <b className="tabular-nums">{formatKES(cents(monthPaymentTotals.credit))}</b></span>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-4 p-4 sm:grid-cols-3">
+            {[
+              { label: "Cash", amount: monthPaymentTotals.cash, tone: "bg-amber-500" },
+              { label: "M-Pesa", amount: monthPaymentTotals.mpesa, tone: "bg-sky-500" },
+              { label: "Credit", amount: monthPaymentTotals.credit, tone: "bg-violet-500" },
+            ].map(item => {
+              const revenue = Number(monthSummary.totalRevenueCents) || 0;
+              const share = revenue > 0 ? Math.min(100, Math.round((item.amount / revenue) * 100)) : 0;
+              return <div key={item.label} className="rounded-xl border border-border/70 bg-background/70 p-3">
+                <div className="flex items-center justify-between gap-2 text-sm"><span className="font-semibold">{item.label}</span><span className="tabular-nums text-muted-foreground">{share}%</span></div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full ${item.tone} transition-[width] duration-300`} style={{ width: `${share}%` }} /></div>
+                <p className="mt-2 text-sm font-bold tabular-nums">{formatKES(cents(item.amount))}</p>
+              </div>;
+            })}
+          </CardContent>
+        </Card>
+
         <Card className="overflow-hidden">
-          <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-border/70">
+          <CardHeader className="flex flex-col gap-3 border-b border-border/70 sm:flex-row sm:items-center sm:justify-between">
             <div><CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-primary" />Monthly sales by category</CardTitle><p className="mt-1 text-sm text-muted-foreground">Totals use each variety’s current shop-defined category.</p></div>
             <Button type="button" variant="outline" size="sm" className="shrink-0 gap-2" onClick={() => setActiveTab("catalogue")}><Boxes className="h-4 w-4" /> Manage categories</Button>
           </CardHeader>
@@ -607,7 +682,7 @@ export default function NurseryRegister() {
         </CardHeader>
         <CardContent>
           {customerInsightsQuery.isLoading ? <p className="py-6 text-center text-sm text-muted-foreground">Loading customer insights…</p>
-            : customerInsightsQuery.isError ? <p className="py-6 text-center text-sm text-destructive">Could not load customer insights.</p>
+            : customerInsightsQuery.isError ? <div className="py-6 text-center"><p className="text-sm font-medium text-destructive">Could not load customer insights.</p><Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void customerInsightsQuery.refetch()}>Try again</Button></div>
             : !customerInsightsQuery.data?.rows?.length ? <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">No named customer purchases in this date range yet. Add a customer to a sale to start seeing buying patterns.</p>
             : (() => {
               const grouped = new Map<string, { name: string; phone: string; quantity: number; totalCents: number; lastPurchase: string; varieties: Map<string, number> }>();
@@ -632,7 +707,7 @@ export default function NurseryRegister() {
                     return <div key={customer.name.toLowerCase()} className="flex flex-col gap-2 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <p className="font-semibold">{customer.name}</p>
-                        <p className="text-xs text-muted-foreground">{customer.phone || "No phone recorded"} · Last purchase {customer.lastPurchase}</p>
+                        <p className="text-xs text-muted-foreground">{customer.phone || "No phone recorded"} · Last purchase {formatBusinessDate(customer.lastPurchase)}</p>
                         <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><TrendingUp className="h-3.5 w-3.5" /> Most purchased: {favorite?.[0] ?? "—"} ({favorite?.[1].toLocaleString() ?? "0"} seedlings)</p>
                       </div>
                       <div className="sm:text-right"><p className="text-lg font-bold tabular-nums">{formatKES(customer.totalCents / 100)}</p><p className="text-xs text-muted-foreground">{customer.quantity.toLocaleString()} seedlings</p></div>
@@ -715,8 +790,8 @@ export default function NurseryRegister() {
               <div className="grid gap-3 sm:grid-cols-2 xl:hidden">
                 {filteredIndividualEntries.map(entry => <div key={entry.id} className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card p-4 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
                   <div className={"absolute inset-x-0 top-0 h-1 " + (entry.paymentMethod === "cash" ? "bg-amber-500" : entry.paymentMethod === "mpesa" ? "bg-sky-500" : "bg-violet-500")} />
-                  <div className="flex items-start justify-between gap-3 pt-1">
-                    <div className="flex min-w-0 items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Sprout className="h-5 w-5" /></div><div className="min-w-0"><p className="truncate font-semibold">{entry.varietyName}</p><p className="mt-0.5 text-xs text-muted-foreground">{entry.businessDate} · {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></div></div>
+                   <div className="flex items-start justify-between gap-3 pt-1">
+                     <div className="flex min-w-0 items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Sprout className="h-5 w-5" /></div><div className="min-w-0"><p className="truncate font-semibold">{entry.varietyName}</p><p className="mt-0.5 text-sm font-semibold text-foreground">{formatBusinessDate(entry.businessDate)} <span className="font-normal text-muted-foreground">· {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></p></div></div>
                     <span className={"shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span>
                   </div>
                   <div className="mt-4 rounded-xl bg-muted/40 p-3"><p className="text-xs text-muted-foreground">Sale total</p><p className="mt-0.5 text-2xl font-bold tracking-tight tabular-nums">{formatKES(cents(entry.totalAmountCents))}</p><div className="mt-2 flex items-center justify-between gap-2 border-t border-border/70 pt-2 text-sm"><span className="text-muted-foreground">Quantity</span><span className="font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()} seedlings</span></div><div className="mt-1 flex items-center justify-between gap-2 text-sm"><span className="text-muted-foreground">Unit price</span><span className="font-medium tabular-nums">{formatKES(cents(entry.unitPriceCents))}</span></div></div>
@@ -728,7 +803,7 @@ export default function NurseryRegister() {
                 <table className="w-full min-w-[850px] text-left text-sm">
                   <thead className="bg-muted/40"><tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground"><th className="px-4 py-3">Date / time</th><th className="px-4 py-3">Seedlings / customer</th><th className="px-4 py-3 text-right">Quantity</th><th className="px-4 py-3 text-right">Unit price</th><th className="px-4 py-3">Payment</th><th className="px-4 py-3 text-right">Sale total</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
                   <tbody>{filteredIndividualEntries.map(entry => <tr key={entry.id} className="border-b border-border/60 last:border-0 transition-colors hover:bg-muted/30">
-                    <td className="whitespace-nowrap px-4 py-3.5"><p className="font-medium">{entry.businessDate}</p><p className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></td>
+                     <td className="whitespace-nowrap px-4 py-3.5"><p className="font-semibold">{formatBusinessDate(entry.businessDate)}</p><p className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></td>
                     <td className="px-4 py-3.5"><p className="font-semibold">{entry.varietyName}</p><p className="text-xs text-muted-foreground">{entry.customerName || "Walk-in customer"}{entry.customerPhone ? " · " + entry.customerPhone : ""}</p></td>
                     <td className="px-4 py-3.5 text-right font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()}</td>
                     <td className="px-4 py-3.5 text-right tabular-nums">{formatKES(cents(entry.unitPriceCents))}</td>
@@ -757,17 +832,13 @@ export default function NurseryRegister() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <CardTitle>Sales report</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={() => { choosePeriod("day"); setReportPage(1); setSalesPage(1); }}>Day</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => { choosePeriod("week"); setReportPage(1); setSalesPage(1); }}>This week</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => { choosePeriod("month"); setReportPage(1); setSalesPage(1); }}>This month</Button>
-              <div className="flex items-center gap-2"><Label htmlFor="report-from" className="text-xs">From</Label><Input id="report-from" type="date" className="w-auto" value={from} onChange={e => { setFrom(e.target.value); setReportPage(1); setSalesPage(1); }} /></div>
-              <div className="flex items-center gap-2"><Label htmlFor="report-to" className="text-xs">To</Label><Input id="report-to" type="date" className="w-auto" value={to} min={from} onChange={e => { setTo(e.target.value); setReportPage(1); setSalesPage(1); }} /></div>
-              <Button type="button" size="icon" variant="ghost" aria-label="Refresh report" onClick={() => qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] })}><RefreshCw className="h-4 w-4" /></Button>
+              <span className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm font-semibold tabular-nums">{formatBusinessDate(from)} <span className="px-1 text-muted-foreground">to</span> {formatBusinessDate(to)}</span>
+              <Button data-testid="button-refresh-nursery-report" type="button" size="icon" variant="outline" aria-label="Refresh report" onClick={() => qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] })}><RefreshCw className="h-4 w-4" /></Button>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {reportQuery.isLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading report…</p> : reportQuery.isError ? <p className="py-8 text-center text-sm text-destructive">Could not load report. Check your connection and try refreshing.</p> : reportRows.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No seedling sales found for this date range.</p> : (
+          {reportQuery.isLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading report…</p> : reportQuery.isError ? <div className="py-8 text-center"><p className="text-sm font-medium text-destructive">Could not load report. Check your connection and try refreshing.</p><Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void reportQuery.refetch()}>Try again</Button></div> : reportRows.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No seedling sales found for this date range.</p> : (
             <>
               {report?.summary && (
                 <div className="mb-4 grid gap-3 sm:grid-cols-2">

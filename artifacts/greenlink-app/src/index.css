@@ -253,3 +253,90 @@
     pointer-events: none;
   }
 }
+
+/* Nursery register: a bright, paper-led counter workspace inside the dark POS shell. */
+.nursery-page {
+  --background: 42 33% 96%;
+  --foreground: 151 22% 15%;
+  --border: 145 13% 83%;
+  --input: 0 0% 100%;
+  --ring: 153 51% 34%;
+  --card: 0 0% 100%;
+  --card-foreground: 151 22% 15%;
+  --card-border: 145 13% 84%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 151 22% 15%;
+  --popover-border: 145 13% 84%;
+  --primary: 153 51% 31%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 146 19% 91%;
+  --secondary-foreground: 151 22% 15%;
+  --muted: 145 17% 92%;
+  --muted-foreground: 150 10% 38%;
+  --accent: 37 72% 88%;
+  --accent-foreground: 25 48% 23%;
+  --destructive: 2 63% 47%;
+  --destructive-foreground: 0 0% 100%;
+  color: hsl(var(--foreground));
+  background:
+    radial-gradient(ellipse at 92% 1%, hsl(43 75% 88% / .45), transparent 30rem),
+    hsl(var(--background));
+  border: 1px solid hsl(145 13% 83%);
+  border-radius: 1.25rem;
+  box-shadow: 0 12px 34px hsl(151 22% 15% / .07);
+}
+
+.nursery-page input,
+.nursery-page select {
+  color-scheme: light;
+}
+
+.nursery-page input[type="date"],
+.nursery-page input[type="month"] {
+  min-height: 2.8rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  letter-spacing: .015em;
+}
+
+.nursery-page [role="tablist"] {
+  background: hsl(145 21% 90% / .72);
+}
+
+.nursery-page [role="tab"][data-state="active"] {
+  background: hsl(0 0% 100%);
+  color: hsl(153 51% 27%);
+  box-shadow: 0 1px 4px hsl(151 22% 15% / .12);
+}
+
+.nursery-date-field {
+  display: grid;
+  gap: .4rem;
+  min-width: 0;
+}
+
+.nursery-date-field label {
+  color: hsl(150 10% 34%);
+  font-size: .72rem;
+  font-weight: 750;
+  letter-spacing: .075em;
+  text-transform: uppercase;
+}
+
+.nursery-date-card {
+  border: 1px solid hsl(145 18% 79%);
+  border-radius: .9rem;
+  background: hsl(0 0% 100% / .92);
+  padding: .75rem;
+}
+
+.nursery-date-card:focus-within {
+  border-color: hsl(153 51% 39%);
+  box-shadow: 0 0 0 3px hsl(153 51% 31% / .12);
+}
+
+@media (max-width: 640px) {
+  .nursery-page {
+    border-radius: .9rem;
+  }
+}
