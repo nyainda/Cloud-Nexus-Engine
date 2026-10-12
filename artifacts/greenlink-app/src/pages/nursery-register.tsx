@@ -830,29 +830,40 @@ export default function NurseryRegister() {
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <CardTitle>Sales report</CardTitle>
-            <div className="flex flex-wrap items-center gap-2">
+            <div>
+              <CardTitle>Sales report</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">Compare the selected working day with the full reporting period.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
               <span className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm font-semibold tabular-nums">{formatBusinessDate(from)} <span className="px-1 text-muted-foreground">to</span> {formatBusinessDate(to)}</span>
-              <Button data-testid="button-refresh-nursery-report" type="button" size="icon" variant="outline" aria-label="Refresh report" onClick={() => qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] })}><RefreshCw className="h-4 w-4" /></Button>
+              <Button data-testid="button-refresh-nursery-report" type="button" size="icon" variant="outline" aria-label="Refresh report" disabled={reportQuery.isFetching} onClick={() => qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] })}><RefreshCw className={"h-4 w-4 " + (reportQuery.isFetching ? "animate-spin" : "")} /></Button>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {reportQuery.isLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading report…</p> : reportQuery.isError ? <div className="py-8 text-center"><p className="text-sm font-medium text-destructive">Could not load report. Check your connection and try refreshing.</p><Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void reportQuery.refetch()}>Try again</Button></div> : reportRows.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No seedling sales found for this date range.</p> : (
-            <>
-              {report?.summary && (
-                <div className="mb-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
-                    <p className="text-xs text-muted-foreground">Plants sold in this period</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums">{Number(report.summary.totalSeedlings).toLocaleString()}</p>
+          {reportQuery.isLoading && !report ? <div className="space-y-3 py-3" aria-label="Loading sales report"><div className="h-24 animate-pulse rounded-xl bg-muted/60" /><div className="h-12 animate-pulse rounded-xl bg-muted/40" /><div className="h-40 animate-pulse rounded-xl bg-muted/30" /></div> : reportQuery.isError && !report ? <div className="py-8 text-center"><p className="text-sm font-medium text-destructive">Could not load report. Check your connection and try refreshing.</p><Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => void reportQuery.refetch()}>Try again</Button></div> : report ? (
+              <div className="space-y-5">
+                <section aria-label="Selected sale date summary" className="rounded-2xl bg-primary p-4 text-primary-foreground sm:p-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                    <div><p className="text-xs font-bold uppercase tracking-[.12em] opacity-80">Selected sale date</p><p className="mt-1 text-sm font-semibold">{formatBusinessDate(businessDate)}</p></div>
+                    <div className="grid grid-cols-2 gap-x-7 gap-y-3 sm:min-w-[330px]">
+                      <div><p className="text-xs opacity-80">Seedlings sold</p><p data-testid="text-report-daily-seedlings" className="mt-0.5 text-2xl font-bold tabular-nums">{Number(report.dailySummary?.totalSeedlings ?? 0).toLocaleString()}</p></div>
+                      <div><p className="text-xs opacity-80">Sales value</p><p data-testid="text-report-daily-revenue" className="mt-0.5 text-2xl font-bold tabular-nums">{formatKES(cents(report.dailySummary?.totalRevenueCents))}</p></div>
+                    </div>
                   </div>
-                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
-                    <p className="text-xs text-muted-foreground">Sales value in this period</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums">{formatKES(cents(Number(report.summary.totalRevenueCents)))}</p>
+                  <div className="mt-4 grid grid-cols-3 gap-2 border-t border-current/20 pt-3 text-xs sm:max-w-[520px]">
+                    <p><span className="block opacity-75">Cash</span><span className="mt-0.5 block font-semibold tabular-nums">{formatKES(cents(report.dailySummary?.cashCents))}</span></p>
+                    <p><span className="block opacity-75">M-Pesa</span><span className="mt-0.5 block font-semibold tabular-nums">{formatKES(cents(report.dailySummary?.mpesaCents))}</span></p>
+                    <p><span className="block opacity-75">Credit</span><span className="mt-0.5 block font-semibold tabular-nums">{formatKES(cents(report.dailySummary?.creditCents))}</span></p>
                   </div>
-                </div>
-              )}
-              <div className="overflow-x-auto">
+                </section>
+                <section aria-label="Reporting period summary" className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-4"><p className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Selected period · seedlings sold</p><p data-testid="text-report-range-seedlings" className="mt-1 text-2xl font-bold tabular-nums">{Number(report.summary?.totalSeedlings ?? 0).toLocaleString()}</p><p className="mt-1 text-xs text-muted-foreground">{formatBusinessDate(from)} to {formatBusinessDate(to)}</p></div>
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-4"><p className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Selected period · sales value</p><p data-testid="text-report-range-revenue" className="mt-1 text-2xl font-bold tabular-nums">{formatKES(cents(report.summary?.totalRevenueCents))}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>Cash {formatKES(cents(report.summary?.cashCents))}</span><span>M-Pesa {formatKES(cents(report.summary?.mpesaCents))}</span><span>Credit {formatKES(cents(report.summary?.creditCents))}</span></div></div>
+                </section>
+                {reportQuery.isFetching && <p role="status" className="text-xs text-muted-foreground">Updating report…</p>}
+                {reportRows.length === 0 ? <p className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No seedling sales found for this date range.</p> : <>
+              <div className="hidden overflow-x-auto rounded-xl border border-border/70 md:block">
                 <table className="w-full min-w-[680px] text-left text-sm">
                   <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Variety</th><th className="px-3 py-3 text-right">Plants sold</th><th className="px-3 py-3 text-right">Sales value</th><th className="px-3 py-3">Payment mix</th></tr></thead>
                   <tbody>{reportRows.map((row, index) => <tr key={row.varietyKey ?? `${row.varietyId ?? row.varietyName.trim().toLowerCase()}-${index}`} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
@@ -869,8 +880,15 @@ export default function NurseryRegister() {
                   </tr>)}</tbody>
                 </table>
               </div>
-            </>
-          )}
+              <div className="space-y-2 md:hidden">
+                {reportRows.map((row, index) => <article key={row.varietyKey ?? `${row.varietyId ?? row.varietyName.trim().toLowerCase()}-${index}`} data-testid={`card-report-variety-${index}`} className="rounded-xl border border-border/70 bg-card p-3">
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-sm font-bold">{row.varietyName}</h3><p className="mt-1 text-xs text-muted-foreground">{Number(row.quantity).toLocaleString()} seedlings sold</p></div><p className="shrink-0 text-sm font-bold tabular-nums">{formatKES(cents(Number(row.totalAmountCents)))}</p></div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/60 pt-2 text-xs"><p className="text-muted-foreground">Cash<span className="mt-1 block font-semibold tabular-nums text-foreground">{formatKES(cents(Number(row.cashCents)))}</span></p><p className="text-muted-foreground">M-Pesa<span className="mt-1 block font-semibold tabular-nums text-foreground">{formatKES(cents(Number(row.mpesaCents)))}</span></p><p className="text-muted-foreground">Credit<span className="mt-1 block font-semibold tabular-nums text-foreground">{formatKES(cents(Number(row.creditCents)))}</span></p></div>
+                </article>)}
+              </div>
+              </>}
+              </div>
+            ) : null}
           {reportTotal > 0 && <div className="mt-4 flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground">Showing varieties {((reportPage - 1) * reportPageSize + 1).toLocaleString()}–{Math.min(reportPage * reportPageSize, reportTotal).toLocaleString()} of {reportTotal.toLocaleString()} · Page {reportPage} of {reportPageCount}</p>
             <div className="flex items-center gap-2">
@@ -878,7 +896,7 @@ export default function NurseryRegister() {
               <Button type="button" size="sm" variant="outline" disabled={reportPage >= reportPageCount || reportQuery.isFetching} onClick={() => setReportPage(page => Math.min(reportPageCount, page + 1))}>Next</Button>
             </div>
           </div>}
-          <p className="mt-3 text-xs text-muted-foreground">Each variety is totaled once across the selected date range, including its payment mix. Individual sale dates remain available in Sales history. Credit sales create a linked customer debt.</p>
+          <p className="mt-3 border-t border-border/70 pt-3 text-xs leading-relaxed text-muted-foreground">The selected sale date summary is for {formatBusinessDate(businessDate)}; period figures and variety totals cover {formatBusinessDate(from)} to {formatBusinessDate(to)}. Each variety is totaled once across that range. Individual sale dates remain available in Sales history. Credit sales create a linked customer debt.</p>
         </CardContent>
       </Card>
       </TabsContent>
