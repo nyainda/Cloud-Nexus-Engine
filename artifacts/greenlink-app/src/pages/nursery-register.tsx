@@ -85,6 +85,7 @@ export default function NurseryRegister() {
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "mpesa" | "credit">("cash");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("0");
   const [newCategory, setNewCategory] = useState("Uncategorized");
@@ -98,6 +99,7 @@ export default function NurseryRegister() {
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
   const [saleEdit, setSaleEdit] = useState({ businessDate: "", varietyId: "", quantity: "", unitPrice: "", paymentMethod: "cash" as "cash" | "mpesa" | "credit", customerName: "", customerPhone: "" });
   const [saleEditSearch, setSaleEditSearch] = useState("");
+  const [saleEditSelectedVariety, setSaleEditSelectedVariety] = useState<{ id: string; name: string } | null>(null);
   const [busySaleId, setBusySaleId] = useState<string | null>(null);
   const [catalogueExpanded, setCatalogueExpanded] = useState(false);
   const [catalogueSearch, setCatalogueSearch] = useState("");
@@ -117,6 +119,16 @@ export default function NurseryRegister() {
   const debouncedProductSearch = useDebouncedValue(productSearch);
   const debouncedSaleSearch = useDebouncedValue(saleSearch);
   const debouncedSaleEditSearch = useDebouncedValue(saleEditSearch);
+
+  useEffect(() => {
+    const updateOnlineStatus = () => setIsOnline(navigator.onLine);
+    window.addEventListener("online", updateOnlineStatus);
+    window.addEventListener("offline", updateOnlineStatus);
+    return () => {
+      window.removeEventListener("online", updateOnlineStatus);
+      window.removeEventListener("offline", updateOnlineStatus);
+    };
+  }, []);
 
   const catalogueQuery = useQuery({
     queryKey: ["/api/nursery/varieties", shopId, "catalogue", catalogueStatus, catalogueCategory, debouncedCatalogueSearch, cataloguePage],
@@ -175,7 +187,12 @@ export default function NurseryRegister() {
   const catalogueEnd = Math.min(cataloguePage * 30, catalogueTotal);
   const catalogueCategories = catalogueQuery.data?.categories ?? [];
   const saleCategories = saleVarietiesQuery.data?.categories ?? [];
-  const cartTotal = cart.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unitPrice) || 0), 0);
+  const cartTotalCents = cart.reduce((sum, item) => {
+    const quantity = Number(item.quantity);
+    const unitPriceCents = Math.round(Number(item.unitPrice) * 100);
+    return sum + (Number.isSafeInteger(quantity) && quantity > 0 && Number.isSafeInteger(unitPriceCents) && unitPriceCents >= 0 ? quantity * unitPriceCents : 0);
+  }, 0);
+  const cartTotal = cartTotalCents / 100;
   function addToCart(variety: Variety) {
     setCart(current => {
       const existing = current.find(item => item.varietyId === variety.id);
@@ -189,9 +206,18 @@ export default function NurseryRegister() {
   const reportTotal = report?.total ?? 0;
   const reportPageCount = Math.max(1, Math.ceil(reportTotal / reportPageSize));
   const individualEntries = individualEntriesQuery.data?.rows ?? [];
+  const editVarietyRows = saleEditVarietiesQuery.data?.rows ?? [];
+  const saleEditVarietyOptions = saleEditSelectedVariety && !editVarietyRows.some(variety => variety.id === saleEditSelectedVariety.id)
+    ? [{ id: saleEditSelectedVariety.id, name: saleEditSelectedVariety.name, category: "", defaultPrice: 0, isActive: 0 }, ...editVarietyRows]
+    : editVarietyRows;
   const individualTotal = individualEntriesQuery.data?.total ?? 0;
   const individualPageCount = Math.max(1, Math.ceil(individualTotal / salesPageSize));
   const filteredIndividualEntries = individualEntries;
+  useEffect(() => {
+    if (individualEntriesQuery.isSuccess && !individualEntriesQuery.isFetching && salesPage > individualPageCount) {
+      setSalesPage(individualPageCount);
+    }
+  }, [individualEntriesQuery.isFetching, individualEntriesQuery.isSuccess, individualPageCount, salesPage]);
   const individualSaleSummary = individualEntriesQuery.data?.summary ?? { quantity: 0, totalCents: 0, creditCents: 0 };
   const monthSummary = monthlySummaryQuery.data?.summary ?? { seedlingsSold: 0, totalRevenueCents: 0 };
   const monthCategories = monthlySummaryQuery.data?.categories ?? [];
@@ -206,7 +232,8 @@ export default function NurseryRegister() {
     event.preventDefault();
     if (!cart.length) { toast.error("Search and add at least one seedling variety."); return; }
     if (paymentMethod === "credit" && !customerName.trim()) { toast.error("Choose or enter the customer for a credit sale."); return; }
-    if (!navigator.onLine) { toast.error("Connect to the internet before saving. Nursery entries are not queued offline yet."); return; }
+    if (customerName.trim().length > 120 || customerPhone.trim().length > 40) { toast.error("Customer name must be 120 characters or fewer and phone number 40 characters or fewer."); return; }
+    if (!isOnline) { toast.error("Connect to the internet before saving. Nursery entries are not queued offline yet."); return; }
     const prepared = cart.map(item => ({ ...item, qty: Number(item.quantity), price: Number(item.unitPrice) }));
     if (prepared.some(item => !Number.isSafeInteger(item.qty) || item.qty <= 0 || !Number.isFinite(item.price) || item.price < 0 || (paymentMethod === "credit" && item.price <= 0))) {
       toast.error("Check every cart line: quantity must be a positive whole number and each price must be valid."); return;
@@ -334,7 +361,8 @@ export default function NurseryRegister() {
 
   function beginEditSale(entry: IndividualSaleEntry) {
     setEditingSaleId(entry.id);
-    setSaleEditSearch(entry.varietyName);
+    setSaleEditSearch("");
+    setSaleEditSelectedVariety({ id: entry.varietyId, name: entry.varietyName });
     setSaleEdit({ businessDate: entry.businessDate, varietyId: entry.varietyId, quantity: String(entry.quantity), unitPrice: String(cents(entry.unitPriceCents)), paymentMethod: entry.paymentMethod, customerName: entry.customerName || "", customerPhone: entry.customerPhone || "" });
   }
 
@@ -343,19 +371,17 @@ export default function NurseryRegister() {
     if (!editingSaleId) return;
     const quantity = Number(saleEdit.quantity);
     const unitPrice = Number(saleEdit.unitPrice);
-    const variety = (saleEditVarietiesQuery.data?.rows ?? []).find(v => v.id === saleEdit.varietyId);
+    const variety = saleEditVarietyOptions.find(v => v.id === saleEdit.varietyId);
     if (!saleEdit.businessDate || !variety || !Number.isSafeInteger(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) { toast.error("Check the date, variety, quantity and price."); return; }
     if (saleEdit.paymentMethod === "credit" && (!saleEdit.customerName.trim() || unitPrice <= 0)) { toast.error("Credit sales need a customer name and a price above zero."); return; }
-    const key = ["/api/nursery/entries", shopId, from, to] as const;
-    const previous = qc.getQueryData<{ rows: IndividualSaleEntry[] }>(key);
-    const entry = previous?.rows.find(row => row.id === editingSaleId);
+    if (saleEdit.customerName.trim().length > 120 || saleEdit.customerPhone.trim().length > 40) { toast.error("Customer name must be 120 characters or fewer and phone number 40 characters or fewer."); return; }
+    const entry = individualEntries.find(row => row.id === editingSaleId);
     if (!entry) { toast.error("Refresh the sales list and try again."); return; }
-    const optimistic: IndividualSaleEntry = { ...entry, businessDate: saleEdit.businessDate, varietyId: variety.id, varietyName: variety.name, quantity, unitPriceCents: Math.round(unitPrice * 100), totalAmountCents: quantity * Math.round(unitPrice * 100), paymentMethod: saleEdit.paymentMethod, customerName: saleEdit.customerName.trim(), customerPhone: saleEdit.customerPhone.trim() };
-    if (previous) qc.setQueryData(key, { ...previous, rows: previous.rows.map(row => row.id === editingSaleId ? optimistic : row) });
-    setEditingSaleId(null);
     setBusySaleId(entry.id);
     try {
       await customFetch(`/api/nursery/entries/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ ...saleEdit, quantity, unitPrice, customerName: saleEdit.customerName.trim(), customerPhone: saleEdit.customerPhone.trim() }) });
+      setEditingSaleId(null);
+      setSaleEditSelectedVariety(null);
       toast.success("Sale updated. Reports and customer summaries are being refreshed.");
       await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
@@ -366,19 +392,19 @@ export default function NurseryRegister() {
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
       ]);
     } catch (error: any) {
-      if (previous) qc.setQueryData(key, previous);
-      toast.error(error?.message || "Could not update sale. The previous entry was restored.");
+      toast.error(error?.message || "Could not update sale. Your changes are still available to retry.");
     } finally { setBusySaleId(null); }
   }
 
   async function deleteSale(entry: IndividualSaleEntry) {
-    const key = ["/api/nursery/entries", shopId, from, to] as const;
-    const previous = qc.getQueryData<{ rows: IndividualSaleEntry[] }>(key);
-    if (previous) qc.setQueryData(key, { ...previous, rows: previous.rows.filter(row => row.id !== entry.id) });
     setBusySaleId(entry.id);
     try {
       await customFetch(`/api/nursery/entries/${encodeURIComponent(entry.id)}`, { method: "DELETE" });
-      if (editingSaleId === entry.id) setEditingSaleId(null);
+      if (editingSaleId === entry.id) {
+        setEditingSaleId(null);
+        setSaleEditSelectedVariety(null);
+      }
+      if (filteredIndividualEntries.length === 1 && salesPage > 1) setSalesPage(page => Math.max(1, page - 1));
       toast.success("Sale deleted. Totals and customer summaries are being refreshed.");
       await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
@@ -389,8 +415,7 @@ export default function NurseryRegister() {
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
       ]);
     } catch (error: any) {
-      if (previous) qc.setQueryData(key, previous);
-      toast.error(error?.message || "Could not delete sale. The previous entry was restored.");
+      toast.error(error?.message || "Could not delete sale. The entry is still in the register.");
     } finally { setBusySaleId(null); }
   }
 
@@ -548,53 +573,91 @@ export default function NurseryRegister() {
       </TabsContent>
 
       <TabsContent value="record" className="mt-5 space-y-4 focus-visible:outline-none">
-        <Card>
-          <CardHeader className="rounded-t-xl border-b border-emerald-500/15 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent pb-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-emerald-600 p-2.5 text-white shadow-sm"><PackagePlus className="h-5 w-5" /></div><div className="min-w-0 flex-1"><CardTitle className="text-lg">New seedling sale</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Enter the quantity, price and how the customer paid.</p></div><span className="rounded-full border border-emerald-600/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">Sales entry</span></div></CardHeader>
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b border-border bg-primary/[.04] pb-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-primary p-2.5 text-primary-foreground"><PackagePlus className="h-5 w-5" /></div>
+              <div className="min-w-0 flex-1">
+                <CardTitle className="text-lg">New seedling sale</CardTitle>
+                <p className="mt-1 text-sm font-normal text-muted-foreground">Choose seedlings, set quantities and prices, then record how the customer paid.</p>
+              </div>
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">Sale entry</span>
+            </div>
+          </CardHeader>
           <CardContent className="space-y-4 pt-5">
-            <form className="space-y-4" onSubmit={saveEntry}>
-              <div className="space-y-3">
-                <Label htmlFor="seedling-search">Add seedlings to this sale</Label>
-                <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input id="seedling-search" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Search cabbage, tomato, kale…" className="h-11 bg-background pl-9" autoComplete="off" /></div>
-                {productSearch.trim() && <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-                  {matchingSaleVarieties.length ? matchingSaleVarieties.map(v => <button key={v.id} type="button" onClick={() => addToCart(v)} className="flex w-full items-center justify-between gap-3 border-b border-border/70 px-3 py-3 text-left last:border-0 hover:bg-muted/50"><span className="min-w-0"><span className="block truncate text-sm font-semibold">{v.name}</span><span className="text-xs text-muted-foreground">Default price · {formatKES(v.defaultPrice)} each</span></span><span className="flex shrink-0 items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300"><Plus className="h-3.5 w-3.5" /> Add</span></button>) : <p className="p-3 text-sm text-muted-foreground">No active varieties found. Add this variety in the catalogue first.</p>}
-                  {matchingSaleVarieties.length === 8 && <p className="border-t bg-muted/30 px-3 py-2 text-xs text-muted-foreground">Showing first 8 matches. Type more letters to narrow results.</p>}
+            <form className="space-y-5" onSubmit={saveEntry}>
+              <section aria-labelledby="sale-items-heading" className="space-y-3">
+                <div>
+                  <h2 id="sale-items-heading" className="text-sm font-semibold">1. Choose seedlings</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">Search by name or narrow the list by category. Add each variety once, then set its quantity and price.</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
+                  <div className="relative">
+                    <Label htmlFor="seedling-search" className="sr-only">Search seedling varieties</Label>
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input id="seedling-search" data-testid="input-nursery-variety-search" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Search cabbage, tomato, kale…" aria-label="Search seedling varieties" className="h-11 bg-background pl-9" autoComplete="off" />
+                  </div>
+                  <select data-testid="select-nursery-variety-category" aria-label="Filter seedling varieties by category" value={productCategory} onChange={e => setProductCategory(e.target.value)} className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+                    <option value="">All categories</option>
+                    {saleCategories.map(category => <option key={category} value={category}>{category}</option>)}
+                  </select>
+                </div>
+                {(productSearch.trim() || productCategory) && saleVarietiesQuery.isFetching && <p data-testid="status-nursery-variety-search" role="status" className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">Finding matching seedlings…</p>}
+                {(productSearch.trim() || productCategory) && saleVarietiesQuery.isError && <div data-testid="status-nursery-variety-error" role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm"><p className="font-medium text-destructive">Could not load seedling varieties.</p><Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => void saleVarietiesQuery.refetch()}>Try again</Button></div>}
+                {(productSearch.trim() || productCategory) && saleVarietiesQuery.isSuccess && !saleVarietiesQuery.isFetching && <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+                  {matchingSaleVarieties.length ? matchingSaleVarieties.slice(0, 8).map(v => <button key={v.id} type="button" data-testid={`button-add-nursery-variety-${v.id}`} aria-label={`Add ${v.name} to sale`} onClick={() => addToCart(v)} className="flex w-full items-center justify-between gap-3 border-b border-border/70 px-3 py-3 text-left last:border-0 hover:bg-muted/50">
+                    <span className="min-w-0"><span className="block truncate text-sm font-semibold">{v.name}</span><span className="text-xs text-muted-foreground">{v.category} · Usual price {formatKES(v.defaultPrice)} each</span></span>
+                    <span className="flex shrink-0 items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-semibold text-primary"><Plus className="h-3.5 w-3.5" /> Add</span>
+                  </button>) : <p className="p-3 text-sm text-muted-foreground">No active varieties match. Try another search or add the variety in the catalogue.</p>}
+                  {matchingSaleVarieties.length > 8 && <p data-testid="text-nursery-variety-suggestions-more" className="border-t bg-muted/30 px-3 py-2 text-xs text-muted-foreground">Showing 8 suggestions. Type a longer name to narrow the list.</p>}
                 </div>}
-                <div className="rounded-xl border border-border bg-muted/20 p-3">
-                  <div className="mb-3 flex items-center justify-between gap-2"><p className="flex items-center gap-2 text-sm font-semibold"><ShoppingCart className="h-4 w-4 text-emerald-600" /> Sale items</p><span className="rounded-full bg-background px-2.5 py-1 text-xs font-semibold text-muted-foreground">{cart.length} varieties</span></div>
+                {!productSearch.trim() && !productCategory && saleVarietiesQuery.isSuccess && varieties.length === 0 && <p data-testid="status-nursery-varieties-empty" className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">There are no active varieties yet. Add one in the Varieties tab before recording a sale.</p>}
+                <div data-testid="section-nursery-sale-items" aria-label="Sale items" className="rounded-xl border border-border bg-muted/20 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-2"><p className="flex items-center gap-2 text-sm font-semibold"><ShoppingCart className="h-4 w-4 text-primary" /> Items in this sale</p><span className="rounded-full bg-background px-2.5 py-1 text-xs font-semibold text-muted-foreground">{cart.length} {cart.length === 1 ? "variety" : "varieties"}</span></div>
                   {!cart.length ? <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">Search above and add each seedling type the customer wants.</p> : <div className="space-y-2">
-                    {cart.map(item => <div key={item.varietyId} className="rounded-lg border border-border bg-card p-3">
-                      <div className="mb-2 flex items-start justify-between gap-2"><p className="min-w-0 truncate text-sm font-semibold">{item.name}</p><button type="button" aria-label={`Remove ${item.name}`} onClick={() => setCart(current => current.filter(line => line.varietyId !== item.varietyId))} className="rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><X className="h-4 w-4" /></button></div>
-                      <div className="grid grid-cols-2 gap-2"><div className="space-y-1"><Label className="text-xs">Quantity</Label><Input aria-label={`${item.name} quantity`} type="number" min="1" step="1" inputMode="numeric" value={item.quantity} onChange={e => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, quantity: e.target.value } : line))} className="h-9" /></div><div className="space-y-1"><Label className="text-xs">Price each (KES)</Label><Input aria-label={`${item.name} price per seedling`} type="number" min="0" step="0.01" value={item.unitPrice} onChange={e => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, unitPrice: e.target.value } : line))} className="h-9" /></div></div>
-                      <p className="mt-2 text-right text-sm font-semibold tabular-nums">{formatKES((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</p>
-                    </div>)}
+                    {cart.map(item => {
+                      const quantity = Number(item.quantity);
+                      const unitPriceCents = Math.round(Number(item.unitPrice) * 100);
+                      const lineTotal = Number.isSafeInteger(quantity) && quantity > 0 && Number.isSafeInteger(unitPriceCents) && unitPriceCents >= 0 ? quantity * unitPriceCents / 100 : 0;
+                      return <div key={item.varietyId} className="rounded-lg border border-border bg-card p-3">
+                        <div className="mb-2 flex items-start justify-between gap-2"><p className="min-w-0 truncate text-sm font-semibold">{item.name}</p><button type="button" data-testid={`button-remove-nursery-variety-${item.varietyId}`} aria-label={`Remove ${item.name}`} onClick={() => setCart(current => current.filter(line => line.varietyId !== item.varietyId))} className="rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><X className="h-4 w-4" /></button></div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <div className="space-y-1"><Label htmlFor={`cart-${item.varietyId}-quantity`} className="text-xs">Quantity</Label><Input id={`cart-${item.varietyId}-quantity`} data-testid={`input-nursery-sale-quantity-${item.varietyId}`} aria-label={`${item.name} quantity`} type="number" min="1" max="10000000" step="1" inputMode="numeric" value={item.quantity} onChange={e => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, quantity: e.target.value } : line))} className="h-10" required /></div>
+                          <div className="space-y-1"><Label htmlFor={`cart-${item.varietyId}-price`} className="text-xs">Price per seedling (KES)</Label><Input id={`cart-${item.varietyId}-price`} data-testid={`input-nursery-sale-price-${item.varietyId}`} aria-label={`${item.name} price per seedling`} type="number" min="0" max="1000000" step="0.01" inputMode="decimal" value={item.unitPrice} onChange={e => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, unitPrice: e.target.value } : line))} className="h-10" required /></div>
+                        </div>
+                        <p data-testid={`text-nursery-sale-line-total-${item.varietyId}`} className="mt-2 text-right text-sm font-semibold tabular-nums">Line total · {formatKES(lineTotal)}</p>
+                      </div>;
+                    })}
                   </div>}
                 </div>
-              </div>
-<div className="space-y-2">
-                <Label>Payment method</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button type="button" onClick={() => setPaymentMethod("cash")} className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition-colors ${paymentMethod === "cash" ? "border-emerald-600 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border text-muted-foreground hover:bg-muted/60"}`}><Banknote className="h-4 w-4" /> Cash</button>
-                  <button type="button" onClick={() => setPaymentMethod("mpesa")} className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition-colors ${paymentMethod === "mpesa" ? "border-sky-600 bg-sky-500/10 text-sky-700 dark:text-sky-300" : "border-border text-muted-foreground hover:bg-muted/60"}`}><Smartphone className="h-4 w-4" /> M-Pesa</button>
-                  <button type="button" onClick={() => setPaymentMethod("credit")} className={`flex items-center justify-center gap-2 rounded-xl border p-3 text-sm font-semibold transition-colors ${paymentMethod === "credit" ? "border-violet-600 bg-violet-500/10 text-violet-700 dark:text-violet-300" : "border-border text-muted-foreground hover:bg-muted/60"}`}><CreditCard className="h-4 w-4" /> Credit</button>
+              </section>
+              <section aria-labelledby="sale-payment-heading" className="space-y-3">
+                <div><h2 id="sale-payment-heading" className="text-sm font-semibold">2. Record payment</h2><p className="mt-1 text-xs text-muted-foreground">Choose the method used for this sale.</p></div>
+                <div role="group" aria-label="Payment method" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <button type="button" data-testid="button-nursery-payment-cash" aria-pressed={paymentMethod === "cash"} onClick={() => setPaymentMethod("cash")} className={`flex h-11 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-semibold transition-colors ${paymentMethod === "cash" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted/60"}`}><Banknote className="h-4 w-4" /> Cash</button>
+                  <button type="button" data-testid="button-nursery-payment-mpesa" aria-pressed={paymentMethod === "mpesa"} onClick={() => setPaymentMethod("mpesa")} className={`flex h-11 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-semibold transition-colors ${paymentMethod === "mpesa" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted/60"}`}><Smartphone className="h-4 w-4" /> M-Pesa</button>
+                  <button type="button" data-testid="button-nursery-payment-credit" aria-pressed={paymentMethod === "credit"} onClick={() => setPaymentMethod("credit")} className={`flex h-11 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-semibold transition-colors ${paymentMethod === "credit" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted/60"}`}><CreditCard className="h-4 w-4" /> Credit</button>
                 </div>
+              </section>
+              <section aria-labelledby="sale-customer-heading" className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4">
+                <div><h2 id="sale-customer-heading" className="text-sm font-semibold">3. Customer details</h2><p className="mt-1 text-xs text-muted-foreground">{paymentMethod === "credit" ? "A customer name is required so the unpaid balance is linked correctly." : "Optional for cash and M-Pesa sales."}</p></div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5"><Label htmlFor="nursery-sale-customer">Customer name{paymentMethod === "credit" ? " *" : ""}</Label><CustomerAutocomplete shopId={shopId} value={customerName} onChange={setCustomerName} onSelect={(customer: SelectedCustomer) => { setCustomerName(customer.name); setCustomerPhone(customer.phone); }} placeholder="Search customers or enter a name" inputId="nursery-sale-customer" inputTestId="input-nursery-sale-customer" ariaLabel="Customer name" ariaInvalid={paymentMethod === "credit" && !customerName.trim()} maxLength={120} /></div>
+                  <div className="space-y-1.5"><Label htmlFor="nursery-sale-phone">Phone number <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="nursery-sale-phone" data-testid="input-nursery-sale-phone" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="e.g. 07xx xxx xxx" type="tel" maxLength={40} /></div>
+                </div>
+                {paymentMethod === "credit" && <p data-testid="status-nursery-credit-sale" role="status" className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5 text-sm text-muted-foreground">{customerName.trim() ? `${formatKES(cartTotal)} will be added to ${customerName.trim()}'s debt. No payment is recorded now.` : "Enter the customer name to record this as credit."} Nursery sales do not reduce POS stock.</p>}
+              </section>
+              <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/[.04] p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sale total</p>
+                  <p data-testid="text-nursery-sale-total" className="mt-0.5 text-2xl font-bold tabular-nums">{formatKES(cartTotal)}</p>
+                  <p data-testid="text-nursery-sale-summary" className="mt-1 text-xs text-muted-foreground">{cart.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0).toLocaleString()} seedlings · {cart.length} {cart.length === 1 ? "variety" : "varieties"} · Sale date {formatBusinessDate(businessDate)}</p>
+                </div>
+                <Button data-testid="button-record-nursery-sale" type="submit" disabled={saving || cart.length === 0 || !isOnline} className="h-11 w-full shrink-0 gap-2 sm:w-auto sm:px-5">
+                  <CheckCircle2 className="h-4 w-4" />{saving ? "Recording sale…" : "Record sale"}<ArrowUpRight className="h-4 w-4" />
+                </Button>
               </div>
-              <div className="space-y-2">
-                <Label>Customer (optional for cash / M-Pesa; required for credit)</Label>
-                <CustomerAutocomplete
-                  shopId={shopId}
-                  value={customerName}
-                  onChange={setCustomerName}
-                  onSelect={(customer: SelectedCustomer) => { setCustomerName(customer.name); setCustomerPhone(customer.phone); }}
-                  placeholder="Search existing customer or enter a name"
-                />
-                <Input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="Phone number (optional)" type="tel" />
-                {paymentMethod === "credit" && <p className="text-xs text-violet-700 dark:text-violet-300">This creates a debt in the existing Debts and Customers screens. No inventory is deducted.</p>}
-              </div>
-              <div className="flex flex-col gap-3 rounded-xl border border-emerald-600/15 bg-gradient-to-br from-emerald-500/10 to-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div><p className="text-sm text-muted-foreground">Sale total</p><p className="text-2xl font-bold tabular-nums">{formatKES(cartTotal)}</p><p className="text-xs text-muted-foreground">{cart.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0).toLocaleString()} seedlings in {cart.length} varieties</p></div>
-                <Button type="submit" disabled={saving || varieties.length === 0 || cart.length === 0 || !navigator.onLine} className="h-11 gap-2 px-5 shadow-sm"><CheckCircle2 className="h-4 w-4" />{saving ? "Saving sale…" : "Record sale"}<ArrowUpRight className="h-4 w-4" /></Button>
-              </div>
-              {!navigator.onLine && <p className="text-xs text-amber-600">Offline: connect before saving. This register does not queue offline entries yet.</p>}
+              {!isOnline && <p data-testid="status-nursery-offline" role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">You’re offline. Reconnect before saving; sale entries are not queued offline.</p>}
             </form>
           </CardContent>
         </Card>
@@ -769,19 +832,30 @@ export default function NurseryRegister() {
           {editingSaleId && <form onSubmit={saveSaleEdit} className="rounded-2xl border border-primary/30 bg-primary/[0.04] p-4 shadow-sm sm:p-5">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="flex items-start gap-3"><div className="rounded-xl bg-primary/10 p-2 text-primary"><Pencil className="h-4 w-4" /></div><div><p className="font-semibold">Edit sale entry</p><p className="mt-0.5 text-sm text-muted-foreground">Save corrections to update the related summaries.</p></div></div>
-              <Button type="button" variant="ghost" size="icon" aria-label="Cancel sale edit" onClick={() => setEditingSaleId(null)}><X className="h-4 w-4" /></Button>
+              <Button type="button" variant="ghost" size="icon" aria-label="Cancel sale edit" onClick={() => { setEditingSaleId(null); setSaleEditSelectedVariety(null); }}><X className="h-4 w-4" /></Button>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="space-y-1.5"><Label htmlFor="sale-edit-date">Sale date</Label><Input id="sale-edit-date" type="date" value={saleEdit.businessDate} onChange={e => setSaleEdit(s => ({ ...s, businessDate: e.target.value }))} required /></div>
-              <div className="space-y-1.5"><Label htmlFor="sale-edit-variety">Seedling variety</Label><select id="sale-edit-variety" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.varietyId} onChange={e => setSaleEdit(s => ({ ...s, varietyId: e.target.value }))} required>{(saleEditVarietiesQuery.data?.rows ?? []).map(v => <option key={v.id} value={v.id}>{v.name}{Boolean(v.isActive) ? "" : " (archived)"}</option>)}</select></div>
-              <div className="space-y-1.5"><Label htmlFor="sale-edit-qty">Quantity</Label><Input id="sale-edit-qty" type="number" min="1" step="1" value={saleEdit.quantity} onChange={e => setSaleEdit(s => ({ ...s, quantity: e.target.value }))} required /></div>
-              <div className="space-y-1.5"><Label htmlFor="sale-edit-price">Unit price (KES)</Label><Input id="sale-edit-price" type="number" min="0" step="0.01" value={saleEdit.unitPrice} onChange={e => setSaleEdit(s => ({ ...s, unitPrice: e.target.value }))} required /></div>
-              <div className="space-y-1.5"><Label htmlFor="sale-edit-payment">Payment method</Label><select id="sale-edit-payment" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.paymentMethod} onChange={e => setSaleEdit(s => ({ ...s, paymentMethod: e.target.value as "cash" | "mpesa" | "credit" }))}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="credit">Credit</option></select></div>
-              <div className="space-y-1.5"><Label htmlFor="sale-edit-customer">Customer name</Label><Input id="sale-edit-customer" value={saleEdit.customerName} onChange={e => setSaleEdit(s => ({ ...s, customerName: e.target.value }))} maxLength={120} placeholder="Walk-in customer if blank" /></div>
-              <div className="space-y-1.5"><Label htmlFor="sale-edit-phone">Customer phone</Label><Input id="sale-edit-phone" type="tel" value={saleEdit.customerPhone} onChange={e => setSaleEdit(s => ({ ...s, customerPhone: e.target.value }))} maxLength={40} /></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-date">Sale date</Label><Input id="sale-edit-date" data-testid="input-nursery-edit-date" type="date" value={saleEdit.businessDate} onChange={e => setSaleEdit(s => ({ ...s, businessDate: e.target.value }))} required /></div>
+              <div className="space-y-1.5">
+                <Label htmlFor="sale-edit-variety-search">Find a variety</Label>
+                <Input id="sale-edit-variety-search" data-testid="input-nursery-edit-variety-search" value={saleEditSearch} onChange={e => setSaleEditSearch(e.target.value)} placeholder="Type the start of a name…" autoComplete="off" />
+                <select id="sale-edit-variety" data-testid="select-nursery-edit-variety" aria-label="Selected seedling variety" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.varietyId} onChange={e => {
+                  const selected = saleEditVarietyOptions.find(variety => variety.id === e.target.value);
+                  setSaleEdit(s => ({ ...s, varietyId: e.target.value }));
+                  if (selected) setSaleEditSelectedVariety({ id: selected.id, name: selected.name });
+                }} required>
+                  {saleEditVarietyOptions.map(v => <option key={v.id} value={v.id}>{v.name}{Boolean(v.isActive) ? "" : " (archived)"}</option>)}
+                </select>
+                <p className="text-xs text-muted-foreground">{saleEditVarietiesQuery.isFetching ? "Searching varieties…" : "Search by the start of a name, then choose the variety for this sale."}</p>
+              </div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-qty">Quantity</Label><Input id="sale-edit-qty" data-testid="input-nursery-edit-quantity" type="number" min="1" max="10000000" step="1" inputMode="numeric" value={saleEdit.quantity} onChange={e => setSaleEdit(s => ({ ...s, quantity: e.target.value }))} required /></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-price">Unit price (KES)</Label><Input id="sale-edit-price" data-testid="input-nursery-edit-price" type="number" min="0" max="1000000" step="0.01" inputMode="decimal" value={saleEdit.unitPrice} onChange={e => setSaleEdit(s => ({ ...s, unitPrice: e.target.value }))} required /></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-payment">Payment method</Label><select id="sale-edit-payment" data-testid="select-nursery-edit-payment" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.paymentMethod} onChange={e => setSaleEdit(s => ({ ...s, paymentMethod: e.target.value as "cash" | "mpesa" | "credit" }))}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="credit">Credit</option></select></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-customer">Customer name</Label><Input id="sale-edit-customer" data-testid="input-nursery-edit-customer" value={saleEdit.customerName} onChange={e => setSaleEdit(s => ({ ...s, customerName: e.target.value }))} maxLength={120} placeholder="Walk-in customer if blank" /></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-phone">Customer phone</Label><Input id="sale-edit-phone" data-testid="input-nursery-edit-phone" type="tel" value={saleEdit.customerPhone} onChange={e => setSaleEdit(s => ({ ...s, customerPhone: e.target.value }))} maxLength={40} /></div>
             </div>
-            {saleEdit.paymentMethod === "credit" && <p className="mt-3 rounded-xl bg-violet-500/10 px-3 py-2.5 text-sm text-violet-800 dark:text-violet-200">Credit entries require a customer and positive price. Sales with payments already recorded must be reconciled in Debts before editing or deleting.</p>}
-            <div className="mt-4 flex flex-col-reverse gap-2 border-t border-border/70 pt-4 sm:flex-row sm:justify-end"><Button type="button" variant="outline" onClick={() => setEditingSaleId(null)}>Cancel</Button><Button type="submit" disabled={busySaleId === editingSaleId} className="gap-2"><Save className="h-4 w-4" /> Save changes</Button></div>
+            {saleEdit.paymentMethod === "credit" && <p data-testid="status-nursery-edit-credit" className="mt-3 rounded-xl bg-primary/10 px-3 py-2.5 text-sm text-primary">Credit entries require a customer and positive price. Sales with payments already recorded must be reconciled in Debts before editing or deleting.</p>}
+              <div className="mt-4 flex flex-col-reverse gap-2 border-t border-border/70 pt-4 sm:flex-row sm:justify-end"><Button data-testid="button-cancel-nursery-edit" type="button" variant="outline" onClick={() => { setEditingSaleId(null); setSaleEditSelectedVariety(null); }}>Cancel</Button><Button data-testid="button-save-nursery-edit" type="submit" disabled={busySaleId === editingSaleId} className="gap-2"><Save className="h-4 w-4" /> Save changes</Button></div>
           </form>}
           {individualEntriesQuery.isLoading ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{[0,1,2].map(item => <div key={item} className="h-36 animate-pulse rounded-2xl border bg-muted/40" />)}</div>
             : individualEntriesQuery.isError ? <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center"><p className="font-medium text-destructive">Could not load individual sales</p><p className="mt-1 text-sm text-muted-foreground">Check your connection and try refreshing.</p><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void individualEntriesQuery.refetch()}><RefreshCw className="mr-2 h-4 w-4" /> Try again</Button></div>

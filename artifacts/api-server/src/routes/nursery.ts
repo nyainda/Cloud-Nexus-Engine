@@ -388,7 +388,12 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   const prior = await c.env.DB.prepare(
     "SELECT id, debt_id AS debtId FROM nursery_entry_requests WHERE id = ? AND shop_id = ?"
   ).bind(requestId, shopId).first<{ id: string; debtId: string | null }>();
-  if (prior) return c.json({ ok: true, requestId, debtId: prior.debtId, duplicate: true });
+  if (prior) {
+    const existingEntry = await c.env.DB.prepare(
+      "SELECT id, created_at AS createdAt FROM nursery_sale_entries WHERE shop_id = ? AND request_id = ?"
+    ).bind(shopId, requestId).first<{ id: string; createdAt: string }>();
+    return c.json({ ok: true, id: existingEntry?.id ?? null, requestId, debtId: prior.debtId, createdAt: existingEntry?.createdAt ?? null, duplicate: true });
+  }
 
   const variety = await c.env.DB.prepare(
     "SELECT id, name FROM nursery_varieties WHERE id = ? AND shop_id = ? AND is_active = 1"
@@ -399,6 +404,7 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   const totalCents = quantity * unitPriceCents;
   const totalAmount = totalCents / 100;
   const now = new Date().toISOString();
+  const entryId = crypto.randomUUID();
   const debtId = paymentMethod === "credit" ? crypto.randomUUID() : null;
   const customerKey = customerName.toLocaleLowerCase().replace(/\s+/g, " ");
   const statements = [
@@ -457,7 +463,7 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
       (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at)
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
      WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)`
-  ).bind(crypto.randomUUID(), requestId, shopId, businessDate, variety.id, variety.name,
+  ).bind(entryId, requestId, shopId, businessDate, variety.id, variety.name,
     customerName, customerPhone, quantity, unitPriceCents, totalCents, paymentMethod, debtId, now, requestId, shopId));
 
   statements.push(c.env.DB.prepare(
@@ -467,7 +473,7 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   const saved = await c.env.DB.prepare(
     "SELECT debt_id AS debtId FROM nursery_entry_requests WHERE id = ? AND shop_id = ?"
   ).bind(requestId, shopId).first<{ debtId: string | null }>();
-  return c.json({ ok: true, requestId, debtId: saved?.debtId ?? null });
+  return c.json({ ok: true, id: entryId, requestId, businessDate, varietyId: variety.id, varietyName: variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents: totalCents, paymentMethod, debtId: saved?.debtId ?? null, createdAt: now });
 });
 
 
@@ -480,22 +486,31 @@ function adjustNurseryAggregateStatements(
 ) {
   const quantity = sale.quantity * direction;
   const total = sale.totalAmountCents * direction;
-  const statements = [
-    db.prepare(
-      "UPDATE nursery_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ?"
-    ).bind(quantity, total, now, shopId, sale.businessDate, sale.varietyId, sale.unitPriceCents, sale.paymentMethod),
-    db.prepare(
-      "DELETE FROM nursery_daily_sales WHERE shop_id = ? AND business_date = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity <= 0"
-    ).bind(shopId, sale.businessDate, sale.varietyId, sale.unitPriceCents, sale.paymentMethod),
-  ];
+  const statements = [];
+  if (direction < 0) {
+    // Remove a one-entry aggregate before decrementing it; the table requires
+    // quantity > 0, so updating it to zero would fail before a later DELETE.
+    statements.push(db.prepare(
+      "DELETE FROM nursery_daily_sales WHERE shop_id = ? AND business_date = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity = ?"
+    ).bind(shopId, sale.businessDate, sale.varietyId, sale.unitPriceCents, sale.paymentMethod, sale.quantity));
+  }
+  statements.push(db.prepare(
+    direction < 0
+      ? "UPDATE nursery_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity > ?"
+      : "UPDATE nursery_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ?"
+  ).bind(quantity, total, now, shopId, sale.businessDate, sale.varietyId, sale.unitPriceCents, sale.paymentMethod, ...(direction < 0 ? [sale.quantity] : [])));
   const customerKey = sale.customerName.trim().toLocaleLowerCase().replace(/\s+/g, " ");
   if (customerKey) {
+    if (direction < 0) {
+      statements.push(db.prepare(
+        "DELETE FROM nursery_customer_daily_sales WHERE shop_id = ? AND business_date = ? AND customer_key = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity = ?"
+      ).bind(shopId, sale.businessDate, customerKey, sale.varietyId, sale.unitPriceCents, sale.paymentMethod, sale.quantity));
+    }
     statements.push(db.prepare(
-      "UPDATE nursery_customer_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND customer_key = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ?"
-    ).bind(quantity, total, now, shopId, sale.businessDate, customerKey, sale.varietyId, sale.unitPriceCents, sale.paymentMethod));
-    statements.push(db.prepare(
-      "DELETE FROM nursery_customer_daily_sales WHERE shop_id = ? AND business_date = ? AND customer_key = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity <= 0"
-    ).bind(shopId, sale.businessDate, customerKey, sale.varietyId, sale.unitPriceCents, sale.paymentMethod));
+      direction < 0
+        ? "UPDATE nursery_customer_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND customer_key = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ? AND quantity > ?"
+        : "UPDATE nursery_customer_daily_sales SET quantity = quantity + ?, total_amount_cents = total_amount_cents + ?, updated_at = ? WHERE shop_id = ? AND business_date = ? AND customer_key = ? AND variety_id = ? AND unit_price_cents = ? AND payment_method = ?"
+    ).bind(quantity, total, now, shopId, sale.businessDate, customerKey, sale.varietyId, sale.unitPriceCents, sale.paymentMethod, ...(direction < 0 ? [sale.quantity] : [])));
   }
   return statements;
 }
@@ -538,6 +553,9 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   if (old.debtId) {
     oldDebt = await c.env.DB.prepare("SELECT amount_paid, total_amount FROM debts WHERE id = ? AND shop_id = ?")
       .bind(old.debtId, shopId).first<{ amount_paid: number; total_amount: number }>();
+    if (!oldDebt && paymentMethod === "credit") {
+      return c.json({ error: "The linked customer debt could not be found. Refresh the debt records before editing this credit sale." }, 409);
+    }
     if (oldDebt && Number(oldDebt.amount_paid) > 0) {
       return c.json({ error: "This credit sale already has a payment recorded. Reconcile the customer debt before editing this sale." }, 409);
     }
@@ -546,6 +564,7 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   const unitPriceCents = Math.round(unitPrice * 100);
   const totalAmountCents = quantity * unitPriceCents;
   const now = new Date().toISOString();
+  let linkedDebtId = paymentMethod === "credit" ? old.debtId : null;
   const oldAggregate = {
     businessDate: old.businessDate, varietyId: old.varietyId, unitPriceCents: old.unitPriceCents,
     paymentMethod: old.paymentMethod, quantity: old.quantity, totalAmountCents: old.totalAmountCents,
@@ -558,7 +577,7 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
     ).bind(crypto.randomUUID(), shopId, businessDate, variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents, now, now),
     c.env.DB.prepare(
       "INSERT INTO nursery_sale_entries (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, request_id) DO UPDATE SET business_date = excluded.business_date, variety_id = excluded.variety_id, variety_name = excluded.variety_name, customer_name = excluded.customer_name, customer_phone = excluded.customer_phone, quantity = excluded.quantity, unit_price_cents = excluded.unit_price_cents, total_amount_cents = excluded.total_amount_cents, payment_method = excluded.payment_method, debt_id = excluded.debt_id"
-    ).bind(old.id, old.requestId, shopId, businessDate, variety.id, variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, paymentMethod === "credit" ? old.debtId : null, old.createdAt ?? now),
+     ).bind(old.id, old.requestId, shopId, businessDate, variety.id, variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, linkedDebtId, old.createdAt ?? now),
   ];
 
   if (old.debtId && paymentMethod !== "credit") {
@@ -570,13 +589,13 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
       "UPDATE debts SET customer_name = ?, customer_phone = ?, total_amount = ?, balance = ?, status = CASE WHEN ? = 0 THEN 'unpaid' ELSE 'partial' END, items_json = ?, notes = 'Nursery register credit sale' WHERE id = ? AND shop_id = ? AND amount_paid = 0"
     ).bind(customerName, customerPhone, totalAmountCents / 100, totalAmountCents / 100, 0, itemsJson, old.debtId, shopId));
   } else if (paymentMethod === "credit" && !old.debtId) {
-    const debtId = crypto.randomUUID();
+    linkedDebtId = crypto.randomUUID();
     const itemsJson = JSON.stringify([{ productName: "Nursery seedlings — " + variety.name, qty: quantity, unitPrice, totalPrice: totalAmountCents / 100 }]);
     statements.push(c.env.DB.prepare(
       "INSERT INTO debts (id, shop_id, sale_id, customer_name, customer_phone, total_amount, amount_paid, balance, status, notes, items_json, paid_at, created_at) VALUES (?, ?, NULL, ?, ?, ?, 0, ?, 'unpaid', 'Nursery register credit sale', ?, NULL, ?)"
-    ).bind(debtId, shopId, customerName, customerPhone, totalAmountCents / 100, totalAmountCents / 100, itemsJson, now));
-    statements.push(c.env.DB.prepare("UPDATE nursery_sale_entries SET debt_id = ? WHERE id = ? AND shop_id = ?").bind(debtId, id, shopId));
-    statements.push(c.env.DB.prepare("UPDATE nursery_entry_requests SET debt_id = ? WHERE id = ? AND shop_id = ?").bind(debtId, old.requestId, shopId));
+    ).bind(linkedDebtId, shopId, customerName, customerPhone, totalAmountCents / 100, totalAmountCents / 100, itemsJson, now));
+    statements.push(c.env.DB.prepare("UPDATE nursery_sale_entries SET debt_id = ? WHERE id = ? AND shop_id = ?").bind(linkedDebtId, id, shopId));
+    statements.push(c.env.DB.prepare("UPDATE nursery_entry_requests SET debt_id = ? WHERE id = ? AND shop_id = ?").bind(linkedDebtId, old.requestId, shopId));
   }
 
   if (customerName) {
@@ -590,7 +609,7 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   }
 
   await c.env.DB.batch(statements);
-  return c.json({ ok: true, id, businessDate, varietyId: variety.id, varietyName: variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, debtId: paymentMethod === "credit" ? old.debtId : null, createdAt: now });
+  return c.json({ ok: true, id, businessDate, varietyId: variety.id, varietyName: variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, debtId: linkedDebtId, createdAt: old.createdAt });
 });
 
 nurseryRouter.delete("/nursery/entries/:id", requireAuth, async (c) => {
