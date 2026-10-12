@@ -87,6 +87,7 @@ export default function NurseryRegister() {
   const [saleEdit, setSaleEdit] = useState({ businessDate: "", varietyId: "", quantity: "", unitPrice: "", paymentMethod: "cash" as "cash" | "mpesa" | "credit", customerName: "", customerPhone: "" });
   const [saleEditSearch, setSaleEditSearch] = useState("");
   const [busySaleId, setBusySaleId] = useState<string | null>(null);
+  const [catalogueExpanded, setCatalogueExpanded] = useState(false);
   const [catalogueSearch, setCatalogueSearch] = useState("");
   const [catalogueStatus, setCatalogueStatus] = useState<"active" | "archived" | "all">("active");
   const [catalogueCategory, setCatalogueCategory] = useState("");
@@ -151,6 +152,8 @@ export default function NurseryRegister() {
   const catalogueRows = catalogueQuery.data?.rows ?? [];
   const catalogueTotal = catalogueQuery.data?.total ?? 0;
   const cataloguePageCount = Math.max(1, Math.ceil(catalogueTotal / 30));
+  const catalogueStart = catalogueTotal === 0 ? 0 : (cataloguePage - 1) * 30 + 1;
+  const catalogueEnd = Math.min(cataloguePage * 30, catalogueTotal);
   const catalogueCategories = catalogueQuery.data?.categories ?? [];
   const saleCategories = saleVarietiesQuery.data?.categories ?? [];
   const cartTotal = cart.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unitPrice) || 0), 0);
@@ -499,9 +502,9 @@ export default function NurseryRegister() {
 
       <TabsContent value="catalogue" className="mt-5 space-y-4 focus-visible:outline-none">
         <Card>
-          <CardHeader className="rounded-t-xl border-b border-sky-500/15 bg-gradient-to-r from-sky-500/10 via-sky-500/5 to-transparent pb-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-sky-600 p-2.5 text-white shadow-sm"><Sprout className="h-5 w-5" /></div><div className="min-w-0 flex-1"><CardTitle className="text-lg">Seedling catalogue</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Set up varieties and their usual selling prices.</p></div><span className="rounded-full border border-sky-600/20 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300">{(varietiesQuery.data ?? []).filter(v => Boolean(v.isActive)).length} active</span></div></CardHeader>
+          <CardHeader className="rounded-t-xl border-b border-sky-500/15 bg-gradient-to-r from-sky-500/10 via-sky-500/5 to-transparent pb-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-sky-600 p-2.5 text-white shadow-sm"><Sprout className="h-5 w-5" /></div><div className="min-w-0 flex-1"><CardTitle className="text-lg">Seedling catalogue</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Set up varieties and their usual selling prices.</p></div><span className="rounded-full border border-sky-600/20 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300">{catalogueTotal.toLocaleString()} {catalogueStatus === "active" ? "active" : catalogueStatus === "archived" ? "archived" : "total"}</span></div></CardHeader>
           <CardContent className="space-y-3 pt-4">
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-3"><div className="min-w-0"><p className="text-sm font-semibold">{(varietiesQuery.data ?? []).filter(v => Boolean(v.isActive)).length} active varieties</p><p className="text-xs text-muted-foreground">Manage names and default prices only when needed.</p></div><Button type="button" variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setCatalogueExpanded(value => !value)}>{catalogueExpanded ? "Hide catalogue" : "Manage catalogue"} <ChevronDown className={`h-4 w-4 transition-transform ${catalogueExpanded ? "rotate-180" : ""}`} /></Button></div>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-3"><div className="min-w-0"><p className="text-sm font-semibold">{catalogueTotal.toLocaleString()} {catalogueStatus === "active" ? "active" : catalogueStatus === "archived" ? "archived" : "total"} varieties</p><p className="text-xs text-muted-foreground">Manage names and default prices only when needed.</p></div><Button type="button" variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setCatalogueExpanded(value => !value)}>{catalogueExpanded ? "Hide catalogue" : "Manage catalogue"} <ChevronDown className={`h-4 w-4 transition-transform ${catalogueExpanded ? "rotate-180" : ""}`} /></Button></div>
             {catalogueExpanded && <>
             <form onSubmit={createVariety} className="rounded-xl border border-dashed border-sky-600/30 bg-sky-500/[0.04] p-3"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Plus className="h-4 w-4 text-sky-600" /> Add a seedling variety</div><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_130px_auto]">
               <div className="space-y-1"><Label htmlFor="new-name">Variety name</Label><Input id="new-name" placeholder="e.g. Cabbage" value={newName} onChange={e => setNewName(e.target.value)} maxLength={80} required /></div>
@@ -513,26 +516,28 @@ export default function NurseryRegister() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <div className="relative min-w-0 flex-1">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input value={catalogueSearch} onChange={e => { setCatalogueSearch(e.target.value); setCatalogueLimit(12); }} placeholder="Find a seedling variety…" aria-label="Search seedling catalogue" className="h-10 bg-background pl-9" />
+                    <Input value={catalogueSearch} onChange={e => { setCatalogueSearch(e.target.value); setCataloguePage(1); }} placeholder="Find a seedling variety…" aria-label="Search seedling catalogue" className="h-10 bg-background pl-9" />
                   </div>
                   <div className="relative sm:w-44">
                     <SlidersHorizontal className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <select aria-label="Filter seedling varieties" value={catalogueStatus} onChange={e => { setCatalogueStatus(e.target.value as typeof catalogueStatus); setCatalogueLimit(12); }} className="h-10 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+                    <select aria-label="Filter seedling varieties" value={catalogueStatus} onChange={e => { setCatalogueStatus(e.target.value as typeof catalogueStatus); setCataloguePage(1); }} className="h-10 w-full appearance-none rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
                       <option value="active">Active varieties</option><option value="archived">Archived varieties</option><option value="all">All varieties</option>
                     </select>
                     <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <p>Showing <span className="font-semibold text-foreground">{Math.min(catalogueLimit, filteredCatalogue.length)}</span> of <span className="font-semibold text-foreground">{filteredCatalogue.length}</span> {catalogueStatus === "all" ? "varieties" : catalogueStatus + " varieties"}</p>
-                  {(catalogueSearch || catalogueStatus !== "active") && <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setCatalogueSearch(""); setCatalogueStatus("active"); setCatalogueLimit(12); }}>Reset filters</Button>}
+                  <p>Showing <span className="font-semibold text-foreground">{catalogueStart}–{catalogueEnd}</span> of <span className="font-semibold text-foreground">{catalogueTotal}</span> {catalogueStatus === "all" ? "varieties" : catalogueStatus + " varieties"}</p>
+                  {(catalogueSearch || catalogueStatus !== "active") && <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setCatalogueSearch(""); setCatalogueStatus("active"); setCataloguePage(1); }}>Reset filters</Button>}
                 </div>
               </div>
-              {(varietiesQuery.data ?? []).length === 0 && <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">Add cabbage, spinach or any seedling varieties sold by this shop.</p>}
-              {(varietiesQuery.data ?? []).length > 0 && filteredCatalogue.length === 0 && <div className="rounded-xl border border-dashed p-6 text-center"><Sprout className="mx-auto h-6 w-6 text-muted-foreground/60" /><p className="mt-2 text-sm font-medium">No varieties match this view</p><p className="mt-1 text-xs text-muted-foreground">Try another search or switch the status filter.</p></div>}
+              {catalogueQuery.isLoading && <p className="py-6 text-center text-sm text-muted-foreground">Loading seedling varieties…</p>}
+              {catalogueQuery.isError && <div role="alert" className="rounded-xl border border-destructive/20 bg-destructive/5 p-6 text-center text-sm"><p className="font-medium text-destructive">Could not load seedling varieties.</p><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void catalogueQuery.refetch()}><RefreshCw className="mr-2 h-4 w-4" /> Try again</Button></div>}
+              {catalogueQuery.isSuccess && catalogueTotal === 0 && !catalogueSearch && catalogueStatus === "active" && <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">Add cabbage, spinach or any seedling varieties sold by this shop.</p>}
+              {catalogueQuery.isSuccess && catalogueTotal === 0 && (catalogueSearch || catalogueStatus !== "active") && <div className="rounded-xl border border-dashed p-6 text-center"><Sprout className="mx-auto h-6 w-6 text-muted-foreground/60" /><p className="mt-2 text-sm font-medium">No varieties match this view</p><p className="mt-1 text-xs text-muted-foreground">Try another search or switch the status filter.</p></div>}
               <div className="max-h-[min(55vh,520px)] overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-muted/10 p-2">
               <div className="grid gap-2 sm:grid-cols-2">
-              {visibleCatalogue.map(v => <div key={v.id} className="group rounded-xl border border-border bg-card p-3 transition-colors hover:border-sky-600/30 hover:bg-sky-500/[0.03]">
+              {catalogueRows.map(v => <div key={v.id} className="group rounded-xl border border-border bg-card p-3 transition-colors hover:border-sky-600/30 hover:bg-sky-500/[0.03]">
                 {editingVarietyId === v.id ? (
                   <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px_auto]">
                     <div className="space-y-1"><Label htmlFor={`edit-name-${v.id}`}>Variety name</Label><Input id={`edit-name-${v.id}`} value={editingName} onChange={e => setEditingName(e.target.value)} maxLength={80} autoFocus /></div>
@@ -552,7 +557,7 @@ export default function NurseryRegister() {
               </div>)}
               </div>
               </div>
-              {filteredCatalogue.length > catalogueLimit && <Button type="button" variant="outline" className="w-full gap-2" onClick={() => setCatalogueLimit(limit => limit + 12)}>Show {Math.min(12, filteredCatalogue.length - catalogueLimit)} more varieties <ChevronDown className="h-4 w-4" /></Button>}
+              {cataloguePageCount > 1 && <div className="flex items-center justify-between gap-3"><Button type="button" variant="outline" size="sm" disabled={cataloguePage <= 1 || catalogueQuery.isFetching} onClick={() => setCataloguePage(page => Math.max(1, page - 1))}>Previous</Button><span className="text-xs text-muted-foreground">Page {cataloguePage} of {cataloguePageCount}</span><Button type="button" variant="outline" size="sm" disabled={cataloguePage >= cataloguePageCount || catalogueQuery.isFetching} onClick={() => setCataloguePage(page => Math.min(cataloguePageCount, page + 1))}>Next</Button></div>}
             </div>
             </>}
           </CardContent>
@@ -659,7 +664,7 @@ export default function NurseryRegister() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div className="space-y-1.5"><Label htmlFor="sale-edit-date">Sale date</Label><Input id="sale-edit-date" type="date" value={saleEdit.businessDate} onChange={e => setSaleEdit(s => ({ ...s, businessDate: e.target.value }))} required /></div>
-              <div className="space-y-1.5"><Label htmlFor="sale-edit-variety">Seedling variety</Label><select id="sale-edit-variety" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.varietyId} onChange={e => setSaleEdit(s => ({ ...s, varietyId: e.target.value }))} required>{(varietiesQuery.data ?? []).map(v => <option key={v.id} value={v.id}>{v.name}{Boolean(v.isActive) ? "" : " (archived)"}</option>)}</select></div>
+              <div className="space-y-1.5"><Label htmlFor="sale-edit-variety">Seedling variety</Label><select id="sale-edit-variety" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.varietyId} onChange={e => setSaleEdit(s => ({ ...s, varietyId: e.target.value }))} required>{(saleEditVarietiesQuery.data?.rows ?? []).map(v => <option key={v.id} value={v.id}>{v.name}{Boolean(v.isActive) ? "" : " (archived)"}</option>)}</select></div>
               <div className="space-y-1.5"><Label htmlFor="sale-edit-qty">Quantity</Label><Input id="sale-edit-qty" type="number" min="1" step="1" value={saleEdit.quantity} onChange={e => setSaleEdit(s => ({ ...s, quantity: e.target.value }))} required /></div>
               <div className="space-y-1.5"><Label htmlFor="sale-edit-price">Unit price (KES)</Label><Input id="sale-edit-price" type="number" min="0" step="0.01" value={saleEdit.unitPrice} onChange={e => setSaleEdit(s => ({ ...s, unitPrice: e.target.value }))} required /></div>
               <div className="space-y-1.5"><Label htmlFor="sale-edit-payment">Payment method</Label><select id="sale-edit-payment" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={saleEdit.paymentMethod} onChange={e => setSaleEdit(s => ({ ...s, paymentMethod: e.target.value as "cash" | "mpesa" | "credit" }))}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="credit">Credit</option></select></div>
