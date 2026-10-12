@@ -15,8 +15,8 @@ import { toast } from "sonner";
 type Variety = { id: string; name: string; category: string; defaultPrice: number; isActive: number | boolean };
 type VarietyListData = { rows: Variety[]; total: number; page: number; pageSize: number; categories: string[] };
 type ReportRow = {
-  businessDate: string; varietyId: string; varietyName: string; unitPriceCents: number;
-  paymentMethod: "cash" | "mpesa" | "credit"; quantity: number; totalAmountCents: number;
+  varietyId: string; varietyName: string; quantity: number; totalAmountCents: number;
+  cashCents: number; mpesaCents: number; creditCents: number;
 };
 type ReportData = {
   rows: ReportRow[];
@@ -734,21 +734,46 @@ export default function NurseryRegister() {
         </CardHeader>
         <CardContent>
           {reportQuery.isLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading report…</p> : reportQuery.isError ? <p className="py-8 text-center text-sm text-destructive">Could not load report. Check your connection and try refreshing.</p> : reportRows.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No seedling sales found for this date range.</p> : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[680px] text-left text-sm">
-                <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Date</th><th className="px-3 py-3">Variety</th><th className="px-3 py-3 text-right">Qty</th><th className="px-3 py-3 text-right">Unit price</th><th className="px-3 py-3">Payment</th><th className="px-3 py-3 text-right">Total</th></tr></thead>
-                <tbody>{reportRows.map((row, index) => <tr key={`${row.businessDate}-${row.varietyId}-${row.unitPriceCents}-${row.paymentMethod}-${index}`} className="border-b border-border/60 last:border-0 hover:bg-muted/30"><td className="whitespace-nowrap px-3 py-3">{row.businessDate}</td><td className="px-3 py-3 font-medium">{row.varietyName}</td><td className="px-3 py-3 text-right tabular-nums">{Number(row.quantity).toLocaleString()}</td><td className="px-3 py-3 text-right tabular-nums">{formatKES(cents(row.unitPriceCents))}</td><td className="px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${row.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : row.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300"}`}>{row.paymentMethod === "mpesa" ? "M-Pesa" : row.paymentMethod === "credit" ? "Credit" : "Cash"}</span></td><td className="px-3 py-3 text-right font-semibold tabular-nums">{formatKES(cents(row.totalAmountCents))}</td></tr>)}</tbody>
-              </table>
-            </div>
+            <>
+              {report?.summary && (
+                <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <p className="text-xs text-muted-foreground">Plants sold in this period</p>
+                    <p className="mt-1 text-xl font-bold tabular-nums">{Number(report.summary.totalSeedlings).toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <p className="text-xs text-muted-foreground">Sales value in this period</p>
+                    <p className="mt-1 text-xl font-bold tabular-nums">{formatKES(cents(Number(report.summary.totalRevenueCents)))}</p>
+                  </div>
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[680px] text-left text-sm">
+                  <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Variety</th><th className="px-3 py-3 text-right">Plants sold</th><th className="px-3 py-3 text-right">Sales value</th><th className="px-3 py-3">Payment mix</th></tr></thead>
+                  <tbody>{reportRows.map(row => <tr key={row.varietyId} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                    <td className="px-3 py-3 font-medium">{row.varietyName}</td>
+                    <td className="px-3 py-3 text-right font-semibold tabular-nums">{Number(row.quantity).toLocaleString()}</td>
+                    <td className="px-3 py-3 text-right font-semibold tabular-nums">{formatKES(cents(Number(row.totalAmountCents)))}</td>
+                    <td className="px-3 py-3 text-xs text-muted-foreground">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1">
+                        <span>Cash {formatKES(cents(Number(row.cashCents)))}</span>
+                        <span>M-Pesa {formatKES(cents(Number(row.mpesaCents)))}</span>
+                        <span>Credit {formatKES(cents(Number(row.creditCents)))}</span>
+                      </div>
+                    </td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
+            </>
           )}
           {reportTotal > 0 && <div className="mt-4 flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-muted-foreground">Showing {((reportPage - 1) * reportPageSize + 1).toLocaleString()}–{Math.min(reportPage * reportPageSize, reportTotal).toLocaleString()} of {reportTotal.toLocaleString()} report rows · Page {reportPage} of {reportPageCount}</p>
+            <p className="text-xs text-muted-foreground">Showing varieties {((reportPage - 1) * reportPageSize + 1).toLocaleString()}–{Math.min(reportPage * reportPageSize, reportTotal).toLocaleString()} of {reportTotal.toLocaleString()} · Page {reportPage} of {reportPageCount}</p>
             <div className="flex items-center gap-2">
               <Button type="button" size="sm" variant="outline" disabled={reportPage <= 1 || reportQuery.isFetching} onClick={() => setReportPage(page => Math.max(1, page - 1))}>Previous</Button>
               <Button type="button" size="sm" variant="outline" disabled={reportPage >= reportPageCount || reportQuery.isFetching} onClick={() => setReportPage(page => Math.min(reportPageCount, page + 1))}>Next</Button>
             </div>
           </div>}
-          <p className="mt-3 text-xs text-muted-foreground">Report rows are aggregated and paginated in D1; the summary totals still cover the full selected date range. Named customer purchases are also summarized by customer and variety; credit sales create a linked customer debt.</p>
+          <p className="mt-3 text-xs text-muted-foreground">Each variety is totaled once across the selected date range, including its payment mix. Individual sale dates remain available in Sales history. Credit sales create a linked customer debt.</p>
         </CardContent>
       </Card>
       </TabsContent>

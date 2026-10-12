@@ -91,7 +91,8 @@ nurseryRouter.get("/nursery/monthly-summary", requireAuth, async (c) => {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     return c.json({ error: "Choose a valid month." }, 400);
   }
-  const [year, monthNumber] = month.split("-").map(Number);
+  const year = Number(month.slice(0, 4));
+  const monthNumber = Number(month.slice(5, 7));
   const from = `${month}-01`;
   const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
   const to = `${month}-${String(lastDay).padStart(2, "0")}`;
@@ -615,25 +616,24 @@ nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
   const page = Math.max(1, Math.floor(Number(c.req.query("page") ?? 1) || 1));
   const pageSize = Math.min(50, Math.max(1, Math.floor(Number(c.req.query("pageSize") ?? 20) || 20)));
   const offset = (page - 1) * pageSize;
-  // Aggregate and paginate in D1 so long date ranges do not return every report row.
+   // Aggregate and paginate in D1 so each variety appears once across the selected range.
   const rows = await c.env.DB.prepare(
-    `SELECT s.business_date AS businessDate, s.variety_id AS varietyId, v.name AS varietyName,
-      s.unit_price_cents AS unitPriceCents, s.payment_method AS paymentMethod,
-      SUM(s.quantity) AS quantity, SUM(s.total_amount_cents) AS totalAmountCents
+     `SELECT s.variety_id AS varietyId, v.name AS varietyName,
+       SUM(s.quantity) AS quantity, SUM(s.total_amount_cents) AS totalAmountCents,
+       SUM(CASE WHEN s.payment_method = 'cash' THEN s.total_amount_cents ELSE 0 END) AS cashCents,
+       SUM(CASE WHEN s.payment_method = 'mpesa' THEN s.total_amount_cents ELSE 0 END) AS mpesaCents,
+       SUM(CASE WHEN s.payment_method = 'credit' THEN s.total_amount_cents ELSE 0 END) AS creditCents
      FROM nursery_daily_sales s
      JOIN nursery_varieties v ON v.id = s.variety_id AND v.shop_id = s.shop_id
      WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?
-     GROUP BY s.business_date, s.variety_id, v.name, s.unit_price_cents, s.payment_method
-     ORDER BY s.business_date DESC, v.name COLLATE NOCASE, s.payment_method
+      GROUP BY s.variety_id, v.name
+      ORDER BY quantity DESC, v.name COLLATE NOCASE
      LIMIT ? OFFSET ?`
   ).bind(shopId, from, to, pageSize, offset).all();
   const count = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS total FROM (
-       SELECT s.business_date, s.variety_id, s.unit_price_cents, s.payment_method
-       FROM nursery_daily_sales s
-       WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?
-       GROUP BY s.business_date, s.variety_id, s.unit_price_cents, s.payment_method
-     )`
+     `SELECT COUNT(DISTINCT variety_id) AS total
+      FROM nursery_daily_sales
+      WHERE shop_id = ? AND business_date >= ? AND business_date <= ?`
   ).bind(shopId, from, to).first<{ total: number }>();
   const summary = await c.env.DB.prepare(
     `SELECT COALESCE(SUM(quantity), 0) AS totalSeedlings,
