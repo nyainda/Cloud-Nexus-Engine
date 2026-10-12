@@ -15,8 +15,8 @@ import { toast } from "sonner";
 type Variety = { id: string; name: string; category: string; defaultPrice: number; isActive: number | boolean };
 type VarietyListData = { rows: Variety[]; total: number; page: number; pageSize: number; categories: string[] };
 type ReportRow = {
-  varietyId: string; varietyName: string; quantity: number; totalAmountCents: number;
-  cashCents: number; mpesaCents: number; creditCents: number;
+  varietyKey?: string; varietyId?: string; varietyName: string; quantity: number; totalAmountCents: number;
+  cashCents?: number | string | null; mpesaCents?: number | string | null; creditCents?: number | string | null;
 };
 type ReportData = {
   rows: ReportRow[];
@@ -42,7 +42,10 @@ function addDays(date: string, amount: number) {
   parsed.setDate(parsed.getDate() + amount);
   return localDate(parsed);
 }
-function cents(value: number) { return value / 100; }
+function cents(value: unknown) {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount / 100 : 0;
+}
 type CustomerInsightRow = { customerKey: string; customerName: string; customerPhone: string; varietyName: string; quantity: number; totalAmountCents: number; lastPurchase: string };
 type IndividualSaleEntry = { id: string; requestId: string; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
 
@@ -781,7 +784,7 @@ export default function NurseryRegister() {
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[680px] text-left text-sm">
                   <thead><tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Variety</th><th className="px-3 py-3 text-right">Plants sold</th><th className="px-3 py-3 text-right">Sales value</th><th className="px-3 py-3">Payment mix</th></tr></thead>
-                  <tbody>{reportRows.map(row => <tr key={row.varietyId} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                  <tbody>{reportRows.map((row, index) => <tr key={row.varietyKey ?? `${row.varietyId ?? row.varietyName.trim().toLowerCase()}-${index}`} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
                     <td className="px-3 py-3 font-medium">{row.varietyName}</td>
                     <td className="px-3 py-3 text-right font-semibold tabular-nums">{Number(row.quantity).toLocaleString()}</td>
                     <td className="px-3 py-3 text-right font-semibold tabular-nums">{formatKES(cents(Number(row.totalAmountCents)))}</td>

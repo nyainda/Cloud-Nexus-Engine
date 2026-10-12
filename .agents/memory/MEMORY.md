@@ -6,3 +6,4 @@
 - [D1 schema bootstrap across isolates](d1-schema-bootstrap.md) — persistent migration markers are required; module-level Worker flags do not span cold isolates
 - [Debt sale reconciliation](debt-sale-reconciliation.md) — historical debt sales may lack customer rows; repair only with an explicitly confirmed customer name
 - [Quotation invoices](quotation-invoices.md) — issued invoices preserve the accepted quote and do not themselves record payment or stock movement
+- [Cloudflare Worker deploy runtime](cloudflare-deploy-runtime.md) — Wrangler v4 requires Node 22; check the active shell runtime, not pnpm's engine warning, before deploying

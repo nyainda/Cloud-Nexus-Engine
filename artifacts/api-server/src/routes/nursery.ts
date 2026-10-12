@@ -632,24 +632,26 @@ nurseryRouter.get("/nursery/report", requireAuth, async (c) => {
   const page = Math.max(1, Math.floor(Number(c.req.query("page") ?? 1) || 1));
   const pageSize = Math.min(50, Math.max(1, Math.floor(Number(c.req.query("pageSize") ?? 20) || 20)));
   const offset = (page - 1) * pageSize;
-   // Aggregate and paginate in D1 so each variety appears once across the selected range.
+   // Aggregate by normalized name so duplicate catalogue entries and daily rows roll up together.
   const rows = await c.env.DB.prepare(
-     `SELECT s.variety_id AS varietyId, v.name AS varietyName,
-       SUM(s.quantity) AS quantity, SUM(s.total_amount_cents) AS totalAmountCents,
-       SUM(CASE WHEN s.payment_method = 'cash' THEN s.total_amount_cents ELSE 0 END) AS cashCents,
-       SUM(CASE WHEN s.payment_method = 'mpesa' THEN s.total_amount_cents ELSE 0 END) AS mpesaCents,
-       SUM(CASE WHEN s.payment_method = 'credit' THEN s.total_amount_cents ELSE 0 END) AS creditCents
+      `SELECT LOWER(TRIM(v.name)) AS varietyKey, MIN(TRIM(v.name)) AS varietyName,
+        COALESCE(SUM(s.quantity), 0) AS quantity,
+        COALESCE(SUM(s.total_amount_cents), 0) AS totalAmountCents,
+        COALESCE(SUM(CASE WHEN s.payment_method = 'cash' THEN s.total_amount_cents ELSE 0 END), 0) AS cashCents,
+        COALESCE(SUM(CASE WHEN s.payment_method = 'mpesa' THEN s.total_amount_cents ELSE 0 END), 0) AS mpesaCents,
+        COALESCE(SUM(CASE WHEN s.payment_method = 'credit' THEN s.total_amount_cents ELSE 0 END), 0) AS creditCents
      FROM nursery_daily_sales s
      JOIN nursery_varieties v ON v.id = s.variety_id AND v.shop_id = s.shop_id
      WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?
-      GROUP BY s.variety_id, v.name
-      ORDER BY quantity DESC, v.name COLLATE NOCASE
+       GROUP BY LOWER(TRIM(v.name))
+       ORDER BY quantity DESC, varietyName COLLATE NOCASE
      LIMIT ? OFFSET ?`
   ).bind(shopId, from, to, pageSize, offset).all();
   const count = await c.env.DB.prepare(
-     `SELECT COUNT(DISTINCT variety_id) AS total
-      FROM nursery_daily_sales
-      WHERE shop_id = ? AND business_date >= ? AND business_date <= ?`
+      `SELECT COUNT(DISTINCT LOWER(TRIM(v.name))) AS total
+       FROM nursery_daily_sales s
+       JOIN nursery_varieties v ON v.id = s.variety_id AND v.shop_id = s.shop_id
+       WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?`
   ).bind(shopId, from, to).first<{ total: number }>();
   const summary = await c.env.DB.prepare(
     `SELECT COALESCE(SUM(quantity), 0) AS totalSeedlings,
