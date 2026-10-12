@@ -435,7 +435,29 @@ export default function NurseryRegister() {
                 <table className="w-full min-w-[700px] text-left text-sm">
                   <thead><tr className="border-b border-border bg-muted/20 text-xs uppercase tracking-wide text-muted-foreground"><th className="px-4 py-3">Category</th><th className="px-4 py-3 text-right">Varieties</th><th className="px-4 py-3 text-right">Plants sold</th><th className="px-4 py-3 text-right">Sales value</th><th className="px-4 py-3">Payment mix</th></tr></thead>
                   <tbody>{monthlySummaryQuery.data.categories.map(category => <tr key={category.category} className="border-b border-border/60 last:border-0 hover:bg-muted/20">
-                    <td className="px-4 py-3.5 font-semibold">{category.category}</td>
+                    <td className="px-4 py-3.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold">{category.category}</span>
+                        {category.category.trim().toLowerCase() === "uncategorized" && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1.5 px-2 text-[11px]"
+                            onClick={() => {
+                              setCatalogueStatus("all");
+                              setCatalogueCategory("Uncategorized");
+                              setCatalogueSearch("");
+                              setCataloguePage(1);
+                              setCatalogueExpanded(true);
+                              setActiveTab("catalogue");
+                            }}
+                          >
+                            <Pencil className="h-3 w-3" /> Assign categories
+                          </Button>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3.5 text-right tabular-nums">{Number(category.varietyCount).toLocaleString()}</td>
                     <td className="px-4 py-3.5 text-right font-semibold tabular-nums">{Number(category.seedlingsSold).toLocaleString()}</td>
                     <td className="px-4 py-3.5 text-right font-semibold tabular-nums">{formatKES(cents(Number(category.totalRevenueCents)))}</td>
@@ -504,16 +526,17 @@ export default function NurseryRegister() {
         <Card>
           <CardHeader className="rounded-t-xl border-b border-sky-500/15 bg-gradient-to-r from-sky-500/10 via-sky-500/5 to-transparent pb-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-sky-600 p-2.5 text-white shadow-sm"><Sprout className="h-5 w-5" /></div><div className="min-w-0 flex-1"><CardTitle className="text-lg">Seedling catalogue</CardTitle><p className="mt-1 text-sm font-normal text-muted-foreground">Set up varieties and their usual selling prices.</p></div><span className="rounded-full border border-sky-600/20 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300">{catalogueTotal.toLocaleString()} {catalogueStatus === "active" ? "active" : catalogueStatus === "archived" ? "archived" : "total"}</span></div></CardHeader>
           <CardContent className="space-y-3 pt-4">
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-3"><div className="min-w-0"><p className="text-sm font-semibold">{catalogueTotal.toLocaleString()} {catalogueStatus === "active" ? "active" : catalogueStatus === "archived" ? "archived" : "total"} varieties</p><p className="text-xs text-muted-foreground">Manage names and default prices only when needed.</p></div><Button type="button" variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setCatalogueExpanded(value => !value)}>{catalogueExpanded ? "Hide catalogue" : "Manage catalogue"} <ChevronDown className={`h-4 w-4 transition-transform ${catalogueExpanded ? "rotate-180" : ""}`} /></Button></div>
+             <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-3"><div className="min-w-0"><p className="text-sm font-semibold">{catalogueTotal.toLocaleString()} {catalogueStatus === "active" ? "active" : catalogueStatus === "archived" ? "archived" : "total"} varieties</p><p className="text-xs text-muted-foreground">Manage variety names, categories, and default prices.</p></div><Button type="button" variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setCatalogueExpanded(value => !value)}>{catalogueExpanded ? "Hide catalogue" : "Manage catalogue"} <ChevronDown className={`h-4 w-4 transition-transform ${catalogueExpanded ? "rotate-180" : ""}`} /></Button></div>
             {catalogueExpanded && <>
-            <form onSubmit={createVariety} className="rounded-xl border border-dashed border-sky-600/30 bg-sky-500/[0.04] p-3"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Plus className="h-4 w-4 text-sky-600" /> Add a seedling variety</div><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_130px_auto]">
+             <form onSubmit={createVariety} className="rounded-xl border border-dashed border-sky-600/30 bg-sky-500/[0.04] p-3"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Plus className="h-4 w-4 text-sky-600" /> Add a seedling variety</div><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_130px_auto]">
               <div className="space-y-1"><Label htmlFor="new-name">Variety name</Label><Input id="new-name" placeholder="e.g. Cabbage" value={newName} onChange={e => setNewName(e.target.value)} maxLength={80} required /></div>
+               <div className="space-y-1"><Label htmlFor="new-category">Category</Label><Input id="new-category" placeholder="e.g. Vegetables" value={newCategory} onChange={e => setNewCategory(e.target.value)} maxLength={60} /></div>
               <div className="space-y-1"><Label htmlFor="new-price">Default price (KES)</Label><Input id="new-price" type="number" min="0" step="0.01" value={newPrice} onChange={e => setNewPrice(e.target.value)} required /></div>
               <div className="flex items-end"><Button type="submit" disabled={addingVariety} className="w-full gap-1 bg-sky-600 text-white hover:bg-sky-700"><Plus className="h-4 w-4" /> Add</Button></div>
             </div></form>
             <div className="space-y-3">
               <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <div className="relative min-w-0 flex-1">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input value={catalogueSearch} onChange={e => { setCatalogueSearch(e.target.value); setCataloguePage(1); }} placeholder="Find a seedling variety…" aria-label="Search seedling catalogue" className="h-10 bg-background pl-9" />
@@ -525,10 +548,17 @@ export default function NurseryRegister() {
                     </select>
                     <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   </div>
+                   <div className="relative sm:w-44">
+                     <select aria-label="Filter varieties by category" value={catalogueCategory} onChange={e => { setCatalogueCategory(e.target.value); setCataloguePage(1); }} className="h-10 w-full appearance-none rounded-md border border-input bg-background px-3 pr-9 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+                       <option value="">All categories</option>
+                       {catalogueCategories.map(category => <option key={category} value={category}>{category}</option>)}
+                     </select>
+                     <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <p>Showing <span className="font-semibold text-foreground">{catalogueStart}–{catalogueEnd}</span> of <span className="font-semibold text-foreground">{catalogueTotal}</span> {catalogueStatus === "all" ? "varieties" : catalogueStatus + " varieties"}</p>
-                  {(catalogueSearch || catalogueStatus !== "active") && <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setCatalogueSearch(""); setCatalogueStatus("active"); setCataloguePage(1); }}>Reset filters</Button>}
+                   {(catalogueSearch || catalogueCategory || catalogueStatus !== "active") && <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setCatalogueSearch(""); setCatalogueCategory(""); setCatalogueStatus("active"); setCataloguePage(1); }}>Reset filters</Button>}
                 </div>
               </div>
               {catalogueQuery.isLoading && <p className="py-6 text-center text-sm text-muted-foreground">Loading seedling varieties…</p>}
@@ -539,8 +569,9 @@ export default function NurseryRegister() {
               <div className="grid gap-2 sm:grid-cols-2">
               {catalogueRows.map(v => <div key={v.id} className="group rounded-xl border border-border bg-card p-3 transition-colors hover:border-sky-600/30 hover:bg-sky-500/[0.03]">
                 {editingVarietyId === v.id ? (
-                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px_auto]">
+                   <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_140px_auto]">
                     <div className="space-y-1"><Label htmlFor={`edit-name-${v.id}`}>Variety name</Label><Input id={`edit-name-${v.id}`} value={editingName} onChange={e => setEditingName(e.target.value)} maxLength={80} autoFocus /></div>
+                     <div className="space-y-1"><Label htmlFor={`edit-category-${v.id}`}>Category</Label><Input id={`edit-category-${v.id}`} value={editingCategory} onChange={e => setEditingCategory(e.target.value)} maxLength={60} /></div>
                     <div className="space-y-1"><Label htmlFor={`edit-price-${v.id}`}>Default price (KES)</Label><Input id={`edit-price-${v.id}`} type="number" min="0" step="0.01" value={editingPrice} onChange={e => setEditingPrice(e.target.value)} /></div>
                     <div className="flex items-end gap-1"><Button type="button" size="sm" disabled={busyVarietyId === v.id} onClick={() => saveVarietyEdit(v)} className="gap-1"><Save className="h-3.5 w-3.5" /> Save</Button><Button type="button" size="icon" variant="ghost" aria-label="Cancel editing" onClick={() => setEditingVarietyId(null)}><X className="h-4 w-4" /></Button></div>
                   </div>

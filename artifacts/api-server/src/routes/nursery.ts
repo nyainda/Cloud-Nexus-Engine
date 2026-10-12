@@ -31,8 +31,12 @@ nurseryRouter.get("/nursery/varieties", requireAuth, async (c) => {
     values.push(status === "active" ? 1 : 0);
   }
   if (category) {
-    filters.push("category = ? COLLATE NOCASE");
-    values.push(category);
+    if (category.toLowerCase() === "uncategorized") {
+      filters.push("(category IS NULL OR TRIM(category) = '' OR LOWER(TRIM(category)) = 'uncategorized')");
+    } else {
+      filters.push("category = ? COLLATE NOCASE");
+      values.push(category);
+    }
   }
   if (search) {
     filters.push("name LIKE ? COLLATE NOCASE");
@@ -41,7 +45,10 @@ nurseryRouter.get("/nursery/varieties", requireAuth, async (c) => {
   const where = filters.join(" AND ");
   const [rows, count, categories] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT id, name, category, (default_price / 100.0) AS defaultPrice,
+      `SELECT id, name,
+        CASE WHEN category IS NULL OR TRIM(category) = '' OR LOWER(TRIM(category)) = 'uncategorized'
+          THEN 'Uncategorized' ELSE TRIM(category) END AS category,
+        (default_price / 100.0) AS defaultPrice,
         is_active AS isActive, created_at AS createdAt
        FROM nursery_varieties WHERE ${where}
        ORDER BY is_active DESC, name COLLATE NOCASE LIMIT ? OFFSET ?`
@@ -49,7 +56,10 @@ nurseryRouter.get("/nursery/varieties", requireAuth, async (c) => {
     c.env.DB.prepare(`SELECT COUNT(*) AS total FROM nursery_varieties WHERE ${where}`)
       .bind(...values).first<{ total: number }>(),
     c.env.DB.prepare(
-      "SELECT DISTINCT category FROM nursery_varieties WHERE shop_id = ? ORDER BY category COLLATE NOCASE"
+      `SELECT DISTINCT
+        CASE WHEN category IS NULL OR TRIM(category) = '' OR LOWER(TRIM(category)) = 'uncategorized'
+          THEN 'Uncategorized' ELSE TRIM(category) END AS category
+       FROM nursery_varieties WHERE shop_id = ? ORDER BY category COLLATE NOCASE`
     ).bind(shopId).all<{ category: string }>(),
   ]);
   const result = {
@@ -100,7 +110,10 @@ nurseryRouter.get("/nursery/monthly-summary", requireAuth, async (c) => {
   // This report reads the compact per-day aggregates, never the raw sale ledger.
   const [categories, summary] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT COALESCE(NULLIF(TRIM(v.category), ''), 'Uncategorized') AS category,
+      `SELECT CASE
+          WHEN v.category IS NULL OR TRIM(v.category) = '' OR LOWER(TRIM(v.category)) = 'uncategorized'
+          THEN 'Uncategorized' ELSE TRIM(v.category)
+        END AS category,
         SUM(s.quantity) AS seedlingsSold,
         SUM(s.total_amount_cents) AS totalRevenueCents,
         COUNT(DISTINCT v.id) AS varietyCount,
@@ -110,7 +123,10 @@ nurseryRouter.get("/nursery/monthly-summary", requireAuth, async (c) => {
        FROM nursery_daily_sales s
        JOIN nursery_varieties v ON v.id = s.variety_id AND v.shop_id = s.shop_id
        WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ?
-       GROUP BY v.category COLLATE NOCASE
+       GROUP BY CASE
+          WHEN v.category IS NULL OR TRIM(v.category) = '' OR LOWER(TRIM(v.category)) = 'uncategorized'
+          THEN 'Uncategorized' ELSE TRIM(v.category)
+        END COLLATE NOCASE
        ORDER BY seedlingsSold DESC, category COLLATE NOCASE`
     ).bind(shopId, from, to).all(),
     c.env.DB.prepare(
