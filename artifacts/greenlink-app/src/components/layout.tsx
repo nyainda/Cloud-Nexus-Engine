@@ -8,7 +8,7 @@ import {
   Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
   MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser, Sprout,
 } from "lucide-react";
-import { useListNotifications, useLogout } from "@workspace/api-client-react";
+import { useGetUnreadNotificationCount, useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { setCachedSession } from "@/lib/session-cache";
 import { getTheme, setTheme, type Theme } from "@/lib/theme";
@@ -238,11 +238,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const { data: notifications } = useListNotifications(
+  const { data: notificationCount } = useGetUnreadNotificationCount(
     { shopId },
-    { query: { enabled: !!shopId } as any }
+    { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
   );
-  const unreadCount = (notifications || []).filter((n: any) => !n.isRead).length;
+  const unreadCount = notificationCount?.count ?? 0;
 
   const logout = useLogout();
   const [, setLocation] = useLocation();

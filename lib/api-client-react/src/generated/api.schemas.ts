@@ -472,22 +472,19 @@ export interface DebtPaymentReversalInput {
 }
 
 export interface DebtTransferItem {
+  /** @minimum 0 */
   itemIndex: number;
+  /** @exclusiveMinimum 0 */
   qty: number;
 }
 
 export interface DebtTransferInput {
   shopId?: string;
   customerName: string;
-  customerPhone: string;
+  customerPhone?: string;
+  /** @minItems 1 */
   items: DebtTransferItem[];
   operationId?: string;
-}
-
-export interface TransferDebtItemsResponse {
-  sourceDebtId: string;
-  targetDebt: Debt;
-  sourceDebt: Debt;
 }
 
 export interface InventoryMovement {
@@ -520,6 +517,11 @@ export interface Notification {
   debtId?: string | null;
   isRead: boolean;
   createdAt: string;
+}
+
+export interface NotificationUnreadCount {
+  /** @minimum 0 */
+  count: number;
 }
 
 /**
@@ -623,6 +625,22 @@ export interface RangeReport {
   salesCount: number;
   marginPct: number;
   dailyBreakdown: DailySummary[];
+}
+
+export type MonthlySalesReportMonthlyBreakdownItem = {
+  month: number;
+  revenue: number;
+  profit: number;
+  salesCount: number;
+};
+
+export interface MonthlySalesReport {
+  shopId: string;
+  year: number;
+  totalRevenue: number;
+  totalProfit: number;
+  totalSalesCount: number;
+  monthlyBreakdown: MonthlySalesReportMonthlyBreakdownItem[];
 }
 
 export interface CategoryBreakdown {
@@ -800,12 +818,22 @@ status?: string;
 q?: string;
 };
 
+export type TransferDebtItems201 = {
+  sourceDebtId: string;
+  targetDebt: Debt;
+  sourceDebt: Debt;
+};
+
 export type ListInventoryMovementsParams = {
 shopId?: string;
 productId?: string;
 movementType?: string;
 limit?: number;
 offset?: number;
+};
+
+export type GetUnreadNotificationCountParams = {
+shopId: string;
 };
 
 export type ListNotificationsParams = {
@@ -840,6 +868,11 @@ export type GetReportRangeParams = {
 shopId?: string;
 from: string;
 to: string;
+};
+
+export type GetMonthlySalesParams = {
+shopId: string;
+year: number;
 };
 
 export type GetTopProductsParams = {

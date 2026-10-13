@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -7,6 +7,20 @@ import { notifications, debts, products } from "@workspace/db/schema";
 import { broadcastPush, getVapidConfig } from "../lib/web-push";
 
 const notificationsRouter = new Hono<AppEnv>();
+
+notificationsRouter.get("/notifications/unread-count", requireAuth, async (c) => {
+  const sessionShopId = c.get("session").shopId;
+  const requestedShopId = c.req.query("shopId");
+  if (requestedShopId && requestedShopId !== sessionShopId) {
+    return c.json({ error: "Shop access denied." }, 403);
+  }
+
+  const result = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM notifications WHERE shop_id = ? AND is_read = 0",
+  ).bind(sessionShopId).first<{ count: number }>();
+
+  return c.json({ count: Number(result?.count ?? 0) });
+});
 
 notificationsRouter.get("/notifications", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
@@ -22,9 +36,10 @@ notificationsRouter.get("/notifications", requireAuth, async (c) => {
         unreadOnly ? eq(notifications.isRead, false) : undefined,
       ),
     )
+    .orderBy(desc(notifications.createdAt))
     .all();
 
-  return c.json(rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  return c.json(rows);
 });
 
 notificationsRouter.post("/notifications/generate", requireAuth, async (c) => {

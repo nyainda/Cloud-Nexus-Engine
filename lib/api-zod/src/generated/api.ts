@@ -641,6 +641,32 @@ export const UpdateDebtResponse = zod.object({
 
 
 /**
+ * @summary Move selected outstanding debt items to another customer
+ */
+export const TransferDebtItemsParams = zod.object({
+  "debtId": zod.coerce.string()
+})
+
+export const transferDebtItemsBodyItemsItemItemIndexMin = 0;
+
+export const transferDebtItemsBodyItemsItemQtyExclusiveMin = 0;
+
+
+
+
+export const TransferDebtItemsBody = zod.object({
+  "shopId": zod.string().optional(),
+  "customerName": zod.string(),
+  "customerPhone": zod.string().optional(),
+  "items": zod.array(zod.object({
+  "itemIndex": zod.number().min(transferDebtItemsBodyItemsItemItemIndexMin),
+  "qty": zod.number().gt(transferDebtItemsBodyItemsItemQtyExclusiveMin)
+})).min(1),
+  "operationId": zod.string().optional()
+})
+
+
+/**
  * @summary Record a payment against a debt
  */
 export const RecordDebtPaymentParams = zod.object({
@@ -692,6 +718,22 @@ export const ListInventoryMovementsResponseItem = zod.object({
   "createdAt": zod.string()
 })
 export const ListInventoryMovementsResponse = zod.array(ListInventoryMovementsResponseItem)
+
+
+/**
+ * @summary Get the current shop's unread notification count
+ */
+export const GetUnreadNotificationCountQueryParams = zod.object({
+  "shopId": zod.coerce.string()
+})
+
+export const getUnreadNotificationCountResponseCountMin = 0;
+
+
+
+export const GetUnreadNotificationCountResponse = zod.object({
+  "count": zod.number().min(getUnreadNotificationCountResponseCountMin)
+})
 
 
 /**
@@ -888,6 +930,29 @@ export const GetReportRangeResponse = zod.object({
   "marginPct": zod.number(),
   "dailyBreakdown": zod.array(zod.object({
   "date": zod.string(),
+  "revenue": zod.number(),
+  "profit": zod.number(),
+  "salesCount": zod.number()
+}))
+})
+
+
+/**
+ * @summary Aggregated monthly sales for one calendar year
+ */
+export const GetMonthlySalesQueryParams = zod.object({
+  "shopId": zod.coerce.string(),
+  "year": zod.coerce.number()
+})
+
+export const GetMonthlySalesResponse = zod.object({
+  "shopId": zod.string(),
+  "year": zod.number(),
+  "totalRevenue": zod.number(),
+  "totalProfit": zod.number(),
+  "totalSalesCount": zod.number(),
+  "monthlyBreakdown": zod.array(zod.object({
+  "month": zod.number(),
   "revenue": zod.number(),
   "profit": zod.number(),
   "salesCount": zod.number()

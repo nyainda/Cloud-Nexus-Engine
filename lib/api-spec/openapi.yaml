@@ -811,6 +811,25 @@ paths:
                   $ref: "#/components/schemas/InventoryMovement"
 
   # ─── NOTIFICATIONS ────────────────────────────────────────
+  /notifications/unread-count:
+    get:
+      operationId: getUnreadNotificationCount
+      tags: [notifications]
+      summary: Get the current shop's unread notification count
+      parameters:
+        - name: shopId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Unread notification count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationUnreadCount"
+
   /notifications:
     get:
       operationId: listNotifications
@@ -2011,6 +2030,14 @@ components:
         createdAt:
           type: string
       required: [id, shopId, type, title, message, isRead, createdAt]
+
+    NotificationUnreadCount:
+      type: object
+      properties:
+        count:
+          type: integer
+          minimum: 0
+      required: [count]
 
     # ─── AUDIT ────────────────────────────────────────────
     AuditEntry:
