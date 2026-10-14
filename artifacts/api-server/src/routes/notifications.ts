@@ -7,6 +7,8 @@ import { notifications, debts, products } from "@workspace/db/schema";
 import { broadcastPush, getVapidConfig } from "../lib/web-push";
 
 const notificationsRouter = new Hono<AppEnv>();
+const DEFAULT_NOTIFICATION_PAGE_SIZE = 50;
+const MAX_NOTIFICATION_PAGE_SIZE = 101;
 
 notificationsRouter.get("/notifications/unread-count", requireAuth, async (c) => {
   const sessionShopId = c.get("session").shopId;
@@ -32,13 +34,14 @@ notificationsRouter.get("/notifications", requireAuth, async (c) => {
   const unreadOnly = c.req.query("unreadOnly") === "true";
   const limitParam = c.req.query("limit");
   const offsetParam = c.req.query("offset");
-  const limit = limitParam === undefined ? undefined : Number.parseInt(limitParam, 10);
+  const requestedLimit = limitParam === undefined
+    ? DEFAULT_NOTIFICATION_PAGE_SIZE
+    : Number.parseInt(limitParam, 10);
   const offset = offsetParam === undefined ? 0 : Number.parseInt(offsetParam, 10);
 
   if (
-    (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) ||
-    !Number.isInteger(offset) || offset < 0 ||
-    (offset > 0 && limit === undefined)
+    !Number.isInteger(requestedLimit) || requestedLimit < 1 ||
+    !Number.isInteger(offset) || offset < 0
   ) {
     return c.json({ error: "Use a positive limit and a non-negative offset." }, 400);
   }
@@ -53,9 +56,10 @@ notificationsRouter.get("/notifications", requireAuth, async (c) => {
       ),
     )
     .orderBy(desc(notifications.createdAt));
-  const rows = limit === undefined
-    ? await query.all()
-    : await query.limit(Math.min(limit, 201)).offset(offset).all();
+  const rows = await query
+    .limit(Math.min(requestedLimit, MAX_NOTIFICATION_PAGE_SIZE))
+    .offset(offset)
+    .all();
 
   return c.json(rows);
 });

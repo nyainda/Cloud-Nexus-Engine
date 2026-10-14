@@ -217,12 +217,12 @@ export default function Alerts() {
       `/api/notifications?shopId=${encodeURIComponent(shopId)}&limit=${NOTIFICATIONS_PAGE_SIZE + 1}&offset=0`,
     ),
     enabled: !!shopId,
-    refetchInterval: 60_000,
-    refetchIntervalInBackground: false,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
   });
   const { data: notificationCount, refetch: refetchUnreadCount } = useGetUnreadNotificationCount(
     { shopId },
-    { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any },
+    { query: { enabled: !!shopId, staleTime: 5 * 60_000, refetchOnWindowFocus: true } as any },
   );
 
   useEffect(() => {
@@ -244,29 +244,22 @@ export default function Alerts() {
     }
   }, [latestNotificationPage, nextNotificationOffset]);
 
-  const { data: productsData, isLoading: productsLoading } = useListProducts(
-    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 15_000, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
+  const { data: productsData, isLoading: productsLoading, refetch: refetchProducts } = useListProducts(
+    { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 5 * 60_000, refetchOnWindowFocus: true } as any }
   );
 
-  const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any });
+  const { data: shop, refetch: refetchShop } = useGetShop(
+    shopId,
+    { query: { enabled: !!shopId, staleTime: 5 * 60_000, refetchOnWindowFocus: true } as any },
+  );
 
   // limit is not in the OpenAPI spec for GET /debts — omit it; backend returns all debts for the shop.
-  // Local mutations invalidate this query, and polling keeps the badge current
-  // when a debt changes on another device.
-  const { data: debtsData } = useListDebts(
-    { shopId }, { query: { enabled: !!shopId && isOwner, staleTime: 15_000, refetchOnWindowFocus: true, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
+  const { data: debtsData, refetch: refetchDebts } = useListDebts(
+    { shopId }, { query: { enabled: !!shopId && isOwner, staleTime: 5 * 60_000, refetchOnWindowFocus: true } as any }
   );
 
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
-
-  useEffect(() => {
-    if (!shopId) return;
-    generateAlerts().then(() => {
-      void refetch();
-      void refetchUnreadCount();
-    });
-  }, [shopId]);
 
   const handleMarkRead = (id: string) => {
     markRead.mutate({ notificationId: id }, {
@@ -299,8 +292,14 @@ export default function Alerts() {
 
   const handleRefresh = async () => {
     await generateAlerts();
-    await refetch();
-    await refetchUnreadCount();
+    const refreshes = [
+      refetch(),
+      refetchUnreadCount(),
+      refetchProducts(),
+      refetchShop(),
+    ];
+    if (isOwner) refreshes.push(refetchDebts());
+    await Promise.all(refreshes);
     toast.success("Alerts refreshed");
   };
 

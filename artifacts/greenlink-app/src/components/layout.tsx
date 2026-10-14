@@ -8,7 +8,7 @@ import {
   Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
   MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser, Sprout,
 } from "lucide-react";
-import { useGetUnreadNotificationCount, useLogout } from "@workspace/api-client-react";
+import { useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { setCachedSession } from "@/lib/session-cache";
 import { getTheme, setTheme, type Theme } from "@/lib/theme";
@@ -118,7 +118,7 @@ function ThemeToggle({ collapsed, className }: { collapsed?: boolean; className?
   );
 }
 
-function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCount: number }) {
+function MobileBottomNav({ isOwner }: { isOwner: boolean }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [location] = useLocation();
 
@@ -135,7 +135,7 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
         <BottomNavItem href="/pos" icon={ShoppingCart} label="POS" />
         <BottomNavItem href="/stock" icon={Package} label="Stock" />
         <BottomNavItem href="/debts" icon={Users} label="Debts" />
-        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} />
+        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" />
         <BottomNavItem href="/sales-history" icon={Receipt} label="History" />
         {/* "More" button — opens a sheet with the rest of the navigation */}
         <button
@@ -238,12 +238,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const { data: notificationCount } = useGetUnreadNotificationCount(
-    { shopId },
-    { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
-  );
-  const unreadCount = notificationCount?.count ?? 0;
-
   const logout = useLogout();
   const [, setLocation] = useLocation();
 
@@ -309,7 +303,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <SidebarNavItem href="/stock" icon={Package} label="Inventory" collapsed={collapsed} />
           <SidebarNavItem href="/customers" icon={BookUser} label="Customers" collapsed={collapsed} />
           <SidebarNavItem href="/debts" icon={Users} label="Customer Debts" collapsed={collapsed} />
-          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} collapsed={collapsed} />
+          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" collapsed={collapsed} />
 
           {!collapsed && (
             <div className="pt-3 pb-1 px-3">
@@ -425,7 +419,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </OfflineSyncProvider>
 
         {/* Mobile Bottom Nav */}
-        <MobileBottomNav isOwner={isOwner} unreadCount={unreadCount} />
+        <MobileBottomNav isOwner={isOwner} />
       </div>
     </div>
   );
