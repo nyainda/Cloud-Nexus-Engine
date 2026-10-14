@@ -41,6 +41,11 @@ interface Props {
   onSelect: (customer: SelectedCustomer) => void;
   placeholder?: string;
   className?: string;
+  inputId?: string;
+  inputTestId?: string;
+  ariaLabel?: string;
+  ariaInvalid?: boolean;
+  maxLength?: number;
   /** Show the selected customer's outstanding balance below the input */
   showBalanceWarning?: boolean;
   selectedBalance?: number;
@@ -53,6 +58,11 @@ export function CustomerAutocomplete({
   onSelect,
   placeholder = "e.g. John Kamau",
   className,
+  inputId,
+  inputTestId,
+  ariaLabel,
+  ariaInvalid,
+  maxLength,
   showBalanceWarning = false,
   selectedBalance,
 }: Props) {
@@ -87,8 +97,13 @@ export function CustomerAutocomplete({
       <div className="relative">
         <User2 className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
         <input
+          id={inputId}
+          data-testid={inputTestId}
           type="text"
           placeholder={placeholder}
+          aria-label={ariaLabel}
+          aria-invalid={ariaInvalid || undefined}
+          maxLength={maxLength}
           value={value}
           onChange={(e) => {
             onChange(e.target.value);

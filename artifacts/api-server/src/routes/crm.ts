@@ -309,6 +309,7 @@ crmRouter.post("/crm", requireAuth, async (c) => {
       notes: body.notes?.trim() || null,
       creditLimit: body.creditLimit ?? null,
       createdAt: now,
+      updatedAt: now,
     })
     .run();
 

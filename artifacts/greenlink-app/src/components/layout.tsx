@@ -6,9 +6,9 @@ import {
   ShoppingCart, Package, Users, Bell, BarChart3,
   ScanLine, Settings, LogOut, LayoutDashboard, Receipt,
   Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
-  MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser,
+  MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser, Sprout,
 } from "lucide-react";
-import { useListNotifications, useLogout } from "@workspace/api-client-react";
+import { useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { setCachedSession } from "@/lib/session-cache";
 import { getTheme, setTheme, type Theme } from "@/lib/theme";
@@ -118,7 +118,7 @@ function ThemeToggle({ collapsed, className }: { collapsed?: boolean; className?
   );
 }
 
-function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCount: number }) {
+function MobileBottomNav({ isOwner }: { isOwner: boolean }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [location] = useLocation();
 
@@ -135,7 +135,7 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
         <BottomNavItem href="/pos" icon={ShoppingCart} label="POS" />
         <BottomNavItem href="/stock" icon={Package} label="Stock" />
         <BottomNavItem href="/debts" icon={Users} label="Debts" />
-        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} />
+        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" />
         <BottomNavItem href="/sales-history" icon={Receipt} label="History" />
         {/* "More" button — opens a sheet with the rest of the navigation */}
         <button
@@ -173,6 +173,7 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
             </div>
             <div className="p-3 grid grid-cols-2 gap-2">
               <MoreSheetItem href="/customers" icon={BookUser} label="Customers" />
+              <MoreSheetItem href="/nursery" icon={Sprout} label="Nursery Register" />
               <MoreSheetItem href="/returns" icon={RotateCcw} label="Process Return" />
               <MoreSheetItem href="/transfers" icon={ArrowLeftRight} label="Transfers" />
               <MoreSheetItem href="/quotations" icon={FileText} label="Quotations" />
@@ -236,12 +237,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       return next;
     });
   };
-
-  const { data: notifications } = useListNotifications(
-    { shopId },
-    { query: { enabled: !!shopId } as any }
-  );
-  const unreadCount = (notifications || []).filter((n: any) => !n.isRead).length;
 
   const logout = useLogout();
   const [, setLocation] = useLocation();
@@ -308,7 +303,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <SidebarNavItem href="/stock" icon={Package} label="Inventory" collapsed={collapsed} />
           <SidebarNavItem href="/customers" icon={BookUser} label="Customers" collapsed={collapsed} />
           <SidebarNavItem href="/debts" icon={Users} label="Customer Debts" collapsed={collapsed} />
-          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} collapsed={collapsed} />
+          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" collapsed={collapsed} />
 
           {!collapsed && (
             <div className="pt-3 pb-1 px-3">
@@ -327,6 +322,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           )}
           {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
           <SidebarNavItem href="/quotations" icon={FileText} label="Quotations" collapsed={collapsed} />
+          <SidebarNavItem href="/nursery" icon={Sprout} label="Nursery Register" collapsed={collapsed} />
 
           {isOwner && (
             <>
@@ -423,7 +419,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </OfflineSyncProvider>
 
         {/* Mobile Bottom Nav */}
-        <MobileBottomNav isOwner={isOwner} unreadCount={unreadCount} />
+        <MobileBottomNav isOwner={isOwner} />
       </div>
     </div>
   );
