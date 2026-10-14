@@ -1,0 +1,128 @@
+select "id", "shop_id", "canonical_name", "normalized_name", "sku", "category", "unit", "purchase_price", "selling_price", "profit_margin", "product_type", "allow_decimals", "stock_qty", "alert_qty", "expiry_date", "tokens_json", "size", "is_active", "last_sold_at", "created_at", "updated_at" from "products" where ("products"."shop_id" = ? and "products"."is_active" = ?) limit ?
+60.67%
+38
+0.6 sec
+16.3 ms
+24.1 ms
+74.7k
+1
+0
+select
+  "id",
+  "shop_id",
+  "canonical_name",
+  "normalized_name",
+  "sku",
+  "category",
+  "unit",
+  "purchase_price",
+  "selling_price",
+  "profit_margin",
+  "product_type",
+  "allow_decimals",
+  "stock_qty",
+  "alert_qty",
+  "expiry_date",
+  "tokens_json",
+  "size",
+  "is_active",
+  "last_sold_at",
+  "created_at",
+  "updated_at"
+from "products"
+where
+  (
+    "products"."shop_id" = ?
+    and "products"."is_active" = ?
+  )
+limit ?
+select "updated_at" from "products" where "products"."shop_id" = ? order by "products"."updated_at" desc limit ?
+6.73%
+203
+0.1 sec
+0.3 ms
+0.7 ms
+203
+1
+0
+SELECT key FROM app_migrations WHERE key = ?
+5.68%
+228
+0.1 sec
+0.2 ms
+0.5 ms
+228
+1
+0
+SELECT unread_count AS count FROM notification_unread_counts WHERE shop_id = ?
+5.51%
+228
+0.1 sec
+0.2 ms
+0.5 ms
+228
+1
+0
+update "products" set "stock_qty" = MAX(0, "products"."stock_qty" - ?), "last_sold_at" = ?, "updated_at" = ? where "products"."id" = ?
+2.15%
+50
+0 sec
+0.4 ms
+0.5 ms
+50
+—
+100
+insert into "sale_items" ("id", "sale_id", "product_id", "product_name", "qty", "unit_price", "unit_cost", "unit_profit", "total_price", "total_profit") values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+2.1%
+39
+0 sec
+0.4 ms
+0.9 ms
+0
+—
+156
+select "id", "shop_id", "sale_id", "customer_name", "customer_phone", "total_amount", "amount_paid", "balance", "status", "notes", "items_json", "paid_at", "created_at" from "debts" where "debts"."shop_id" = ?
+2.04%
+16
+0 sec
+1 ms
+3.1 ms
+2.67k
+1
+0
+select "id", "shop_id", "canonical_name", "normalized_name", "sku", "category", "unit", "purchase_price", "selling_price", "profit_margin", "product_type", "allow_decimals", "stock_qty", "alert_qty", "expiry_date", "tokens_json", "size", "is_active", "last_sold_at", "created_at", "updated_at" from "products" where "products"."id" = ?
+1.64%
+47
+0 sec
+0.3 ms
+0.6 ms
+47
+1
+0
+select "sale_id", "product_name", "qty", "unit_price", "total_price", "total_profit" from "sale_items" where "sale_items"."sale_id" in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+1.61%
+6
+0 sec
+2.2 ms
+3.9 ms
+2.75k
+2
+0
+insert into "inventory_movements" ("id", "product_id", "product_name", "movement_type", "qty_change", "before_qty", "after_qty", "source", "reference_id", "created_by", "created_at") values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+1.36%
+38
+0 sec
+0.4 ms
+0.4 ms
+0
+—
+114
+Showing 1-10 of 47
+1
+Rows read
+Eastern North America (ENAM)
+147.65k
+0
+15k
+30k
+45k
