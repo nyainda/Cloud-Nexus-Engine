@@ -16,6 +16,7 @@ const NURSERY_CUSTOMER_MARKER = "nursery-customer-credit-v1";
 const NURSERY_ENTRIES_MARKER = "nursery-individual-entries-v1";
 const NURSERY_CATEGORY_MARKER = "nursery-categories-v1";
 const NOTIFICATION_COUNTER_MARKER = "notification-unread-counter-v1";
+const CUSTOMER_SCHEMA_MARKER = "customer-credit-columns-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
@@ -215,6 +216,36 @@ async function ensureNotificationReadModel(db: D1Database): Promise<void> {
   ]);
 }
 
+/** Keep the shared customer table compatible with nursery and CRM writes. */
+async function ensureCustomerSchema(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(CUSTOMER_SCHEMA_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  const hasColumn = async (columnName: string): Promise<boolean> => {
+    const columns = await db.prepare("PRAGMA table_info(customers)").all<{ name: string }>();
+    return (columns.results ?? []).some(column => column.name === columnName);
+  };
+
+  const ensureColumn = async (columnName: string, statement: string): Promise<void> => {
+    if (await hasColumn(columnName)) return;
+    try {
+      await db.prepare(statement).run();
+    } catch (error) {
+      // Another cold Worker isolate may have added the column concurrently.
+      if (!(await hasColumn(columnName))) throw error;
+    }
+  };
+
+  await ensureColumn("credit_limit", "ALTER TABLE customers ADD COLUMN credit_limit REAL");
+  await ensureColumn(
+    "updated_at",
+    "ALTER TABLE customers ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+  );
+  await db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+    .bind(CUSTOMER_SCHEMA_MARKER, new Date().toISOString()).run();
+}
+
 async function bootstrapD1(db: D1Database): Promise<void> {
   if (bootstrapped) return;
 
@@ -245,6 +276,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     await ensureNurseryIndividualEntries(db);
     await ensureNurseryCategories(db);
     await ensureNotificationReadModel(db);
+    await ensureCustomerSchema(db);
     bootstrapped = true;
     return;
   }
@@ -358,7 +390,8 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       email TEXT,
       notes TEXT,
       credit_limit REAL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )`,
     "CREATE INDEX IF NOT EXISTS idx_customers_shop ON customers(shop_id)",
     "CREATE INDEX IF NOT EXISTS idx_customers_shop_name ON customers(shop_id, name)",
@@ -430,6 +463,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   await ensureNurseryIndividualEntries(db);
   await ensureNurseryCategories(db);
   await ensureNotificationReadModel(db);
+  await ensureCustomerSchema(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup

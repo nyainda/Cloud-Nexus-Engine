@@ -266,6 +266,9 @@ export const customers = sqliteTable("customers", {
   notes: text("notes"),
   creditLimit: real("credit_limit"),
   createdAt: createdAt(),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
 });
 
 export type Customer = typeof customers.$inferSelect;

@@ -268,10 +268,10 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
   const statements = [] as D1PreparedStatement[];
   if (customerName) {
     statements.push(c.env.DB.prepare(
-      `INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at)
-       SELECT ?, ?, ?, ?, NULL, NULL, NULL, ?
+      `INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at, updated_at)
+       SELECT ?, ?, ?, ?, NULL, NULL, NULL, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM customers WHERE shop_id = ? AND lower(trim(name)) = ?)`
-    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, shopId, customerKey));
+    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, now, shopId, customerKey));
   }
 
   for (const item of newItems) {
@@ -423,10 +423,10 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
 
   if (customerName) {
     statements.push(c.env.DB.prepare(
-      `INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at)
-       SELECT ?, ?, ?, ?, NULL, NULL, NULL, ?
+      `INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at, updated_at)
+       SELECT ?, ?, ?, ?, NULL, NULL, NULL, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM customers WHERE shop_id = ? AND lower(trim(name)) = ?)`
-    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, shopId, customerKey));
+    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, now, shopId, customerKey));
     statements.push(c.env.DB.prepare(
       `INSERT INTO nursery_customer_daily_sales
         (id, shop_id, business_date, customer_key, customer_name, customer_phone, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at)
@@ -601,8 +601,8 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   if (customerName) {
     const customerKey = customerName.toLocaleLowerCase().replace(/\s+/g, " ");
     statements.push(c.env.DB.prepare(
-      "INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at) SELECT ?, ?, ?, ?, NULL, NULL, NULL, ? WHERE NOT EXISTS (SELECT 1 FROM customers WHERE shop_id = ? AND lower(trim(name)) = ?)"
-    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, shopId, customerKey));
+      "INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at, updated_at) SELECT ?, ?, ?, ?, NULL, NULL, NULL, ?, ? WHERE NOT EXISTS (SELECT 1 FROM customers WHERE shop_id = ? AND lower(trim(name)) = ?)"
+    ).bind(crypto.randomUUID(), shopId, customerName, customerPhone, now, now, shopId, customerKey));
     statements.push(c.env.DB.prepare(
       "INSERT INTO nursery_customer_daily_sales (id, shop_id, business_date, customer_key, customer_name, customer_phone, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, business_date, customer_key, variety_id, unit_price_cents, payment_method) DO UPDATE SET quantity = nursery_customer_daily_sales.quantity + excluded.quantity, total_amount_cents = nursery_customer_daily_sales.total_amount_cents + excluded.total_amount_cents, customer_name = excluded.customer_name, customer_phone = CASE WHEN excluded.customer_phone != '' THEN excluded.customer_phone ELSE nursery_customer_daily_sales.customer_phone END, updated_at = excluded.updated_at"
     ).bind(crypto.randomUUID(), shopId, businessDate, customerKey, customerName, customerPhone, variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents, now, now));
