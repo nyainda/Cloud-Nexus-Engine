@@ -15,6 +15,7 @@ const NURSERY_REGISTER_MARKER = "nursery-register-v1";
 const NURSERY_CUSTOMER_MARKER = "nursery-customer-credit-v1";
 const NURSERY_ENTRIES_MARKER = "nursery-individual-entries-v1";
 const NURSERY_CATEGORY_MARKER = "nursery-categories-v1";
+const READ_QUERY_INDEX_MARKER = "read-query-indexes-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
@@ -168,6 +169,21 @@ async function ensureNurseryCategories(db: D1Database): Promise<void> {
   ]);
 }
 
+/** Add indexes for repeated date-range and reference lookups exactly once. */
+async function ensureReadQueryIndexes(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(READ_QUERY_INDEX_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  await db.batch([
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_debt_payments_paid_at ON debt_payments(paid_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_inventory_movements_created_at ON inventory_movements(created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_inventory_movements_reference_id ON inventory_movements(reference_id)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(READ_QUERY_INDEX_MARKER, new Date().toISOString()),
+  ]);
+}
+
 async function bootstrapD1(db: D1Database): Promise<void> {
   if (bootstrapped) return;
 
@@ -197,6 +213,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     await ensureNurseryCustomerCredit(db);
     await ensureNurseryIndividualEntries(db);
     await ensureNurseryCategories(db);
+    await ensureReadQueryIndexes(db);
     bootstrapped = true;
     return;
   }
@@ -381,6 +398,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   await ensureNurseryCustomerCredit(db);
   await ensureNurseryIndividualEntries(db);
   await ensureNurseryCategories(db);
+  await ensureReadQueryIndexes(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup

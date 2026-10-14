@@ -848,7 +848,7 @@ export default function Customers() {
     enabled: !!shopId,
     staleTime: 15_000,
     refetchOnWindowFocus: true,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   const stats = useMemo(() => {

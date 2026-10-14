@@ -68,9 +68,7 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: true,
       refetchOnReconnect: true,
       refetchOnMount: true,
-      staleTime: 15_000,
-      refetchInterval: 60_000,
-      refetchIntervalInBackground: false,
+      staleTime: 60_000,
       gcTime: 30 * 60_000,          // 30 min in memory
     },
   },

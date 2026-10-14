@@ -67,8 +67,8 @@ export default function Transfers() {
     queryKey: ["transfers", shopId],
     queryFn: () => customFetch<any[]>(`/api/transfers?shopId=${encodeURIComponent(shopId)}&limit=200`),
     enabled: !!shopId,
-    staleTime: 45_000,
-    refetchInterval: 45_000,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   });

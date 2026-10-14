@@ -1125,7 +1125,7 @@ export default function Settings() {
 
   const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } });
   const { data: suppliers } = useListSuppliers({ shopId }, { query: { enabled: !!shopId && isOwner, refetchInterval: 60_000, refetchIntervalInBackground: false } });
-  const { data: auditLog } = useListAuditLog({ shopId, limit: 20 }, { query: { enabled: !!shopId && isOwner, refetchInterval: 30_000, refetchIntervalInBackground: false } });
+  const { data: auditLog } = useListAuditLog({ shopId, limit: 20 }, { query: { enabled: !!shopId && isOwner, refetchInterval: 60_000, refetchIntervalInBackground: false } });
 
   const updateShop = useUpdateShop();
 

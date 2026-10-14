@@ -293,7 +293,7 @@ function PaymentDialog({ debt }: { debt: any }) {
     // Fire network request in the background.
     // ⚠️ Do NOT call invalidateQueries on success — it triggers a refetch that can
     // return stale cached data and revert the optimistic update. The optimistic patch
-    // above is already authoritative; the 20-second refetchInterval will sync eventually.
+    // above is already authoritative; the 60-second refetchInterval will sync eventually.
     recordPayment.mutateAsync({ debtId: debt.id, data: { amount: paid, recordedBy: userName } })
       .then(() => {
         // Server confirmed — safe to refetch and get any concurrent updates
@@ -2442,7 +2442,7 @@ export default function Debts() {
         staleTime: 15_000,
         refetchOnWindowFocus: true,
         refetchOnMount: true,
-        refetchInterval: 30_000,
+        refetchInterval: 60_000,
         refetchIntervalInBackground: false,
       },
     }

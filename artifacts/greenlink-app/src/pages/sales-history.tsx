@@ -671,7 +671,7 @@ export default function SalesHistory() {
       query: {
         enabled: !!shopId,
         staleTime: 15_000,
-        refetchInterval: 30_000,
+        refetchInterval: 60_000,
         refetchIntervalInBackground: false,
       }
     }

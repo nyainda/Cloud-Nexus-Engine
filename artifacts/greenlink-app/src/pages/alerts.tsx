@@ -215,7 +215,7 @@ export default function Alerts() {
   // Local mutations invalidate this query, and polling keeps the badge current
   // when a debt changes on another device.
   const { data: debtsData } = useListDebts(
-    { shopId }, { query: { enabled: !!shopId && isOwner, staleTime: 15_000, refetchOnWindowFocus: true, refetchInterval: 30_000, refetchIntervalInBackground: false } as any }
+    { shopId }, { query: { enabled: !!shopId && isOwner, staleTime: 15_000, refetchOnWindowFocus: true, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
   );
 
   const markRead = useMarkNotificationRead();
