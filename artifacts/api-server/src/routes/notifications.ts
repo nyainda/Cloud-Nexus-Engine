@@ -16,7 +16,7 @@ notificationsRouter.get("/notifications/unread-count", requireAuth, async (c) =>
   }
 
   const result = await c.env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM notifications WHERE shop_id = ? AND is_read = 0",
+    "SELECT unread_count AS count FROM notification_unread_counts WHERE shop_id = ?",
   ).bind(sessionShopId).first<{ count: number }>();
 
   return c.json({ count: Number(result?.count ?? 0) });
@@ -24,20 +24,38 @@ notificationsRouter.get("/notifications/unread-count", requireAuth, async (c) =>
 
 notificationsRouter.get("/notifications", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId");
+  const sessionShopId = c.get("session").shopId;
+  const requestedShopId = c.req.query("shopId");
+  if (requestedShopId && requestedShopId !== sessionShopId) {
+    return c.json({ error: "Shop access denied." }, 403);
+  }
   const unreadOnly = c.req.query("unreadOnly") === "true";
+  const limitParam = c.req.query("limit");
+  const offsetParam = c.req.query("offset");
+  const limit = limitParam === undefined ? undefined : Number.parseInt(limitParam, 10);
+  const offset = offsetParam === undefined ? 0 : Number.parseInt(offsetParam, 10);
 
-  const rows = await db
+  if (
+    (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) ||
+    !Number.isInteger(offset) || offset < 0 ||
+    (offset > 0 && limit === undefined)
+  ) {
+    return c.json({ error: "Use a positive limit and a non-negative offset." }, 400);
+  }
+
+  const query = db
     .select()
     .from(notifications)
     .where(
       and(
-        shopId ? eq(notifications.shopId, shopId) : undefined,
+        eq(notifications.shopId, sessionShopId),
         unreadOnly ? eq(notifications.isRead, false) : undefined,
       ),
     )
-    .orderBy(desc(notifications.createdAt))
-    .all();
+    .orderBy(desc(notifications.createdAt));
+  const rows = limit === undefined
+    ? await query.all()
+    : await query.limit(Math.min(limit, 201)).offset(offset).all();
 
   return c.json(rows);
 });
@@ -172,14 +190,16 @@ notificationsRouter.patch(
   requireAuth,
   async (c) => {
     const db = createDb(c.env.DB);
+    const sessionShopId = c.get("session").shopId;
+    const notificationId = c.req.param("notificationId");
     await db
       .update(notifications)
       .set({ isRead: true })
-      .where(eq(notifications.id, c.req.param("notificationId")));
+      .where(and(eq(notifications.id, notificationId), eq(notifications.shopId, sessionShopId)));
     const notification = await db
       .select()
       .from(notifications)
-      .where(eq(notifications.id, c.req.param("notificationId")))
+      .where(and(eq(notifications.id, notificationId), eq(notifications.shopId, sessionShopId)))
       .get();
     if (!notification) return c.json({ error: "Not found" }, 404);
     return c.json(notification);
@@ -191,11 +211,15 @@ notificationsRouter.patch(
   requireAuth,
   async (c) => {
     const db = createDb(c.env.DB);
-    const shopId = c.req.query("shopId");
+    const sessionShopId = c.get("session").shopId;
+    const requestedShopId = c.req.query("shopId");
+    if (requestedShopId && requestedShopId !== sessionShopId) {
+      return c.json({ error: "Shop access denied." }, 403);
+    }
     await db
       .update(notifications)
       .set({ isRead: true })
-      .where(shopId ? eq(notifications.shopId, shopId) : undefined);
+      .where(and(eq(notifications.shopId, sessionShopId), eq(notifications.isRead, false)));
     return c.json({ success: true });
   },
 );

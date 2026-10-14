@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { isPushSupported, subscribeToPush, unsubscribeFromPush, sendTestPush, getActiveSubscription } from "@/lib/push-notifications";
 import {
-  useListNotifications, useMarkAllNotificationsRead,
+  useGetUnreadNotificationCount, useMarkAllNotificationsRead,
   useMarkNotificationRead, useListProducts, useGetShop,
   useListDebts, customFetch
 } from "@workspace/api-client-react";
@@ -19,6 +20,7 @@ import { formatKES } from "@/lib/format";
 type AlertType = "low_stock" | "out_of_stock" | "debt_reminder" | "expiry_soon" | "expired" | string;
 
 const WEIGHT_UNITS = new Set(["kg", "g", "gram", "grams", "litre", "liter", "l", "ml", "ton", "tonne"]);
+const NOTIFICATIONS_PAGE_SIZE = 100;
 function isWeighedUnit(unit: string) {
   return WEIGHT_UNITS.has((unit || "").trim().toLowerCase());
 }
@@ -165,6 +167,10 @@ export default function Alerts() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
   const role = localStorage.getItem("greenlink_role") || "cashier";
   const isOwner = role === "owner";
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [nextNotificationOffset, setNextNotificationOffset] = useState(NOTIFICATIONS_PAGE_SIZE);
+  const [hasMoreNotifications, setHasMoreNotifications] = useState(false);
+  const [isLoadingOlderNotifications, setIsLoadingOlderNotifications] = useState(false);
 
   // ── Push notification state ────────────────────────────────────────────────
   const [pushActive, setPushActive] = useState(false);
@@ -200,10 +206,43 @@ export default function Alerts() {
     }
   };
 
-  // Keep alert data fresh when another device creates or clears a notification.
-  const { data: notifications, isLoading: notifsLoading, refetch } = useListNotifications(
-    { shopId }, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
+  // Fetch the newest page only; older history is fetched only when requested.
+  const {
+    data: latestNotificationPage,
+    isLoading: notifsLoading,
+    refetch,
+  } = useQuery<any[]>({
+    queryKey: ["alerts-notifications", shopId, NOTIFICATIONS_PAGE_SIZE],
+    queryFn: () => customFetch<any[]>(
+      `/api/notifications?shopId=${encodeURIComponent(shopId)}&limit=${NOTIFICATIONS_PAGE_SIZE + 1}&offset=0`,
+    ),
+    enabled: !!shopId,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  });
+  const { data: notificationCount, refetch: refetchUnreadCount } = useGetUnreadNotificationCount(
+    { shopId },
+    { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any },
   );
+
+  useEffect(() => {
+    setNotifications([]);
+    setNextNotificationOffset(NOTIFICATIONS_PAGE_SIZE);
+    setHasMoreNotifications(false);
+  }, [shopId]);
+
+  useEffect(() => {
+    if (!latestNotificationPage) return;
+    const latest = latestNotificationPage.slice(0, NOTIFICATIONS_PAGE_SIZE);
+    setNotifications((current) => {
+      const byId = new Map<string, any>(current.map((notification) => [notification.id, notification]));
+      for (const notification of latest) byId.set(notification.id, notification);
+      return [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    });
+    if (nextNotificationOffset === NOTIFICATIONS_PAGE_SIZE) {
+      setHasMoreNotifications(latestNotificationPage.length > NOTIFICATIONS_PAGE_SIZE);
+    }
+  }, [latestNotificationPage, nextNotificationOffset]);
 
   const { data: productsData, isLoading: productsLoading } = useListProducts(
     { shopId, limit: 3000 }, { query: { enabled: !!shopId, staleTime: 15_000, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
@@ -223,12 +262,21 @@ export default function Alerts() {
 
   useEffect(() => {
     if (!shopId) return;
-    generateAlerts().then(() => refetch());
+    generateAlerts().then(() => {
+      void refetch();
+      void refetchUnreadCount();
+    });
   }, [shopId]);
 
   const handleMarkRead = (id: string) => {
     markRead.mutate({ notificationId: id }, {
-      onSuccess: () => refetch(),
+      onSuccess: () => {
+        setNotifications((current) => current.map((notification) =>
+          notification.id === id ? { ...notification, isRead: true } : notification
+        ));
+        void refetch();
+        void refetchUnreadCount();
+      },
       onError: () => toast.error("Failed to mark as read"),
     });
   };
@@ -239,7 +287,11 @@ export default function Alerts() {
     markAllRead.mutate(
       { params: { shopId } },
       {
-        onSuccess: () => { refetch(); },
+        onSuccess: () => {
+          setNotifications((current) => current.map((notification) => ({ ...notification, isRead: true })));
+          void refetch();
+          void refetchUnreadCount();
+        },
         onError: () => toast.error("Failed to mark all as read — please retry"),
       }
     );
@@ -248,11 +300,34 @@ export default function Alerts() {
   const handleRefresh = async () => {
     await generateAlerts();
     await refetch();
+    await refetchUnreadCount();
     toast.success("Alerts refreshed");
   };
 
-  const unreadCount = notifications?.filter(n => !n.isRead).length || 0;
-  const totalCount = notifications?.length || 0;
+  const handleLoadOlderNotifications = async () => {
+    if (isLoadingOlderNotifications || !hasMoreNotifications) return;
+    setIsLoadingOlderNotifications(true);
+    try {
+      const page = await customFetch<any[]>(
+        `/api/notifications?shopId=${encodeURIComponent(shopId)}&limit=${NOTIFICATIONS_PAGE_SIZE + 1}&offset=${nextNotificationOffset}`,
+      );
+      const older = page.slice(0, NOTIFICATIONS_PAGE_SIZE);
+      setNotifications((current) => {
+        const knownIds = new Set(current.map((notification) => notification.id));
+        return [...current, ...older.filter((notification) => !knownIds.has(notification.id))]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      });
+      setNextNotificationOffset((offset) => offset + older.length);
+      setHasMoreNotifications(page.length > NOTIFICATIONS_PAGE_SIZE);
+    } catch {
+      toast.error("Could not load older notifications");
+    } finally {
+      setIsLoadingOlderNotifications(false);
+    }
+  };
+
+  const unreadCount = notificationCount?.count ?? 0;
+  const totalCount = notifications.length;
 
   const stockAlerts = notifications?.filter(n => n.type === "low_stock" || n.type === "out_of_stock") || [];
   const debtAlerts = notifications?.filter(n => n.type === "debt_reminder") || [];
@@ -445,7 +520,7 @@ export default function Alerts() {
               <p className="text-xs text-muted-foreground">
                 {unreadCount > 0
                   ? `${unreadCount} unread · ${needsRestockCount} restock · ${expiryCount} expiry`
-                  : `${totalCount} notifications · ${needsRestockCount} restock · ${expiryCount} expiry`}
+                  : `${hasMoreNotifications ? `Showing ${totalCount}+` : totalCount} notifications · ${needsRestockCount} restock · ${expiryCount} expiry`}
               </p>
             </div>
           </div>
@@ -723,6 +798,19 @@ export default function Alerts() {
                   <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground/50">
                     <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500/40" />
                     All notifications have been read
+                  </div>
+                )}
+                {hasMoreNotifications && (
+                  <div className="flex justify-center px-4 py-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isLoadingOlderNotifications}
+                      onClick={() => void handleLoadOlderNotifications()}
+                    >
+                      {isLoadingOlderNotifications ? "Loading older alerts…" : "Load older notifications"}
+                    </Button>
                   </div>
                 )}
               </div>

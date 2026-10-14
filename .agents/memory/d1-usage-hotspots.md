@@ -3,14 +3,10 @@ name: D1 production usage hotspots
 description: The production usage pattern to check before changing GreenLink persistence
 ---
 
-Production D1 pressure should be diagnosed with `wrangler d1 insights`, not inferred from table row counts alone. The catalog endpoint can dominate free-tier consumption because each full product-list request scans the active catalog, and a separate count query doubles that scan. Normal sale writes (sale, line items, stock movement, product stock update, and occasional low-stock alert) are comparatively small at the current shop volume.
+Production D1 pressure should be diagnosed with Cloudflare D1 Insights, not inferred from table row counts alone. The leading source can change: notification history and unread-count scans have recently exceeded full product-catalog reads. Normal sale writes are not necessarily the primary quota risk.
 
 The user requires Cloudflare/D1 usage to stay within the free tier and wants shared sales, debt, and inventory changes to appear across devices without clearing caches. Balance freshness against reads: use bounded refreshes for important shared data, not rapid full-catalog or report scans.
 
-**Why:** The user explicitly asked to avoid database spikes and remain on the free tier.
+**Why:** Live ranked insights showed notification list/count queries as the largest read consumers, so an earlier catalog-focused assumption was incomplete.
 
-**How to apply:** Remove stale browser/service-worker reuse for mutable API data, refresh shared lists on focus/reconnect, and keep polling conservative. Check D1 Insights before increasing full-catalog or report request frequency.
-
-**Why:** A prior production snapshot looked like a write problem because sales touch several tables, but Cloudflare's ranked metrics showed repeated product reads were the larger quota risk. Removing unnecessary count scans preserved the API total while cutting that repeated read work.
-
-**How to apply:** When D1 usage rises, run `wrangler d1 insights greenlink-db --sort-type=sum --sort-by=reads --timePeriod=1d` and `--sort-by=writes` before changing financial data retention or sale history. Treat frontend polling and duplicate alert generation as separate optimization targets; large catalog responses should use a shop-scoped edge cache with an indexed version probe.
+**How to apply:** Recheck ranked D1 Insights before every quota optimization. Bound and paginate notification history, avoid repeated scans for exact aggregates, keep polling conservative, and use a shop-scoped edge cache with an indexed version probe for full catalog responses. Do not change financial or notification retention based on assumptions alone.

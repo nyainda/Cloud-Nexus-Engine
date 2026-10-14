@@ -2,7 +2,8 @@
 - [CF Worker in-memory cache pitfall](cf-cache-pitfall.md) — per-isolate Map cache causes cross-isolate stale reads; removed product list cache entirely
 - [Product list pagination for tests](product-list-pagination.md) — always use limit=3000 in tests; default limit=100 misses newly-created products at end of 2500+ rows
 - [Debt PDF presentation](debt-pdf-presentation.md) — customer statements stay focused on current debt/payment results, not correction mechanics
-- [D1 production usage hotspots](d1-usage-hotspots.md) — D1 Insights shows catalog polling/read scans, not sales writes, as the main free-tier pressure
+- [D1 production usage hotspots](d1-usage-hotspots.md) — rank live D1 Insights before optimizing; notification history/counts can dominate catalog reads
+- [GreenLink production-only workflow](greenlink-production-only.md) — keep local Replit workflows stopped and use production hosts only with explicit approval
 - [D1 schema bootstrap across isolates](d1-schema-bootstrap.md) — persistent migration markers are required; module-level Worker flags do not span cold isolates
 - [Debt sale reconciliation](debt-sale-reconciliation.md) — historical debt sales may lack customer rows; repair only with an explicitly confirmed customer name
 - [Quotation invoices](quotation-invoices.md) — issued invoices preserve the accepted quote and do not themselves record payment or stock movement

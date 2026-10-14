@@ -15,7 +15,7 @@ const NURSERY_REGISTER_MARKER = "nursery-register-v1";
 const NURSERY_CUSTOMER_MARKER = "nursery-customer-credit-v1";
 const NURSERY_ENTRIES_MARKER = "nursery-individual-entries-v1";
 const NURSERY_CATEGORY_MARKER = "nursery-categories-v1";
-const READ_QUERY_INDEX_MARKER = "read-query-indexes-v1";
+const NOTIFICATION_COUNTER_MARKER = "notification-unread-counter-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
@@ -169,18 +169,49 @@ async function ensureNurseryCategories(db: D1Database): Promise<void> {
   ]);
 }
 
-/** Add indexes for repeated date-range and reference lookups exactly once. */
-async function ensureReadQueryIndexes(db: D1Database): Promise<void> {
+/** Keep unread notification totals current without rescanning the full list. */
+async function ensureNotificationReadModel(db: D1Database): Promise<void> {
   const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(READ_QUERY_INDEX_MARKER).first<{ key: string }>();
+    .bind(NOTIFICATION_COUNTER_MARKER).first<{ key: string }>();
   if (marker) return;
 
   await db.batch([
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_debt_payments_paid_at ON debt_payments(paid_at)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_inventory_movements_created_at ON inventory_movements(created_at)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_inventory_movements_reference_id ON inventory_movements(reference_id)"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS notification_unread_counts (
+      shop_id TEXT PRIMARY KEY,
+      unread_count INTEGER NOT NULL DEFAULT 0 CHECK(unread_count >= 0)
+    )`),
+    db.prepare(`INSERT OR REPLACE INTO notification_unread_counts (shop_id, unread_count)
+      SELECT shop_id, COUNT(*) FROM notifications WHERE is_read = 0 GROUP BY shop_id`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_notifications_product_type_read ON notifications(product_id, type, is_read)"),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS notifications_unread_count_insert
+      AFTER INSERT ON notifications
+      WHEN NEW.is_read = 0
+      BEGIN
+        INSERT OR IGNORE INTO notification_unread_counts (shop_id, unread_count) VALUES (NEW.shop_id, 0);
+        UPDATE notification_unread_counts SET unread_count = unread_count + 1 WHERE shop_id = NEW.shop_id;
+      END`),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS notifications_unread_count_update
+      AFTER UPDATE OF shop_id, is_read ON notifications
+      WHEN OLD.shop_id != NEW.shop_id OR OLD.is_read != NEW.is_read
+      BEGIN
+        UPDATE notification_unread_counts
+          SET unread_count = MAX(0, unread_count - CASE WHEN OLD.is_read = 0 THEN 1 ELSE 0 END)
+          WHERE shop_id = OLD.shop_id;
+        INSERT OR IGNORE INTO notification_unread_counts (shop_id, unread_count) VALUES (NEW.shop_id, 0);
+        UPDATE notification_unread_counts
+          SET unread_count = unread_count + CASE WHEN NEW.is_read = 0 THEN 1 ELSE 0 END
+          WHERE shop_id = NEW.shop_id;
+      END`),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS notifications_unread_count_delete
+      AFTER DELETE ON notifications
+      WHEN OLD.is_read = 0
+      BEGIN
+        UPDATE notification_unread_counts
+          SET unread_count = MAX(0, unread_count - 1)
+          WHERE shop_id = OLD.shop_id;
+      END`),
     db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
-      .bind(READ_QUERY_INDEX_MARKER, new Date().toISOString()),
+      .bind(NOTIFICATION_COUNTER_MARKER, new Date().toISOString()),
   ]);
 }
 
@@ -213,7 +244,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     await ensureNurseryCustomerCredit(db);
     await ensureNurseryIndividualEntries(db);
     await ensureNurseryCategories(db);
-    await ensureReadQueryIndexes(db);
+    await ensureNotificationReadModel(db);
     bootstrapped = true;
     return;
   }
@@ -398,7 +429,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   await ensureNurseryCustomerCredit(db);
   await ensureNurseryIndividualEntries(db);
   await ensureNurseryCategories(db);
-  await ensureReadQueryIndexes(db);
+  await ensureNotificationReadModel(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup
