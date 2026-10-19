@@ -488,7 +488,8 @@ export default function NurseryRegister() {
         {from && to && from > to && <p role="alert" className="text-xs font-medium text-destructive sm:col-span-2 lg:col-span-4">Start date must be on or before the end date.</p>}
       </section>
 
-      <TabsContent value="overview" className="mt-5 space-y-5 focus-visible:outline-none">\n        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[.14em] text-primary">Your nursery at a glance</p><h2 className="mt-1 text-xl font-bold tracking-tight">Performance overview</h2></div><p className="text-xs text-muted-foreground">Figures update from recorded nursery sales.</p></div>
+      <TabsContent value="overview" className="mt-5 space-y-5 focus-visible:outline-none">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[.14em] text-primary">Your nursery at a glance</p><h2 className="mt-1 text-xl font-bold tracking-tight">Performance overview</h2></div><p className="text-xs text-muted-foreground">Figures update from recorded nursery sales.</p></div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.1fr_1fr_1fr_1fr_auto]">
           <Card className="group overflow-hidden rounded-2xl border-primary/25 bg-primary/[.045] shadow-sm transition-shadow hover:shadow-md"><CardContent className="flex h-full min-h-[124px] flex-col justify-center gap-2 p-4 sm:p-5">
             <Label htmlFor="nursery-month" className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Monthly activity</Label>
