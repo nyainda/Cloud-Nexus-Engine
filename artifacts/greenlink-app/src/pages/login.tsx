@@ -234,9 +234,7 @@ export default function Login() {
   });
   const loginMutation = useLogin();
 
-  const [shopId, setShopId] = useState<string>(
-    () => localStorage.getItem(LAST_SHOP_KEY) ?? ""
-  );
+  // Do not silently preselect the last shop when multiple shops exist. Suggest it,\n  // but require the user to deliberately confirm which shop they are entering.\n  const [lastShopId] = useState<string>(\n    () => localStorage.getItem(LAST_SHOP_KEY) ?? ""\n  );\n  const [shopId, setShopId] = useState<string>("");
   const [role, setRole] = useState<"owner" | "cashier">("cashier");
   const [pin, setPin] = useState("");
   const [showForgot, setShowForgot] = useState(false);
@@ -270,7 +268,7 @@ export default function Login() {
     );
   };
 
-  const selectedShop = shops?.find((shop) => shop.id === shopId);
+  const selectedShop = shops?.find((shop) => shop.id === shopId);\n  const recommendedShop = shops?.find((shop) => shop.id === lastShopId);\n  const needsExplicitShopChoice = (shops?.length ?? 0) > 1 && !shopId;
 
   return (
     <main className="min-h-[100dvh] bg-[#07130f] text-white lg:grid lg:grid-cols-[minmax(340px,0.88fr)_minmax(580px,1.12fr)]">
@@ -376,9 +374,34 @@ export default function Login() {
                   <label className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100/60">1. Select your shop</label>
                   <span className="text-xs text-emerald-100/40">Choose carefully</span>
                 </div>
+                {recommendedShop && (shops?.length ?? 0) > 1 && (
+                  <div className="rounded-2xl border border-lime-300/25 bg-lime-300/[0.06] p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-lime-300/10 text-lime-300">
+                        <CheckCircle2 className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-bold text-lime-200">Suggested shop</p>
+                          <span className="rounded-full bg-lime-300/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-lime-200/80">Last used</span>
+                        </div>
+                        <p className="mt-1 break-words text-sm font-semibold text-white">{recommendedShop.name}</p>
+                        <p className="mt-1 text-xs leading-5 text-emerald-100/55">Suggested from your previous visit. Only choose it if this is the shop you intend to access today.</p>
+                        <button
+                          type="button"
+                          onClick={() => { setShopId(recommendedShop.id); setPin(""); }}
+                          className="mt-3 inline-flex h-9 items-center gap-2 rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 text-xs font-bold text-lime-200 transition-colors hover:bg-lime-300/20"
+                        >
+                          Choose suggested shop <ArrowRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <Select value={shopId} onValueChange={(value) => { setShopId(value); setPin(""); }}>
                   <SelectTrigger className="h-14 rounded-xl border-white/10 bg-[#17261f] text-left text-sm text-white transition-colors hover:border-emerald-500/50 focus:ring-emerald-500/30 sm:text-base">
-                    <SelectValue placeholder="Choose the shop you want to access" />
+                    <SelectValue placeholder="Select the exact shop you intend to use" />
                   </SelectTrigger>
                   <SelectContent>
                     {shops?.map((shop) => (
@@ -386,6 +409,7 @@ export default function Login() {
                         <div className="flex items-center gap-3">
                           <Store className="h-4 w-4 text-emerald-500" />
                           <span>{shop.name}</span>
+                          {shop.id === lastShopId && <span className="ml-2 text-xs text-emerald-600">Last used</span>}
                         </div>
                       </SelectItem>
                     ))}
@@ -407,7 +431,7 @@ export default function Login() {
                     <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
                   </div>
                 ) : (
-                  <p className="text-xs leading-5 text-emerald-100/45">Select the correct shop before entering your PIN.</p>
+                  <p className={cn("text-xs leading-5", needsExplicitShopChoice ? "font-semibold text-amber-200" : "text-emerald-100/45")}>{needsExplicitShopChoice ? "Choose a shop above before entering your PIN. The previous shop is only a suggestion, not an automatic selection." : "Select the correct shop before entering your PIN."}</p>
                 )}
               </div>
 
