@@ -430,28 +430,40 @@ export default function NurseryRegister() {
   return (
     <Tabs value={activeTab} onValueChange={value => setActiveTab(value as NurseryTab)}>
     <div className="nursery-page mx-auto w-full max-w-[1440px] space-y-5 p-3 pb-8 sm:p-5 lg:p-7">
-      <div className="flex flex-col gap-4 border-b border-border/80 pb-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-3">
-          <div className="rounded-2xl bg-primary p-3 text-primary-foreground shadow-sm"><Sprout className="h-7 w-7" /></div>
-          <div>
-            <p className="mb-1 text-[11px] font-bold uppercase tracking-[.18em] text-primary">GreenLink · Nursery</p>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Sales register</h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Record seedling sales and follow the money. Nursery sales never deduct POS stock.</p>
+      <section className="relative isolate overflow-hidden rounded-3xl border border-primary/20 bg-card shadow-sm">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+          <div className="absolute -right-12 -top-24 h-64 w-64 rounded-full bg-primary/10 blur-3xl" />
+          <div className="absolute bottom-0 right-1/4 h-32 w-64 rounded-full bg-primary/[.06] blur-2xl" />
+        </div>
+        <div className="flex flex-col gap-6 p-5 sm:p-7 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/[.08] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[.14em] text-primary">
+              <Sprout className="h-3.5 w-3.5" /> GreenLink · Nursery
+            </div>
+            <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Seedling sales <span className="text-primary">workspace</span></h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">Record nursery sales, manage seedling varieties, and understand your daily and monthly performance—all in one place.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/[.08] px-3 py-1.5 text-xs font-medium text-primary"><CheckCircle2 className="h-3.5 w-3.5" /> Nursery sales kept separate from POS stock</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground"><CalendarDays className="h-3.5 w-3.5" /> Daily register & reports</span>
+            </div>
+          </div>
+          <div className="grid gap-3 rounded-2xl border border-border/70 bg-background/80 p-4 shadow-sm backdrop-blur sm:grid-cols-2 xl:min-w-[370px] xl:grid-cols-1">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><CalendarDays className="h-5 w-5" /></div>
+              <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-muted-foreground">Working sales date</p><p className="mt-1 text-sm font-bold tabular-nums sm:text-base">{businessDate ? new Date(`${businessDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" }) : "Choose a date"}</p></div>
+            </div>
+            <Button type="button" className="h-11 gap-2" onClick={() => setActiveTab("record")}><PackagePlus className="h-4 w-4" /> Record a seedling sale <ArrowUpRight className="ml-auto h-4 w-4" /></Button>
           </div>
         </div>
-        <div className="flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/[.06] px-4 py-3 sm:min-w-[245px]">
-          <CalendarDays className="h-5 w-5 shrink-0 text-primary" />
-          <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-muted-foreground">Working sales date</p><p className="mt-0.5 text-base font-bold tabular-nums">{businessDate ? new Date(`${businessDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" }) : "Choose a date"}</p></div>
-        </div>
-      </div>
+      </section>
 
-      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 sm:grid-cols-3 lg:grid-cols-6">
-        <TabsTrigger value="overview" className="gap-2 py-2.5"><LayoutDashboard className="h-4 w-4" />Overview</TabsTrigger>
-        <TabsTrigger value="record" className="gap-2 py-2.5"><PackagePlus className="h-4 w-4" />Record sale</TabsTrigger>
-        <TabsTrigger value="catalogue" className="gap-2 py-2.5"><Boxes className="h-4 w-4" />Varieties</TabsTrigger>
-        <TabsTrigger value="insights" className="gap-2 py-2.5"><Users className="h-4 w-4" />Customers</TabsTrigger>
-        <TabsTrigger value="sales" className="gap-2 py-2.5"><ReceiptText className="h-4 w-4" />Sales history</TabsTrigger>
-        <TabsTrigger value="reports" className="gap-2 py-2.5"><BarChart3 className="h-4 w-4" />Reports</TabsTrigger>
+      <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1.5 rounded-2xl border border-border/70 bg-muted/30 p-2 shadow-sm">
+        <TabsTrigger value="overview" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><LayoutDashboard className="h-4 w-4" />Overview</TabsTrigger>
+        <TabsTrigger value="record" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><PackagePlus className="h-4 w-4" />Record sale</TabsTrigger>
+        <TabsTrigger value="catalogue" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><Boxes className="h-4 w-4" />Varieties</TabsTrigger>
+        <TabsTrigger value="insights" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><Users className="h-4 w-4" />Customers</TabsTrigger>
+        <TabsTrigger value="sales" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><ReceiptText className="h-4 w-4" />Sales history</TabsTrigger>
+        <TabsTrigger value="reports" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><BarChart3 className="h-4 w-4" />Reports</TabsTrigger>
       </TabsList>
 
       <section aria-label="Date controls" className="grid gap-3 rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm sm:grid-cols-2 sm:p-4 lg:grid-cols-[minmax(170px,.7fr)_minmax(170px,.7fr)_minmax(180px,.8fr)_auto] lg:items-end">
