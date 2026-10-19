@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import PinKeypad from "@/components/pin-keypad";
-import { Store, Shield, KeyRound, ChevronLeft, CheckCircle2, Eye, EyeOff } from "lucide-react";
+import { Store, Shield, KeyRound, ChevronLeft, CheckCircle2, Eye, EyeOff, Sprout, Boxes, TrendingUp, MapPin, ArrowRight, LockKeyhole } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SHOPS_CACHE_KEY = "greenlink_shops_cache";
@@ -270,110 +270,179 @@ export default function Login() {
     );
   };
 
+  const selectedShop = shops?.find((shop) => shop.id === shopId);
+
   return (
-    <div className="min-h-[100dvh] flex flex-col md:flex-row bg-background" style={{ WebkitTransform: 'translateZ(0)', transform: 'translateZ(0)' }}>
-      {/* Forgot PIN overlay */}
+    <main className="min-h-[100dvh] bg-[#07130f] text-white lg:grid lg:grid-cols-[minmax(340px,0.88fr)_minmax(580px,1.12fr)]">
       {showForgot && (
-        <ForgotPinModal
-          shops={shops ?? []}
-          onClose={() => setShowForgot(false)}
-        />
+        <ForgotPinModal shops={shops ?? []} onClose={() => setShowForgot(false)} />
       )}
 
-      {/* Brand Panel */}
-      <div className="hidden md:flex md:w-1/2 bg-sidebar flex-col justify-between p-12 text-sidebar-foreground">
-        <div>
-          <img
-            src={shopId.includes("sunrise") ? "/logo-sunrise.jpg" : "/logo-greenlink.jpg"}
-            alt="shop logo"
-            className="h-20 w-auto mb-8 rounded-lg"
-            style={{ objectFit: "contain", background: "white", padding: "6px" }}
-          />
-          <h1 className="text-4xl lg:text-5xl font-bold font-display tracking-tight text-white mb-4">
-            {shopId.includes("sunrise") ? "Kabatha Sunrise" : "GreenLink OS"}
-          </h1>
-          <p className="text-sidebar-foreground/80 text-lg max-w-md font-sans">
-            The professional operating system for agrovet businesses. Manage your inventory, track debts, and process sales with confidence.
-          </p>
+      {/* Brand story panel */}
+      <section className="relative isolate hidden min-h-[100dvh] overflow-hidden border-r border-emerald-900/50 bg-gradient-to-br from-[#062c20] via-[#071b15] to-[#07130f] p-10 xl:flex xl:flex-col xl:justify-between xl:p-14">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10">
+          <div className="absolute -left-24 top-36 h-80 w-80 rounded-full bg-emerald-500/10 blur-3xl" />
+          <div className="absolute bottom-10 right-0 h-96 w-96 rounded-full bg-lime-400/10 blur-3xl" />
+          <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-emerald-950/60 to-transparent" />
         </div>
-        <div className="flex items-center gap-4 text-sidebar-foreground/60 text-sm">
-          <Shield className="h-5 w-5" />
-          <span>Secure, fast, and reliable</span>
-        </div>
-      </div>
 
-      {/* Login Panel */}
-      <div className="flex-1 flex items-center justify-center p-6 bg-muted/20">
-        <div className="w-full max-w-md">
-          {/* Mobile Header */}
-          <div className="md:hidden flex flex-col items-center mb-8 text-center">
-            <img
-              src={shopId.includes("sunrise") ? "/logo-sunrise.jpg" : "/logo-greenlink.jpg"}
-              alt="shop logo"
-              className="h-16 w-auto mb-4 rounded-lg"
-              style={{ objectFit: "contain", background: "white", padding: "4px" }}
-            />
-            <h1 className="text-3xl font-bold font-display tracking-tight text-foreground">
-              {shopId.includes("sunrise") ? "Kabatha Sunrise" : "GreenLink"}
-            </h1>
+        <div>
+          <div className="flex items-center gap-4">
+            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-white p-2 shadow-lg shadow-black/20">
+              <img src="/logo-greenlink.jpg" alt="GreenLink logo" className="h-full w-full object-contain" />
+            </div>
+            <div>
+              <p className="text-2xl font-extrabold tracking-tight">GreenLink <span className="text-lime-400">OS</span></p>
+              <p className="mt-1 text-sm text-emerald-100/65">Multi-shop business platform</p>
+            </div>
           </div>
 
-          <Card className="border-none shadow-2xl bg-card">
-            <CardHeader className="text-center pb-6 border-b border-border/40">
-              <CardTitle className="text-2xl font-bold tracking-tight">Welcome back</CardTitle>
-              <CardDescription className="text-base">Sign in to your terminal</CardDescription>
+          <div className="mt-20 max-w-xl">
+            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold tracking-wide text-emerald-200">
+              <Sprout className="h-4 w-4 text-lime-300" />
+              BUILT FOR AGROVET BUSINESSES
+            </div>
+            <h1 className="text-5xl font-extrabold leading-[1.08] tracking-tight 2xl:text-6xl">
+              Run your business.
+              <span className="mt-2 block text-lime-400">Grow with confidence.</span>
+            </h1>
+            <p className="mt-6 max-w-lg text-lg leading-8 text-emerald-50/70">
+              Manage sales, stock, customer debts, and business performance from one dependable workspace.
+            </p>
+          </div>
+
+          <div className="mt-12 grid max-w-xl grid-cols-2 gap-3">
+            {[
+              { icon: Store, title: "Point of sale", detail: "Fast checkout" },
+              { icon: Boxes, title: "Stock control", detail: "Know your inventory" },
+              { icon: TrendingUp, title: "Reports & insights", detail: "Make informed decisions" },
+              { icon: Shield, title: "Shop-specific access", detail: "Keep work in context" },
+            ].map(({ icon: Icon, title, detail }) => (
+              <div key={title} className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 backdrop-blur-sm">
+                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-400/10 text-lime-300">
+                  <Icon className="h-5 w-5" />
+                </div>
+                <p className="font-semibold text-white">{title}</p>
+                <p className="mt-1 text-sm text-emerald-100/55">{detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-12 flex items-center gap-3 rounded-2xl border border-emerald-300/15 bg-black/20 px-4 py-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-300">
+            <Shield className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white">Your work, in the right shop</p>
+            <p className="mt-1 text-xs text-emerald-100/60">Check the selected location before signing in.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Login experience */}
+      <section className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-[#091510] px-4 py-8 sm:px-8 lg:px-10">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-emerald-500/[0.08] blur-3xl" />
+        <div className="relative w-full max-w-xl">
+          <div className="mb-7 flex items-center justify-between xl:hidden">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl bg-white p-1.5">
+                <img src="/logo-greenlink.jpg" alt="GreenLink logo" className="h-full w-full object-contain" />
+              </div>
+              <div>
+                <p className="text-lg font-extrabold">GreenLink <span className="text-lime-400">OS</span></p>
+                <p className="text-xs text-emerald-100/60">Multi-shop business platform</p>
+              </div>
+            </div>
+            <div className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-emerald-100/65">Secure sign in</div>
+          </div>
+
+          <Card className="overflow-hidden rounded-[1.75rem] border border-emerald-900/70 bg-[#101d17] text-white shadow-2xl shadow-black/30">
+            <CardHeader className="border-b border-white/[0.07] px-6 py-6 sm:px-8 sm:py-7">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/20 bg-emerald-400/10 text-lime-300">
+                  <LockKeyhole className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <CardTitle className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome back</CardTitle>
+                  <CardDescription className="mt-1.5 text-sm text-emerald-100/60 sm:text-base">Sign in to your GreenLink OS terminal</CardDescription>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="pt-6 space-y-8">
+
+            <CardContent className="space-y-7 px-6 py-6 sm:px-8 sm:py-8">
               <div className="space-y-3">
-                <label className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Location</label>
-                <Select value={shopId} onValueChange={setShopId}>
-                  <SelectTrigger className="w-full h-14 text-lg bg-muted/50 border-transparent focus:bg-background transition-colors">
-                    <SelectValue placeholder="Select your shop" />
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100/60">1. Select your shop</label>
+                  <span className="text-xs text-emerald-100/40">Choose carefully</span>
+                </div>
+                <Select value={shopId} onValueChange={(value) => { setShopId(value); setPin(""); }}>
+                  <SelectTrigger className="h-14 rounded-xl border-white/10 bg-[#17261f] text-left text-sm text-white transition-colors hover:border-emerald-500/50 focus:ring-emerald-500/30 sm:text-base">
+                    <SelectValue placeholder="Choose the shop you want to access" />
                   </SelectTrigger>
                   <SelectContent>
                     {shops?.map((shop) => (
-                      <SelectItem key={shop.id} value={shop.id} className="text-lg py-3 cursor-pointer">
+                      <SelectItem key={shop.id} value={shop.id} className="cursor-pointer py-3">
                         <div className="flex items-center gap-3">
-                          <Store className="h-5 w-5 text-primary" />
-                          {shop.name}
+                          <Store className="h-4 w-4 text-emerald-500" />
+                          <span>{shop.name}</span>
                         </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+
+                {selectedShop ? (
+                  <div className="flex items-center gap-3 rounded-xl border border-emerald-400/25 bg-emerald-400/[0.07] p-3.5">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-400/10 text-lime-300">
+                      <Store className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-white">{selectedShop.name}</p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-emerald-100/55">
+                        <MapPin className="h-3 w-3" />
+                        Selected shop · verify before continuing
+                      </p>
+                    </div>
+                    <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                  </div>
+                ) : (
+                  <p className="text-xs leading-5 text-emerald-100/45">Select the correct shop before entering your PIN.</p>
+                )}
               </div>
 
               <div className="space-y-4">
-                <label className="text-sm font-semibold uppercase tracking-wider text-muted-foreground block">Authentication</label>
-                <Tabs value={role} onValueChange={(v) => { setRole(v as any); setPin(""); }} className="w-full">
-                  <TabsList className="grid w-full grid-cols-2 h-14 mb-8 bg-muted/50 p-1">
-                    <TabsTrigger value="cashier" className="text-base font-medium rounded-md data-[state=active]:shadow-sm">Cashier</TabsTrigger>
-                    <TabsTrigger value="owner" className="text-base font-medium rounded-md data-[state=active]:shadow-sm">Owner</TabsTrigger>
+                <label className="block text-xs font-bold uppercase tracking-[0.16em] text-emerald-100/60">2. Choose your access</label>
+                <Tabs value={role} onValueChange={(value) => { setRole(value as "owner" | "cashier"); setPin(""); }} className="w-full">
+                  <TabsList className="grid h-12 w-full grid-cols-2 rounded-xl border border-white/[0.06] bg-[#0a1510] p-1">
+                    <TabsTrigger value="cashier" className="rounded-lg text-sm font-semibold text-emerald-100/55 data-[state=active]:bg-emerald-400 data-[state=active]:text-[#062016] data-[state=active]:shadow-sm">Cashier</TabsTrigger>
+                    <TabsTrigger value="owner" className="rounded-lg text-sm font-semibold text-emerald-100/55 data-[state=active]:bg-emerald-400 data-[state=active]:text-[#062016] data-[state=active]:shadow-sm">Owner</TabsTrigger>
                   </TabsList>
-                  <TabsContent value="cashier" className="mt-0 focus-visible:outline-none">
+                  <TabsContent value="cashier" className="mt-5 focus-visible:outline-none">
                     <PinKeypad pin={pin} onChange={setPin} onSubmit={handleLogin} loading={loginMutation.isPending} />
                   </TabsContent>
-                  <TabsContent value="owner" className="mt-0 focus-visible:outline-none">
+                  <TabsContent value="owner" className="mt-5 focus-visible:outline-none">
                     <PinKeypad pin={pin} onChange={setPin} onSubmit={handleLogin} loading={loginMutation.isPending} />
                   </TabsContent>
                 </Tabs>
 
-                {/* Forgot PIN link */}
-                <div className="flex justify-center pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowForgot(true)}
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <KeyRound className="h-3 w-3" />
+                <div className="flex flex-col items-center justify-between gap-3 border-t border-white/[0.07] pt-4 sm:flex-row">
+                  <button type="button" onClick={() => setShowForgot(true)} className="inline-flex items-center gap-2 text-sm font-medium text-emerald-100/55 transition-colors hover:text-lime-300">
+                    <KeyRound className="h-4 w-4" />
                     Forgot PIN?
                   </button>
+                  <p className="inline-flex items-center gap-2 text-xs text-emerald-100/40">
+                    <Shield className="h-3.5 w-3.5" />
+                    Your session is shop-specific
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
+
+          <p className="mt-5 text-center text-xs leading-5 text-emerald-100/35">
+            GreenLink OS · Secure access for your business
+          </p>
         </div>
-      </div>
-    </div>
-  );
-}
+      </section>
+    </main>
