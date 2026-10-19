@@ -499,7 +499,7 @@ export default function NurseryRegister() {
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><Leaf className="h-5 w-5" /></div>
             <div><p className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Seedlings sold</p><p data-testid="text-month-seedlings" className="mt-1 text-2xl font-bold tabular-nums">{Number(monthSummary.seedlingsSold).toLocaleString()}</p><p className="mt-0.5 text-xs text-muted-foreground">for selected month</p></div>
           </CardContent></Card>
-          <Card><CardContent className="flex h-full min-h-[116px] items-center gap-3 p-4">
+          <Card className="overflow-hidden rounded-2xl border-border/70 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"><CardContent className="flex h-full min-h-[124px] items-center gap-3 p-4 sm:p-5">
             <div className="rounded-xl bg-amber-500/10 p-3 text-amber-700"><Banknote className="h-5 w-5" /></div>
             <div><p className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Sales value</p><p data-testid="text-month-revenue" className="mt-1 text-2xl font-bold tabular-nums">{formatKES(cents(Number(monthSummary.totalRevenueCents)))}</p><p className="mt-0.5 text-xs text-muted-foreground">recorded revenue</p></div>
           </CardContent></Card>
@@ -597,7 +597,7 @@ export default function NurseryRegister() {
               <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">Sale entry</span>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4 pt-5">
+          <CardContent className="space-y-5 p-4 pt-5 sm:p-6">
             <form className="space-y-5" onSubmit={saveEntry}>
               <section aria-labelledby="sale-items-heading" className="space-y-3">
                 <div>
@@ -798,7 +798,7 @@ export default function NurseryRegister() {
 
 
       <TabsContent value="sales" className="mt-5 space-y-4 focus-visible:outline-none">
-      <Card className="overflow-hidden border-border/80 shadow-sm">
+      <Card className="overflow-hidden rounded-3xl border-border/70 shadow-sm">
         <CardHeader className="border-b border-border/70 bg-gradient-to-br from-primary/[0.07] via-background to-sky-500/[0.06] pb-5">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-start gap-3">
