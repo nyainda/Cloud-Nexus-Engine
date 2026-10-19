@@ -466,7 +466,7 @@ export default function NurseryRegister() {
         <TabsTrigger value="reports" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><BarChart3 className="h-4 w-4" />Reports</TabsTrigger>
       </TabsList>
 
-      <section aria-label="Date controls" className="grid gap-3 rounded-2xl border border-border/80 bg-card/80 p-3 shadow-sm sm:grid-cols-2 sm:p-4 lg:grid-cols-[minmax(170px,.7fr)_minmax(170px,.7fr)_minmax(180px,.8fr)_auto] lg:items-end">
+      <section aria-label="Date controls" className="grid gap-3 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:grid-cols-2 sm:p-5 lg:grid-cols-[minmax(170px,.7fr)_minmax(170px,.7fr)_minmax(180px,.8fr)_auto] lg:items-end">
         <div className="nursery-date-field">
           <Label htmlFor="nursery-range-from">Period starts</Label>
           <Input data-testid="input-nursery-period-from" id="nursery-range-from" type="date" value={from} max={to || undefined} onChange={event => { setFrom(event.target.value); setReportPage(1); setSalesPage(1); }} />
@@ -488,13 +488,13 @@ export default function NurseryRegister() {
         {from && to && from > to && <p role="alert" className="text-xs font-medium text-destructive sm:col-span-2 lg:col-span-4">Start date must be on or before the end date.</p>}
       </section>
 
-      <TabsContent value="overview" className="mt-5 space-y-5 focus-visible:outline-none">
+      <TabsContent value="overview" className="mt-5 space-y-5 focus-visible:outline-none">\n        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[.14em] text-primary">Your nursery at a glance</p><h2 className="mt-1 text-xl font-bold tracking-tight">Performance overview</h2></div><p className="text-xs text-muted-foreground">Figures update from recorded nursery sales.</p></div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.1fr_1fr_1fr_1fr_auto]">
-          <Card className="border-primary/20 bg-primary/[.04]"><CardContent className="flex h-full min-h-[116px] flex-col justify-center gap-2 p-4">
+          <Card className="group overflow-hidden rounded-2xl border-primary/25 bg-primary/[.045] shadow-sm transition-shadow hover:shadow-md"><CardContent className="flex h-full min-h-[124px] flex-col justify-center gap-2 p-4 sm:p-5">
             <Label htmlFor="nursery-month" className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Monthly activity</Label>
             <Input data-testid="input-nursery-month" id="nursery-month" type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)} className="h-11 bg-card text-base font-bold" />
           </CardContent></Card>
-          <Card><CardContent className="flex h-full min-h-[116px] items-center gap-3 p-4">
+          <Card className="rounded-2xl shadow-sm transition-shadow hover:shadow-md"><CardContent className="flex h-full min-h-[124px] items-center gap-3 p-4 sm:p-5">
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><Leaf className="h-5 w-5" /></div>
             <div><p className="text-xs font-semibold uppercase tracking-[.08em] text-muted-foreground">Seedlings sold</p><p data-testid="text-month-seedlings" className="mt-1 text-2xl font-bold tabular-nums">{Number(monthSummary.seedlingsSold).toLocaleString()}</p><p className="mt-0.5 text-xs text-muted-foreground">for selected month</p></div>
           </CardContent></Card>
@@ -511,7 +511,7 @@ export default function NurseryRegister() {
           </Button>
         </div>
 
-        <Card className="overflow-hidden border-primary/15">
+        <Card className="overflow-hidden rounded-2xl border-primary/15 shadow-sm">
           <CardHeader className="flex flex-col gap-3 border-b border-border/70 pb-4 sm:flex-row sm:items-center sm:justify-between">
             <div><p className="text-xs font-bold uppercase tracking-[.14em] text-primary">At a glance</p><CardTitle className="mt-1 text-xl">Where sales landed</CardTitle><p className="mt-1 text-sm text-muted-foreground">Payment totals for the selected month, based on recorded sales.</p></div>
             <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
