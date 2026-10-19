@@ -234,7 +234,12 @@ export default function Login() {
   });
   const loginMutation = useLogin();
 
-  // Do not silently preselect the last shop when multiple shops exist. Suggest it,\n  // but require the user to deliberately confirm which shop they are entering.\n  const [lastShopId] = useState<string>(\n    () => localStorage.getItem(LAST_SHOP_KEY) ?? ""\n  );\n  const [shopId, setShopId] = useState<string>("");
+  // Do not silently preselect the last shop when multiple shops exist. Suggest it,
+  // but require the user to deliberately confirm which shop they are entering.
+  const [lastShopId] = useState<string>(
+    () => localStorage.getItem(LAST_SHOP_KEY) ?? ""
+  );
+  const [shopId, setShopId] = useState<string>("");
   const [role, setRole] = useState<"owner" | "cashier">("cashier");
   const [pin, setPin] = useState("");
   const [showForgot, setShowForgot] = useState(false);
