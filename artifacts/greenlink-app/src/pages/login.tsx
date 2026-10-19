@@ -273,7 +273,9 @@ export default function Login() {
     );
   };
 
-  const selectedShop = shops?.find((shop) => shop.id === shopId);\n  const recommendedShop = shops?.find((shop) => shop.id === lastShopId);\n  const needsExplicitShopChoice = (shops?.length ?? 0) > 1 && !shopId;
+  const selectedShop = shops?.find((shop) => shop.id === shopId);
+  const recommendedShop = shops?.find((shop) => shop.id === lastShopId);
+  const needsExplicitShopChoice = (shops?.length ?? 0) > 1 && !shopId;
 
   return (
     <main className="min-h-[100dvh] bg-[#07130f] text-white lg:grid lg:grid-cols-[minmax(340px,0.88fr)_minmax(580px,1.12fr)]">
