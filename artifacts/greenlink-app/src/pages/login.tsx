@@ -279,13 +279,13 @@ export default function Login() {
   const needsExplicitShopChoice = (shops?.length ?? 0) > 1 && !shopId;
 
   return (
-    <main className="min-h-[100dvh] bg-[#07130f] text-white lg:grid lg:grid-cols-[minmax(340px,0.88fr)_minmax(580px,1.12fr)]">
+    <main className={cn("min-h-[100dvh] transition-colors duration-300 lg:grid lg:grid-cols-[minmax(340px,0.88fr)_minmax(580px,1.12fr)]", isLight ? "bg-stone-50 text-slate-900" : "bg-[#07130f] text-white")}>
       {showForgot && (
         <ForgotPinModal shops={shops ?? []} onClose={() => setShowForgot(false)} />
       )}
 
       {/* Brand story panel */}
-      <section className="relative isolate hidden min-h-[100dvh] overflow-hidden border-r border-emerald-900/50 bg-gradient-to-br from-[#062c20] via-[#071b15] to-[#07130f] p-10 xl:flex xl:flex-col xl:justify-between xl:p-14">
+      <section className={cn("relative isolate hidden min-h-[100dvh] overflow-hidden border-r p-10 transition-colors duration-300 xl:flex xl:flex-col xl:justify-between xl:p-14", isLight ? "border-border bg-gradient-to-br from-white via-stone-50 to-emerald-50 text-slate-900" : "border-emerald-900/50 bg-gradient-to-br from-[#062c20] via-[#071b15] to-[#07130f] text-white")}>
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10">
           <div className="absolute -left-24 top-36 h-80 w-80 rounded-full bg-emerald-500/10 blur-3xl" />
           <div className="absolute bottom-10 right-0 h-96 w-96 rounded-full bg-lime-400/10 blur-3xl" />
@@ -299,12 +299,12 @@ export default function Login() {
             </div>
             <div>
               <p className="text-2xl font-extrabold tracking-tight">GreenLink <span className="text-lime-400">OS</span></p>
-              <p className="mt-1 text-sm text-emerald-100/65">Multi-shop business platform</p>
+              <p className={cn("mt-1 text-sm", isLight ? "text-muted-foreground" : "text-emerald-100/65")}>Multi-shop business platform</p>
             </div>
           </div>
 
           <div className="mt-20 max-w-xl">
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold tracking-wide text-emerald-200">
+            <div className={cn("mb-5 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold tracking-wide", isLight ? "border-primary/20 bg-primary/10 text-primary" : "border-emerald-400/20 bg-emerald-400/10 text-emerald-200")}>
               <Sprout className="h-4 w-4 text-lime-300" />
               BUILT FOR AGROVET BUSINESSES
             </div>
@@ -348,6 +348,7 @@ export default function Login() {
 
       {/* Login experience */}
       <section className={cn("relative flex min-h-[100dvh] items-center justify-center overflow-hidden px-4 py-8 transition-colors duration-300 sm:px-8 lg:px-10", isLight ? "bg-stone-100" : "bg-[#091510]")}>
+      <button type="button" onClick={toggleLoginTheme} aria-label={isLight ? "Switch login to dark theme" : "Switch login to light theme"} className="absolute right-4 top-4 z-20 inline-flex h-10 items-center gap-2 rounded-full border border-border bg-background/90 px-3 text-xs font-semibold text-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted sm:right-6 sm:top-6"><Sun className="hidden h-4 w-4" />{isLight ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}{isLight ? "Dark mode" : "Light mode"}</button>
         <div aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-emerald-500/[0.08] blur-3xl" />
         <div className="relative w-full max-w-xl">
           <div className="mb-7 flex items-center justify-between xl:hidden">
