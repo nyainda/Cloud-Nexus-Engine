@@ -415,7 +415,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {/* Persistent shop identity bar: visible on every page, including checkout */}
           <div className="z-30 flex shrink-0 items-center gap-3 border-b border-emerald-500/20 bg-emerald-500/[0.07] px-3 py-2.5 sm:px-5">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300">
-              <Store className="h-4.5 w-4.5" />
+              <Store className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
