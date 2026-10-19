@@ -222,6 +222,19 @@ function ForgotPinModal({ shops, onClose }: {
 
 // ─── Main Login page ──────────────────────────────────────────────────────────
 export default function Login() {
+  const [loginTheme, setLoginTheme] = useState<"dark" | "light">(() => {
+    try {
+      return localStorage.getItem(LOGIN_THEME_KEY) === "light" ? "light" : "dark";
+    } catch {
+      return "dark";
+    }
+  });
+  const isLight = loginTheme === "light";
+  const toggleLoginTheme = () => {
+    const next = isLight ? "dark" : "light";
+    setLoginTheme(next);
+    try { localStorage.setItem(LOGIN_THEME_KEY, next); } catch {}
+  };
   const [, setLocation] = useLocation();
   const { data: shops } = useListShops({
     query: {
