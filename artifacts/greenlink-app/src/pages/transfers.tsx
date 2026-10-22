@@ -51,6 +51,7 @@ export default function Transfers() {
   const [search, setSearch] = useState("");
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
   const toggleGroup = (label: string) =>
     setCollapsed(prev => {
@@ -85,10 +86,16 @@ export default function Transfers() {
     });
   }, [transfers, filter, shopId, search]);
 
+  // Keep the default view focused on recent activity; searching reveals every match.
+  const visibleTransfers = useMemo(() => {
+    if (search.trim() || showAllHistory) return filtered;
+    return filtered.slice(0, 8);
+  }, [filtered, search, showAllHistory]);
+
   const grouped = useMemo(() => {
     const groups: { label: string; items: any[] }[] = [];
     const seen: Record<string, number> = {};
-    for (const t of filtered) {
+    for (const t of visibleTransfers) {
       const label = getDateGroup(t.createdAt);
       if (seen[label] === undefined) {
         seen[label] = groups.length;
@@ -97,7 +104,7 @@ export default function Transfers() {
       groups[seen[label]].items.push(t);
     }
     return groups;
-  }, [filtered]);
+  }, [visibleTransfers]);
 
   const sentCount = useMemo(() => (transfers ?? []).filter(t => t.fromShopId === shopId).length, [transfers, shopId]);
   const receivedCount = useMemo(() => (transfers ?? []).filter(t => t.toShopId === shopId).length, [transfers, shopId]);
@@ -208,7 +215,7 @@ export default function Transfers() {
       </div>
 
       {/* Transfer activity */}
-      <div className="mx-auto w-full max-w-6xl flex-1 space-y-5 p-4 pb-8 sm:px-6">
+      <div className="mx-auto w-full max-w-6xl flex-1 space-y-4 p-4 pb-8 sm:px-6">
         {isLoading ? (
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             {[1, 2, 3, 4, 5, 6].map(i => <TransferRowSkeleton key={i} />)}
@@ -255,7 +262,7 @@ export default function Transfers() {
 
                 {/* Compact rows — hidden when collapsed */}
                 {!isCollapsed && (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {group.items.map((transfer) => {
                       const isSent = transfer.fromShopId === shopId;
                       const canCancel = isOwner && isSent;
@@ -266,12 +273,12 @@ export default function Transfers() {
                         <div
                           key={transfer.id}
                           className={cn(
-                            "flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-4 shadow-sm transition-colors hover:border-primary/30"
+                            "flex items-center gap-3 rounded-xl border border-border/80 bg-card px-3 py-2.5 shadow-sm transition-colors hover:border-primary/30 sm:px-3.5"
                           )}
                         >
                           {/* Direction icon */}
                           <div className={cn(
-                            "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
+                            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
                             isSent
                               ? "bg-orange-500/10 text-orange-500"
                               : "bg-emerald-500/10 text-emerald-500"
@@ -287,13 +294,13 @@ export default function Transfers() {
                               {transfer.productName}
                             </p>
                             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                              <span className="rounded-lg bg-muted px-2.5 py-1 font-mono font-bold text-foreground">{transfer.qty} {transfer.unit || "units"}</span>
-                              <span className={cn("inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-medium", isSent ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300")}>
+                              <span className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] font-bold text-foreground">{transfer.qty} {transfer.unit || "units"}</span>
+                              <span className={cn("inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium", isSent ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300")}>
                                 {shopLabel(transfer.fromShopId)} <ArrowRight className="h-3 w-3 opacity-70" /> {shopLabel(transfer.toShopId)}
                               </span>
                             </div>
                             {transfer.notes && (
-                              <p className="mt-2 truncate text-xs italic text-muted-foreground">
+                              <p className="mt-1 truncate text-[11px] text-muted-foreground">
                                 {transfer.notes}
                               </p>
                             )}
@@ -329,6 +336,19 @@ export default function Transfers() {
               </div>
             );
           })
+        )}
+        {!isLoading && !search.trim() && filtered.length > 8 && (
+          <div className="flex justify-center pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-2 rounded-xl"
+              onClick={() => setShowAllHistory(value => !value)}
+            >
+              {showAllHistory ? "Show recent only" : `Show all ${filtered.length} transfers`}
+              <ChevronDown className={cn("h-4 w-4 transition-transform", showAllHistory && "rotate-180")} />
+            </Button>
+          </div>
         )}
       </div>
     </div>
