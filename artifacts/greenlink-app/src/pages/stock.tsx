@@ -239,7 +239,7 @@ function WeightPresets({ unit, onSelect }: { unit: string; onSelect: (v: number)
     ? [250, 500, 1000]
     : [0.5, 1, 2, 5, 10, 25, 50];
   return (
-    <div className="flex gap-2 flex-wrap items-center">
+    <div className="flex gap-1.5 flex-wrap">
       {presets.map(p => (
         <button key={p} type="button" onClick={() => onSelect(p)}
           className="text-xs font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 border border-border transition-colors">
@@ -1567,7 +1567,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
           </div>
 
           {/* Table */}
-          <div className="flex-1 overflow-y-auto min-h-0 px-2 pb-4 md:px-4">
+          <div className="flex-1 overflow-y-auto min-h-0">
             {/* Column headers */}
             <div className="sticky top-0 z-10 bg-muted border-b border-border px-4 py-1.5 grid grid-cols-[1fr_80px_80px_72px] gap-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
               <span>Product</span>
