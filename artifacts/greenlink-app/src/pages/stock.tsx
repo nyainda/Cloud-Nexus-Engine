@@ -1350,7 +1350,6 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
 
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
   const [catFilter, setCatFilter] = useState("all");
   const [entries, setEntries] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}"); } catch { return {}; }
@@ -1722,6 +1721,7 @@ export default function Stock() {
   const isOwner = role === "owner";
 
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const debouncedSearch = useDebounce(search, 100);
   const [view, setView] = useState<StockView>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
