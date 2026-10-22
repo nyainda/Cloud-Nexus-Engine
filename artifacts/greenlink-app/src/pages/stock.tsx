@@ -1851,10 +1851,10 @@ export default function Stock() {
   }, [debouncedSearch, view, categoryFilter, sortBy]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <div className="shrink-0 border-b border-border/70 bg-gradient-to-r from-primary/[0.08] via-background to-background px-4 py-4 md:px-6 md:py-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground">
+      <div className="shrink-0 border-b border-border/70 bg-gradient-to-br from-primary/[0.10] via-background to-background px-3 py-4 sm:px-5 md:px-6 md:py-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/15"><Package className="h-6 w-6" /></div>
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">Inventory control</p>
@@ -1862,7 +1862,7 @@ export default function Stock() {
               <p className="mt-1 text-sm text-muted-foreground">Monitor availability, spot issues and manage your products.</p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             <BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} />
             {isOwner && <CleanupDialog products={allProducts} shopId={shopId} />}
             <AddProductDialog shopId={shopId} onSuccess={refresh} existingProducts={allProducts} isOwner={isOwner} />
@@ -1870,7 +1870,7 @@ export default function Stock() {
         </div>
 
         {isOwner && (
-          <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
             {[
               { label: "Total products", value: counts.all.toLocaleString(), note: "Active inventory", icon: Package, tone: "primary" },
               { label: "Units on hand", value: parseFloat(counts.totalItems.toFixed(3)).toLocaleString(), note: "Across all products", icon: Scale, tone: "primary" },
@@ -1878,7 +1878,7 @@ export default function Stock() {
               { label: "Out of stock", value: counts.out.toLocaleString(), note: counts.out ? "Needs attention" : "Nothing unavailable", icon: PackageX, tone: "danger" },
             ].map(stat => {
               const Icon = stat.icon;
-              return <div key={stat.label} className="relative overflow-hidden rounded-2xl border border-border/70 bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md md:p-5">
+              return <div key={stat.label} className="relative overflow-hidden rounded-xl border border-border/70 bg-card p-3 shadow-sm transition-[border-color,box-shadow] duration-200 hover:border-primary/25 hover:shadow-md sm:rounded-2xl sm:p-4 md:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div><p className="text-sm font-medium text-muted-foreground">{stat.label}</p><p className="mt-2 text-2xl font-bold tracking-tight tabular-nums md:text-3xl">{stat.value}</p></div>
                   <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", stat.tone === "warning" ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" : stat.tone === "danger" ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary")}><Icon className="h-5 w-5" /></div>
@@ -1903,25 +1903,25 @@ export default function Stock() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view === "transfers" ? <TransferHistory shopId={shopId} isOwner={isOwner} /> : (
-          <div className="p-4 md:p-6">
-            <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_280px]">
+          <div className="p-3 sm:p-4 md:p-6">
+            <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_280px] 2xl:gap-5">
               <section className="min-w-0 space-y-4">
-                <div className="rounded-2xl border border-border/70 bg-card p-3 shadow-sm md:p-4">
+                <div className="rounded-2xl border border-border/70 bg-card p-3 shadow-sm transition-shadow duration-200 focus-within:shadow-md md:p-4">
                   <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
                     <div className="relative min-w-0 flex-1">
                       <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input placeholder="Search products, then act without scrolling…" className="h-11 rounded-xl border-border/70 bg-background pl-10 pr-10" value={search} onFocus={() => setSearchOpen(true)} onChange={e => { setSearch(e.target.value); setSearchOpen(true); }} onKeyDown={e => { if (e.key === "Escape") setSearchOpen(false); if (e.key === "Enter" && searchResults.length === 1) { setSearch(searchResults[0].canonicalName); setSearchOpen(false); } }} />
+                      <Input placeholder="Search products, then act without scrolling…" className="h-12 rounded-xl border-border/70 bg-background pl-10 pr-10 text-sm shadow-sm transition-colors placeholder:text-muted-foreground/70 focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/15" value={search} onFocus={() => setSearchOpen(true)} onChange={e => { setSearch(e.target.value); setSearchOpen(true); }} onKeyDown={e => { if (e.key === "Escape") setSearchOpen(false); if (e.key === "Enter" && searchResults.length === 1) { setSearch(searchResults[0].canonicalName); setSearchOpen(false); } }} />
                       {search && <button type="button" aria-label="Clear product search" onClick={() => { setSearch(""); setSearchOpen(true); }} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>}
-                      {searchOpen && search.trim().length >= 2 && <div className="absolute left-0 right-0 top-full z-40 mt-2 max-h-[min(70vh,520px)] overflow-y-auto rounded-2xl border border-border bg-popover p-2 shadow-2xl shadow-black/15">
+                      {searchOpen && search.trim().length >= 2 && <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-[min(70vh,520px)] overflow-y-auto rounded-2xl border border-border/80 bg-popover p-2 shadow-2xl shadow-black/20 ring-1 ring-black/5 animate-in fade-in-0 zoom-in-95 duration-150">
                         <div className="flex items-center justify-between px-2 py-2"><p className="text-xs font-semibold text-muted-foreground">PRODUCT MATCHES</p><span className="text-[11px] text-muted-foreground">{searchResults.length ? "Showing " + searchResults.length + " matching items" : "No matches"}</span></div>
                         {searchResults.length === 0 ? <div className="px-3 py-6 text-center"><PackageX className="mx-auto h-7 w-7 text-muted-foreground/50" /><p className="mt-2 text-sm font-medium">No products found</p><p className="mt-1 text-xs text-muted-foreground">Try a shorter name, SKU or category.</p></div> : searchResults.map((p: any) => {
                           const cat = getCategoryStyle(p.category);
                           const isOut = p.stockQty === 0;
                           const isLow = p.stockQty > 0 && p.stockQty <= p.alertQty;
-                          return <div key={p.id} className="rounded-xl border border-transparent p-3 transition-colors hover:border-border hover:bg-muted/40">
+                          return <div key={p.id} className="rounded-xl border border-transparent p-3 transition-[background-color,border-color] duration-150 hover:border-border/80 hover:bg-muted/40">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                               <div className="flex min-w-0 flex-1 items-center gap-3"><div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{p.canonicalName}</p><p className="mt-1 truncate text-xs text-muted-foreground">{p.sku || "No SKU"} · {p.category || "Uncategorised"}</p></div><div className="shrink-0 text-right"><p className={cn("font-mono text-sm font-bold tabular-nums",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>{formatQty(p.stockQty)} <span className="text-[10px] font-normal text-muted-foreground">{p.unit || "units"}</span></p><p className="text-[10px] text-muted-foreground">{isOut ? "Out of stock" : isLow ? "Low · alert " + formatQty(p.alertQty) : "In stock"}</p></div></div>
-                              <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /></>}<Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs" onClick={() => { setSearch(p.canonicalName); setSearchOpen(false); setView("all"); setCategoryFilter("all"); }}><ArrowUpRight className="mr-1 h-3.5 w-3.5" />Table</Button></div>
+                              <div className="flex w-full shrink-0 flex-wrap gap-1.5 border-t border-border/50 pt-2 sm:w-auto sm:border-0 sm:pt-0 sm:justify-end"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /></>}<Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs" onClick={() => { setSearch(p.canonicalName); setSearchOpen(false); setView("all"); setCategoryFilter("all"); }}><ArrowUpRight className="mr-1 h-3.5 w-3.5" />Table</Button></div>
                             </div>
                           </div>;
                         })}
@@ -1967,7 +1967,7 @@ export default function Stock() {
                 </div>
 
                 <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-muted/30 px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-muted/20 px-3 py-3 sm:px-4">
                     <div><h2 className="font-semibold">{view === "low" ? "Low-stock products" : view === "out" ? "Out-of-stock products" : view === "expiring" ? "Expiry watchlist" : view === "noprice" ? "Products missing prices" : "Product inventory"}</h2><p className="mt-0.5 text-xs text-muted-foreground">{filtered.length.toLocaleString()} products · quantities and actions</p></div>
                     <Badge variant="secondary" className="rounded-lg">{isLoading ? "Loading…" : "Live inventory"}</Badge>
                   </div>
@@ -1987,7 +1987,7 @@ export default function Stock() {
                               const isExpiringSoon = p.expiryDate && !isExpired && p.expiryDate <= soonStr;
                               const isExpiryWarning = p.expiryDate && !isExpired && !isExpiringSoon && p.expiryDate <= day90Str;
                               const cat = getCategoryStyle(p.category);
-                              return <div key={p.id} data-index={virtualRow.index} ref={virtualizer.measureElement} style={{position:"absolute",top:0,left:0,width:"100%",transform:`translateY(${virtualRow.start}px)`}} className={cn("grid items-center gap-3 border-b border-border/50 px-4 py-3 transition-colors hover:bg-muted/30", isOut && "bg-destructive/[0.025]", isLow && "bg-amber-500/[0.025]", isBulkView && selectedIds.has(p.id) && "bg-primary/[0.06]", isOwner ? (showFinancialColumns ? "grid-cols-[minmax(220px,1.6fr)_minmax(130px,0.9fr)_100px_110px_120px_280px]" : "grid-cols-[minmax(240px,1.8fr)_minmax(130px,0.9fr)_110px_280px]") : "grid-cols-[minmax(240px,1.8fr)_minmax(120px,1fr)_120px_150px]")}>
+                              return <div key={p.id} data-index={virtualRow.index} ref={virtualizer.measureElement} style={{position:"absolute",top:0,left:0,width:"100%",transform:`translateY(${virtualRow.start}px)`}} className={cn("grid items-center gap-3 border-b border-border/50 px-4 py-3 transition-colors duration-150 hover:bg-muted/40", isOut && "bg-destructive/[0.025]", isLow && "bg-amber-500/[0.025]", isBulkView && selectedIds.has(p.id) && "bg-primary/[0.06]", isOwner ? (showFinancialColumns ? "grid-cols-[minmax(220px,1.6fr)_minmax(130px,0.9fr)_100px_110px_120px_280px]" : "grid-cols-[minmax(240px,1.8fr)_minmax(130px,0.9fr)_110px_280px]") : "grid-cols-[minmax(240px,1.8fr)_minmax(120px,1fr)_120px_150px]")}>
                                 <div className="flex min-w-0 items-center gap-3">{isBulkView && <input type="checkbox" checked={selectedIds.has(p.id)} onChange={e => setSelectedIds(prev => {const next = new Set(prev); e.target.checked ? next.add(p.id) : next.delete(p.id); return next;})} className="h-4 w-4 shrink-0 accent-primary" />}<div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0"><p className="truncate text-sm font-semibold">{p.canonicalName}</p><p className="mt-1 truncate text-[11px] text-muted-foreground">{p.sku || "No SKU"}{isExpired ? " · Expired" : isExpiringSoon ? " · Expires within 30 days" : isExpiryWarning ? " · Expires within 90 days" : ""}</p></div></div>
                                 <div className="min-w-0"><Badge variant="secondary" className={cn("max-w-full truncate rounded-md border",cat.bg,cat.text,cat.border)}>{p.category || "Uncategorised"}</Badge><p className="mt-1 text-[10px] text-muted-foreground">{p.unit || "units"}</p></div>
                                 <div className="text-right"><p className={cn("font-mono text-sm font-bold tabular-nums",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>{formatQty(p.stockQty)}</p><p className="mt-1 text-[10px] text-muted-foreground">Alert: {formatQty(p.alertQty)}</p></div>
