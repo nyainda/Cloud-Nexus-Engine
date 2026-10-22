@@ -1372,12 +1372,6 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
 
   const debouncedSearch = useDebounce(search, 80);
 
-  const searchResults = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (q.length < 2) return [];
-    return allProducts.filter(p => p.canonicalName.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q)) || (p.category && p.category.toLowerCase().includes(q))).slice(0, 8);
-  }, [allProducts, search]);
-
   const categories = useMemo(() => {
     const s = new Set<string>();
     allProds.forEach(p => { if (p.category) s.add(p.category); });
@@ -1743,6 +1737,12 @@ export default function Stock() {
   );
 
   const allProducts = productsData?.products || [];
+
+  const searchResults = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (q.length < 2) return [];
+    return allProducts.filter(p => p.canonicalName.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q)) || (p.category && p.category.toLowerCase().includes(q))).slice(0, 8);
+  }, [allProducts, search]);
 
   const categories = useMemo(() => {
     const cats = new Set<string>();
