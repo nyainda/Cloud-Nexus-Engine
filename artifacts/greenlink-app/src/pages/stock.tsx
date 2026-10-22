@@ -1350,6 +1350,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
 
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [catFilter, setCatFilter] = useState("all");
   const [entries, setEntries] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}"); } catch { return {}; }
@@ -1371,6 +1372,12 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
   }, [entries, DRAFT_KEY]);
 
   const debouncedSearch = useDebounce(search, 80);
+
+  const searchResults = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (q.length < 2) return [];
+    return allProducts.filter(p => p.canonicalName.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q)) || (p.category && p.category.toLowerCase().includes(q))).slice(0, 8);
+  }, [allProducts, search]);
 
   const categories = useMemo(() => {
     const s = new Set<string>();
@@ -1903,7 +1910,23 @@ export default function Stock() {
                   <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
                     <div className="relative min-w-0 flex-1">
                       <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input placeholder="Search by product name, SKU or category…" className="h-11 rounded-xl border-border/70 bg-background pl-10" value={search} onChange={e => setSearch(e.target.value)} />
+                      <Input placeholder="Search products, then act without scrolling…" className="h-11 rounded-xl border-border/70 bg-background pl-10 pr-10" value={search} onFocus={() => setSearchOpen(true)} onChange={e => { setSearch(e.target.value); setSearchOpen(true); }} onKeyDown={e => { if (e.key === "Escape") setSearchOpen(false); if (e.key === "Enter" && searchResults.length === 1) { setSearch(searchResults[0].canonicalName); setSearchOpen(false); } }} />
+                      {search && <button type="button" aria-label="Clear product search" onClick={() => { setSearch(""); setSearchOpen(true); }} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>}
+                      {searchOpen && search.trim().length >= 2 && <div className="absolute left-0 right-0 top-full z-40 mt-2 max-h-[min(70vh,520px)] overflow-y-auto rounded-2xl border border-border bg-popover p-2 shadow-2xl shadow-black/15">
+                        <div className="flex items-center justify-between px-2 py-2"><p className="text-xs font-semibold text-muted-foreground">PRODUCT MATCHES</p><span className="text-[11px] text-muted-foreground">{searchResults.length ? "Showing " + searchResults.length + " matching items" : "No matches"}</span></div>
+                        {searchResults.length === 0 ? <div className="px-3 py-6 text-center"><PackageX className="mx-auto h-7 w-7 text-muted-foreground/50" /><p className="mt-2 text-sm font-medium">No products found</p><p className="mt-1 text-xs text-muted-foreground">Try a shorter name, SKU or category.</p></div> : searchResults.map((p: any) => {
+                          const cat = getCategoryStyle(p.category);
+                          const isOut = p.stockQty === 0;
+                          const isLow = p.stockQty > 0 && p.stockQty <= p.alertQty;
+                          return <div key={p.id} className="rounded-xl border border-transparent p-3 transition-colors hover:border-border hover:bg-muted/40">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                              <div className="flex min-w-0 flex-1 items-center gap-3"><div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{p.canonicalName}</p><p className="mt-1 truncate text-xs text-muted-foreground">{p.sku || "No SKU"} · {p.category || "Uncategorised"}</p></div><div className="shrink-0 text-right"><p className={cn("font-mono text-sm font-bold tabular-nums",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>{formatQty(p.stockQty)} <span className="text-[10px] font-normal text-muted-foreground">{p.unit || "units"}</span></p><p className="text-[10px] text-muted-foreground">{isOut ? "Out of stock" : isLow ? "Low · alert " + formatQty(p.alertQty) : "In stock"}</p></div></div>
+                              <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /></>}<Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs" onClick={() => { setSearch(p.canonicalName); setSearchOpen(false); setView("all"); setCategoryFilter("all"); }}><ArrowUpRight className="mr-1 h-3.5 w-3.5" />Table</Button></div>
+                            </div>
+                          </div>;
+                        })}
+                        <div className="border-t border-border/60 px-2 pt-2"><p className="text-[11px] text-muted-foreground">Quick actions use the existing inventory dialogs. No extra search request is made.</p></div>
+                      </div>}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <div className="relative">
