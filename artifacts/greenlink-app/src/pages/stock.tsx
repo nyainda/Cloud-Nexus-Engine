@@ -239,7 +239,7 @@ function WeightPresets({ unit, onSelect }: { unit: string; onSelect: (v: number)
     ? [250, 500, 1000]
     : [0.5, 1, 2, 5, 10, 25, 50];
   return (
-    <div className="flex gap-1.5 flex-wrap">
+    <div className="flex gap-2 flex-wrap items-center">
       {presets.map(p => (
         <button key={p} type="button" onClick={() => onSelect(p)}
           className="text-xs font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 border border-border transition-colors">
@@ -1567,7 +1567,7 @@ function BulkRestockSheet({ products: allProds, shopId, onDone }: { products: an
           </div>
 
           {/* Table */}
-          <div className="flex-1 overflow-y-auto min-h-0">
+          <div className="flex-1 overflow-y-auto min-h-0 px-2 pb-4 md:px-4">
             {/* Column headers */}
             <div className="sticky top-0 z-10 bg-muted border-b border-border px-4 py-1.5 grid grid-cols-[1fr_80px_80px_72px] gap-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
               <span>Product</span>
@@ -1841,13 +1841,13 @@ export default function Stock() {
   }, [debouncedSearch, view, categoryFilter, sortBy]);
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full min-h-0 bg-background text-foreground">
       {/* Header — shrinks, never scrolls */}
-      <div className="shrink-0 bg-background border-b border-border px-4 py-3 space-y-3">
+      <div className="shrink-0 border-b border-border/70 bg-gradient-to-br from-primary/[0.08] via-background to-background px-4 py-4 md:px-6 md:py-5 space-y-4">
         <div className="flex items-start justify-between gap-2 flex-wrap">
           <div>
-            <h1 className="text-lg font-bold text-foreground">Inventory</h1>
-            <p className="text-xs text-muted-foreground">{counts.all.toLocaleString()} products · {parseFloat(counts.totalItems.toFixed(3)).toLocaleString()} units</p>
+            <div className="flex items-center gap-2.5"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/15"><Package className="h-5 w-5" /></div><div><h1 className="text-xl md:text-2xl font-bold tracking-tight text-foreground">Stock & Inventory</h1><p className="mt-0.5 text-xs md:text-sm text-muted-foreground">Your inventory, stock health and daily operations in one place.</p></div></div>
+            <p className="mt-2 ml-[50px] text-xs font-medium text-muted-foreground">{counts.all.toLocaleString()} products <span className="mx-1.5 text-border">/</span> {parseFloat(counts.totalItems.toFixed(3)).toLocaleString()} units on hand</p>
           </div>
           <div className="flex gap-1.5 flex-wrap">
             <BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} />
@@ -1858,7 +1858,7 @@ export default function Stock() {
 
         {/* Stats */}
         {isOwner && (
-          <div className="grid grid-cols-4 gap-1.5">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 md:gap-3">
             {[
               { label: "SKUs", value: counts.all.toLocaleString(), warn: false, accent: false },
               { label: "Units", value: counts.totalItems.toLocaleString(), warn: false, accent: false },
@@ -1866,15 +1866,15 @@ export default function Stock() {
               { label: "Expiring", value: counts.expiring.toString(), warn: false, accent: counts.expiring > 0 },
             ].map(stat => (
               <div key={stat.label} className={cn(
-                "rounded-xl border px-2 py-2 text-center",
+                "group rounded-2xl border px-3 py-3 md:px-4 md:py-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
                 stat.warn ? "bg-orange-500/[0.06] border-orange-500/20" :
                 stat.accent ? "bg-amber-500/[0.06] border-amber-500/20" :
                 "bg-card border-border/60"
               )}>
-                <p className={cn("text-sm font-bold font-mono leading-none",
+                <p className={cn("text-xl md:text-2xl font-bold font-mono tracking-tight leading-none",
                   stat.warn ? "text-orange-400" : stat.accent ? "text-amber-400" : "text-primary"
                 )}>{stat.value}</p>
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wide mt-1">{stat.label}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-[0.12em] font-semibold mt-2">{stat.label}</p>
               </div>
             ))}
           </div>
@@ -1884,7 +1884,7 @@ export default function Stock() {
         {view !== "transfers" && (
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input placeholder="Search name, SKU or category…" className="pl-9 h-9" value={search} onChange={e => setSearch(e.target.value)} />
+            <Input placeholder="Search products by name, SKU or category…" className="pl-10 h-11 rounded-xl border-border/70 bg-background/90 shadow-sm focus-visible:ring-primary/25" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         )}
 
@@ -1900,8 +1900,8 @@ export default function Stock() {
           ] as { value: StockView; count: number | null; label: string; activeClass: string; countClass: string }[]).map(tab => (
             <button key={tab.value} onClick={() => setView(tab.value)}
               className={cn(
-                "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border",
-                view === tab.value ? tab.activeClass : "bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                "shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all border shadow-sm",
+                view === tab.value ? tab.activeClass : "bg-card/80 text-muted-foreground border-border/70 hover:bg-muted hover:text-foreground hover:border-primary/30"
               )}>
               {tab.count !== null && (
                 <span className={cn("font-bold font-mono tabular-nums",
@@ -1935,8 +1935,8 @@ export default function Stock() {
               <div className="flex gap-1.5 overflow-x-auto pb-0.5 flex-1 min-w-0">
                 {(["all", ...categories] as string[]).map(cat => (
                   <button key={cat} onClick={() => setCategoryFilter(cat)}
-                    className={cn("shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors border",
-                      categoryFilter === cat ? "bg-muted border-foreground/30 text-foreground" : "bg-background border-border text-muted-foreground hover:text-foreground")}>
+                    className={cn("shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border",
+                      categoryFilter === cat ? "bg-primary/10 border-primary/30 text-primary shadow-sm" : "bg-card/70 border-border/70 text-muted-foreground hover:text-foreground hover:border-primary/25")}>
                     {cat === "all" ? "All categories" : cat}
                   </button>
                 ))}
@@ -2032,12 +2032,12 @@ export default function Stock() {
                     className="px-3 py-1.5"
                   >
                     <div className={cn(
-                      "flex items-center gap-3 px-3 py-3 rounded-xl border transition-colors",
+                      "flex items-center gap-3 md:gap-4 px-3 md:px-4 py-3.5 rounded-2xl border transition-all duration-200 shadow-sm hover:shadow-md hover:border-primary/25 hover:-translate-y-px",
                       isBulkView && selectedIds.has(p.id) ? "bg-violet-500/10 border-violet-500/40" :
                       isOut   ? "bg-destructive/[0.04] border-destructive/25" :
                       isLow   ? "bg-orange-500/[0.04] border-orange-500/25" :
                       isExpired ? "bg-red-500/[0.04] border-red-500/20" :
-                      "bg-card border-border/50"
+                      "bg-card/95 border-border/70"
                     )}>
                       {/* Checkbox — only in bulk-cleanup views */}
                       {isBulkView && (
@@ -2058,7 +2058,7 @@ export default function Stock() {
                       )}
                       {/* Category chip */}
                       <div className={cn(
-                        "w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-[10px] font-bold border",
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-[10px] font-bold border shadow-sm",
                         cat.bg, cat.text, cat.border
                       )}>
                         {cat.abbr}
@@ -2067,7 +2067,7 @@ export default function Stock() {
                       {/* Product info */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-sm font-semibold text-foreground leading-tight">{p.canonicalName}</span>
+                          <span className="text-sm md:text-[15px] font-semibold tracking-tight text-foreground leading-tight">{p.canonicalName}</span>
                           {isExpired && <Badge variant="destructive" className="text-[9px] h-3.5 px-1 shrink-0">Exp!</Badge>}
                           {isExpiringSoon && <Badge className="bg-amber-500/15 text-amber-400 border-0 text-[9px] h-3.5 px-1 shrink-0">≤30d</Badge>}
                           {isExpiryWarning && <Badge className="bg-yellow-500/15 text-yellow-400 border-0 text-[9px] h-3.5 px-1 shrink-0">≤90d</Badge>}
@@ -2080,7 +2080,7 @@ export default function Stock() {
 
                       {/* Stock qty — large & prominent */}
                       <div className="text-center shrink-0 min-w-[40px]">
-                        <p className={cn("text-lg font-bold font-mono leading-none",
+                        <p className={cn("text-xl font-bold font-mono tracking-tight leading-none",
                           isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-primary"
                         )}>{formatQty(p.stockQty)}</p>
                         <p className="text-[9px] text-muted-foreground/60 mt-0.5 uppercase tracking-wide truncate max-w-[44px]">{p.unit || "u"}</p>
@@ -2114,7 +2114,7 @@ export default function Stock() {
                 );
               })}
             </div>
-            <div className="py-4 text-center border-t border-border/40">
+            <div className="py-5 text-center border-t border-border/40">
               <p className="text-xs text-muted-foreground">{filtered.length.toLocaleString()} products</p>
             </div>
           </>
