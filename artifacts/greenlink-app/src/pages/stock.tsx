@@ -346,8 +346,8 @@ function RestockDialog({ product }: { product: any }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-8 text-xs px-3 gap-1">
-          <ArrowUpRight className="h-3.5 w-3.5" />Restock
+        <Button size="sm" className="h-9 rounded-xl border border-primary/20 bg-primary px-3.5 text-xs font-bold text-primary-foreground shadow-sm shadow-primary/15 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/30">
+          <ArrowUpRight className="mr-1.5 h-4 w-4" />Restock
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
@@ -570,8 +570,8 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 text-xs px-2">
-          <Edit2 className="h-3 w-3 mr-1" />Edit
+        <Button size="sm" variant="outline" className="h-9 rounded-xl border-border/70 bg-background px-3 text-xs font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/20">
+          <Edit2 className="mr-1.5 h-3.5 w-3.5" />Edit
         </Button>
       </DialogTrigger>
       <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-lg max-h-[90svh] overflow-y-auto">
@@ -1067,8 +1067,8 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 text-xs px-2">
-          <ArrowLeftRight className="h-3 w-3" />
+        <Button size="sm" variant="outline" aria-label="Transfer stock" title="Transfer stock" className="h-9 rounded-xl border-sky-500/25 bg-sky-500/[0.07] px-3 text-xs font-semibold text-sky-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-500/45 hover:bg-sky-500/15 dark:text-sky-300 focus-visible:ring-2 focus-visible:ring-sky-500/25">
+          <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" /><span>Transfer</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-sm">
@@ -1931,7 +1931,7 @@ export default function Stock() {
                               return <div key={p.id} className="group relative overflow-hidden rounded-2xl border border-border/70 bg-card p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-lg hover:shadow-primary/[0.05] sm:p-5">
                                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                                   <div className="flex min-w-0 flex-1 items-center gap-3"><div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border text-xs font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0 flex-1"><p className="break-words text-sm font-bold leading-snug tracking-tight sm:text-base">{p.canonicalName}</p><p className="mt-1.5 break-words text-xs text-muted-foreground">{p.sku || "No SKU"} · {p.category || "Uncategorised"}</p></div><div className="shrink-0 text-right"><p className={cn("font-mono text-base font-bold tabular-nums sm:text-lg",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>{formatQty(p.stockQty)} <span className="text-xs font-normal text-muted-foreground">{p.unit || "units"}</span></p><p className={cn("mt-1 text-xs font-medium",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>{isOut ? "Out of stock" : isLow ? "Low stock · alert " + formatQty(p.alertQty) : "In stock"}</p></div></div>
-                                  <div className="flex w-full flex-wrap gap-2 border-t border-border/60 pt-3 [&>button]:min-h-9 [&>button]:rounded-xl [&>button]:transition-all sm:w-auto sm:justify-end sm:border-0 sm:pt-0"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /></>}<Button type="button" size="sm" variant="outline" className="h-9 rounded-lg px-3" onClick={() => { setSearch(p.canonicalName); setSearchOpen(false); setView("all"); setCategoryFilter("all"); }}><ArrowUpRight className="mr-1.5 h-4 w-4" />View in table</Button></div>
+                                  <div className="flex w-full flex-wrap items-center gap-2 border-t border-border/60 pt-3 [&>button]:min-h-10 [&>button]:rounded-xl [&>button]:transition-all sm:w-auto sm:justify-end sm:border-0 sm:pt-0"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /></>}<Button type="button" size="sm" variant="outline" className="h-9 rounded-lg px-3" onClick={() => { setSearch(p.canonicalName); setSearchOpen(false); setView("all"); setCategoryFilter("all"); }}><ArrowUpRight className="mr-1.5 h-4 w-4" />View in table</Button></div>
                                 </div>
                               </div>;
                             })}
