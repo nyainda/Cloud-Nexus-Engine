@@ -1841,285 +1841,168 @@ export default function Stock() {
   }, [debouncedSearch, view, categoryFilter, sortBy]);
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-background text-foreground">
-      {/* Header — shrinks, never scrolls */}
-      <div className="shrink-0 border-b border-border/70 bg-gradient-to-br from-primary/[0.08] via-background to-background px-4 py-4 md:px-6 md:py-5 space-y-4">
-        <div className="flex items-start justify-between gap-2 flex-wrap">
-          <div>
-            <div className="flex items-center gap-2.5"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/15"><Package className="h-5 w-5" /></div><div><h1 className="text-xl md:text-2xl font-bold tracking-tight text-foreground">Stock & Inventory</h1><p className="mt-0.5 text-xs md:text-sm text-muted-foreground">Your inventory, stock health and daily operations in one place.</p></div></div>
-            <p className="mt-2 ml-[50px] text-xs font-medium text-muted-foreground">{counts.all.toLocaleString()} products <span className="mx-1.5 text-border">/</span> {parseFloat(counts.totalItems.toFixed(3)).toLocaleString()} units on hand</p>
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+      <div className="shrink-0 border-b border-border/70 bg-gradient-to-r from-primary/[0.08] via-background to-background px-4 py-4 md:px-6 md:py-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/15"><Package className="h-6 w-6" /></div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">Inventory control</p>
+              <h1 className="mt-1 text-2xl font-bold tracking-tight md:text-3xl">Stock overview</h1>
+              <p className="mt-1 text-sm text-muted-foreground">Monitor availability, spot issues and manage your products.</p>
+            </div>
           </div>
-          <div className="flex gap-1.5 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             <BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} />
             {isOwner && <CleanupDialog products={allProducts} shopId={shopId} />}
             <AddProductDialog shopId={shopId} onSuccess={refresh} existingProducts={allProducts} isOwner={isOwner} />
           </div>
         </div>
 
-        {/* Stats */}
         {isOwner && (
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 md:gap-3">
+          <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
             {[
-              { label: "SKUs", value: counts.all.toLocaleString(), warn: false, accent: false },
-              { label: "Units", value: counts.totalItems.toLocaleString(), warn: false, accent: false },
-              { label: "Low/Out", value: (counts.low + counts.out).toString(), warn: (counts.low + counts.out) > 0, accent: false },
-              { label: "Expiring", value: counts.expiring.toString(), warn: false, accent: counts.expiring > 0 },
-            ].map(stat => (
-              <div key={stat.label} className={cn(
-                "group rounded-2xl border px-3 py-3 md:px-4 md:py-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
-                stat.warn ? "bg-orange-500/[0.06] border-orange-500/20" :
-                stat.accent ? "bg-amber-500/[0.06] border-amber-500/20" :
-                "bg-card border-border/60"
-              )}>
-                <p className={cn("text-xl md:text-2xl font-bold font-mono tracking-tight leading-none",
-                  stat.warn ? "text-orange-400" : stat.accent ? "text-amber-400" : "text-primary"
-                )}>{stat.value}</p>
-                <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-[0.12em] font-semibold mt-2">{stat.label}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Search */}
-        {view !== "transfers" && (
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input placeholder="Search products by name, SKU or category…" className="pl-10 h-11 rounded-xl border-border/70 bg-background/90 shadow-sm focus-visible:ring-primary/25" value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
-        )}
-
-        {/* View tabs */}
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
-          {([
-            { value: "all",       count: counts.all,       label: "All",       activeClass: "bg-primary border-primary text-primary-foreground",           countClass: "text-primary" },
-            { value: "low",       count: counts.low,       label: "Low",       activeClass: "bg-orange-500 border-orange-500 text-white",                   countClass: "text-orange-400" },
-            { value: "out",       count: counts.out,       label: "Out",       activeClass: "bg-destructive border-destructive text-destructive-foreground", countClass: "text-destructive" },
-            { value: "noprice",   count: counts.noprice,   label: "No Price",  activeClass: "bg-violet-600 border-violet-600 text-white",                   countClass: "text-violet-400" },
-            { value: "expiring",  count: counts.expiring,  label: "Expiring",  activeClass: "bg-amber-500 border-amber-500 text-white",                     countClass: "text-amber-400" },
-            { value: "transfers", count: null,             label: "Transfers", activeClass: "bg-primary border-primary text-primary-foreground",            countClass: "text-foreground" },
-          ] as { value: StockView; count: number | null; label: string; activeClass: string; countClass: string }[]).map(tab => (
-            <button key={tab.value} onClick={() => setView(tab.value)}
-              className={cn(
-                "shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all border shadow-sm",
-                view === tab.value ? tab.activeClass : "bg-card/80 text-muted-foreground border-border/70 hover:bg-muted hover:text-foreground hover:border-primary/30"
-              )}>
-              {tab.count !== null && (
-                <span className={cn("font-bold font-mono tabular-nums",
-                  view === tab.value ? "text-inherit opacity-90" : tab.countClass
-                )}>{tab.count.toLocaleString()}</span>
-              )}
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Bulk-cleanup select bar — shown in Out and No Price views */}
-        {isBulkView && filtered.length > 0 && (
-          <div className="flex items-center gap-3 py-0.5">
-            <button onClick={toggleSelectAll} className="flex items-center gap-1.5 text-xs font-semibold text-primary">
-              {allBulkSelected
-                ? <CheckSquare2 className="h-4 w-4" />
-                : <Square className="h-4 w-4" />}
-              {allBulkSelected ? "Deselect all" : `Select all ${filtered.length}`}
-            </button>
-            {selectedIds.size > 0 && (
-              <span className="text-xs text-muted-foreground ml-auto">{selectedIds.size} selected</span>
-            )}
-          </div>
-        )}
-
-        {/* Category filter + Sort */}
-        {view !== "transfers" && (
-          <div className="flex items-center gap-2">
-            {categories.length > 0 && (
-              <div className="flex gap-1.5 overflow-x-auto pb-0.5 flex-1 min-w-0">
-                {(["all", ...categories] as string[]).map(cat => (
-                  <button key={cat} onClick={() => setCategoryFilter(cat)}
-                    className={cn("shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border",
-                      categoryFilter === cat ? "bg-primary/10 border-primary/30 text-primary shadow-sm" : "bg-card/70 border-border/70 text-muted-foreground hover:text-foreground hover:border-primary/25")}>
-                    {cat === "all" ? "All categories" : cat}
-                  </button>
-                ))}
-              </div>
-            )}
-            {/* Sort selector */}
-            <div className="shrink-0 relative">
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value as typeof sortBy)}
-                className="appearance-none h-8 pl-7 pr-2 rounded-full text-[11px] font-semibold bg-muted border border-border text-muted-foreground focus:outline-none focus:border-primary/60 cursor-pointer"
-              >
-                <option value="az">A → Z</option>
-                <option value="za">Z → A</option>
-                <option value="newest">Newest</option>
-                <option value="stock_asc">Stock ↑</option>
-                <option value="stock_desc">Stock ↓</option>
-                <option value="price_asc">Price ↑</option>
-                <option value="price_desc">Price ↓</option>
-              </select>
-              <ArrowUpDown className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
-            </div>
+              { label: "Total products", value: counts.all.toLocaleString(), note: "Active inventory", icon: Package, tone: "primary" },
+              { label: "Units on hand", value: parseFloat(counts.totalItems.toFixed(3)).toLocaleString(), note: "Across all products", icon: Scale, tone: "primary" },
+              { label: "Low stock", value: counts.low.toLocaleString(), note: counts.low ? "Restock recommended" : "Stock levels healthy", icon: AlertTriangle, tone: "warning" },
+              { label: "Out of stock", value: counts.out.toLocaleString(), note: counts.out ? "Needs attention" : "Nothing unavailable", icon: PackageX, tone: "danger" },
+            ].map(stat => {
+              const Icon = stat.icon;
+              return <div key={stat.label} className="relative overflow-hidden rounded-2xl border border-border/70 bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md md:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div><p className="text-sm font-medium text-muted-foreground">{stat.label}</p><p className="mt-2 text-2xl font-bold tracking-tight tabular-nums md:text-3xl">{stat.value}</p></div>
+                  <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", stat.tone === "warning" ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" : stat.tone === "danger" ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary")}><Icon className="h-5 w-5" /></div>
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">{stat.note}</p>
+                <div className={cn("absolute bottom-0 left-0 h-1 w-full", stat.tone === "warning" ? "bg-amber-500/70" : stat.tone === "danger" ? "bg-destructive/70" : "bg-primary/60")} />
+              </div>;
+            })}
           </div>
         )}
       </div>
 
-      {/* Bulk delete action bar — fixed between header and scroll content */}
       {isBulkView && selectedIds.size > 0 && (
-        <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2.5 bg-destructive/10 border-b border-destructive/20">
-          <p className="text-sm font-bold text-destructive">{selectedIds.size} product{selectedIds.size !== 1 ? "s" : ""} selected</p>
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-3 md:px-6">
+          <p className="text-sm font-semibold text-destructive">{selectedIds.size} product{selectedIds.size !== 1 ? "s" : ""} selected</p>
           <div className="flex gap-2">
-            <button
-              onClick={() => setSelectedIds(new Set())}
-              className="px-3 h-7 rounded-full bg-muted text-muted-foreground text-xs font-semibold border border-border"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleBulkDelete}
-              disabled={bulkDeleting}
-              className="px-3 h-7 rounded-full bg-destructive text-destructive-foreground text-xs font-bold disabled:opacity-50 flex items-center gap-1.5"
-            >
-              {bulkDeleting
-                ? <div className="w-3 h-3 border border-destructive-foreground/30 border-t-destructive-foreground rounded-full animate-spin" />
-                : <Trash2 className="h-3 w-3" />}
-              Delete {selectedIds.size}
-            </button>
+            <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Cancel</Button>
+            <Button size="sm" variant="destructive" onClick={handleBulkDelete} disabled={bulkDeleting}>{bulkDeleting ? "Deleting…" : <><Trash2 className="mr-1.5 h-4 w-4" />Delete selected</>}</Button>
           </div>
         </div>
       )}
 
-      {/* Content — owns its scroll so useVirtualizer works correctly */}
-      <div ref={listRef} className="flex-1 overflow-y-auto min-h-0">
-        {view === "transfers" ? (
-          <TransferHistory shopId={shopId} isOwner={isOwner} />
-        ) : isLoading ? (
-          <div className="flex items-center justify-center h-48">
-            <div className="w-6 h-6 rounded-full border-2 border-border border-t-primary animate-spin" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground">
-            <PackageX className="h-10 w-10 opacity-20" />
-            <p className="text-sm font-medium">No products found</p>
-            {search && <p className="text-xs">Try a different search term</p>}
-          </div>
-        ) : (
-          <>
-            {(debouncedSearch || view !== "all" || categoryFilter !== "all") && (
-              <div className="px-4 py-2 border-b border-border bg-muted/30">
-                <p className="text-xs text-muted-foreground">Showing <span className="font-semibold text-foreground">{filtered.length.toLocaleString()}</span> products</p>
-              </div>
-            )}
-
-            {/* Virtual list — only ~10 rows in DOM at a time */}
-            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
-              {virtualizer.getVirtualItems().map(virtualRow => {
-                const p = filtered[virtualRow.index] as any;
-                const isLow = p.stockQty > 0 && p.stockQty <= p.alertQty;
-                const isOut = p.stockQty === 0;
-                const isExpired = p.expiryDate && p.expiryDate < todayStr;
-                const isExpiringSoon = p.expiryDate && !isExpired && p.expiryDate <= soonStr;
-                const isExpiryWarning = p.expiryDate && !isExpired && !isExpiringSoon && p.expiryDate <= day90Str;
-                const margin = p.purchasePrice && p.sellingPrice
-                  ? (((p.sellingPrice - p.purchasePrice) / p.sellingPrice) * 100).toFixed(0) : null;
-                const cat = getCategoryStyle(p.category);
-
-                return (
-                  <div
-                    key={p.id}
-                    data-index={virtualRow.index}
-                    ref={virtualizer.measureElement}
-                    style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)` }}
-                    className="px-3 py-1.5"
-                  >
-                    <div className={cn(
-                      "flex items-center gap-3 md:gap-4 px-3 md:px-4 py-3.5 rounded-2xl border transition-all duration-200 shadow-sm hover:shadow-md hover:border-primary/25 hover:-translate-y-px",
-                      isBulkView && selectedIds.has(p.id) ? "bg-violet-500/10 border-violet-500/40" :
-                      isOut   ? "bg-destructive/[0.04] border-destructive/25" :
-                      isLow   ? "bg-orange-500/[0.04] border-orange-500/25" :
-                      isExpired ? "bg-red-500/[0.04] border-red-500/20" :
-                      "bg-card/95 border-border/70"
-                    )}>
-                      {/* Checkbox — only in bulk-cleanup views */}
-                      {isBulkView && (
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(p.id)}
-                          onChange={e => {
-                            setSelectedIds(prev => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(p.id);
-                              else next.delete(p.id);
-                              return next;
-                            });
-                          }}
-                          className="h-4 w-4 rounded border-border accent-destructive shrink-0 cursor-pointer"
-                          onClick={e => e.stopPropagation()}
-                        />
-                      )}
-                      {/* Category chip */}
-                      <div className={cn(
-                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-[10px] font-bold border shadow-sm",
-                        cat.bg, cat.text, cat.border
-                      )}>
-                        {cat.abbr}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {view === "transfers" ? <TransferHistory shopId={shopId} isOwner={isOwner} /> : (
+          <div className="p-4 md:p-6">
+            <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_280px]">
+              <section className="min-w-0 space-y-4">
+                <div className="rounded-2xl border border-border/70 bg-card p-3 shadow-sm md:p-4">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                    <div className="relative min-w-0 flex-1">
+                      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input placeholder="Search by product name, SKU or category…" className="h-11 rounded-xl border-border/70 bg-background pl-10" value={search} onChange={e => setSearch(e.target.value)} />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <div className="relative">
+                        <select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)} className="h-11 appearance-none rounded-xl border border-border/70 bg-background pl-3 pr-9 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20">
+                          <option value="az">Name: A to Z</option><option value="za">Name: Z to A</option><option value="newest">Recently updated</option><option value="stock_asc">Stock: lowest first</option><option value="stock_desc">Stock: highest first</option><option value="price_asc">Price: lowest first</option><option value="price_desc">Price: highest first</option>
+                        </select><ArrowUpDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                       </div>
-
-                      {/* Product info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-sm md:text-[15px] font-semibold tracking-tight text-foreground leading-tight">{p.canonicalName}</span>
-                          {isExpired && <Badge variant="destructive" className="text-[9px] h-3.5 px-1 shrink-0">Exp!</Badge>}
-                          {isExpiringSoon && <Badge className="bg-amber-500/15 text-amber-400 border-0 text-[9px] h-3.5 px-1 shrink-0">≤30d</Badge>}
-                          {isExpiryWarning && <Badge className="bg-yellow-500/15 text-yellow-400 border-0 text-[9px] h-3.5 px-1 shrink-0">≤90d</Badge>}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          {p.sku && <span className="text-[10px] font-mono text-muted-foreground/50">{p.sku}</span>}
-                          {isWeighedUnit(p.unit || "") && <span className="text-[10px] text-primary/70">⚖ {p.unit}</span>}
-                        </div>
-                      </div>
-
-                      {/* Stock qty — large & prominent */}
-                      <div className="text-center shrink-0 min-w-[40px]">
-                        <p className={cn("text-xl font-bold font-mono tracking-tight leading-none",
-                          isOut ? "text-destructive" : isLow ? "text-orange-400" : "text-primary"
-                        )}>{formatQty(p.stockQty)}</p>
-                        <p className="text-[9px] text-muted-foreground/60 mt-0.5 uppercase tracking-wide truncate max-w-[44px]">{p.unit || "u"}</p>
-                      </div>
-
-                      {/* Price — owner only, sm+ screens */}
-                      {isOwner && (
-                        <div className="text-right shrink-0 hidden sm:block min-w-[68px]">
-                          {p.sellingPrice ? (
-                            <>
-                              <p className="text-sm font-bold font-mono">{formatKES(p.sellingPrice)}</p>
-                              {margin && <p className="text-[10px] text-emerald-400 font-mono">{margin}%</p>}
-                            </>
-                          ) : <span className="text-muted-foreground/40 text-sm">—</span>}
-                        </div>
-                      )}
-
-                      {/* Actions */}
-                      <div className="flex items-center gap-1 shrink-0">
-                        <RestockDialog product={p} />
-                        {isOwner && (
-                          <>
-                            <TransferDialog product={p} shopId={shopId} onSuccess={refresh} />
-                            <EditProductDialog product={p} onSuccess={refresh} />
-                            <DeleteProductButton productId={p.id} productName={p.canonicalName} onSuccess={refresh} />
-                          </>
-                        )}
-                      </div>
+                      {isBulkView && filtered.length > 0 && <Button variant="outline" className="h-11 rounded-xl" onClick={toggleSelectAll}>{allBulkSelected ? <CheckSquare2 className="mr-2 h-4 w-4" /> : <Square className="mr-2 h-4 w-4" />}{allBulkSelected ? "Deselect all" : "Select all"}</Button>}
                     </div>
                   </div>
-                );
-              })}
+                  <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                    {([
+                      { value: "all", count: counts.all, label: "All products", icon: Package },
+                      { value: "low", count: counts.low, label: "Low stock", icon: AlertTriangle },
+                      { value: "out", count: counts.out, label: "Out of stock", icon: PackageX },
+                      { value: "noprice", count: counts.noprice, label: "Missing price", icon: Scale },
+                      { value: "expiring", count: counts.expiring, label: "Expiring soon", icon: Calendar },
+                      { value: "transfers", count: null, label: "Transfers", icon: ArrowLeftRight },
+                    ] as {value: StockView; count: number | null; label: string; icon: any}[]).map(tab => {
+                      const Icon = tab.icon;
+                      return <button key={tab.value} onClick={() => setView(tab.value)} className={cn("flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors", view === tab.value ? "border-primary/30 bg-primary/10 text-primary" : "border-transparent bg-muted/50 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground")}>
+                        <Icon className="h-4 w-4" /><span className="text-xs font-semibold">{tab.label}</span>{tab.count !== null && <span className={cn("rounded-md px-1.5 py-0.5 text-[11px] font-bold tabular-nums", view === tab.value ? "bg-primary/10 text-primary" : "bg-background text-foreground")}>{tab.count}</span>}
+                      </button>;
+                    })}
+                  </div>
+                  {categories.length > 0 && <div className="mt-3 flex items-center gap-2 border-t border-border/60 pt-3">
+                    <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Category</span>
+                    <div className="flex min-w-0 gap-1.5 overflow-x-auto pb-1">
+                      {(["all", ...categories] as string[]).map(cat => <button key={cat} onClick={() => setCategoryFilter(cat)} className={cn("shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors", categoryFilter === cat ? "border-primary/30 bg-primary/10 text-primary" : "border-border/60 bg-background text-muted-foreground hover:text-foreground")}>{cat === "all" ? "All categories" : cat}</button>)}
+                    </div>
+                  </div>}
+                </div>
+
+                <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-muted/30 px-4 py-3">
+                    <div><h2 className="font-semibold">{view === "low" ? "Low-stock products" : view === "out" ? "Out-of-stock products" : view === "expiring" ? "Expiry watchlist" : view === "noprice" ? "Products missing prices" : "Product inventory"}</h2><p className="mt-0.5 text-xs text-muted-foreground">{filtered.length.toLocaleString()} products · quantities and actions</p></div>
+                    <Badge variant="secondary" className="rounded-lg">{isLoading ? "Loading…" : "Live inventory"}</Badge>
+                  </div>
+                  {isLoading ? <div className="flex h-48 items-center justify-center"><div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-primary" /></div> : filtered.length === 0 ? <div className="flex h-56 flex-col items-center justify-center gap-2 text-muted-foreground"><PackageX className="h-10 w-10 opacity-30" /><p className="font-medium">No products found</p><p className="text-xs">{search ? "Try another search or filter." : "Products matching this view will appear here."}</p></div> : <>
+                    <div className="hidden overflow-x-auto lg:block">
+                      <div className="min-w-[850px]">
+                        <div className={cn("grid items-center gap-3 border-b border-border/70 bg-muted/20 px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground", isOwner ? "grid-cols-[minmax(220px,1.6fr)_minmax(110px,0.8fr)_100px_100px_100px_150px]" : "grid-cols-[minmax(240px,1.8fr)_minmax(120px,1fr)_120px_150px]")}>
+                          <span>Product</span><span>Category / SKU</span><span className="text-right">On hand</span>{isOwner && <><span className="text-right">Unit price</span><span className="text-right">Stock value</span></>}<span className="text-right">Actions</span>
+                        </div>
+                        <div ref={listRef} className="max-h-[min(62vh,760px)] overflow-y-auto">
+                          <div style={{height: virtualizer.getTotalSize(), position:"relative"}}>
+                            {virtualizer.getVirtualItems().map(virtualRow => {
+                              const p = filtered[virtualRow.index] as any;
+                              const isLow = p.stockQty > 0 && p.stockQty <= p.alertQty;
+                              const isOut = p.stockQty === 0;
+                              const isExpired = p.expiryDate && p.expiryDate < todayStr;
+                              const isExpiringSoon = p.expiryDate && !isExpired && p.expiryDate <= soonStr;
+                              const isExpiryWarning = p.expiryDate && !isExpired && !isExpiringSoon && p.expiryDate <= day90Str;
+                              const cat = getCategoryStyle(p.category);
+                              return <div key={p.id} data-index={virtualRow.index} ref={virtualizer.measureElement} style={{position:"absolute",top:0,left:0,width:"100%",transform:`translateY(${virtualRow.start}px)`}} className={cn("grid items-center gap-3 border-b border-border/50 px-4 py-3 transition-colors hover:bg-muted/30", isOut && "bg-destructive/[0.025]", isLow && "bg-amber-500/[0.025]", isBulkView && selectedIds.has(p.id) && "bg-primary/[0.06]", isOwner ? "grid-cols-[minmax(220px,1.6fr)_minmax(110px,0.8fr)_100px_100px_100px_150px]" : "grid-cols-[minmax(240px,1.8fr)_minmax(120px,1fr)_120px_150px]")}>
+                                <div className="flex min-w-0 items-center gap-3">{isBulkView && <input type="checkbox" checked={selectedIds.has(p.id)} onChange={e => setSelectedIds(prev => {const next = new Set(prev); e.target.checked ? next.add(p.id) : next.delete(p.id); return next;})} className="h-4 w-4 shrink-0 accent-primary" />}<div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0"><p className="truncate text-sm font-semibold">{p.canonicalName}</p><p className="mt-1 truncate text-[11px] text-muted-foreground">{p.sku || "No SKU"}{isExpired ? " · Expired" : isExpiringSoon ? " · Expires within 30 days" : isExpiryWarning ? " · Expires within 90 days" : ""}</p></div></div>
+                                <div className="min-w-0"><Badge variant="secondary" className={cn("max-w-full truncate rounded-md border",cat.bg,cat.text,cat.border)}>{p.category || "Uncategorised"}</Badge><p className="mt-1 text-[10px] text-muted-foreground">{p.unit || "units"}</p></div>
+                                <div className="text-right"><p className={cn("font-mono text-sm font-bold tabular-nums",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>{formatQty(p.stockQty)}</p><p className="mt-1 text-[10px] text-muted-foreground">Alert: {formatQty(p.alertQty)}</p></div>
+                                {isOwner && <><div className="text-right text-sm font-medium tabular-nums">{p.sellingPrice ? formatKES(p.sellingPrice) : <span className="text-amber-600 dark:text-amber-400">Set price</span>}</div><div className="text-right text-sm font-semibold tabular-nums">{p.sellingPrice ? formatKES(p.stockQty * p.sellingPrice) : "—"}</div></>}
+                                <div className="flex justify-end gap-1"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /><DeleteProductButton productId={p.id} productName={p.canonicalName} onSuccess={refresh} /></>}</div>
+                              </div>;
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="divide-y divide-border/60 lg:hidden">
+                      {filtered.slice(0, 100).map((p: any) => {
+                        const isLow = p.stockQty > 0 && p.stockQty <= p.alertQty;
+                        const isOut = p.stockQty === 0;
+                        const cat = getCategoryStyle(p.category);
+                        return <div key={p.id} className={cn("p-4",isOut && "bg-destructive/[0.025]",isLow && "bg-amber-500/[0.025]")}>
+                          <div className="flex items-start gap-3"><div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-semibold">{p.canonicalName}</p>{isBulkView && <input type="checkbox" checked={selectedIds.has(p.id)} onChange={e => setSelectedIds(prev => {const next = new Set(prev); e.target.checked ? next.add(p.id) : next.delete(p.id); return next;})} className="h-4 w-4 accent-primary" />}</div><p className="mt-1 text-xs text-muted-foreground">{p.category || "Uncategorised"} · {p.sku || "No SKU"}</p><div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">On hand</p><p className={cn("mt-1 text-xl font-bold tabular-nums",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-primary")}>{formatQty(p.stockQty)} <span className="text-xs font-medium text-muted-foreground">{p.unit || "units"}</span></p></div>{isOwner && <div className="text-right"><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Unit price</p><p className="mt-1 font-semibold">{p.sellingPrice ? formatKES(p.sellingPrice) : "—"}</p></div>}</div><div className="mt-3 flex flex-wrap gap-1.5"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /><DeleteProductButton productId={p.id} productName={p.canonicalName} onSuccess={refresh} /></>}</div></div></div>
+                        </div>;
+                      })}
+                      {filtered.length > 100 && <p className="p-3 text-center text-xs text-muted-foreground">Showing first 100 products on this screen. Use search to narrow the list.</p>}
+                    </div>
+                    <div className="border-t border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">Showing {filtered.length.toLocaleString()} matching products</div>
+                  </>}
+                </div>
+              </section>
+
+              {isOwner && <aside className="space-y-4">
+                <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+                  <div className="flex items-center justify-between"><h2 className="font-semibold">Quick actions</h2><Zap className="h-4 w-4 text-primary" /></div>
+                  <div className="mt-3 space-y-2"><div className="rounded-xl border border-primary/15 bg-primary/[0.06] p-3"><div className="flex items-center gap-2 text-sm font-semibold"><Plus className="h-4 w-4 text-primary" />Add a product</div><p className="mt-1 text-xs text-muted-foreground">Register a new item in your inventory.</p><div className="mt-2"><AddProductDialog shopId={shopId} onSuccess={refresh} existingProducts={allProducts} isOwner={isOwner} /></div></div><div className="rounded-xl border border-border/70 p-3"><div className="flex items-center gap-2 text-sm font-semibold"><ArrowUpRight className="h-4 w-4 text-primary" />Bulk restock</div><p className="mt-1 text-xs text-muted-foreground">Update quantities for multiple products.</p><div className="mt-2"><BulkRestockSheet products={allProducts} shopId={shopId} onDone={refresh} /></div></div><div className="rounded-xl border border-border/70 p-3"><div className="flex items-center gap-2 text-sm font-semibold"><Trash2 className="h-4 w-4 text-muted-foreground" />Inventory cleanup</div><p className="mt-1 text-xs text-muted-foreground">Review records that need attention.</p><div className="mt-2"><CleanupDialog products={allProducts} shopId={shopId} /></div></div></div>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+                  <div className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-500" /><h2 className="font-semibold">Stock health</h2></div>
+                  <p className="mt-1 text-xs text-muted-foreground">A live snapshot of items that need attention.</p>
+                  <div className="mt-4 space-y-4">
+                    {[{label:"In stock",value:Math.max(0,counts.all-counts.low-counts.out),color:"bg-primary"},{label:"Low stock",value:counts.low,color:"bg-amber-500"},{label:"Out of stock",value:counts.out,color:"bg-destructive"},{label:"Expiring soon",value:counts.expiring,color:"bg-violet-500"}].map(item => <div key={item.label}><div className="mb-1.5 flex items-center justify-between text-xs"><span className="text-muted-foreground">{item.label}</span><span className="font-semibold tabular-nums">{item.value}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className={cn("h-full rounded-full",item.color)} style={{width:`${counts.all ? Math.min(100,item.value/counts.all*100) : 0}%`}} /></div></div>)}
+                  </div>
+                  <div className="mt-4 rounded-xl bg-muted/50 p-3"><p className="text-xs font-semibold">{counts.low + counts.out ? `${counts.low + counts.out} products need stock attention` : "Your stock levels look healthy"}</p><p className="mt-1 text-xs text-muted-foreground">Use the stock filters to review and take action.</p></div>
+                </div>
+                <div className="rounded-2xl border border-primary/20 bg-primary/[0.05] p-4"><div className="flex items-center gap-2 text-primary"><TrendingUp className="h-4 w-4" /><h2 className="font-semibold">Inventory summary</h2></div><p className="mt-2 text-sm text-muted-foreground">Track availability and keep product records current as stock moves in and out.</p><div className="mt-3 flex items-center justify-between border-t border-primary/10 pt-3 text-xs"><span className="text-muted-foreground">Products with missing prices</span><span className="font-bold text-foreground">{counts.noprice}</span></div><div className="mt-2 flex items-center justify-between text-xs"><span className="text-muted-foreground">Expiry watchlist</span><span className="font-bold text-foreground">{counts.expiring}</span></div></div>
+              </aside>}
             </div>
-            <div className="py-5 text-center border-t border-border/40">
-              <p className="text-xs text-muted-foreground">{filtered.length.toLocaleString()} products</p>
-            </div>
-          </>
+          </div>
         )}
       </div>
     </div>
   );
+}
 }
