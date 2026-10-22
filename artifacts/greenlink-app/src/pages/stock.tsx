@@ -1719,6 +1719,7 @@ export default function Stock() {
   const [view, setView] = useState<StockView>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("az");
+  const [showFinancialColumns, setShowFinancialColumns] = useState(false);
   const qc = useQueryClient();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -1730,7 +1731,7 @@ export default function Stock() {
 
   const { data: productsData, isLoading } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!shopId, refetchInterval: 120_000, refetchIntervalInBackground: false } }
   );
 
   const allProducts = productsData?.products || [];
@@ -1832,7 +1833,7 @@ export default function Stock() {
     count: filtered.length,
     getScrollElement: () => listRef.current,
     estimateSize: () => 68,
-    overscan: 12,
+    overscan: 6,
   });
 
   // Scroll to top when filter / search / sort changes
@@ -1926,6 +1927,12 @@ export default function Stock() {
                       </button>;
                     })}
                   </div>
+                  {isOwner && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
+                    <span className="text-xs text-muted-foreground">Keep the table focused; financial columns are optional.</span>
+                    <Button type="button" size="sm" variant="outline" className="h-8 rounded-lg text-xs" onClick={() => setShowFinancialColumns(v => !v)}>
+                      {showFinancialColumns ? "Hide financial columns" : "Show unit price & stock value"}
+                    </Button>
+                  </div>}
                   {categories.length > 0 && <div className="mt-3 flex items-center gap-2 border-t border-border/60 pt-3">
                     <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Category</span>
                     <div className="flex min-w-0 gap-1.5 overflow-x-auto pb-1">
@@ -1941,9 +1948,9 @@ export default function Stock() {
                   </div>
                   {isLoading ? <div className="flex h-48 items-center justify-center"><div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-primary" /></div> : filtered.length === 0 ? <div className="flex h-56 flex-col items-center justify-center gap-2 text-muted-foreground"><PackageX className="h-10 w-10 opacity-30" /><p className="font-medium">No products found</p><p className="text-xs">{search ? "Try another search or filter." : "Products matching this view will appear here."}</p></div> : <>
                     <div className="hidden overflow-x-auto lg:block">
-                      <div className="min-w-[1050px]">
-                        <div className={cn("grid items-center gap-3 border-b border-border/70 bg-muted/20 px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground", isOwner ? "grid-cols-[minmax(220px,1.6fr)_minmax(130px,0.9fr)_100px_110px_120px_240px]" : "grid-cols-[minmax(240px,1.8fr)_minmax(120px,1fr)_120px_150px]")}>
-                          <span>Product</span><span>Category / SKU</span><span className="text-right">On hand</span>{isOwner && <><span className="text-right">Unit price</span><span className="text-right">Stock value</span></>}<span className="text-right">Actions</span>
+                      <div className="min-w-[980px]">
+                        <div className={cn("grid items-center gap-3 border-b border-border/70 bg-muted/20 px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground", isOwner ? (showFinancialColumns ? "grid-cols-[minmax(220px,1.6fr)_minmax(130px,0.9fr)_100px_110px_120px_280px]" : "grid-cols-[minmax(240px,1.8fr)_minmax(130px,0.9fr)_110px_280px]") : "grid-cols-[minmax(240px,1.8fr)_minmax(120px,1fr)_120px_150px]")}>
+                          <span>Product</span><span>Category / SKU</span><span className="text-right">On hand</span>{isOwner && showFinancialColumns && <><span className="text-right">Unit price</span><span className="text-right">Stock value</span></>}<span className="text-right">Actions</span>
                         </div>
                         <div ref={listRef} className="max-h-[min(62vh,760px)] overflow-y-auto">
                           <div style={{height: virtualizer.getTotalSize(), position:"relative"}}>
@@ -1959,7 +1966,7 @@ export default function Stock() {
                                 <div className="flex min-w-0 items-center gap-3">{isBulkView && <input type="checkbox" checked={selectedIds.has(p.id)} onChange={e => setSelectedIds(prev => {const next = new Set(prev); e.target.checked ? next.add(p.id) : next.delete(p.id); return next;})} className="h-4 w-4 shrink-0 accent-primary" />}<div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0"><p className="truncate text-sm font-semibold">{p.canonicalName}</p><p className="mt-1 truncate text-[11px] text-muted-foreground">{p.sku || "No SKU"}{isExpired ? " · Expired" : isExpiringSoon ? " · Expires within 30 days" : isExpiryWarning ? " · Expires within 90 days" : ""}</p></div></div>
                                 <div className="min-w-0"><Badge variant="secondary" className={cn("max-w-full truncate rounded-md border",cat.bg,cat.text,cat.border)}>{p.category || "Uncategorised"}</Badge><p className="mt-1 text-[10px] text-muted-foreground">{p.unit || "units"}</p></div>
                                 <div className="text-right"><p className={cn("font-mono text-sm font-bold tabular-nums",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>{formatQty(p.stockQty)}</p><p className="mt-1 text-[10px] text-muted-foreground">Alert: {formatQty(p.alertQty)}</p></div>
-                                {isOwner && <><div className="text-right text-sm font-medium tabular-nums">{p.sellingPrice ? formatKES(p.sellingPrice) : <span className="text-amber-600 dark:text-amber-400">Set price</span>}</div><div className="text-right text-sm font-semibold tabular-nums">{p.sellingPrice ? formatKES(p.stockQty * p.sellingPrice) : "—"}</div></>}
+                                {isOwner && showFinancialColumns && <><div className="text-right text-sm font-medium tabular-nums">{p.sellingPrice ? formatKES(p.sellingPrice) : <span className="text-amber-600 dark:text-amber-400">Set price</span>}</div><div className="text-right text-sm font-semibold tabular-nums">{p.sellingPrice ? formatKES(p.stockQty * p.sellingPrice) : "—"}</div></>}
                                 <div className="flex justify-end gap-1"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /><DeleteProductButton productId={p.id} productName={p.canonicalName} onSuccess={refresh} /></>}</div>
                               </div>;
                             })}
