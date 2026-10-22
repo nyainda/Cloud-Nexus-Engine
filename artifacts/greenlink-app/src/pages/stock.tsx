@@ -1720,6 +1720,7 @@ export default function Stock() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"az" | "za" | "stock_asc" | "stock_desc" | "price_asc" | "price_desc" | "newest">("az");
   const [showFinancialColumns, setShowFinancialColumns] = useState(false);
+  const [mobileVisibleCount, setMobileVisibleCount] = useState(60);
   const qc = useQueryClient();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -1836,9 +1837,10 @@ export default function Stock() {
     overscan: 6,
   });
 
-  // Scroll to top when filter / search / sort changes
+  // Keep long lists responsive on mobile and reset the incremental list on filters.
   useEffect(() => {
     listRef.current?.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+    setMobileVisibleCount(60);
   }, [debouncedSearch, view, categoryFilter, sortBy]);
 
   return (
@@ -1962,7 +1964,7 @@ export default function Stock() {
                               const isExpiringSoon = p.expiryDate && !isExpired && p.expiryDate <= soonStr;
                               const isExpiryWarning = p.expiryDate && !isExpired && !isExpiringSoon && p.expiryDate <= day90Str;
                               const cat = getCategoryStyle(p.category);
-                              return <div key={p.id} data-index={virtualRow.index} ref={virtualizer.measureElement} style={{position:"absolute",top:0,left:0,width:"100%",transform:`translateY(${virtualRow.start}px)`}} className={cn("grid items-center gap-3 border-b border-border/50 px-4 py-3 transition-colors hover:bg-muted/30", isOut && "bg-destructive/[0.025]", isLow && "bg-amber-500/[0.025]", isBulkView && selectedIds.has(p.id) && "bg-primary/[0.06]", isOwner ? "grid-cols-[minmax(220px,1.6fr)_minmax(130px,0.9fr)_100px_110px_120px_240px]" : "grid-cols-[minmax(240px,1.8fr)_minmax(120px,1fr)_120px_150px]")}>
+                              return <div key={p.id} data-index={virtualRow.index} ref={virtualizer.measureElement} style={{position:"absolute",top:0,left:0,width:"100%",transform:`translateY(${virtualRow.start}px)`}} className={cn("grid items-center gap-3 border-b border-border/50 px-4 py-3 transition-colors hover:bg-muted/30", isOut && "bg-destructive/[0.025]", isLow && "bg-amber-500/[0.025]", isBulkView && selectedIds.has(p.id) && "bg-primary/[0.06]", isOwner ? (showFinancialColumns ? "grid-cols-[minmax(220px,1.6fr)_minmax(130px,0.9fr)_100px_110px_120px_280px]" : "grid-cols-[minmax(240px,1.8fr)_minmax(130px,0.9fr)_110px_280px]") : "grid-cols-[minmax(240px,1.8fr)_minmax(120px,1fr)_120px_150px]")}>
                                 <div className="flex min-w-0 items-center gap-3">{isBulkView && <input type="checkbox" checked={selectedIds.has(p.id)} onChange={e => setSelectedIds(prev => {const next = new Set(prev); e.target.checked ? next.add(p.id) : next.delete(p.id); return next;})} className="h-4 w-4 shrink-0 accent-primary" />}<div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0"><p className="truncate text-sm font-semibold">{p.canonicalName}</p><p className="mt-1 truncate text-[11px] text-muted-foreground">{p.sku || "No SKU"}{isExpired ? " · Expired" : isExpiringSoon ? " · Expires within 30 days" : isExpiryWarning ? " · Expires within 90 days" : ""}</p></div></div>
                                 <div className="min-w-0"><Badge variant="secondary" className={cn("max-w-full truncate rounded-md border",cat.bg,cat.text,cat.border)}>{p.category || "Uncategorised"}</Badge><p className="mt-1 text-[10px] text-muted-foreground">{p.unit || "units"}</p></div>
                                 <div className="text-right"><p className={cn("font-mono text-sm font-bold tabular-nums",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>{formatQty(p.stockQty)}</p><p className="mt-1 text-[10px] text-muted-foreground">Alert: {formatQty(p.alertQty)}</p></div>
@@ -1975,7 +1977,7 @@ export default function Stock() {
                       </div>
                     </div>
                     <div className="divide-y divide-border/60 lg:hidden">
-                      {filtered.map((p: any) => {
+                      {filtered.slice(0, mobileVisibleCount).map((p: any) => {
                         const isLow = p.stockQty > 0 && p.stockQty <= p.alertQty;
                         const isOut = p.stockQty === 0;
                         const cat = getCategoryStyle(p.category);
@@ -1984,6 +1986,7 @@ export default function Stock() {
                         </div>;
                       })}
                     </div>
+                    {filtered.length > mobileVisibleCount && <div className="border-t border-border/60 p-3 text-center lg:hidden"><Button variant="outline" size="sm" onClick={() => setMobileVisibleCount(n => Math.min(n + 60, filtered.length))}>Show more products ({filtered.length - mobileVisibleCount} remaining)</Button></div>}
                     <div className="border-t border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">Showing {filtered.length.toLocaleString()} matching products</div>
                   </>}
                 </div>
