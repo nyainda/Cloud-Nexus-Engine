@@ -1968,7 +1968,7 @@ export default function Stock() {
                       </div>
                     </div>
                     <div className="divide-y divide-border/60 lg:hidden">
-                      {filtered.slice(0, 100).map((p: any) => {
+                      {filtered.map((p: any) => {
                         const isLow = p.stockQty > 0 && p.stockQty <= p.alertQty;
                         const isOut = p.stockQty === 0;
                         const cat = getCategoryStyle(p.category);
@@ -1976,7 +1976,6 @@ export default function Stock() {
                           <div className="flex items-start gap-3"><div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold",cat.bg,cat.text,cat.border)}>{cat.abbr}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-semibold">{p.canonicalName}</p>{isBulkView && <input type="checkbox" checked={selectedIds.has(p.id)} onChange={e => setSelectedIds(prev => {const next = new Set(prev); e.target.checked ? next.add(p.id) : next.delete(p.id); return next;})} className="h-4 w-4 accent-primary" />}</div><p className="mt-1 text-xs text-muted-foreground">{p.category || "Uncategorised"} · {p.sku || "No SKU"}</p><div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">On hand</p><p className={cn("mt-1 text-xl font-bold tabular-nums",isOut ? "text-destructive" : isLow ? "text-amber-600 dark:text-amber-400" : "text-primary")}>{formatQty(p.stockQty)} <span className="text-xs font-medium text-muted-foreground">{p.unit || "units"}</span></p></div>{isOwner && <div className="text-right"><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Unit price</p><p className="mt-1 font-semibold">{p.sellingPrice ? formatKES(p.sellingPrice) : "—"}</p></div>}</div><div className="mt-3 flex flex-wrap gap-1.5"><RestockDialog product={p} />{isOwner && <><TransferDialog product={p} shopId={shopId} onSuccess={refresh} /><EditProductDialog product={p} onSuccess={refresh} /><DeleteProductButton productId={p.id} productName={p.canonicalName} onSuccess={refresh} /></>}</div></div></div>
                         </div>;
                       })}
-                      {filtered.length > 100 && <p className="p-3 text-center text-xs text-muted-foreground">Showing first 100 products on this screen. Use search to narrow the list.</p>}
                     </div>
                     <div className="border-t border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">Showing {filtered.length.toLocaleString()} matching products</div>
                   </>}
