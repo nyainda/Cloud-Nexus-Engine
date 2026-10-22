@@ -2004,4 +2004,3 @@ export default function Stock() {
     </div>
   );
 }
-}
