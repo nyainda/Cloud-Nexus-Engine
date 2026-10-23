@@ -28,7 +28,7 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
 
   // Aggregate sales in SQLite: the dashboard needs totals, not every sale row.
   // This keeps response size and Worker CPU flat as transaction history grows.
-  const [daySalesSummary, lowStockRow, outOfStockRow, pendingDebts, unreadNotifications, itemsSold, cashCollectedRow] = await Promise.all([
+  const [daySalesSummary, lowStockRow, outOfStockRow, pendingDebtsRow, unreadNotificationsRow, itemsSold, cashCollectedRow] = await Promise.all([
     db.select({
       totalRevenue: sql<number>`COALESCE(SUM(${sales.totalAmount}), 0)`,
       totalCost: sql<number>`COALESCE(SUM(${sales.totalCost}), 0)`,
@@ -58,12 +58,16 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
         sql`is_active = 1 AND stock_qty = 0`,
       ),
     ).get(),
-    db.select().from(debts).where(
-      and(shopId ? eq(debts.shopId, shopId) : undefined, sql`status != 'paid'`),
-    ).all(),
-    db.select().from(notifications).where(
-      and(shopId ? eq(notifications.shopId, shopId) : undefined, eq(notifications.isRead, false)),
-    ).all(),
+    db.select({
+      total: sql<number>`COALESCE(SUM(${debts.balance}), 0)`,
+    }).from(debts).where(
+      and(eq(debts.shopId, shopId), sql`status != 'paid'`),
+    ).get(),
+    db.select({
+      count: sql<number>`COUNT(*)`,
+    }).from(notifications).where(
+      and(eq(notifications.shopId, shopId), eq(notifications.isRead, false)),
+    ).get(),
     // Aggregate product lines in SQLite so the dashboard transfers product-level
     // summaries instead of every individual sale item to the Worker.
     db.select({
@@ -90,7 +94,7 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
 
   const lowStockCount = lowStockRow?.count ?? 0;
   const outOfStockCount = outOfStockRow?.count ?? 0;
-  const pendingDebtsTotal = pendingDebts.reduce((s, d) => s + d.balance, 0);
+  const pendingDebtsTotal = pendingDebtsRow?.total ?? 0;
 
   const productSales = new Map<string, { productId: string; productName: string; totalQtySold: number; totalRevenue: number; totalProfit: number | null }>();
   for (const item of itemsSold) {
@@ -133,7 +137,7 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     lowStockCount,
     outOfStockCount,
     pendingDebtsTotal,
-    unreadNotificationsCount: unreadNotifications.length,
+    unreadNotificationsCount: unreadNotificationsRow?.count ?? 0,
   };
   if (shopId) {
     await kvSet(c.env.SESSIONS, CK.dashboard(shopId, date), dashPayload, CACHE_TTL.dashboard);
@@ -397,29 +401,35 @@ reportsRouter.get("/reports/hourly", requireAuth, async (c) => {
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
 
-  const daySales = await db
-    .select()
+  // Return 24 compact buckets from SQLite instead of transferring every sale
+  // for the selected day into the Worker.
+  const hourlyRows = await db
+    .select({
+      hour: sql<number>`CAST(substr(${sales.createdAt}, 12, 2) AS INTEGER)`,
+      salesCount: sql<number>`COUNT(*)`,
+      revenue: sql<number>`COALESCE(SUM(${sales.totalAmount}), 0)`,
+    })
     .from(sales)
     .where(
       and(
-        shopId ? eq(sales.shopId, shopId) : undefined,
+        eq(sales.shopId, shopId),
         eq(sales.isDeleted, false),
         gte(sales.createdAt, startOfDay),
         lte(sales.createdAt, endOfDay),
       ),
     )
+    .groupBy(sql`CAST(substr(${sales.createdAt}, 12, 2) AS INTEGER)`)
     .all();
 
-  const hourMap = new Map<number, { hour: number; salesCount: number; revenue: number }>();
-  for (let h = 0; h < 24; h++) hourMap.set(h, { hour: h, salesCount: 0, revenue: 0 });
-  for (const sale of daySales) {
-    const hour = parseInt(sale.createdAt.slice(11, 13));
-    const entry = hourMap.get(hour)!;
-    entry.salesCount++;
-    entry.revenue += sale.totalAmount;
-  }
-
-  return c.json(Array.from(hourMap.values()));
+  const hourMap = new Map(hourlyRows.map((row) => [row.hour, row]));
+  return c.json(Array.from({ length: 24 }, (_, hour) => {
+    const row = hourMap.get(hour);
+    return {
+      hour,
+      salesCount: row?.salesCount ?? 0,
+      revenue: row?.revenue ?? 0,
+    };
+  }));
 });
 
 reportsRouter.get("/reports/debts-summary", requireAuth, async (c) => {
