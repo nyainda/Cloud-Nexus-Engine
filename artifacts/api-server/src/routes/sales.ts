@@ -139,6 +139,13 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     debtCustomerPhone?: string;
   }>();
 
+  if (body.saleType !== "cash" && body.saleType !== "debt") {
+    return c.json({ error: "saleType must be cash or debt" }, 400);
+  }
+  if (body.paymentMethod !== undefined && body.paymentMethod !== "cash" && body.paymentMethod !== "bank") {
+    return c.json({ error: "paymentMethod must be cash or bank" }, 400);
+  }
+
   // A debt sale without a customer cannot be reconciled later: it would appear
   // in sales history but never be discoverable in the debt ledger or CRM.
   // Reject it before writing the sale so those two records cannot drift apart.
@@ -513,8 +520,14 @@ salesRouter.post("/returns", requireAuth, async (c) => {
   if (!body.shopId || body.shopId !== sessionShopId) {
     return c.json({ error: "Forbidden: shop does not match the authenticated session" }, 403);
   }
-  if (!body.productId || !Number.isFinite(body.qty) || body.qty <= 0)
-    return c.json({ error: "productId and qty > 0 required" }, 400);
+  if (
+    !body.productId ||
+    !Number.isFinite(body.qty) ||
+    body.qty <= 0 ||
+    (body.unitPrice !== undefined && (!Number.isFinite(body.unitPrice) || body.unitPrice < 0))
+  ) {
+    return c.json({ error: "productId, positive quantity, and non-negative unit price are required" }, 400);
+  }
 
   const now = new Date().toISOString();
   const returnId = crypto.randomUUID();
@@ -526,6 +539,9 @@ salesRouter.post("/returns", requireAuth, async (c) => {
     ),
   ).get();
   if (!product) return c.json({ error: "Product not found" }, 404);
+  if (!product.allowDecimals && !Number.isInteger(body.qty)) {
+    return c.json({ error: `${product.canonicalName} must be returned in whole units` }, 400);
+  }
 
   const beforeQty = product.stockQty;
   const afterQty = beforeQty + body.qty;
@@ -673,7 +689,21 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     .get();
   if (!sale) return c.json({ error: "Sale not found" }, 404);
   if (sale.isDeleted) return c.json({ error: "Cannot return items from a voided sale" }, 400);
-  if (!body.items || body.items.length === 0) return c.json({ error: "No items to return" }, 400);
+  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 200) {
+    return c.json({ error: "A return must contain between 1 and 200 items" }, 400);
+  }
+  for (const item of body.items) {
+    if (
+      !Number.isFinite(item?.qty) ||
+      item.qty <= 0 ||
+      !Number.isFinite(item?.unitPrice) ||
+      item.unitPrice < 0 ||
+      !Number.isFinite(item?.refundAmount) ||
+      item.refundAmount < 0
+    ) {
+      return c.json({ error: "Each return item requires a positive quantity and non-negative price/refund" }, 400);
+    }
+  }
 
   // ── Guard: compute already-returned qty per product for this sale ────────────
   const existingReturnRows = await db
@@ -697,15 +727,23 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     if (si.productId) soldQty[si.productId] = (soldQty[si.productId] ?? 0) + si.qty;
   }
 
-  // ── Validate each return item ────────────────────────────────────────────────
+  // Aggregate duplicate product lines before checking the returnable quantity.
+  // Otherwise two individually-valid lines could together return more than sold.
+  const requestedQtyByProduct: Record<string, number> = {};
   for (const item of body.items) {
     if (!item.productId) continue;
-    const originalQty = soldQty[item.productId] ?? 0;
-    const prevReturned = alreadyReturned[item.productId] ?? 0;
+    requestedQtyByProduct[item.productId] = (requestedQtyByProduct[item.productId] ?? 0) + item.qty;
+  }
+
+  // ── Validate each return item ────────────────────────────────────────────────
+  for (const [productId, requestedQty] of Object.entries(requestedQtyByProduct)) {
+    const originalQty = soldQty[productId] ?? 0;
+    const prevReturned = alreadyReturned[productId] ?? 0;
     const maxReturnable = originalQty - prevReturned;
-    if (item.qty > maxReturnable) {
+    if (requestedQty > maxReturnable) {
+      const productName = body.items.find((item) => item.productId === productId)?.productName ?? "product";
       return c.json({
-        error: `Cannot return ${item.qty}× "${item.productName}" — only ${maxReturnable} can be returned (${prevReturned} already returned of ${originalQty} sold)`,
+        error: `Cannot return ${requestedQty}× "${productName}" — only ${maxReturnable} can be returned (${prevReturned} already returned of ${originalQty} sold)`,
       }, 400);
     }
   }
