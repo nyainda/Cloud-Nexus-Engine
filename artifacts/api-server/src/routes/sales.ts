@@ -725,8 +725,12 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
   // ── Fetch original sold quantities ───────────────────────────────────────────
   const soldRows = await db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).all();
   const soldQty: Record<string, number> = {};
+  const maxSoldUnitPrice: Record<string, number> = {};
   for (const si of soldRows) {
-    if (si.productId) soldQty[si.productId] = (soldQty[si.productId] ?? 0) + si.qty;
+    if (si.productId) {
+      soldQty[si.productId] = (soldQty[si.productId] ?? 0) + si.qty;
+      maxSoldUnitPrice[si.productId] = Math.max(maxSoldUnitPrice[si.productId] ?? 0, si.unitPrice);
+    }
   }
 
   // Aggregate duplicate product lines before checking the returnable quantity.
@@ -735,6 +739,12 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
   for (const item of body.items) {
     if (!item.productId) continue;
     requestedQtyByProduct[item.productId] = (requestedQtyByProduct[item.productId] ?? 0) + item.qty;
+    if (item.unitPrice > (maxSoldUnitPrice[item.productId] ?? -1)) {
+      return c.json({ error: `Return price for "${item.productName}" cannot exceed its recorded sale price` }, 400);
+    }
+    if (item.refundAmount > item.qty * item.unitPrice) {
+      return c.json({ error: `Refund for "${item.productName}" cannot exceed quantity multiplied by unit price` }, 400);
+    }
   }
 
   // ── Validate each return item ────────────────────────────────────────────────
@@ -753,7 +763,10 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
   const now = new Date().toISOString();
   const returnId = crypto.randomUUID();
 
-  const totalRefund = body.items.reduce((sum, it) => sum + it.refundAmount, 0);
+  const totalRefund = money(body.items.reduce((sum, it) => sum + it.refundAmount, 0));
+  if (!Number.isFinite(totalRefund) || totalRefund > sale.totalAmount) {
+    return c.json({ error: "Total refund cannot exceed the remaining sale amount" }, 400);
+  }
 
   // Restore stock for each returned product
   for (const item of body.items) {
