@@ -296,14 +296,15 @@ reportsRouter.get("/reports/top-products", requireAuth, async (c) => {
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
   const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit), 10) || 10));
   const productKey = sql`COALESCE(${saleItems.productId}, ${saleItems.productName})`;
-  const displayName = sql<string>`COALESCE(${products.canonicalName}, ${saleItems.productName})`;
 
+  // Preserve the historical sale-line name so renaming a catalog product does
+  // not rewrite how older sales appear in this report.
   // Aggregate at the database so report cost scales with products sold, not
-  // every historical line item. The response fields remain unchanged.
+  // every historical line item.
   const topProducts = await db
     .select({
       productId: productKey,
-      productName: displayName,
+      productName: saleItems.productName,
       totalQtySold: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
       totalRevenue: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
       totalProfit: sql<number>`COALESCE(SUM(${saleItems.totalProfit}), 0)`,
@@ -317,7 +318,7 @@ reportsRouter.get("/reports/top-products", requireAuth, async (c) => {
       gte(sales.createdAt, fromTs),
       lte(sales.createdAt, toTs),
     ))
-    .groupBy(productKey, displayName)
+    .groupBy(productKey, saleItems.productName)
     .orderBy(sql`SUM(${saleItems.totalPrice}) DESC`)
     .limit(safeLimit)
     .all();
