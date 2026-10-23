@@ -1,11 +1,10 @@
 import { Hono } from "hono";
-import { eq, and, gte, lte, sql, inArray, or } from "drizzle-orm";
+import { eq, and, gte, lte, sql, or } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, debtPayments, notifications } from "@workspace/db/schema";
 import { kvGet, kvSet, CK, CACHE_TTL } from "../lib/cache";
-import { chunk } from "../lib/chunk";
 
 const reportsRouter = new Hono<AppEnv>();
 
