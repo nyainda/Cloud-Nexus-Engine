@@ -64,9 +64,17 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     db.select().from(notifications).where(
       and(shopId ? eq(notifications.shopId, shopId) : undefined, eq(notifications.isRead, false)),
     ).all(),
-    db.select().from(saleItems).where(
+    // Aggregate product lines in SQLite so the dashboard transfers product-level
+    // summaries instead of every individual sale item to the Worker.
+    db.select({
+      productId: saleItems.productId,
+      productName: saleItems.productName,
+      totalQtySold: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
+      totalRevenue: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+      totalProfit: sql<number>`SUM(${saleItems.totalProfit})`,
+    }).from(saleItems).where(
       sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${startOfDay} AND created_at <= ${endOfDay}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-    ).all(),
+    ).groupBy(saleItems.productId, saleItems.productName).all(),
     db.select({ total: sql<number>`COALESCE(SUM(amount), 0)` }).from(debtPayments).where(
       sql`paid_at >= ${startOfDay} AND paid_at <= ${endOfDay}${shopId ? sql` AND debt_id IN (SELECT id FROM debts WHERE shop_id = ${shopId})` : sql``}`,
     ).get(),
@@ -89,15 +97,15 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     const key = item.productId ?? item.productName;
     const existing = productSales.get(key);
     if (existing) {
-      existing.totalQtySold += item.qty;
-      existing.totalRevenue += item.totalPrice;
+      existing.totalQtySold += item.totalQtySold;
+      existing.totalRevenue += item.totalRevenue;
       existing.totalProfit = (existing.totalProfit ?? 0) + (item.totalProfit ?? 0);
     } else {
       productSales.set(key, {
         productId: item.productId ?? key,
         productName: item.productName,
-        totalQtySold: item.qty,
-        totalRevenue: item.totalPrice,
+        totalQtySold: item.totalQtySold,
+        totalRevenue: item.totalRevenue,
         totalProfit: item.totalProfit,
       });
     }
