@@ -17,10 +17,14 @@ function money(value: number): number {
 
 salesRouter.get("/sales", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId");
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
-  const limit = parseInt(c.req.query("limit") ?? "50");
-  const offset = parseInt(c.req.query("offset") ?? "0");
+  const limit = Math.min(200, Math.max(1, Number.parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = Math.max(0, Number.parseInt(c.req.query("offset") ?? "0", 10) || 0);
   const includeVoided = c.req.query("includeVoided") === "true";
 
   const startOfDay = `${date}T00:00:00.000Z`;
@@ -387,11 +391,12 @@ salesRouter.post("/sales", requireAuth, async (c) => {
 salesRouter.get("/sales/:saleId", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const saleId = c.req.param("saleId");
-  const [sale, items] = await Promise.all([
-    db.select().from(sales).where(eq(sales.id, saleId)).get(),
-    db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).all(),
-  ]);
+  const shopId = c.get("session").shopId;
+  const sale = await db.select().from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.shopId, shopId)))
+    .get();
   if (!sale) return c.json({ error: "Not found" }, 404);
+  const items = await db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).all();
   return c.json({ ...sale, items });
 });
 
@@ -402,7 +407,10 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
   }>().catch(() => ({})) as { reason?: string; performedBy?: string };
   const db = createDb(c.env.DB);
   const saleId = c.req.param("saleId");
-  const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
+  const shopId = c.get("session").shopId;
+  const sale = await db.select().from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.shopId, shopId)))
+    .get();
   if (!sale) return c.json({ error: "Not found" }, 404);
   if (sale.isDeleted) return c.json({ error: "Sale already voided" }, 409);
   const now = new Date().toISOString();
