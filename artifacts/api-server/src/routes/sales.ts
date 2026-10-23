@@ -196,15 +196,21 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   // authenticated shop. This avoids one D1 round trip per line item and stops
   // cross-shop or inactive products being sold through a forged request.
   const productIds = Array.from(new Set(body.items.map((item) => item.productId)));
-  const productsInShop = await db
-    .select()
-    .from(products)
-    .where(and(
-      inArray(products.id, productIds),
-      eq(products.shopId, body.shopId),
-      eq(products.isActive, true),
-    ))
-    .all();
+  // D1 supports at most 100 bound parameters per statement. Chunk IDs
+  // so large baskets remain valid while keeping the queries parallel.
+  const productsInShop = (await Promise.all(
+    chunk(productIds).map((ids) =>
+      db
+        .select()
+        .from(products)
+        .where(and(
+          inArray(products.id, ids),
+          eq(products.shopId, body.shopId),
+          eq(products.isActive, true),
+        ))
+        .all(),
+    ),
+  )).flat();
   const productMap = new Map<string, typeof products.$inferSelect>(
     productsInShop.map((product) => [product.id, product] as const),
   );
