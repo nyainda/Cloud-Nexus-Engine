@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, sql, inArray, or } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -466,95 +466,54 @@ reportsRouter.get("/reports/product-search", requireAuth, async (c) => {
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs   = to   ? `${to}T23:59:59.999Z`   : new Date().toISOString();
 
-  // 1. Find all products whose canonical/normalized name contains the query
-  //    so we can also match by productId (catches name changes after the sale)
-  const matchingProducts = await db
-    .select({ id: products.id, canonicalName: products.canonicalName, category: products.category })
-    .from(products)
-    .where(
-      shopId
-        ? and(eq(products.shopId, shopId), sql`lower(canonical_name) LIKE ${"%" + q + "%"}`)
-        : sql`lower(canonical_name) LIKE ${"%" + q + "%"}`,
-    )
+  const productKey = sql`COALESCE(${saleItems.productId}, ${saleItems.productName})`;
+  const displayName = sql<string>`COALESCE(${products.canonicalName}, ${saleItems.productName})`;
+  const categoryName = sql<string>`COALESCE(${products.category}, 'Uncategorized')`;
+  const searchPattern = `%${q}%`;
+
+  // Filter and aggregate in SQLite. The previous version loaded every sale
+  // line in the date range into Worker memory before applying the product
+  // search, making a single-product lookup increasingly expensive over time.
+  const aggregated = await db.select({
+    productId: saleItems.productId,
+    productName: displayName,
+    category: categoryName,
+    totalQty: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
+    totalRevenue: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+    totalProfit: sql<number>`COALESCE(SUM(${saleItems.totalProfit}), 0)`,
+    salesCount: sql<number>`COUNT(*)`,
+  }).from(saleItems)
+    .innerJoin(sales, eq(saleItems.saleId, sales.id))
+    .leftJoin(products, eq(saleItems.productId, products.id))
+    .where(and(
+      eq(sales.shopId, shopId),
+      eq(sales.isDeleted, false),
+      gte(sales.createdAt, fromTs),
+      lte(sales.createdAt, toTs),
+      or(
+        sql`lower(${products.canonicalName}) LIKE ${searchPattern}`,
+        sql`lower(${saleItems.productName}) LIKE ${searchPattern}`,
+      ),
+    ))
+    .groupBy(productKey, displayName, categoryName)
+    .orderBy(sql`SUM(${saleItems.totalPrice}) DESC`)
     .all();
 
-  const matchingProductIds = new Set(matchingProducts.map((p) => p.id));
-  const canonicalNameById  = new Map(matchingProducts.map((p) => [p.id, p.canonicalName]));
-  const categoryById       = new Map(matchingProducts.map((p) => [p.id, p.category ?? "Uncategorized"]));
-
-  // 2. Pull all sale_items in the date range that match either by productId or productName
-  const items = await db
-    .select()
-    .from(saleItems)
-    .where(
-      sql`sale_id IN (
-        SELECT id FROM sales
-        WHERE is_deleted = 0
-          AND created_at >= ${fromTs}
-          AND created_at <= ${toTs}
-          ${shopId ? sql`AND shop_id = ${shopId}` : sql``}
-      )`,
-    )
-    .all();
-
-  // 3. Keep only items that match the query (by productId OR productName substring)
-  const matched = items.filter(
-    (item) =>
-      (item.productId && matchingProductIds.has(item.productId)) ||
-      item.productName.toLowerCase().includes(q),
-  );
-
-  // 4. Group by (productId → canonicalName) so same product sold under old/new
-  //    names still merges correctly. Fall back to productName when no productId.
-  type Variant = {
-    productId: string;
-    productName: string;
-    category: string;
-    totalQty: number;
-    totalRevenue: number;
-    totalProfit: number;
-    salesCount: number;
-  };
-
-  const variantMap = new Map<string, Variant>();
-
-  for (const item of matched) {
-    const key          = item.productId ?? item.productName;
-    const displayName  = item.productId
-      ? (canonicalNameById.get(item.productId) ?? item.productName)
-      : item.productName;
-    const category     = item.productId
-      ? (categoryById.get(item.productId) ?? "Uncategorized")
-      : "Uncategorized";
-
-    const existing = variantMap.get(key);
-    if (existing) {
-      existing.totalQty     += item.qty;
-      existing.totalRevenue += item.totalPrice;
-      existing.totalProfit  += item.totalProfit ?? 0;
-      existing.salesCount   += 1;
-    } else {
-      variantMap.set(key, {
-        productId:    item.productId ?? key,
-        productName:  displayName,
-        category,
-        totalQty:     item.qty,
-        totalRevenue: item.totalPrice,
-        totalProfit:  item.totalProfit ?? 0,
-        salesCount:   1,
-      });
-    }
-  }
-
-  const variants = Array.from(variantMap.values()).sort(
-    (a, b) => b.totalRevenue - a.totalRevenue,
-  );
+  const variants = aggregated.map((item) => ({
+    productId: item.productId ?? item.productName,
+    productName: item.productName,
+    category: item.category,
+    totalQty: item.totalQty,
+    totalRevenue: item.totalRevenue,
+    totalProfit: item.totalProfit,
+    salesCount: item.salesCount,
+  }));
 
   const summary = variants.length === 0 ? null : {
-    totalQty:     variants.reduce((s, v) => s + v.totalQty, 0),
-    totalRevenue: variants.reduce((s, v) => s + v.totalRevenue, 0),
-    totalProfit:  variants.reduce((s, v) => s + v.totalProfit, 0),
-    salesCount:   variants.reduce((s, v) => s + v.salesCount, 0),
+    totalQty: variants.reduce((sum, item) => sum + item.totalQty, 0),
+    totalRevenue: variants.reduce((sum, item) => sum + item.totalRevenue, 0),
+    totalProfit: variants.reduce((sum, item) => sum + item.totalProfit, 0),
+    salesCount: variants.reduce((sum, item) => sum + item.salesCount, 0),
   };
 
   return c.json({ query: q, from: fromTs, to: toTs, variants, summary });
