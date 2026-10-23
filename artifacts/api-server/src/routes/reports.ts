@@ -14,10 +14,6 @@ function isValidDateOnly(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-function invalidDateResponse(c: Parameters<Parameters<typeof reportsRouter.get>[1]>[0], message: string) {
-  return c.json({ error: message }, 400);
-}
-
 reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const requestedShopId = c.req.query("shopId");
