@@ -509,13 +509,23 @@ salesRouter.post("/returns", requireAuth, async (c) => {
     processedBy?: string;
   }>();
 
-  if (!body.productId || !body.qty || body.qty <= 0)
+  const sessionShopId = c.get("session").shopId;
+  if (!body.shopId || body.shopId !== sessionShopId) {
+    return c.json({ error: "Forbidden: shop does not match the authenticated session" }, 403);
+  }
+  if (!body.productId || !Number.isFinite(body.qty) || body.qty <= 0)
     return c.json({ error: "productId and qty > 0 required" }, 400);
 
   const now = new Date().toISOString();
   const returnId = crypto.randomUUID();
 
-  const product = await db.select().from(products).where(eq(products.id, body.productId)).get();
+  const product = await db.select().from(products).where(
+    and(
+      eq(products.id, body.productId),
+      eq(products.shopId, sessionShopId),
+      eq(products.isActive, true),
+    ),
+  ).get();
   if (!product) return c.json({ error: "Product not found" }, 404);
 
   const beforeQty = product.stockQty;
@@ -594,10 +604,16 @@ salesRouter.post("/returns", requireAuth, async (c) => {
 salesRouter.get("/sales/:saleId/returns", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const saleId = c.req.param("saleId");
+  const shopId = c.get("session").shopId;
+  const sale = await db.select({ id: sales.id }).from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.shopId, shopId)))
+    .get();
+  if (!sale) return c.json({ error: "Not found" }, 404);
+
   const rows = await db
     .select()
     .from(saleReturns)
-    .where(eq(saleReturns.saleId, saleId))
+    .where(and(eq(saleReturns.saleId, saleId), eq(saleReturns.shopId, shopId)))
     .all();
   return c.json(rows);
 });
@@ -606,7 +622,11 @@ salesRouter.get("/sales/:saleId/returns", requireAuth, async (c) => {
 // ─── List all returns for a shop on a date ───────────────────────────────────
 salesRouter.get("/returns", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId");
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
 
   const startOfDay = `${date}T00:00:00.000Z`;
@@ -617,7 +637,7 @@ salesRouter.get("/returns", requireAuth, async (c) => {
     .from(saleReturns)
     .where(
       and(
-        shopId ? eq(saleReturns.shopId, shopId) : undefined,
+        eq(saleReturns.shopId, shopId),
         gte(saleReturns.createdAt, startOfDay),
         lte(saleReturns.createdAt, endOfDay),
       )
@@ -645,7 +665,13 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     }>;
   }>();
 
-  const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
+  const shopId = c.get("session").shopId;
+  if (!body.shopId || body.shopId !== shopId) {
+    return c.json({ error: "Forbidden: shop does not match the authenticated session" }, 403);
+  }
+  const sale = await db.select().from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.shopId, shopId)))
+    .get();
   if (!sale) return c.json({ error: "Sale not found" }, 404);
   if (sale.isDeleted) return c.json({ error: "Cannot return items from a voided sale" }, 400);
   if (!body.items || body.items.length === 0) return c.json({ error: "No items to return" }, 400);
@@ -696,7 +722,7 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     const product = await db
       .select()
       .from(products)
-      .where(eq(products.id, item.productId))
+      .where(and(eq(products.id, item.productId), eq(products.shopId, shopId)))
       .get();
     if (!product) continue;
 
