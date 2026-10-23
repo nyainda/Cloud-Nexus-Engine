@@ -270,39 +270,35 @@ reportsRouter.get("/reports/top-products", requireAuth, async (c) => {
 
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit), 10) || 10));
+  const productKey = sql`COALESCE(${saleItems.productId}, ${saleItems.productName})`;
+  const displayName = sql<string>`COALESCE(${products.canonicalName}, ${saleItems.productName})`;
 
-  const items = await db
-    .select()
+  // Aggregate at the database so report cost scales with products sold, not
+  // every historical line item. The response fields remain unchanged.
+  const topProducts = await db
+    .select({
+      productId: productKey,
+      productName: displayName,
+      totalQtySold: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
+      totalRevenue: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+      totalProfit: sql<number>`COALESCE(SUM(${saleItems.totalProfit}), 0)`,
+    })
     .from(saleItems)
-    .where(
-      sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${fromTs} AND created_at <= ${toTs}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-    )
+    .innerJoin(sales, eq(saleItems.saleId, sales.id))
+    .leftJoin(products, eq(saleItems.productId, products.id))
+    .where(and(
+      eq(sales.shopId, shopId),
+      eq(sales.isDeleted, false),
+      gte(sales.createdAt, fromTs),
+      lte(sales.createdAt, toTs),
+    ))
+    .groupBy(productKey, displayName)
+    .orderBy(sql`SUM(${saleItems.totalPrice}) DESC`)
+    .limit(safeLimit)
     .all();
 
-  const map = new Map<string, { productId: string; productName: string; totalQtySold: number; totalRevenue: number; totalProfit: number | null }>();
-  for (const item of items) {
-    const key = item.productId ?? item.productName;
-    const existing = map.get(key);
-    if (existing) {
-      existing.totalQtySold += item.qty;
-      existing.totalRevenue += item.totalPrice;
-      existing.totalProfit = (existing.totalProfit ?? 0) + (item.totalProfit ?? 0);
-    } else {
-      map.set(key, {
-        productId: item.productId ?? key,
-        productName: item.productName,
-        totalQtySold: item.qty,
-        totalRevenue: item.totalPrice,
-        totalProfit: item.totalProfit,
-      });
-    }
-  }
-
-  return c.json(
-    Array.from(map.values())
-      .sort((a, b) => b.totalRevenue - a.totalRevenue)
-      .slice(0, limit),
-  );
+  return c.json(topProducts);
 });
 
 reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
