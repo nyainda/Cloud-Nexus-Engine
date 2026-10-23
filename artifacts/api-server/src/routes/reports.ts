@@ -314,37 +314,38 @@ reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
 
-  const items = await db.select().from(saleItems).where(
-    sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${fromTs} AND created_at <= ${toTs}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-  ).all();
+  const productKey = sql`COALESCE(${saleItems.productId}, ${saleItems.productName})`;
+  const displayName = sql<string>`COALESCE(${products.canonicalName}, ${saleItems.productName})`;
+  const categoryName = sql<string>`COALESCE(${products.category}, 'Uncategorized')`;
 
-  // Only need category/name for products that actually sold in this range —
-  // not the whole catalog. On a shop with 2,000+ products this previously
-  // read every row (every column) on every single report view regardless of
-  // date range, which is what was driving D1 read-row volume so high.
-  const productIds = Array.from(new Set(items.map((i) => i.productId).filter((id): id is string => !!id)));
-  const allProducts = productIds.length
-    ? (await Promise.all(
-        chunk(productIds).map((batch) =>
-          db
-            .select({ id: products.id, category: products.category, canonicalName: products.canonicalName })
-            .from(products)
-            .where(inArray(products.id, batch))
-            .all(),
-        ),
-      )).flat()
-    : [];
-  const productCategoryMap = new Map(allProducts.map((p) => [p.id, p.category ?? "Uncategorized"]));
-  const productNameMap = new Map(allProducts.map((p) => [p.id, p.canonicalName ?? p.id]));
+  // Return one row per product/category rather than every historical sale line.
+  const items = await db.select({
+    productId: saleItems.productId,
+    productName: displayName,
+    category: categoryName,
+    qty: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
+    totalPrice: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+    totalProfit: sql<number>`COALESCE(SUM(${saleItems.totalProfit}), 0)`,
+  }).from(saleItems)
+    .innerJoin(sales, eq(saleItems.saleId, sales.id))
+    .leftJoin(products, eq(saleItems.productId, products.id))
+    .where(and(
+      eq(sales.shopId, shopId),
+      eq(sales.isDeleted, false),
+      gte(sales.createdAt, fromTs),
+      lte(sales.createdAt, toTs),
+    ))
+    .groupBy(productKey, displayName, categoryName)
+    .all();
 
   type ProdEntry = { productId: string; productName: string; qtySold: number; totalRevenue: number; totalProfit: number };
   type CatEntry = { category: string; totalRevenue: number; totalProfit: number; salesCount: number; products: Map<string, ProdEntry> };
   const map = new Map<string, CatEntry>();
 
   for (const item of items) {
-    const category = (item.productId ? productCategoryMap.get(item.productId) : null) ?? "Uncategorized";
-    const productName = (item.productId ? productNameMap.get(item.productId) : null) ?? item.productName ?? "Unknown";
-    const productKey = item.productId ?? productName;
+    const category = item.category ?? "Uncategorized";
+    const productName = item.productName ?? "Unknown";
+    const key = item.productId ?? productName;
 
     let catEntry = map.get(category);
     if (!catEntry) {
@@ -355,10 +356,10 @@ reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
     catEntry.totalProfit += item.totalProfit ?? 0;
     catEntry.salesCount += item.qty;
 
-    let prodEntry = catEntry.products.get(productKey);
+    let prodEntry = catEntry.products.get(key);
     if (!prodEntry) {
       prodEntry = { productId: item.productId ?? "", productName, qtySold: 0, totalRevenue: 0, totalProfit: 0 };
-      catEntry.products.set(productKey, prodEntry);
+      catEntry.products.set(key, prodEntry);
     }
     prodEntry.qtySold += item.qty;
     prodEntry.totalRevenue += item.totalPrice;
