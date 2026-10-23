@@ -205,7 +205,9 @@ salesRouter.post("/sales", requireAuth, async (c) => {
       eq(products.isActive, true),
     ))
     .all();
-  const productMap = new Map(productsInShop.map((product) => [product.id, product]));
+  const productMap = new Map<string, typeof products.$inferSelect>(
+    productsInShop.map((product) => [product.id, product] as const),
+  );
   if (productMap.size !== productIds.length) {
     return c.json({ error: "One or more products are unavailable in this shop" }, 400);
   }
