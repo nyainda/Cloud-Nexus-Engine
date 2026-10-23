@@ -165,20 +165,54 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     totalProfit: number | null;
   }> = [];
 
-  // Collect products during the first loop — reused in the stock-deduction loop
-  // to eliminate the N+1 re-fetch (one DB hit per item instead of two).
-  const productMap = new Map<string, typeof products.$inferSelect>();
+  const session = c.get("session");
+  if (!body.shopId || body.shopId !== session.shopId) {
+    return c.json({ error: "Forbidden: shop does not match the authenticated session" }, 403);
+  }
+  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 200) {
+    return c.json({ error: "A sale must contain between 1 and 200 items" }, 400);
+  }
+  for (const item of body.items) {
+    if (
+      !item?.productId ||
+      !Number.isFinite(item.qty) ||
+      item.qty <= 0 ||
+      !Number.isFinite(item.unitPrice) ||
+      item.unitPrice < 0
+    ) {
+      return c.json({ error: "Each item requires a product, positive quantity, and non-negative unit price" }, 400);
+    }
+  }
+  const discountInput = body.discount ?? 0;
+  if (!Number.isFinite(discountInput) || discountInput < 0) {
+    return c.json({ error: "Discount must be a non-negative number" }, 400);
+  }
+
+  // One indexed query for the distinct products in the basket, scoped to the
+  // authenticated shop. This avoids one D1 round trip per line item and stops
+  // cross-shop or inactive products being sold through a forged request.
+  const productIds = Array.from(new Set(body.items.map((item) => item.productId)));
+  const productsInShop = await db
+    .select()
+    .from(products)
+    .where(and(
+      inArray(products.id, productIds),
+      eq(products.shopId, body.shopId),
+      eq(products.isActive, true),
+    ))
+    .all();
+  const productMap = new Map(productsInShop.map((product) => [product.id, product]));
+  if (productMap.size !== productIds.length) {
+    return c.json({ error: "One or more products are unavailable in this shop" }, 400);
+  }
 
   for (const item of body.items) {
-    const product = await db
-      .select()
-      .from(products)
-      .where(eq(products.id, item.productId))
-      .get();
-    if (product) productMap.set(item.productId, product);
-
+    const product = productMap.get(item.productId)!;
+    if (!product.allowDecimals && !Number.isInteger(item.qty)) {
+      return c.json({ error: `${product.canonicalName} must be sold in whole units` }, 400);
+    }
     const lineTotal = item.unitPrice * item.qty;
-    const unitCost = product?.purchasePrice ?? null;
+    const unitCost = product.purchasePrice ?? null;
     const unitProfit = unitCost !== null ? item.unitPrice - unitCost : null;
     const lineProfit = unitProfit !== null ? unitProfit * item.qty : null;
 
@@ -190,7 +224,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
       id: crypto.randomUUID(),
       saleId,
       productId: item.productId,
-      productName: product?.canonicalName ?? item.productId,
+      productName: product.canonicalName,
       qty: item.qty,
       unitPrice: item.unitPrice,
       unitCost,
@@ -200,7 +234,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     });
   }
 
-  const discount = body.discount ?? 0;
+  const discount = discountInput;
   totalAmount = Math.max(0, totalAmount - discount);
 
   const creditSources = debtCustomerName
