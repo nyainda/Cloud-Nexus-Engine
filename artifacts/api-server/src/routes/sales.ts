@@ -330,8 +330,10 @@ salesRouter.post("/sales", requireAuth, async (c) => {
       : []),
   ]);
 
-  for (const item of lineItems) {
-    await db.insert(saleItems).values(item);
+  // D1 limits bound variables per statement. Keep each multi-row insert
+  // comfortably below that limit while avoiding one awaited INSERT per line.
+  for (const itemChunk of chunk(lineItems, 8)) {
+    await db.insert(saleItems).values(itemChunk);
   }
 
   for (const item of body.items) {
