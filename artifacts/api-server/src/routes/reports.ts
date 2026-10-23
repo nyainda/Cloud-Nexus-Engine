@@ -8,6 +8,16 @@ import { kvGet, kvSet, CK, CACHE_TTL } from "../lib/cache";
 
 const reportsRouter = new Hono<AppEnv>();
 
+function isValidDateOnly(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function invalidDateResponse(c: Parameters<Parameters<typeof reportsRouter.get>[1]>[0], message: string) {
+  return c.json({ error: message }, 400);
+}
+
 reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const requestedShopId = c.req.query("shopId");
@@ -16,6 +26,7 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     return c.json({ error: "Forbidden" }, 403);
   }
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
+  if (!isValidDateOnly(date)) return c.json({ error: "date must be a valid YYYY-MM-DD date" }, 400);
 
   // ── KV cache (5 min TTL, busted on every sale or debt payment) ──────────────
   if (shopId) {
@@ -152,8 +163,11 @@ reportsRouter.get("/reports/range", requireAuth, async (c) => {
   if (requestedShopId && requestedShopId !== shopId) {
     return c.json({ error: "Forbidden" }, 403);
   }
-  const from = c.req.query("from")!;
-  const to = c.req.query("to")!;
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+  if (!from || !to || !isValidDateOnly(from) || !isValidDateOnly(to) || from > to) {
+    return c.json({ error: "from and to must be valid YYYY-MM-DD dates, with from on or before to" }, 400);
+  }
 
   const fromTs = `${from}T00:00:00.000Z`;
   const toTs = `${to}T23:59:59.999Z`;
@@ -279,6 +293,9 @@ reportsRouter.get("/reports/top-products", requireAuth, async (c) => {
   const to = c.req.query("to");
   const limit = parseInt(c.req.query("limit") ?? "10");
 
+  if ((from && !isValidDateOnly(from)) || (to && !isValidDateOnly(to)) || (from && to && from > to)) {
+    return c.json({ error: "from/to must be valid YYYY-MM-DD dates, with from on or before to" }, 400);
+  }
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
   const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit), 10) || 10));
@@ -322,6 +339,9 @@ reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
   const from = c.req.query("from");
   const to = c.req.query("to");
 
+  if ((from && !isValidDateOnly(from)) || (to && !isValidDateOnly(to)) || (from && to && from > to)) {
+    return c.json({ error: "from/to must be valid YYYY-MM-DD dates, with from on or before to" }, 400);
+  }
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
 
@@ -398,6 +418,7 @@ reportsRouter.get("/reports/hourly", requireAuth, async (c) => {
     return c.json({ error: "Forbidden" }, 403);
   }
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
+  if (!isValidDateOnly(date)) return c.json({ error: "date must be a valid YYYY-MM-DD date" }, 400);
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
 
@@ -480,6 +501,9 @@ reportsRouter.get("/reports/product-search", requireAuth, async (c) => {
     return c.json({ query: q, variants: [], summary: null });
   }
 
+  if ((from && !isValidDateOnly(from)) || (to && !isValidDateOnly(to)) || (from && to && from > to)) {
+    return c.json({ error: "from/to must be valid YYYY-MM-DD dates, with from on or before to" }, 400);
+  }
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs   = to   ? `${to}T23:59:59.999Z`   : new Date().toISOString();
 
