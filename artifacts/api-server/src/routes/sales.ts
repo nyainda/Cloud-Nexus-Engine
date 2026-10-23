@@ -523,7 +523,6 @@ salesRouter.post("/returns", requireAuth, async (c) => {
     and(
       eq(products.id, body.productId),
       eq(products.shopId, sessionShopId),
-      eq(products.isActive, true),
     ),
   ).get();
   if (!product) return c.json({ error: "Product not found" }, 404);
