@@ -283,7 +283,7 @@ export default function NurseryRegister() {
 
     setStatementBusy(true);
     try {
-      const search = phone || name;
+      const search = name || phone;
       const makeUrl = (page: number) => "/api/nursery/entries?from=" + encodeURIComponent(from)
         + "&to=" + encodeURIComponent(to) + "&page=" + page + "&pageSize=50&search="
         + encodeURIComponent(search) + "&payment=all";
