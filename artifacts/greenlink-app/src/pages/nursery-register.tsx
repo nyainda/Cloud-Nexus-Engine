@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatKES } from "@/lib/format";
+import { downloadNurseryReceipt, downloadNurseryStatement } from "@/lib/nursery-pdf";
 import { CustomerAutocomplete, type SelectedCustomer } from "@/components/customer-autocomplete";
 import { Sprout, Plus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive, CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight, Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign, ChevronDown, ShoppingCart, BarChart3, Boxes, LayoutDashboard } from "lucide-react";
 import { toast } from "sonner";
@@ -56,7 +57,7 @@ function cents(value: unknown) {
   return Number.isFinite(amount) ? amount / 100 : 0;
 }
 type CustomerInsightRow = { customerKey: string; customerName: string; customerPhone: string; varietyName: string; quantity: number; totalAmountCents: number; lastPurchase: string };
-type IndividualSaleEntry = { id: string; requestId: string; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
+type IndividualSaleEntry = { id: string; requestId: string; transactionId?: string | null; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
 
 function useDebouncedValue<T>(value: T, delayMs = 250) {
   const [debounced, setDebounced] = useState(value);
@@ -112,6 +113,10 @@ export default function NurseryRegister() {
   const [saleSearch, setSaleSearch] = useState("");
   const [salePaymentFilter, setSalePaymentFilter] = useState<"all" | "cash" | "mpesa" | "credit">("all");
   const [salesPage, setSalesPage] = useState(1);
+  const [statementCustomer, setStatementCustomer] = useState("");
+  const [statementPhone, setStatementPhone] = useState("");
+  const [statementBusy, setStatementBusy] = useState(false);
+  const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
   const [reportPage, setReportPage] = useState(1);
   const salesPageSize = 25;
   const reportPageSize = 20;
@@ -228,6 +233,113 @@ export default function NurseryRegister() {
   }), { cash: 0, mpesa: 0, credit: 0 });
   const topMonthCategory = monthCategories[0];
 
+  async function getNurseryPdfBrand() {
+    const shopName = localStorage.getItem("greenlink_shopName") || "Nursery";
+    let logoDataUrl = [
+      localStorage.getItem("greenlink_shopLogo"),
+      localStorage.getItem("greenlink_shop_logo"),
+      localStorage.getItem("greenlink_logo"),
+    ].find(value => value?.startsWith("data:image/")) || null;
+
+    if (!logoDataUrl) {
+      const normalizedName = shopName.toLocaleLowerCase();
+      const logoPath = normalizedName.includes("sunrise")
+        ? "/logo-sunrise.jpg"
+        : normalizedName.includes("greenlink") ? "/logo-greenlink.jpg" : null;
+      if (logoPath) {
+        try {
+          const response = await fetch(logoPath);
+          if (response.ok) {
+            const blob = await response.blob();
+            logoDataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ""));
+              reader.onerror = () => reject(new Error("Could not load the shop logo."));
+              reader.readAsDataURL(blob);
+            });
+          }
+        } catch {
+          // Keep PDF generation available even when a logo asset cannot be loaded.
+        }
+      }
+    }
+    return { shopName, logoDataUrl };
+  }
+
+  async function createCustomerStatement() {
+    const name = statementCustomer.trim();
+    const phone = statementPhone.trim();
+    if (!name && !phone) {
+      toast.error("Enter a customer name or phone number to create a statement.");
+      return;
+    }
+    if (!from || !to || from > to) {
+      toast.error("Choose a valid statement date range.");
+      return;
+    }
+    if (!isOnline) {
+      toast.error("Connect to the internet to retrieve saved customer purchases.");
+      return;
+    }
+
+    setStatementBusy(true);
+    try {
+      const search = name || phone;
+      const makeUrl = (page: number) => "/api/nursery/entries?from=" + encodeURIComponent(from)
+        + "&to=" + encodeURIComponent(to) + "&page=" + page + "&pageSize=50&search="
+        + encodeURIComponent(search) + "&payment=all";
+      const first = await customFetch(makeUrl(1)) as EntriesData;
+      const entries: IndividualSaleEntry[] = [...(first.rows ?? [])];
+      const pageCount = Math.ceil(Number(first.total ?? entries.length) / 50);
+      if (pageCount > 1) {
+        for (let page = 2; page <= pageCount; page++) {
+          const result = await customFetch(makeUrl(page)) as EntriesData;
+          entries.push(...(result.rows ?? []));
+        }
+      }
+      const normalizedName = name.toLocaleLowerCase().replace(/\s+/g, " ");
+      const normalizedPhone = phone.replace(/[\s()-]/g, "");
+      const matching = entries.filter(entry => {
+        const entryName = (entry.customerName || "").toLocaleLowerCase().replace(/\s+/g, " ");
+        const entryPhone = (entry.customerPhone || "").replace(/[\s()-]/g, "");
+        if (normalizedPhone && entryPhone !== normalizedPhone) return false;
+        if (normalizedName && entryName !== normalizedName) return false;
+        return Boolean(entry.customerName || entry.customerPhone);
+      }).sort((a, b) => a.businessDate.localeCompare(b.businessDate) || a.createdAt.localeCompare(b.createdAt));
+
+      if (!matching.length) {
+        toast.error("No saved purchases matched that customer in the selected dates.");
+        return;
+      }
+      const brand = await getNurseryPdfBrand();
+      downloadNurseryStatement(matching, brand, matching[0].customerName || name || "Customer", matching[0].customerPhone || phone, from, to);
+      toast.success("Customer statement generated from " + matching.length + " saved sale entries.");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not create the customer statement. Please try again.");
+    } finally {
+      setStatementBusy(false);
+    }
+  }
+
+  async function downloadReceipt(entry: IndividualSaleEntry) {
+    const brand = await getNurseryPdfBrand();
+    try {
+      if (entry.transactionId) {
+        const transaction = await customFetch("/api/nursery/transactions/" + encodeURIComponent(entry.transactionId)) as { rows?: IndividualSaleEntry[] };
+        const rows = transaction.rows ?? [];
+        if (rows.length) {
+          downloadNurseryReceipt(rows, brand);
+          return;
+        }
+      }
+      downloadNurseryReceipt([entry], brand);
+      if (!entry.transactionId) toast.info("This older record has no saved checkout grouping, so the PDF contains this sale line only.");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not retrieve the full receipt. Try again.");
+    }
+  }
+
+
   async function saveEntry(event: FormEvent) {
     event.preventDefault();
     if (!cart.length) { toast.error("Search and add at least one seedling variety."); return; }
@@ -240,11 +352,14 @@ export default function NurseryRegister() {
     }
     setSaving(true);
     const savedRequestIds = new Set<string>();
+    const transactionId = pendingTransactionId || crypto.randomUUID();
+    setPendingTransactionId(transactionId);
     try {
       for (let start = 0; start < prepared.length; start += 18) {
         const batch = prepared.slice(start, start + 18);
         await customFetch("/api/nursery/entries/batch", { method: "POST", body: JSON.stringify({
           businessDate,
+          transactionId,
           paymentMethod,
           customerName: customerName.trim() || undefined,
           customerPhone: customerPhone.trim() || undefined,
@@ -255,7 +370,7 @@ export default function NurseryRegister() {
         setCart(current => current.filter(item => !completed.has(item.requestId)));
       }
       toast.success(`Saved ${prepared.length} item types (${prepared.reduce((sum, item) => sum + item.qty, 0).toLocaleString()} seedlings)`);
-      setCart([]); setCustomerName(""); setCustomerPhone("");
+      setCart([]); setCustomerName(""); setCustomerPhone(""); setPendingTransactionId(null);
       await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
@@ -825,6 +940,30 @@ export default function NurseryRegister() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4 p-4 sm:p-5">
+          <section className="rounded-2xl border border-primary/20 bg-primary/[0.035] p-4 sm:p-5" aria-label="Customer statement generator">
+            <div className="mb-3 flex items-start gap-3">
+              <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><ReceiptText className="h-4 w-4" /></div>
+              <div className="min-w-0">
+                <h3 className="font-semibold tracking-tight">Customer purchase statement</h3>
+                <p className="mt-0.5 text-sm text-muted-foreground">Retrieve saved purchases for a customer across the selected date range and generate a reusable PDF whenever they need one.</p>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
+              <div className="space-y-1.5">
+                <Label htmlFor="nursery-statement-customer">Customer name</Label>
+                <Input id="nursery-statement-customer" value={statementCustomer} onChange={e => setStatementCustomer(e.target.value)} maxLength={120} placeholder="Enter the saved customer name" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="nursery-statement-phone">Phone number (optional)</Label>
+                <Input id="nursery-statement-phone" value={statementPhone} onChange={e => setStatementPhone(e.target.value)} maxLength={40} inputMode="tel" placeholder="Use phone to identify the customer" />
+              </div>
+              <Button type="button" onClick={() => void createCustomerStatement()} disabled={statementBusy || (!statementCustomer.trim() && !statementPhone.trim()) || !from || !to || from > to} className="h-10 gap-2">
+                {statementBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ReceiptText className="h-4 w-4" />}
+                {statementBusy ? "Preparing statement…" : "Generate statement PDF"}
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">Statement period: {formatBusinessDate(from)} – {formatBusinessDate(to)}. Older sales are retrieved from saved history, not from the current cart.</p>
+          </section>
           <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/20 p-3 sm:grid-cols-[minmax(0,1fr)_190px_auto] sm:items-center">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -883,7 +1022,7 @@ export default function NurseryRegister() {
                   </div>
                   <div className="mt-4 rounded-xl bg-muted/40 p-3"><p className="text-xs text-muted-foreground">Sale total</p><p className="mt-0.5 text-2xl font-bold tracking-tight tabular-nums">{formatKES(cents(entry.totalAmountCents))}</p><div className="mt-2 flex items-center justify-between gap-2 border-t border-border/70 pt-2 text-sm"><span className="text-muted-foreground">Quantity</span><span className="font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()} seedlings</span></div><div className="mt-1 flex items-center justify-between gap-2 text-sm"><span className="text-muted-foreground">Unit price</span><span className="font-medium tabular-nums">{formatKES(cents(entry.unitPriceCents))}</span></div></div>
                   <div className="mt-3 min-w-0"><p className="truncate text-sm font-medium">{entry.customerName || "Walk-in customer"}</p><p className="truncate text-xs text-muted-foreground">{entry.customerPhone || "No phone recorded"}</p></div>
-                  <div className="mt-4 flex gap-2 border-t border-border/70 pt-3"><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="flex-1 gap-1.5"><Pencil className="h-3.5 w-3.5" /> Edit sale</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Delete</span></Button></div>
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-border/70 pt-3"><Button type="button" variant="outline" size="sm" onClick={() => downloadReceipt(entry)} className="gap-1.5"><ReceiptText className="h-3.5 w-3.5" /> PDF receipt</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="flex-1 gap-1.5"><Pencil className="h-3.5 w-3.5" /> Edit sale</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Delete</span></Button></div>
                 </div>)}
               </div>
               <div className="hidden overflow-x-auto rounded-xl border border-border/70 xl:block">
@@ -896,7 +1035,7 @@ export default function NurseryRegister() {
                     <td className="px-4 py-3.5 text-right tabular-nums">{formatKES(cents(entry.unitPriceCents))}</td>
                     <td className="px-4 py-3.5"><span className={"inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span></td>
                     <td className="px-4 py-3.5 text-right font-bold tabular-nums">{formatKES(cents(entry.totalAmountCents))}</td>
-                    <td className="px-4 py-3.5"><div className="flex justify-end gap-1.5"><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</Button><Button type="button" variant="ghost" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /> Delete</Button></div></td>
+                    <td className="px-4 py-3.5"><div className="flex justify-end gap-1.5"><Button type="button" variant="outline" size="sm" onClick={() => downloadReceipt(entry)} className="gap-1"><ReceiptText className="h-3.5 w-3.5" /> PDF</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</Button><Button type="button" variant="ghost" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /> Delete</Button></div></td>
                   </tr>)}</tbody>
                 </table>
               </div>
