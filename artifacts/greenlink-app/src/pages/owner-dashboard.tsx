@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
 import {
   TrendingUp, CreditCard, Package, AlertTriangle, Store,
-  TrendingDown, ArrowUpRight, Percent, ChevronLeft, ChevronRight, CalendarDays
+  TrendingDown, ArrowUpRight, ChevronLeft, ChevronRight, CalendarDays
 } from "lucide-react";
 import { format, subDays, parseISO } from "date-fns";
 import { useState } from "react";
@@ -307,10 +307,10 @@ export default function OwnerDashboard() {
               </CardContent>
             </Card>
 
-            {/* Per-shop breakdown */}
+            {/* Authenticated shop details */}
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 px-0.5">
-                Per Shop
+                Shop Details
               </p>
               <div className="space-y-3">
                 <ShopBreakdown
@@ -322,36 +322,6 @@ export default function OwnerDashboard() {
               </div>
             </div>
 
-            {/* Revenue split */}
-            <Card className="bg-card border-border shadow-none">
-              <CardHeader className="pb-2 pt-4 px-4">
-                <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-                  <Percent className="h-4 w-4 text-primary" />
-                  Revenue Share
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 space-y-3">
-                {[
-                  { name: SHOP_A_NAME, color: SHOP_A_COLOR, pct: 100 },
-                ].map(shop => (
-                  <div key={shop.name} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-foreground flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: shop.color }} />
-                        {shop.name}
-                      </span>
-                      <span className="font-mono text-muted-foreground">{shop.pct.toFixed(1)}%</span>
-                    </div>
-                    <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{ width: `${shop.pct}%`, background: shop.color }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
           </>
         ) : (
           <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground">
