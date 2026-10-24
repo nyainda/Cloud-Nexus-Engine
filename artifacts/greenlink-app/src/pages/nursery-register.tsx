@@ -116,6 +116,7 @@ export default function NurseryRegister() {
   const [statementCustomer, setStatementCustomer] = useState("");
   const [statementPhone, setStatementPhone] = useState("");
   const [statementBusy, setStatementBusy] = useState(false);
+  const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
   const [reportPage, setReportPage] = useState(1);
   const salesPageSize = 25;
   const reportPageSize = 20;
@@ -351,7 +352,8 @@ export default function NurseryRegister() {
     }
     setSaving(true);
     const savedRequestIds = new Set<string>();
-    const transactionId = crypto.randomUUID();
+    const transactionId = pendingTransactionId || crypto.randomUUID();
+    setPendingTransactionId(transactionId);
     try {
       for (let start = 0; start < prepared.length; start += 18) {
         const batch = prepared.slice(start, start + 18);
@@ -368,7 +370,7 @@ export default function NurseryRegister() {
         setCart(current => current.filter(item => !completed.has(item.requestId)));
       }
       toast.success(`Saved ${prepared.length} item types (${prepared.reduce((sum, item) => sum + item.qty, 0).toLocaleString()} seedlings)`);
-      setCart([]); setCustomerName(""); setCustomerPhone("");
+      setCart([]); setCustomerName(""); setCustomerPhone(""); setPendingTransactionId(null);
       await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["/api/nursery/report", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
