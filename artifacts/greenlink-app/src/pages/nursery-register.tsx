@@ -232,6 +232,39 @@ export default function NurseryRegister() {
   }), { cash: 0, mpesa: 0, credit: 0 });
   const topMonthCategory = monthCategories[0];
 
+  async function getNurseryPdfBrand() {
+    const shopName = localStorage.getItem("greenlink_shopName") || "Nursery";
+    let logoDataUrl = [
+      localStorage.getItem("greenlink_shopLogo"),
+      localStorage.getItem("greenlink_shop_logo"),
+      localStorage.getItem("greenlink_logo"),
+    ].find(value => value?.startsWith("data:image/")) || null;
+
+    if (!logoDataUrl) {
+      const normalizedName = shopName.toLocaleLowerCase();
+      const logoPath = normalizedName.includes("sunrise")
+        ? "/logo-sunrise.jpg"
+        : normalizedName.includes("greenlink") ? "/logo-greenlink.jpg" : null;
+      if (logoPath) {
+        try {
+          const response = await fetch(logoPath);
+          if (response.ok) {
+            const blob = await response.blob();
+            logoDataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ""));
+              reader.onerror = () => reject(new Error("Could not load the shop logo."));
+              reader.readAsDataURL(blob);
+            });
+          }
+        } catch {
+          // Keep PDF generation available even when a logo asset cannot be loaded.
+        }
+      }
+    }
+    return { shopName, logoDataUrl };
+  }
+
   async function createCustomerStatement() {
     const name = statementCustomer.trim();
     const phone = statementPhone.trim();
@@ -250,7 +283,7 @@ export default function NurseryRegister() {
 
     setStatementBusy(true);
     try {
-      const search = name || phone;
+      const search = phone || name;
       const makeUrl = (page: number) => "/api/nursery/entries?from=" + encodeURIComponent(from)
         + "&to=" + encodeURIComponent(to) + "&page=" + page + "&pageSize=50&search="
         + encodeURIComponent(search) + "&payment=all";
@@ -277,13 +310,8 @@ export default function NurseryRegister() {
         toast.error("No saved purchases matched that customer in the selected dates.");
         return;
       }
-      const logoDataUrl = [
-        localStorage.getItem("greenlink_shopLogo"),
-        localStorage.getItem("greenlink_shop_logo"),
-        localStorage.getItem("greenlink_logo"),
-      ].find(value => value?.startsWith("data:image/")) || null;
-      const shopName = localStorage.getItem("greenlink_shopName") || "Nursery";
-      downloadNurseryStatement(matching, { shopName, logoDataUrl }, matching[0].customerName || name || "Customer", matching[0].customerPhone || phone, from, to);
+      const brand = await getNurseryPdfBrand();
+      downloadNurseryStatement(matching, brand, matching[0].customerName || name || "Customer", matching[0].customerPhone || phone, from, to);
       toast.success("Customer statement generated from " + matching.length + " saved sale entries.");
     } catch (error: any) {
       toast.error(error?.message || "Could not create the customer statement. Please try again.");
@@ -293,12 +321,7 @@ export default function NurseryRegister() {
   }
 
   async function downloadReceipt(entry: IndividualSaleEntry) {
-    const logoDataUrl = [
-      localStorage.getItem("greenlink_shopLogo"),
-      localStorage.getItem("greenlink_shop_logo"),
-      localStorage.getItem("greenlink_logo"),
-    ].find(value => value?.startsWith("data:image/")) || null;
-    const brand = { shopName: localStorage.getItem("greenlink_shopName") || "Nursery", logoDataUrl };
+    const brand = await getNurseryPdfBrand();
     try {
       if (entry.transactionId) {
         const transaction = await customFetch("/api/nursery/transactions/" + encodeURIComponent(entry.transactionId)) as { rows?: IndividualSaleEntry[] };
