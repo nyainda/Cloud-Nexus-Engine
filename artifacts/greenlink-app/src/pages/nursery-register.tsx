@@ -296,11 +296,11 @@ export default function NurseryRegister() {
           entries.push(...(result.rows ?? []));
         }
       }
-      const normalizedName = name.toLocaleLowerCase().replace(/\\s+/g, " ");
-      const normalizedPhone = phone.replace(/[\\s()-]/g, "");
+      const normalizedName = name.toLocaleLowerCase().replace(/\s+/g, " ");
+      const normalizedPhone = phone.replace(/[\s()-]/g, "");
       const matching = entries.filter(entry => {
-        const entryName = (entry.customerName || "").toLocaleLowerCase().replace(/\\s+/g, " ");
-        const entryPhone = (entry.customerPhone || "").replace(/[\\s()-]/g, "");
+        const entryName = (entry.customerName || "").toLocaleLowerCase().replace(/\s+/g, " ");
+        const entryPhone = (entry.customerPhone || "").replace(/[\s()-]/g, "");
         if (normalizedPhone && entryPhone !== normalizedPhone) return false;
         if (normalizedName && entryName !== normalizedName) return false;
         return Boolean(entry.customerName || entry.customerPhone);
