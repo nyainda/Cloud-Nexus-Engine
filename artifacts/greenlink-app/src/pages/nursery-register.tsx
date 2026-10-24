@@ -316,14 +316,6 @@ export default function NurseryRegister() {
   }
 
 
-      localStorage.getItem("greenlink_shopLogo"),
-      localStorage.getItem("greenlink_shop_logo"),
-      localStorage.getItem("greenlink_logo"),
-    ].find(value => value?.startsWith("data:image/")) || null;
-    const shopName = localStorage.getItem("greenlink_shopName") || "Nursery";
-    downloadNurseryReceipt(entry, { shopName, logoDataUrl });
-  }
-
   async function saveEntry(event: FormEvent) {
     event.preventDefault();
     if (!cart.length) { toast.error("Search and add at least one seedling variety."); return; }
