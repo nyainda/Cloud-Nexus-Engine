@@ -147,6 +147,28 @@ async function ensureNurseryIndividualEntries(db: D1Database): Promise<void> {
   ]);
 }
 
+/** Add transaction grouping for multi-variety nursery receipts. */
+async function ensureNurseryTransactions(db: D1Database): Promise<void> {
+  const markerKey = "nursery_transaction_grouping_v1";
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(markerKey).first<{ key: string }>();
+  if (marker) return;
+  const columns = await db.prepare("PRAGMA table_info(nursery_sale_entries)").all<{ name: string }>();
+  if (!(columns.results ?? []).some(column => column.name === "transaction_id")) {
+    try {
+      await db.prepare("ALTER TABLE nursery_sale_entries ADD COLUMN transaction_id TEXT").run();
+    } catch (error) {
+      const refreshed = await db.prepare("PRAGMA table_info(nursery_sale_entries)").all<{ name: string }>();
+      if (!(refreshed.results ?? []).some(column => column.name === "transaction_id")) throw error;
+    }
+  }
+  await db.batch([
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_entries_shop_transaction ON nursery_sale_entries(shop_id, transaction_id)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(markerKey, new Date().toISOString()),
+  ]);
+}
+
 /** Add shop-defined categories without rewriting historical sales aggregates. */
 async function ensureNurseryCategories(db: D1Database): Promise<void> {
   const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
@@ -274,6 +296,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     await ensureNurseryRegister(db);
     await ensureNurseryCustomerCredit(db);
     await ensureNurseryIndividualEntries(db);
+    await ensureNurseryTransactions(db);
     await ensureNurseryCategories(db);
     await ensureNotificationReadModel(db);
     await ensureCustomerSchema(db);
@@ -461,6 +484,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   await ensureNurseryRegister(db);
   await ensureNurseryCustomerCredit(db);
   await ensureNurseryIndividualEntries(db);
+  await ensureNurseryTransactions(db);
   await ensureNurseryCategories(db);
   await ensureNotificationReadModel(db);
   await ensureCustomerSchema(db);
