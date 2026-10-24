@@ -332,6 +332,9 @@ export default function NurseryRegister() {
   async function downloadSelectedSalesPdf() {
     const selected = filteredIndividualEntries.filter(entry => selectedSaleIds.includes(entry.id));
     if (!selected.length) { toast.info("Select at least one sale first."); return; }
+    const first = selected[0];
+    const sameCheckoutContext = selected.every(entry => entry.businessDate === first.businessDate && (entry.customerName || "").trim().toLowerCase() === (first.customerName || "").trim().toLowerCase() && (entry.customerPhone || "").replace(/\s+/g, "") === (first.customerPhone || "").replace(/\s+/g, "") && entry.paymentMethod === first.paymentMethod);
+    if (!sameCheckoutContext) { toast.error("For one combined receipt, select sales from the same date, customer, and payment method. Use the customer statement for purchases across dates."); return; }
     const brand = await getNurseryPdfBrand();
     try { downloadNurseryReceipt(selected, brand); toast.success(`Combined PDF created for ${selected.length} selected sale lines.`); }
     catch (error: any) { toast.error(error?.message || "Could not create the combined PDF."); }
