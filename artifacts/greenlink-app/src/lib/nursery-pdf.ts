@@ -4,6 +4,7 @@ import autoTable from "jspdf-autotable";
 export type NurseryPdfEntry = {
   id: string;
   requestId: string;
+  transactionId?: string | null;
   businessDate: string;
   varietyId: string;
   varietyName: string;
@@ -90,11 +91,18 @@ function addWatermark(doc: jsPDF, shopName: string) {
   });
 }
 
-export function downloadNurseryReceipt(entry: NurseryPdfEntry, brand: PdfBrand) {
+export function downloadNurseryReceipt(entries: NurseryPdfEntry[], brand: PdfBrand) {
+  if (!entries.length) return;
+  const first = entries[0];
   const doc = new jsPDF({ unit: "mm", format: "a4" });
-  addBrandHeader(doc, brand, "SALES RECEIPT", `Receipt reference: NUR-${entry.id.slice(0, 8).toUpperCase()} • Sale date: ${dateLabel(entry.businessDate)}`);
+  const customerName = first.customerName?.trim() || "Walk-in customer";
+  const transactionRef = first.transactionId
+    ? first.transactionId.slice(0, 8).toUpperCase()
+    : first.id.slice(0, 8).toUpperCase();
+  const totalCents = entries.reduce((sum, entry) => sum + Number(entry.totalAmountCents || 0), 0);
+  const totalQuantity = entries.reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
+  addBrandHeader(doc, brand, "SALES RECEIPT", `Receipt reference: NUR-${transactionRef} • Sale date: ${dateLabel(first.businessDate)}`);
   addWatermark(doc, brand.shopName);
-  const customerName = entry.customerName?.trim() || "Walk-in customer";
   doc.setFillColor(246, 249, 246);
   doc.roundedRect(15, 61, 180, 26, 3, 3, "F");
   doc.setFont("helvetica", "bold");
@@ -107,19 +115,19 @@ export function downloadNurseryReceipt(entry: NurseryPdfEntry, brand: PdfBrand) 
   doc.text(customerName.slice(0, 48), 20, 76);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text(entry.customerPhone?.trim() || "No phone recorded", 20, 82);
+  doc.text(first.customerPhone?.trim() || "No phone recorded", 20, 82);
   doc.setFont("helvetica", "bold");
-  doc.text(paymentLabel(entry.paymentMethod), 130, 77);
-  if (entry.paymentMethod === "credit") {
+  doc.text(paymentLabel(first.paymentMethod), 130, 77);
+  if (first.paymentMethod === "credit") {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(124, 74, 0);
-    doc.text("Outstanding / credit sale", 130, 82);
+    doc.text("Credit sale", 130, 82);
   }
   autoTable(doc, {
     startY: 95,
     head: [["Seedling variety", "Quantity", "Unit price", "Line total"]],
-    body: [[entry.varietyName, Number(entry.quantity).toLocaleString("en-KE"), money(entry.unitPriceCents), money(entry.totalAmountCents)]],
+    body: entries.map(entry => [entry.varietyName, Number(entry.quantity).toLocaleString("en-KE"), money(entry.unitPriceCents), money(entry.totalAmountCents)]),
     theme: "grid",
     margin: { left: 15, right: 15, bottom: 24 },
     styles: { font: "helvetica", fontSize: 9, cellPadding: 4, textColor: [35, 48, 39], lineColor: [225, 232, 226], lineWidth: 0.2 },
@@ -128,24 +136,26 @@ export function downloadNurseryReceipt(entry: NurseryPdfEntry, brand: PdfBrand) 
     columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right", fontStyle: "bold" } },
   });
   const finalY = (doc as any).lastAutoTable?.finalY ?? 115;
+  if (finalY > 235) doc.addPage();
+  const summaryY = finalY > 235 ? 24 : finalY + 8;
   doc.setFillColor(240, 247, 241);
-  doc.roundedRect(120, finalY + 8, 75, 22, 3, 3, "F");
+  doc.roundedRect(120, summaryY, 75, 25, 3, 3, "F");
   doc.setFont("helvetica", "normal");
   doc.setTextColor(80, 99, 85);
-  doc.setFontSize(9);
-  doc.text("TOTAL PAID / RECORDED", 125, finalY + 16);
+  doc.setFontSize(8);
+  doc.text(`TOTAL • ${totalQuantity.toLocaleString("en-KE")} seedlings`, 125, summaryY + 8);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(20, 83, 45);
   doc.setFontSize(14);
-  doc.text(money(entry.totalAmountCents), 190, finalY + 25, { align: "right" });
+  doc.text(money(totalCents), 190, summaryY + 18, { align: "right" });
   doc.setFont("helvetica", "normal");
   doc.setTextColor(100, 116, 105);
   doc.setFontSize(9);
-  doc.text("Thank you for supporting our nursery.", 15, Math.min(finalY + 24, 260));
+  doc.text("Thank you for supporting our nursery.", 15, Math.min(summaryY + 12, 265));
   doc.setFontSize(8);
-  doc.text(`Recorded at: ${entry.createdAt ? new Date(entry.createdAt).toLocaleString("en-KE") : "Not available"}`, 15, Math.min(finalY + 31, 267));
+  doc.text(`Recorded at: ${first.createdAt ? new Date(first.createdAt).toLocaleString("en-KE") : "Not available"}`, 15, Math.min(summaryY + 19, 270));
   addFooter(doc, brand);
-  doc.save(`nursery-receipt-${safeFilePart(customerName)}-${entry.businessDate}-${entry.id.slice(0, 8)}.pdf`);
+  doc.save(`nursery-receipt-${safeFilePart(customerName)}-${first.businessDate}-${transactionRef}.pdf`);
 }
 
 export function downloadNurseryStatement(entries: NurseryPdfEntry[], brand: PdfBrand, customerName: string, customerPhone: string, from: string, to: string) {
