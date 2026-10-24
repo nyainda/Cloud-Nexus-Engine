@@ -210,7 +210,7 @@ export default function OwnerDashboard() {
         {!allLoaded ? (
           <div className="flex flex-col items-center justify-center h-32 gap-3 text-muted-foreground">
             <div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-            <p className="text-sm">Loading all shops…</p>
+            <p className="text-sm">Loading shop summary…</p>
           </div>
         ) : summary ? (
           <>
@@ -238,7 +238,7 @@ export default function OwnerDashboard() {
                 <StatCard
                   label="Outstanding Debt"
                   value={formatKES(summary.pendingDebtsTotal)}
-                  sub="across all shops"
+                  sub="for this shop"
                   icon={CreditCard}
                   color="text-destructive"
                   bg="bg-destructive/10"
