@@ -215,14 +215,17 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
     paymentMethod?: string;
     customerName?: string;
     customerPhone?: string;
+    transactionId?: string;
     items?: Array<{ requestId?: string; varietyId?: string; quantity?: number; unitPrice?: number }>;
   }>();
   const businessDate = body.businessDate ?? "";
   const paymentMethod = body.paymentMethod ?? "";
   const customerName = body.customerName?.trim().replace(/\s+/g, " ") ?? "";
   const customerPhone = body.customerPhone?.trim() ?? "";
+  const transactionId = body.transactionId ?? "";
   const items = body.items ?? [];
   if (!validDate(businessDate) || !paymentMethods.has(paymentMethod) ||
+      (transactionId !== "" && !/^[\w-]{8,80}$/.test(transactionId)) ||
       customerName.length > 120 || customerPhone.length > 40 ||
       (paymentMethod === "credit" && !customerName) ||
       items.length < 1 || items.length > 18) {
@@ -346,12 +349,12 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
 
     statements.push(c.env.DB.prepare(
       `INSERT INTO nursery_sale_entries
-        (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, transaction_id, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)`
     ).bind(sale.id, requestId, shopId, businessDate, variety.id, variety.name,
       customerName, customerPhone, quantity, unitPriceCents, totalAmountCents,
-      paymentMethod, debtId, now, requestId, shopId));
+      paymentMethod, debtId, transactionId || requestId, now, requestId, shopId));
 
     statements.push(c.env.DB.prepare(
       "INSERT OR IGNORE INTO nursery_entry_requests (id, shop_id, created_at, debt_id) VALUES (?, ?, ?, ?)"
@@ -367,16 +370,17 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   const body = await c.req.json<{
     requestId?: string; businessDate?: string; varietyId?: string;
     quantity?: number; unitPrice?: number; paymentMethod?: string;
-    customerName?: string; customerPhone?: string;
+    customerName?: string; customerPhone?: string; transactionId?: string;
   }>();
   const businessDate = body.businessDate ?? "";
   const quantity = Number(body.quantity);
   const unitPrice = Number(body.unitPrice);
   const paymentMethod = body.paymentMethod ?? "";
   const requestId = body.requestId ?? "";
+  const transactionId = body.transactionId ?? requestId;
   const customerName = body.customerName?.trim().replace(/\s+/g, " ") ?? "";
   const customerPhone = body.customerPhone?.trim() ?? "";
-  if (!/^[\w-]{8,80}$/.test(requestId) || !validDate(businessDate) ||
+  if (!/^[\w-]{8,80}$/.test(requestId) || !/^[\w-]{8,80}$/.test(transactionId) || !validDate(businessDate) ||
       !body.varietyId || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 10000000 ||
       !Number.isFinite(unitPrice) || unitPrice < 0 || unitPrice > 1000000 ||
       !paymentMethods.has(paymentMethod) || customerName.length > 120 || customerPhone.length > 40 ||
@@ -460,11 +464,11 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
 
   statements.push(c.env.DB.prepare(
     `INSERT INTO nursery_sale_entries
-      (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, transaction_id, created_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
      WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)`
   ).bind(entryId, requestId, shopId, businessDate, variety.id, variety.name,
-    customerName, customerPhone, quantity, unitPriceCents, totalCents, paymentMethod, debtId, now, requestId, shopId));
+    customerName, customerPhone, quantity, unitPriceCents, totalCents, paymentMethod, debtId, transactionId, now, requestId, shopId));
 
   statements.push(c.env.DB.prepare(
     "INSERT OR IGNORE INTO nursery_entry_requests (id, shop_id, created_at, debt_id) VALUES (?, ?, ?, ?)"
@@ -536,11 +540,11 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   }
 
   const old = await c.env.DB.prepare(
-    "SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId, variety_name AS varietyName, customer_name AS customerName, customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents, payment_method AS paymentMethod, debt_id AS debtId, created_at AS createdAt FROM nursery_sale_entries WHERE id = ? AND shop_id = ?"
+    "SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId, variety_name AS varietyName, customer_name AS customerName, customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents, payment_method AS paymentMethod, debt_id AS debtId, transaction_id AS transactionId, created_at AS createdAt FROM nursery_sale_entries WHERE id = ? AND shop_id = ?"
   ).bind(id, shopId).first<{
     id: string; requestId: string; businessDate: string; varietyId: string; varietyName: string;
     customerName: string; customerPhone: string; quantity: number; unitPriceCents: number;
-    totalAmountCents: number; paymentMethod: string; debtId: string | null; createdAt: string;
+    totalAmountCents: number; paymentMethod: string; debtId: string | null; transactionId: string | null; createdAt: string;
   }>();
   if (!old) return c.json({ error: "Sale entry not found." }, 404);
 
@@ -576,8 +580,8 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
       "INSERT INTO nursery_daily_sales (id, shop_id, business_date, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, business_date, variety_id, unit_price_cents, payment_method) DO UPDATE SET quantity = nursery_daily_sales.quantity + excluded.quantity, total_amount_cents = nursery_daily_sales.total_amount_cents + excluded.total_amount_cents, updated_at = excluded.updated_at"
     ).bind(crypto.randomUUID(), shopId, businessDate, variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents, now, now),
     c.env.DB.prepare(
-      "INSERT INTO nursery_sale_entries (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, request_id) DO UPDATE SET business_date = excluded.business_date, variety_id = excluded.variety_id, variety_name = excluded.variety_name, customer_name = excluded.customer_name, customer_phone = excluded.customer_phone, quantity = excluded.quantity, unit_price_cents = excluded.unit_price_cents, total_amount_cents = excluded.total_amount_cents, payment_method = excluded.payment_method, debt_id = excluded.debt_id"
-     ).bind(old.id, old.requestId, shopId, businessDate, variety.id, variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, linkedDebtId, old.createdAt ?? now),
+      "INSERT INTO nursery_sale_entries (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, transaction_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, request_id) DO UPDATE SET business_date = excluded.business_date, variety_id = excluded.variety_id, variety_name = excluded.variety_name, customer_name = excluded.customer_name, customer_phone = excluded.customer_phone, quantity = excluded.quantity, unit_price_cents = excluded.unit_price_cents, total_amount_cents = excluded.total_amount_cents, payment_method = excluded.payment_method, debt_id = excluded.debt_id"
+     ).bind(old.id, old.requestId, shopId, businessDate, variety.id, variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, linkedDebtId, old.transactionId, old.createdAt ?? now),
   ];
 
   if (old.debtId && paymentMethod !== "credit") {
@@ -723,6 +727,29 @@ nurseryRouter.get("/nursery/analytics", requireAuth, async (c) => {
   return c.json({ from, to, bucket, rows: rows.results ?? [] });
 });
 
+nurseryRouter.get("/nursery/transactions/:transactionId", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const transactionId = c.req.param("transactionId");
+  const result = await c.env.DB.prepare(
+    `SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId,
+      variety_name AS varietyName, customer_name AS customerName, customer_phone AS customerPhone,
+      quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents,
+      payment_method AS paymentMethod, debt_id AS debtId, transaction_id AS transactionId, created_at AS createdAt
+     FROM nursery_sale_entries
+     WHERE shop_id = ? AND transaction_id = ?
+     ORDER BY created_at ASC, id ASC`
+  ).bind(shopId, transactionId).all();
+  const entries = result.results ?? [];
+  if (!entries.length) return c.json({ error: "Transaction not found. Older entries may not have a saved transaction group." }, 404);
+  const first = entries[0] as { businessDate: string; customerName: string; customerPhone: string; paymentMethod: string };
+  return c.json({
+    transactionId, businessDate: first.businessDate, customerName: first.customerName,
+    customerPhone: first.customerPhone, paymentMethod: first.paymentMethod, rows: entries,
+    totalQuantity: entries.reduce((sum, row) => sum + Number((row as any).quantity || 0), 0),
+    totalAmountCents: entries.reduce((sum, row) => sum + Number((row as any).totalAmountCents || 0), 0),
+  });
+});
+
 nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
   const from = c.req.query("from") ?? "";
@@ -741,7 +768,7 @@ nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
       variety_name AS varietyName, customer_name AS customerName,
       customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents,
       total_amount_cents AS totalAmountCents, payment_method AS paymentMethod,
-      debt_id AS debtId, created_at AS createdAt
+      debt_id AS debtId, transaction_id AS transactionId, created_at AS createdAt
      FROM nursery_sale_entries
      WHERE shop_id = ? AND business_date >= ? AND business_date <= ?
        AND (? = '' OR lower(variety_name) LIKE ? OR lower(customer_name) LIKE ? OR lower(customer_phone) LIKE ? OR business_date LIKE ?)
