@@ -1,0 +1,319 @@
+
+Ready when you are.
+Search
+Domains
+Add a domain
+Workers
+greenlink-pos-api
+
+Recents
+Storage & databases
+/
+Analytics Engine
+
+Workers
+/
+greenlink-pos-api
+
+D1
+/
+greenlink-db
+
+Meet the Agentic Internet Builders IRL
+Evan YouTanner LinsleyCorey QuinnPeter SteinbergerFred Schott
+Connect brings the Cloudflare community together once a year to learn, collaborate, and shape what comes next. Oct 19–21, San Francisco.
+
+Learn more
+Analytics
+Total requests
+8.92k
+↗ 48.0%
+Worker invocations
+8.98k
+↗ 47.0%
+Workers errors
+0
+No data
+Cache hit rate
+CPU time P90
+Build minutes
+Support
+System status
+Careers
+Terms of Use
+Report Security Issues
+Privacy Policy
+A blue and white pill with a checkmark and an x, representing privacy choicesCookie Preferences
+© 2026 Cloudflare, Inc.
+No idea what is eating my free resources the 5m reads check and see why is it going past the limit for me please 😭 Your account has used 92% of the daily D1 free tier limit of 5,000,000 rows_read. D1 requests will return errors if the limit is exceeded before 2026-10-14 at 00:00:00 UTC.
+
+How to ensure uninterrupted service
+Upgrade to the Workers Paid plan before reaching the daily limit. The minimum monthly billing amount is $5 and includes 25 billion rows read and 50 million rows written per month.
+Notification details
+Operation: rows_read
+Operation limit: 5,000,000
+Percent reached: 92
+Reset time: 2026-10-14 at 00:00:00 UTC
+
+
+See reasoning
+Agent
+Let me look into your D1 databases and usage to figure out what's driving those reads.
+
+
+See reasoning
+→
+Searched API endpoints
+→
+Documentation
+Agent
+Let me list your D1 databases and check which Workers are bound to them.
+
+
+See reasoning
+→
+Ran List all D1 databases on the account to ident...
+Agent
+You have one D1 database: greenlink-db. Let me inspect its schema and check for tables that might be doing full table scans (the #1 cause of excessive row reads).
+
+
+See reasoning
+→
+Ran List all tables and indexes in the `greenlink...
+Agent
+The query API requires elevated permissions I don't have. Let me check your Workers to find which ones are bound to this D1 database, and pull D1 analytics via GraphQL.
+
+
+See reasoning
+
+See reasoning
+
+See reasoning
+
+See reasoning
+→
+Ran List all Workers on the account to identify w...
+→
+Ran Fetch D1 rows_read analytics for the last 24 ...
+→
+Ran Get the bindings and settings for the `greenl...
+→
+Searched API endpoints
+→
+Ran Check if the `greenlink-pos-api` Worker has c...
+→
+Documentation
+→
+searchDashboardPages
+Agent
+Here's what I found and what's likely happening:
+
+Your setup
+1 D1 database: greenlink-db (~17 MB)
+1 Worker: greenlink-pos-api — has a fetch handler (serves HTTP requests) and a scheduled handler (cron: 0 3 1 * * = once a month, so not the culprit)
+The Worker binds to D1 as DB, and also uses a KV namespace (SESSIONS), a Gemini API key, and VAPID keys (web push)
+The row reads are coming from HTTP requests hitting your Worker's fetch handler — the monthly cron isn't frequent enough to matter.
+
+Why you're burning through 5M rows/day
+D1 bills by rows scanned, not rows returned. The most common cause is queries that do full table scans on unindexed columns. For example, if you have a table with 10,000 rows and a query like SELECT * FROM orders WHERE user_id = ? with no index on user_id, that single query reads all 10,000 rows — even if it only returns 5. A few hundred requests like that per day = millions of rows read.
+
+I wasn't able to query your database directly (the query API needs elevated permissions I don't have), but here's how to find and fix the problem:
+
+Step 1: Check your metrics in the dashboard
+Go to your D1 database metrics page to see the rows_read trend: → D1 Metrics
+
+Step 2: Find the expensive queries
+Open the D1 console and run these to see your schema and identify missing indexes: → D1 Console
+
+-- List all tables
+SELECT name FROM sqlite_master WHERE type='table';
+
+-- List all indexes (to see what's already indexed)
+SELECT name, tbl_name FROM sqlite_master WHERE type='index';
+
+-- For each table, check row counts
+SELECT 'your_table_name' AS table_name, COUNT(*) AS row_count FROM your_table_name;
+Then for every query your Worker runs, use EXPLAIN QUERY PLAN to check if it's doing a full SCAN (bad) or SEARCH ... USING INDEX (good):
+
+EXPLAIN QUERY PLAN SELECT * FROM your_table WHERE some_column = ?;
+If you see SCAN your_table, that query is reading every row — add an index:
+
+CREATE INDEX idx_yourtable_somecolumn ON your_table(some_column);
+For multi-column WHERE clauses, use a composite index:
+
+CREATE INDEX idx_yourtable_col1_col2 ON your_table(col1, col2);
+Step 3: Common patterns to fix
+Pattern	Problem	Fix
+WHERE col = ? with no index	Full table scan	CREATE INDEX on that column
+WHERE a = ? AND b = ? with single-column index	Scans all matching a rows, then filters	Composite index on (a, b)
+JOIN t2 ON t2.x = t1.y where t2.x unindexed	Repeated scans of joined table	Index the join column
+SELECT * FROM table (no WHERE)	Reads entire table every time	Add a WHERE clause + index, or cache the result
+Step 4: Other quick wins
+Cache read-heavy query results in your KV namespace (SESSIONS) — if the same data is requested repeatedly, serve it from KV instead of re-querying D1
+Use LIMIT on queries that don't need all rows
+Avoid SELECT * when you only need specific columns (doesn't reduce row reads, but reduces data transfer)
+Check for loops in your Worker code that might be running the same query multiple times per request
+If you need more headroom
+The free tier gives you 5M rows read/day. If your app genuinely needs more, the Workers Paid plan ($5/month) includes 25 billion rows read/month — that's ~833M/day, roughly 166× the free limit.
+
+Your limit resets at midnight UTC tonight (2026-10-14 00:00 UTC), so you'll get a fresh 5M tomorrow. But if you don't add indexes, you'll hit the same wall again.
+
+Want me to help you review the Worker's source code to find the specific queries that are causing the problem? If you can share the query statements your Worker runs against D1, I can tell you exactly which ones to index.
+
+Yes please check it 
+
+
+See reasoning
+Agent
+Let me investigate your D1 usage to find out what's driving those reads.
+
+
+See reasoning
+→
+Searched API endpoints
+→
+Documentation
+Agent
+Let me list your D1 databases and check for Workers that might be hammering them.
+
+
+See reasoning
+→
+Ran List all D1 databases on the account to ident...
+→
+Ran List all Workers scripts on the account to id...
+Agent
+Found it — you have one D1 database (greenlink-db) and one Worker (greenlink-pos-api) with both fetch and scheduled handlers. Let me dig into the database schema and the Worker's query patterns.
+
+
+See reasoning
+→
+Ran Query the D1 database `greenlink-db` to list ...
+→
+Ran Get the settings and bindings for the `greenl...
+Agent
+The Worker greenlink-pos-api is bound to your D1 database and has a scheduled (cron) handler — that's a likely culprit. Let me check the cron schedule, table sizes, and indexes.
+
+
+See reasoning
+→
+Ran Get cron trigger schedules for the `greenlink...
+→
+Ran Query row counts for all tables in `greenlink...
+→
+Ran Query all indexes in `greenlink-db` to identi...
+Agent
+The cron runs only monthly (0 3 1 * *), so the reads are coming from regular API traffic. Let me check table sizes and pull analytics to pinpoint the heavy queries.
+
+
+See reasoning
+
+See reasoning
+→
+Ran Count rows in first 14 tables of `greenlink-d...
+→
+Ran Count rows in remaining 14 tables of `greenli...
+→
+Ran Count rows in the largest/most active tables ...
+Agent
+Tables are relatively small (largest is inventory_movements at ~10.5K rows). The high read count likely comes from query volume × full table scans. Let me check the remaining tables and pull Worker analytics.
+
+
+See reasoning
+→
+Ran Count rows in the remaining tables of `greenl...
+→
+Ran Query the GraphQL analytics API for Workers r...
+Agent
+8,981 requests in the last 24 hours — that's the volume driving the reads. Let me look at the Worker's source code to find which queries are the most expensive.
+
+
+See reasoning
+
+See reasoning
+→
+Ran Download the source code of `greenlink-pos-ap...
+→
+Searched API endpoints
+Agent
+The Worker source is minified (283K+ chars). Let me search it for SQL query patterns to identify the expensive ones.
+
+
+See reasoning
+→
+Ran Extract SQL query strings from the minified `...
+Agent
+Found 110 SQL queries in the Worker. Let me look for the expensive ones — full table scans, JOINs, and queries on large tables.
+
+
+See reasoning
+→
+Ran Search the Worker source for SQL queries that...
+Agent
+Let me find the queries targeting the biggest tables (sale_items, sales, inventory_movements, products) — those are where the row reads pile up.
+
+
+See reasoning
+
+See reasoning
+→
+Ran Search Worker source for SQL queries targetin...
+→
+Ran Search the Worker source for references to la...
+Agent
+The Worker uses Drizzle ORM — so most queries are dynamically generated. Let me find the ORM query patterns to see how the big tables are accessed.
+
+
+See reasoning
+→
+Ran Search Worker source for Drizzle ORM query pa...
+Agent
+Now I have a clear picture. Let me run EXPLAIN QUERY PLAN on a few key queries to confirm whether indexes are being used, and check the health check endpoint frequency.
+
+
+See reasoning
+
+See reasoning
+→
+Ran Find all API route definitions in the Worker ...
+→
+Ran Check whether key queries use indexes or do f...
+Agent
+I now have a complete picture. Here's what's happening and how to fix it.
+
+Root Cause: High request volume × multiple queries per request
+Your Worker greenlink-pos-api received 8,981 requests in the last 24 hours, and each request triggers multiple D1 queries through Drizzle ORM. With ~5 queries per request averaging ~100 rows read each, that's roughly 4.5M rows read — right at your 92% mark (4.6M of 5M).
+
+What I found
+Finding	Detail
+Database	greenlink-db — 29 tables, ~17 MB, well-indexed overall
+Worker	greenlink-pos-api — uses Drizzle ORM, 141 .select() calls, 115 of which are SELECT * (all columns)
+Request volume	~9K requests/day — this is the primary driver
+Cron job	0 3 1 * * (monthly) — not the culprit
+Full table scan	SELECT * FROM quotations does a full SCAN (no WHERE, no index)
+Indexes	Most queries on products, sale_items, inventory_movements use indexes correctly ✅
+Subquery overhead	Several INSERTs use WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests ...) — each scans that table on every insert
+Health check	SELECT 1 AS ok endpoint exists — if polled frequently, adds up over the day
+Why 5M rows_read gets burned so fast
+D1 counts every row the engine touches, not just full table scans. Even index-backed queries read rows. With ~9K requests/day:
+
+If each request runs ~5 queries → ~45K queries/day
+If each query averages ~100 rows read → ~4.5M rows read
+Actionable fixes (in priority order)
+Reduce queries per request — The biggest lever. Look for endpoints that run redundant queries (e.g., fetching the shop/session on every request, then fetching products, then fetching inventory). Cache session lookups in the SESSIONS KV namespace you already have instead of re-querying D1.
+Fix the SELECT * FROM quotations full table scan — Add a WHERE shop_id = ? filter and an index:
+CREATE INDEX IF NOT EXISTS idx_quotations_shop ON quotations(shop_id);
+Replace SELECT * with column-specific selects — 115 of your 141 .select() calls fetch all columns. In Drizzle, use .select({ id: products.id, name: products.name }) instead of .select() to read fewer columns per row (D1 counts rows, but fewer columns = less memory and faster queries).
+Cache the health check — If something polls /health frequently, return a static 200 without hitting D1, or cache the result for 60 seconds.
+Batch the nursery INSERT subqueries — The WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests ...) pattern scans nursery_entry_requests on every insert. If you're doing batch entries, check the request ID once upfront instead of per-row.
+Add rate limiting or caching — Consider caching list responses (products, inventory) in KV for a short TTL (30-60s). This would dramatically reduce repeated queries from the same shop.
+Immediate relief
+Your limit resets at midnight UTC tonight. If you need uninterrupted service before then, upgrading to the Workers Paid plan ($5/month) raises the limit to 25 billion rows read/month with no daily cap.
+
+Want me to:
+
+Create the missing index on quotations(shop_id) right now?
+Search for the specific endpoints that run the most queries so you can optimize them first?
+Support
+Type @ to tag a resource or ? for shortcuts
+

@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import { precacheAndRoute, cleanupOutdatedCaches } from "workbox-precaching";
 import { registerRoute } from "workbox-routing";
-import { NetworkFirst, CacheFirst } from "workbox-strategies";
+import { NetworkOnly, CacheFirst } from "workbox-strategies";
 import { ExpirationPlugin } from "workbox-expiration";
 import { CacheableResponsePlugin } from "workbox-cacheable-response";
 
@@ -17,20 +17,20 @@ cleanupOutdatedCaches();
 // clients.claim: SW controls all open clients instantly after activation
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) =>
-  e.waitUntil(self.clients.claim())
+  e.waitUntil(Promise.all([
+    self.clients.claim(),
+    // Remove responses cached by older service workers. They can otherwise
+    // outlive server-side cache headers and keep one device behind another.
+    caches.delete("api-cache"),
+  ]))
 );
 
-// Network-first for all API calls (5s timeout → serve cached on slow connections)
+// API data must come from the server while online. Offline UI state is handled
+// by React Query/IndexedDB; serving a day-old API response made cross-device
+// changes appear missing until the user cleared site data.
 registerRoute(
   ({ url }) => url.pathname.startsWith("/api/"),
-  new NetworkFirst({
-    cacheName: "api-cache",
-    networkTimeoutSeconds: 5, // bumped from 2s → handles CF Worker cold starts
-    plugins: [
-      new CacheableResponsePlugin({ statuses: [0, 200] }),
-      new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 86_400 }),
-    ],
-  })
+  new NetworkOnly()
 );
 
 // Cache-first for webfonts (Google + Fontshare)

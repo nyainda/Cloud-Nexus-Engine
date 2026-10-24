@@ -1,0 +1,112 @@
+select "id", "shop_id", "type", "title", "message", "product_id", "debt_id", "is_read", "created_at" from "notifications" where "notifications"."shop_id" = ?
+59.68%
+844
+17.5 sec
+19.9 ms
+38.6 ms
+2.79M
+1
+0
+select
+  "id",
+  "shop_id",
+  "type",
+  "title",
+  "message",
+  "product_id",
+  "debt_id",
+  "is_read",
+  "created_at"
+from "notifications"
+where
+  "notifications"."shop_id" = ?
+select "id", "shop_id", "canonical_name", "normalized_name", "sku", "category", "unit", "purchase_price", "selling_price", "profit_margin", "product_type", "allow_decimals", "stock_qty", "alert_qty", "expiry_date", "tokens_json", "size", "is_active", "last_sold_at", "created_at", "updated_at" from "products" where ("products"."shop_id" = ? and "products"."is_active" = ?) limit ?
+31.73%
+632
+9.3 sec
+14.6 ms
+26.8 ms
+1.25M
+1
+0
+SELECT key FROM app_migrations WHERE key = ?
+0.91%
+723
+0.3 sec
+0.3 ms
+1.6 ms
+723
+1
+0
+select "updated_at" from "products" where "products"."shop_id" = ? order by "products"."updated_at" desc limit ?
+0.76%
+634
+0.2 sec
+0.3 ms
+1 ms
+634
+1
+0
+INSERT INTO notifications (id, shop_id, type, title, message, product_id, debt_id, is_read, created_at) SELECT ?, ?, 'low_stock', ?, ?, ?, NULL, 0, ? WHERE NOT EXISTS ( SELECT 1 FROM notifications WHERE product_id = ? AND type = 'low_stock' AND is_read = 0 )
+0.71%
+71
+0.2 sec
+2.8 ms
+8.8 ms
+504.26k
+—
+64
+select "id", "shop_id", "type", "title", "message", "product_id", "debt_id", "is_read", "created_at" from "notifications" where ("notifications"."shop_id" = ? and "notifications"."is_read" = ?)
+0.36%
+13
+0.1 sec
+7.2 ms
+27.9 ms
+16.12k
+1
+0
+insert into "inventory_movements" ("id", "product_id", "product_name", "movement_type", "qty_change", "before_qty", "after_qty", "source", "reference_id", "created_by", "created_at") values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+0.33%
+187
+0.1 sec
+0.4 ms
+1.7 ms
+0
+—
+561
+SELECT CASE WHEN v.category IS NULL OR TRIM(v.category) = '' OR LOWER(TRIM(v.category)) = 'uncategorized' THEN 'Uncategorized' ELSE TRIM(v.category) END AS category, SUM(s.quantity) AS seedlingsSold, SUM(s.total_amount_cents) AS totalRevenueCents, COUNT(DISTINCT v.id) AS varietyCount, SUM(CASE WHEN s.payment_method = 'cash' THEN s.total_amount_cents ELSE 0 END) AS cashCents, SUM(CASE WHEN s.payment_method = 'mpesa' THEN s.total_amount_cents ELSE 0 END) AS mpesaCents, SUM(CASE WHEN s.payment_method = 'credit' THEN s.total_amount_cents ELSE 0 END) AS creditCents FROM nursery_daily_sales s JOIN nursery_varieties v ON v.id = s.variety_id AND v.shop_id = s.shop_id WHERE s.shop_id = ? AND s.business_date >= ? AND s.business_date <= ? GROUP BY CASE WHEN v.category IS NULL OR TRIM(v.category) = '' OR LOWER(TRIM(v.category)) = 'uncategorized' THEN 'Uncategorized' ELSE TRIM(v.category) END COLLATE NOCASE ORDER BY seedlingsSold DESC, category COLLATE NOCASE
+0.33%
+123
+0.1 sec
+0.7 ms
+1.4 ms
+19.65k
+168
+0
+SELECT id, name, CASE WHEN category IS NULL OR TRIM(category) = '' OR LOWER(TRIM(category)) = 'uncategorized' THEN 'Uncategorized' ELSE TRIM(category) END AS category, (default_price / 100.0) AS defaultPrice, is_active AS isActive, created_at AS createdAt FROM nursery_varieties WHERE shop_id = ? AND is_active = ? AND name LIKE ? COLLATE NOCASE ORDER BY is_active DESC, name COLLATE NOCASE LIMIT ? OFFSET ?
+0.28%
+195
+0.1 sec
+0.4 ms
+1 ms
+780
+2
+0
+select "id", "shop_id", "canonical_name", "normalized_name", "sku", "category", "unit", "purchase_price", "selling_price", "profit_margin", "product_type", "allow_decimals", "stock_qty", "alert_qty", "expiry_date", "tokens_json", "size", "is_active", "last_sold_at", "created_at", "updated_at" from "products" where "products"."id" = ?
+0.26%
+179
+0.1 sec
+0.4 ms
+1.2 ms
+179
+1
+0
+Showing 1-10 of 127
+1
+Rows read
+Eastern North America (ENAM)
+4.6M
+0
+70k
+140k
+210k
