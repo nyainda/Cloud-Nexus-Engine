@@ -113,6 +113,7 @@ export default function NurseryRegister() {
   const [saleSearch, setSaleSearch] = useState("");
   const [salePaymentFilter, setSalePaymentFilter] = useState<"all" | "cash" | "mpesa" | "credit">("all");
   const [salesPage, setSalesPage] = useState(1);
+  const [selectedSaleIds, setSelectedSaleIds] = useState<string[]>([]);
   const [statementCustomer, setStatementCustomer] = useState("");
   const [statementPhone, setStatementPhone] = useState("");
   const [statementBusy, setStatementBusy] = useState(false);
@@ -319,6 +320,24 @@ export default function NurseryRegister() {
     } finally {
       setStatementBusy(false);
     }
+  }
+
+  function toggleSaleSelection(id: string) { setSelectedSaleIds(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]); }
+
+  function toggleVisibleSales() {
+    const visibleIds = filteredIndividualEntries.map(entry => entry.id);
+    setSelectedSaleIds(current => visibleIds.every(id => current.includes(id)) ? current.filter(id => !visibleIds.includes(id)) : [...new Set([...current, ...visibleIds])]);
+  }
+
+  async function downloadSelectedSalesPdf() {
+    const selected = filteredIndividualEntries.filter(entry => selectedSaleIds.includes(entry.id));
+    if (!selected.length) { toast.info("Select at least one sale first."); return; }
+    const first = selected[0];
+    const sameCheckoutContext = selected.every(entry => entry.businessDate === first.businessDate && (entry.customerName || "").trim().toLowerCase() === (first.customerName || "").trim().toLowerCase() && (entry.customerPhone || "").replace(/\s+/g, "") === (first.customerPhone || "").replace(/\s+/g, "") && entry.paymentMethod === first.paymentMethod);
+    if (!sameCheckoutContext) { toast.error("For one combined receipt, select sales from the same date, customer, and payment method. Use the customer statement for purchases across dates."); return; }
+    const brand = await getNurseryPdfBrand();
+    try { downloadNurseryReceipt(selected, brand); toast.success(`Combined PDF created for ${selected.length} selected sale lines.`); }
+    catch (error: any) { toast.error(error?.message || "Could not create the combined PDF."); }
   }
 
   async function downloadReceipt(entry: IndividualSaleEntry) {
@@ -1013,10 +1032,11 @@ export default function NurseryRegister() {
             : individualEntriesQuery.isError ? <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center"><p className="font-medium text-destructive">Could not load individual sales</p><p className="mt-1 text-sm text-muted-foreground">Check your connection and try refreshing.</p><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void individualEntriesQuery.refetch()}><RefreshCw className="mr-2 h-4 w-4" /> Try again</Button></div>
             : !filteredIndividualEntries.length ? <div className="rounded-2xl border border-dashed border-border p-8 text-center sm:p-12"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground"><ClipboardList className="h-6 w-6" /></div><p className="mt-3 font-semibold">{saleSearch || salePaymentFilter !== "all" ? "No matching sales found" : "No individual entries in this period"}</p><p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">{saleSearch || salePaymentFilter !== "all" ? "Try another search term or clear the payment filter." : "New sales will appear here once recorded. Older records remain available in the aggregated sales report."}</p>{(saleSearch || salePaymentFilter !== "all") && <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setSaleSearch(""); setSalePaymentFilter("all"); setSalesPage(1); }}>Clear filters</Button>}</div>
             : <>
-              <div className="grid gap-3 sm:grid-cols-2 xl:hidden">
+              <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold">{selectedSaleIds.filter(id => filteredIndividualEntries.some(entry => entry.id === id)).length} sale lines selected</p><p className="text-xs text-muted-foreground">Select different seedling varieties and combine them into one PDF.</p></div><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={toggleVisibleSales}>{filteredIndividualEntries.length > 0 && filteredIndividualEntries.every(entry => selectedSaleIds.includes(entry.id)) ? "Deselect visible" : "Select visible"}</Button><Button type="button" size="sm" disabled={!filteredIndividualEntries.some(entry => selectedSaleIds.includes(entry.id))} onClick={() => void downloadSelectedSalesPdf()} className="gap-1.5"><ReceiptText className="h-4 w-4" /> Download combined PDF</Button><Button type="button" variant="ghost" size="sm" disabled={!selectedSaleIds.length} onClick={() => setSelectedSaleIds([])}>Clear selection</Button></div></div>\n              <div className="grid gap-3 sm:grid-cols-2 xl:hidden">
                 {filteredIndividualEntries.map(entry => <div key={entry.id} className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card p-4 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
                   <div className={"absolute inset-x-0 top-0 h-1 " + (entry.paymentMethod === "cash" ? "bg-amber-500" : entry.paymentMethod === "mpesa" ? "bg-sky-500" : "bg-violet-500")} />
                    <div className="flex items-start justify-between gap-3 pt-1">
+                     <label className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" aria-label={`Select ${entry.varietyName} sale`} checked={selectedSaleIds.includes(entry.id)} onChange={() => toggleSaleSelection(entry.id)} className="h-4 w-4 rounded border-border accent-primary" /> Select</label>
                      <div className="flex min-w-0 items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Sprout className="h-5 w-5" /></div><div className="min-w-0"><p className="truncate font-semibold">{entry.varietyName}</p><p className="mt-0.5 text-sm font-semibold text-foreground">{formatBusinessDate(entry.businessDate)} <span className="font-normal text-muted-foreground">· {new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></p></div></div>
                     <span className={"shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span>
                   </div>
@@ -1027,7 +1047,7 @@ export default function NurseryRegister() {
               </div>
               <div className="hidden overflow-x-auto rounded-xl border border-border/70 xl:block">
                 <table className="w-full min-w-[850px] text-left text-sm">
-                  <thead className="bg-muted/40"><tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground"><th className="px-4 py-3">Date / time</th><th className="px-4 py-3">Seedlings / customer</th><th className="px-4 py-3 text-right">Quantity</th><th className="px-4 py-3 text-right">Unit price</th><th className="px-4 py-3">Payment</th><th className="px-4 py-3 text-right">Sale total</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
+                  <thead className="bg-muted/40"><tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground"><th className="px-3 py-3"><input type="checkbox" aria-label="Select all visible sales" checked={filteredIndividualEntries.length > 0 && filteredIndividualEntries.every(entry => selectedSaleIds.includes(entry.id))} onChange={toggleVisibleSales} className="h-4 w-4 rounded border-border accent-primary" /></th><th className="px-4 py-3">Date / time</th><th className="px-4 py-3">Seedlings / customer</th><th className="px-4 py-3 text-right">Quantity</th><th className="px-4 py-3 text-right">Unit price</th><th className="px-4 py-3">Payment</th><th className="px-4 py-3 text-right">Sale total</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
                   <tbody>{filteredIndividualEntries.map(entry => <tr key={entry.id} className="border-b border-border/60 last:border-0 transition-colors hover:bg-muted/30">
                      <td className="whitespace-nowrap px-4 py-3.5"><p className="font-semibold">{formatBusinessDate(entry.businessDate)}</p><p className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></td>
                     <td className="px-4 py-3.5"><p className="font-semibold">{entry.varietyName}</p><p className="text-xs text-muted-foreground">{entry.customerName || "Walk-in customer"}{entry.customerPhone ? " · " + entry.customerPhone : ""}</p></td>
