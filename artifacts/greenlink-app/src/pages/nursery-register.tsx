@@ -57,7 +57,7 @@ function cents(value: unknown) {
   return Number.isFinite(amount) ? amount / 100 : 0;
 }
 type CustomerInsightRow = { customerKey: string; customerName: string; customerPhone: string; varietyName: string; quantity: number; totalAmountCents: number; lastPurchase: string };
-type IndividualSaleEntry = { id: string; requestId: string; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
+type IndividualSaleEntry = { id: string; requestId: string; transactionId?: string | null; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
 
 function useDebouncedValue<T>(value: T, delayMs = 250) {
   const [debounced, setDebounced] = useState(value);
@@ -292,8 +292,30 @@ export default function NurseryRegister() {
     }
   }
 
-  function downloadReceipt(entry: IndividualSaleEntry) {
+  async function downloadReceipt(entry: IndividualSaleEntry) {
     const logoDataUrl = [
+      localStorage.getItem("greenlink_shopLogo"),
+      localStorage.getItem("greenlink_shop_logo"),
+      localStorage.getItem("greenlink_logo"),
+    ].find(value => value?.startsWith("data:image/")) || null;
+    const brand = { shopName: localStorage.getItem("greenlink_shopName") || "Nursery", logoDataUrl };
+    try {
+      if (entry.transactionId) {
+        const transaction = await customFetch("/api/nursery/transactions/" + encodeURIComponent(entry.transactionId)) as { rows?: IndividualSaleEntry[] };
+        const rows = transaction.rows ?? [];
+        if (rows.length) {
+          downloadNurseryReceipt(rows, brand);
+          return;
+        }
+      }
+      downloadNurseryReceipt([entry], brand);
+      if (!entry.transactionId) toast.info("This older record has no saved checkout grouping, so the PDF contains this sale line only.");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not retrieve the full receipt. Try again.");
+    }
+  }
+
+
       localStorage.getItem("greenlink_shopLogo"),
       localStorage.getItem("greenlink_shop_logo"),
       localStorage.getItem("greenlink_logo"),
@@ -314,11 +336,13 @@ export default function NurseryRegister() {
     }
     setSaving(true);
     const savedRequestIds = new Set<string>();
+    const transactionId = crypto.randomUUID();
     try {
       for (let start = 0; start < prepared.length; start += 18) {
         const batch = prepared.slice(start, start + 18);
         await customFetch("/api/nursery/entries/batch", { method: "POST", body: JSON.stringify({
           businessDate,
+          transactionId,
           paymentMethod,
           customerName: customerName.trim() || undefined,
           customerPhone: customerPhone.trim() || undefined,
