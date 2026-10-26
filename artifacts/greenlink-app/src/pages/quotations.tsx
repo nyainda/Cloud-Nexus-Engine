@@ -13,7 +13,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { drawPdfDocumentStamp } from "@/lib/pdf-document-stamp";
+import { drawPdfDocumentStamp, prepareStampLogo } from "@/lib/pdf-document-stamp";
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -555,16 +555,17 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       expired: { status: "EXPIRED", tone: "amber" as const },
     }[quotation.status] ?? { status: "STATUS UNAVAILABLE", tone: "amber" as const };
     const stamp = isInvoice
-      ? { status: "PAYMENT STATUS UNVERIFIED", tone: "amber" as const }
+      ? { status: "INVOICE ISSUED", tone: "blue" as const }
       : quotationStamp;
     doc.setPage(numPages);
+    const stampLogo = await prepareStampLogo(logoBase64 || undefined);
     drawPdfDocumentStamp(doc, {
       shopName: shop?.name ?? "Shop",
       status: stamp.status,
       tone: stamp.tone,
       reference: documentNumber,
-      logoDataUrl: logoBase64 || undefined,
-      logoAspectRatio: logoNatW > 0 && logoNatH > 0 ? logoNatW / logoNatH : undefined,
+      logoDataUrl: stampLogo.dataUrl,
+      logoAspectRatio: stampLogo.aspectRatio,
       documentType: isInvoice ? "INVOICE" : "QUOTATION",
       dateLabel: format(new Date(), "dd MMM yyyy"),
     });
