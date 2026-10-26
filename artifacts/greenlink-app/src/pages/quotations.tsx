@@ -13,7 +13,11 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { drawPdfStamp } from "@/lib/pdf-stamp";
+import {
+  drawPdfStamp,
+  getPdfShopLogoAssets,
+  loadPdfStampLogo,
+} from "@/lib/pdf-stamp";
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -103,8 +107,9 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     const BORD:    RGB = [220, 226, 234];
 
     // ── Load shop logo ─────────────────────────────────────────────────────────
-    const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
-    const logoUrl = shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
+    const currentShopId = shop?.id ?? localStorage.getItem("greenlink_shopId") ?? undefined;
+    const shopLogoAssets = getPdfShopLogoAssets(currentShopId);
+    const logoUrl = shopLogoAssets.header;
     let logoBase64 = "";
     let logoNatW = 0;
     let logoNatH = 0;
@@ -125,6 +130,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
         reader.readAsDataURL(blob);
       });
     } catch { /* logo optional */ }
+    const stampLogoBase64 = await loadPdfStampLogo(shopLogoAssets.seal);
 
     // ── Helper: info box with dark header + emerald left accent ───────────────
     function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
@@ -371,9 +377,9 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       : defaultTerms;
     const TERMS_H = Math.max(26, termLines.length * 4.5 + 14);
 
-    const stampSize = 42;
+    const stampSize = 46;
     const stampX = W - MR - stampSize;
-    const stampY = H - 60;
+    const stampY = H - 64;
     const totalRowsHeight = quotation.discountAmount > 0 ? 26 : 9;
     const estimatedThankYouY = ty + totalRowsHeight + 4;
     const estimatedSignatureY = Math.max(
@@ -559,12 +565,14 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       x: stampX,
       y: stampY,
       size: stampSize,
-      shopName: shop?.name ?? "GreenLink",
+      shopName: shopLogoAssets.sealName,
+      logoData: stampLogoBase64,
       status: isInvoice ? "ISSUED" : quotation.status,
       dateLabel: format(
         new Date(isInvoice ? quotation.invoiceIssuedAt ?? quotation.createdAt : quotation.createdAt),
         "dd MMM yyyy",
       ),
+      documentRef: documentNumber,
     });
 
     const custSlug = (quotation.customerName?.trim() || "")
