@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { drawPdfDocumentStamp } from "@/lib/pdf-document-stamp";
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -545,6 +546,26 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       .replace(/[^a-z0-9]/gi, "_")
       .replace(/_+/g, "_")
       .replace(/^_+|_+$/g, "");
+    // Add the branded circular shop seal to the final page.
+    const quotationStamp = {
+      draft: { status: "DRAFT", tone: "blue" as const },
+      sent: { status: "SENT", tone: "blue" as const },
+      accepted: { status: "ACCEPTED", tone: "green" as const },
+      rejected: { status: "REJECTED", tone: "red" as const },
+      expired: { status: "EXPIRED", tone: "amber" as const },
+    }[quotation.status] ?? { status: "STATUS UNAVAILABLE", tone: "amber" as const };
+    const stamp = isInvoice
+      ? { status: "PAYMENT STATUS UNVERIFIED", tone: "amber" as const }
+      : quotationStamp;
+    doc.setPage(numPages);
+    drawPdfDocumentStamp(doc, {
+      shopName: shop?.name ?? "Shop",
+      status: stamp.status,
+      tone: stamp.tone,
+      reference: documentNumber,
+      logoDataUrl: logoBase64 || undefined,
+    });
+
     doc.save(custSlug ? `${custSlug}_${documentNumber}.pdf` : `${documentNumber}.pdf`);
     toast.success("PDF downloaded!", { id: "pdf" });
   } catch (err) {
