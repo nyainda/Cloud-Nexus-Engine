@@ -1165,6 +1165,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       tone: debtStamp.tone,
       reference: `DEBT ${(debt?.id ?? "").slice(0, 8).toUpperCase()}`,
       logoDataUrl: logoBase64 || undefined,
+      logoAspectRatio: logoNatW > 0 && logoNatH > 0 ? logoNatW / logoNatH : undefined,
       documentType: "DEBT STATEMENT",
       dateLabel: format(new Date(), "dd MMM yyyy"),
     });
