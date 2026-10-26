@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   useGetDashboard, useGetReportRange, useGetTopProducts,
@@ -14,9 +14,9 @@ import {
   TrendingUp, ShoppingBag, CreditCard, AlertTriangle,
   Package, TrendingDown, Percent, BarChart2, Trophy, Flame,
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
-  ClipboardCheck, X, Share2, CheckCheck, Wallet, ReceiptText, Ban,
+  ClipboardCheck, X, Share2, Check, CheckCheck, Wallet, ReceiptText, Ban,
   Download, Calendar, ChevronDown, ChevronUp, FileText, Search, SearchX,
-  RefreshCw,
+  RefreshCw, Sprout,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import {
@@ -546,6 +546,30 @@ interface MonthlySalesResponse {
   monthlyBreakdown: { month: number; revenue: number; profit: number; salesCount: number }[];
 }
 
+type NurserySalesBucket = "day" | "month";
+
+interface NurserySalesRow {
+  period: string;
+  seedlingsSold: number;
+  totalRevenueCents: number;
+  cashCents: number;
+  mpesaCents: number;
+  creditCents: number;
+}
+
+interface NurserySalesResponse {
+  from: string;
+  to: string;
+  bucket: NurserySalesBucket;
+  rows: NurserySalesRow[];
+}
+
+function dateRangeDayCount(from: string, to: string): number {
+  const fromTime = Date.parse(`${from}T00:00:00Z`);
+  const toTime = Date.parse(`${to}T00:00:00Z`);
+  return Math.floor((toTime - fromTime) / 86_400_000) + 1;
+}
+
 function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, changePct }: {
   label: string; value?: string; sub?: string; icon: React.ElementType;
   accentClass: string; isLoading?: boolean; changePct?: number | null;
@@ -601,7 +625,7 @@ type PsQuickRange = "this_month" | "last_month" | "last_3_months" | "this_year" 
 
 function getPsDateRange(r: PsQuickRange): { from: string; to: string } {
   const today = new Date();
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const fmt = (d: Date) => format(d, "yyyy-MM-dd");
   if (r === "this_month") {
     return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), to: fmt(today) };
   }
@@ -620,46 +644,83 @@ function getPsDateRange(r: PsQuickRange): { from: string; to: string } {
 
 function fmtQty(n: number) { return n % 1 === 0 ? String(n) : n.toFixed(2); }
 
+interface ProductSearchRequest {
+  query: string;
+  from: string;
+  to: string;
+  range: PsQuickRange;
+}
+
 function ProductSearchSection({ shopId }: { shopId: string }) {
   const [inputValue, setInputValue] = useState("");
-  const [query, setQuery]           = useState("");
   const [psRange, setPsRange]       = useState<PsQuickRange>("this_month");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo,   setCustomTo]   = useState("");
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [submittedSearch, setSubmittedSearch] = useState<ProductSearchRequest | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
 
-  const dateRange = psRange === "custom" && customFrom && customTo
-    ? { from: customFrom, to: customTo }
+  const today = format(new Date(), "yyyy-MM-dd");
+  const dateRange = psRange === "custom"
+    ? customFrom && customTo && customFrom <= customTo && customTo <= today
+      ? { from: customFrom, to: customTo }
+      : null
     : getPsDateRange(psRange);
+  const searchText = inputValue.trim();
+  const canSubmitSearch = !!shopId && searchText.length >= 2 && dateRange !== null;
+  const query = submittedSearch?.query ?? "";
+  const resultsCurrent = !!submittedSearch
+    && searchText === submittedSearch.query
+    && dateRange?.from === submittedSearch.from
+    && dateRange?.to === submittedSearch.to;
 
-  const handleInput = (v: string) => {
-    setInputValue(v);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setQuery(v.trim()), 400);
-  };
-
-  const { data, isLoading, isFetching } = useQuery<ProductSearchResult>({
-    queryKey: ["product-search", shopId, query, dateRange.from, dateRange.to],
-    queryFn:  () =>
-      customFetch(
-        `/api/reports/product-search?shopId=${encodeURIComponent(shopId)}&q=${encodeURIComponent(query)}&from=${dateRange.from}&to=${dateRange.to}`,
-      ) as Promise<ProductSearchResult>,
-    enabled:   !!shopId && query.length >= 2,
-    staleTime: 60_000,
+  const { data, isLoading, isFetching, isError, isStale, refetch } = useQuery<ProductSearchResult>({
+    queryKey: [
+      "product-search",
+      shopId,
+      submittedSearch?.query ?? "",
+      submittedSearch?.from ?? "",
+      submittedSearch?.to ?? "",
+    ],
+    queryFn: () => {
+      const request = submittedSearch!;
+      return customFetch(
+        `/api/reports/product-search?shopId=${encodeURIComponent(shopId)}&q=${encodeURIComponent(request.query)}&from=${request.from}&to=${request.to}`,
+      ) as Promise<ProductSearchResult>;
+    },
+    enabled: !!shopId && !!submittedSearch,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: false,
   });
 
-  const variants   = data?.variants ?? [];
-  const summary    = data?.summary  ?? null;
-  const noResults  = query.length >= 2 && !isLoading && !isFetching && variants.length === 0;
+  const handleSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmitSearch || !dateRange) return;
+    const nextSearch = {
+      query: searchText,
+      from: dateRange.from,
+      to: dateRange.to,
+      range: psRange,
+    };
+    const sameQuery = submittedSearch?.query === nextSearch.query
+      && submittedSearch.from === nextSearch.from
+      && submittedSearch.to === nextSearch.to;
+    setSubmittedSearch(nextSearch);
+    if (sameQuery && isStale) void refetch();
+  };
+
+  const variants   = resultsCurrent ? data?.variants ?? [] : [];
+  const summary    = resultsCurrent ? data?.summary ?? null : null;
+  const noResults  = resultsCurrent && !isLoading && !isFetching && !!data && variants.length === 0;
   const showTotal  = variants.length > 1 && summary !== null;
-  const periodLabel = psRange === "custom" && customFrom && customTo
-    ? `${customFrom} – ${customTo}`
-    : psRange === "this_month"   ? "This Month"
-    : psRange === "last_month"   ? "Last Month"
-    : psRange === "last_3_months"? "Last 3 Months"
+  const periodLabel = submittedSearch?.range === "custom"
+    ? `${submittedSearch.from} – ${submittedSearch.to}`
+    : submittedSearch?.range === "this_month" ? "This Month"
+    : submittedSearch?.range === "last_month" ? "Last Month"
+    : submittedSearch?.range === "last_3_months" ? "Last 3 Months"
     : "This Year";
 
-  const handleShare = () => {
+  const handleShare = async () => {
     if (!summary || variants.length === 0) return;
     const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
     const lines = [
@@ -668,7 +729,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
       `📅 ${periodLabel}`,
       ``,
       ...variants.map(v =>
-        `• ${v.productName}\n  Qty: ${fmtQty(v.totalQty)} | Revenue: ${formatKES(v.totalRevenue)} | Cost: ${formatKES(v.totalRevenue - v.totalProfit)}`
+        `• ${v.productName}\n  Qty: ${fmtQty(v.totalQty)} | Revenue: ${formatKES(v.totalRevenue)} | Est. cost: ${formatKES(v.totalRevenue - v.totalProfit)} | Profit: ${formatKES(v.totalProfit)}`
       ),
     ];
     if (variants.length > 1) {
@@ -677,14 +738,17 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
         `*TOTAL (${variants.length} variants)*`,
         `Qty: ${fmtQty(summary.totalQty)}`,
         `Revenue: ${formatKES(summary.totalRevenue)}`,
-        `Cost of Goods: ${formatKES(summary.totalRevenue - summary.totalProfit)}`,
+        `Estimated cost (revenue minus recorded profit): ${formatKES(summary.totalRevenue - summary.totalProfit)}`,
         `Profit: ${formatKES(summary.totalProfit)}`,
       );
     }
-    navigator.clipboard.writeText(lines.join("\n")).then(() => {
-      const btn = document.getElementById("ps-share-btn");
-      if (btn) { btn.textContent = "Copied!"; setTimeout(() => { btn.textContent = "Copy / Share"; }, 2000); }
-    });
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      setShareCopied(false);
+    }
   };
 
   const QUICK: { label: string; value: PsQuickRange }[] = [
@@ -699,37 +763,40 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
     <Card className="reports-search-card shadow-none border-primary/10">
       <CardHeader className="pb-3 pt-4 px-4">
         <div className="flex items-start justify-between gap-2">
-          <div>
+          <div className="min-w-0">
             <CardTitle className="text-sm font-bold flex items-center gap-1.5">
               <Search className="h-3.5 w-3.5 text-primary" />
               Product Sales Lookup
             </CardTitle>
-            <p className="text-[11px] text-muted-foreground mt-0.5">
-              Search any product — variants (500ml, 1L…) show individually with a combined total. Useful for supplier payments.
+            <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+              Search a product or pack size. Variants stay separate, with a combined total for supplier reconciliation.
             </p>
           </div>
-          {variants.length > 0 && (
+          {resultsCurrent && variants.length > 0 && (
             <button
-              id="ps-share-btn"
+              type="button"
               onClick={handleShare}
-              className="shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 transition-colors flex items-center gap-1"
+              aria-label="Copy product sales report"
+              className="reports-search-share shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 transition-colors flex items-center gap-1"
             >
-              <Share2 className="h-3 w-3" />
-              Copy / Share
+              {shareCopied ? <Check className="h-3 w-3" /> : <Share2 className="h-3 w-3" />}
+              {shareCopied ? "Copied" : "Copy report"}
             </button>
           )}
         </div>
       </CardHeader>
-      <CardContent className="px-4 pb-4 space-y-3">
+      <CardContent className="px-4 pb-4 reports-search-body">
 
         {/* Period pills */}
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 reports-search-periods" role="group" aria-label="Product sales period">
           {QUICK.map(q => (
             <button
               key={q.value}
+              type="button"
               onClick={() => setPsRange(q.value)}
+              aria-pressed={psRange === q.value}
               className={cn(
-                "px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors",
+                "reports-search-range px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors",
                 psRange === q.value
                   ? "bg-primary text-primary-foreground border-primary"
                   : "bg-muted border-border text-muted-foreground hover:border-primary/40",
@@ -742,43 +809,89 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
 
         {/* Custom date range inputs */}
         {psRange === "custom" && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 reports-search-date-range">
             <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
-              className="flex-1 h-8 px-2 rounded-lg border border-border bg-muted text-xs focus:outline-none focus:border-primary/60" />
+              aria-label="Product lookup start date" max={customTo || today}
+              className="flex-1 h-9 px-2 rounded-lg border border-border bg-muted text-xs focus:outline-none focus:border-primary/60" />
             <span className="text-muted-foreground text-xs">–</span>
             <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
-              className="flex-1 h-8 px-2 rounded-lg border border-border bg-muted text-xs focus:outline-none focus:border-primary/60" />
+              aria-label="Product lookup end date" min={customFrom || undefined} max={today}
+              className="flex-1 h-9 px-2 rounded-lg border border-border bg-muted text-xs focus:outline-none focus:border-primary/60" />
           </div>
         )}
 
-        {/* Search input */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-          <input
-            type="text"
-            value={inputValue}
-            onChange={e => handleInput(e.target.value)}
-            placeholder="Type product name, e.g. Roundup, Dithane, urea…"
-            className="w-full h-10 pl-8 pr-8 rounded-lg border border-border bg-muted text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors"
-          />
-          {inputValue && (
-            <button onClick={() => { setInputValue(""); setQuery(""); }}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        <form className="reports-search-form" onSubmit={handleSearch}>
+          <div className="reports-search-input-wrap relative min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <input
+              type="search"
+              value={inputValue}
+              onChange={e => setInputValue(e.target.value)}
+              placeholder="Product name or size, e.g. Urea 50kg or Roundup 1L"
+              aria-label="Search product sales by name or pack size"
+              className="reports-search-input w-full h-11 pl-10 pr-10 rounded-xl border border-border bg-muted text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/60 transition-colors"
+            />
+            {inputValue && (
+              <button
+                type="button"
+                aria-label="Clear product search"
+                onClick={() => { setInputValue(""); setSubmittedSearch(null); setShareCopied(false); }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <button
+            type="submit"
+            disabled={!canSubmitSearch || (resultsCurrent && (isLoading || isFetching))}
+            className="reports-search-submit h-11 px-5 rounded-xl bg-primary text-primary-foreground font-bold text-sm inline-flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed transition-opacity"
+          >
+            <Search className="h-4 w-4" />
+            Search
+          </button>
+        </form>
+
+        {psRange === "custom" && !dateRange && (
+          <p role="alert" className="reports-search-validation text-xs text-destructive">
+            Choose both dates. The end date must be on or after the start date, and neither date can be in the future.
+          </p>
+        )}
+        <p className="reports-search-query-note text-[10px] text-muted-foreground">
+          Searches run only after you press Search. Typing and changing filters do not send lookup requests.
+        </p>
 
         {/* Loading */}
-        {(isLoading || isFetching) && query.length >= 2 && (
-          <div className="space-y-2">
+        {resultsCurrent && (isLoading || isFetching) && (
+          <div className="space-y-2" role="status" aria-live="polite">
             {[1,2,3].map(i => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
+            <span className="sr-only">Searching product sales…</span>
+          </div>
+        )}
+
+        {resultsCurrent && isError && !isFetching && (
+          <div className="rounded-xl border border-destructive/25 bg-destructive/5 px-3 py-3 flex items-center justify-between gap-3" role="alert">
+            <p className="text-xs text-muted-foreground">Unable to load this lookup. Check your connection, then try again.</p>
+            <button
+              type="button"
+              onClick={() => { void refetch(); }}
+              className="shrink-0 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold hover:bg-muted transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {submittedSearch && !resultsCurrent && (
+          <div className="reports-search-pending rounded-xl border border-border bg-muted/30 px-3 py-2.5" role="status">
+            <p className="text-xs font-semibold text-foreground">Search settings changed</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Press Search to apply the new product name or period. No lookup runs automatically.</p>
           </div>
         )}
 
         {/* No results */}
         {noResults && (
-          <div className="flex flex-col items-center gap-1.5 py-8 text-muted-foreground">
+          <div className="flex flex-col items-center gap-1.5 py-8 text-muted-foreground" role="status">
             <SearchX className="h-8 w-8 text-muted-foreground/20" />
             <p className="text-xs font-semibold">No sales found for &ldquo;{query}&rdquo;</p>
             <p className="text-[11px] text-muted-foreground/50">Try a shorter name or a wider date range</p>
@@ -786,7 +899,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
         )}
 
         {/* Results */}
-        {!isLoading && !isFetching && variants.length > 0 && (
+        {resultsCurrent && !isLoading && !isFetching && variants.length > 0 && (
           <>
             {/* Period label */}
             <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
@@ -804,7 +917,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-sm font-semibold leading-snug">{v.productName}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{v.category} · {v.salesCount} {v.salesCount === 1 ? "txn" : "txns"}</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{v.category} · {v.salesCount} {v.salesCount === 1 ? "sale line" : "sale lines"}</p>
                       </div>
                       <span className={cn(
                         "shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md",
@@ -824,7 +937,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                         <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5">{formatKES(v.totalRevenue)}</p>
                       </div>
                       <div className="rounded-lg bg-muted/60 px-2.5 py-2">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Cost</p>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Est. cost</p>
                         <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(cost)}</p>
                       </div>
                       <div className={cn("rounded-lg px-2.5 py-2", v.totalProfit >= 0 ? "bg-emerald-500/5" : "bg-destructive/5")}>
@@ -845,7 +958,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm font-extrabold text-primary">COMBINED TOTAL</p>
-                        <p className="text-[11px] text-muted-foreground">{variants.length} variants · {summary.salesCount} txns</p>
+                        <p className="text-[11px] text-muted-foreground">{variants.length} variants · {summary.salesCount} matching sale lines</p>
                       </div>
                       <span className={cn(
                         "shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md",
@@ -864,7 +977,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                         <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-primary">{formatKES(summary.totalRevenue)}</p>
                       </div>
                       <div className="rounded-lg bg-primary/10 px-2.5 py-2">
-                        <p className="text-[10px] text-primary/70 uppercase tracking-wide font-medium">Cost</p>
+                        <p className="text-[10px] text-primary/70 uppercase tracking-wide font-medium">Est. cost</p>
                         <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(totalCost)}</p>
                       </div>
                       <div className="rounded-lg bg-emerald-500/5 px-2.5 py-2">
@@ -878,15 +991,15 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
             </div>
 
             {/* ── TABLET / DESKTOP: full table ── */}
-            <div className="hidden sm:block rounded-xl border border-border overflow-hidden">
+            <div className="hidden sm:block rounded-xl border border-border overflow-x-auto">
               {/* Column header */}
-              <div className="grid grid-cols-[1fr_56px_100px_100px_100px_48px] gap-x-3 px-4 py-2.5 bg-muted/60 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+              <div className="reports-variant-table min-w-[660px] grid grid-cols-[minmax(180px,1fr)_56px_100px_100px_100px_48px] gap-x-3 px-4 py-2.5 bg-muted/60 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                 <span>Product / Variant</span>
                 <span className="text-right">Qty</span>
                 <span className="text-right">Revenue</span>
-                <span className="text-right">Cost</span>
+                <span className="text-right">Est. cost</span>
                 <span className="text-right">Profit</span>
-                <span className="text-right">Txns</span>
+                <span className="text-right">Lines</span>
               </div>
 
               {variants.map(v => {
@@ -894,7 +1007,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                 const margin = v.totalRevenue > 0 ? (v.totalProfit / v.totalRevenue) * 100 : 0;
                 return (
                   <div key={v.productId}
-                    className="grid grid-cols-[1fr_56px_100px_100px_100px_48px] gap-x-3 px-4 py-3 border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors">
+                    className="reports-variant-table min-w-[660px] grid grid-cols-[minmax(180px,1fr)_56px_100px_100px_100px_48px] gap-x-3 px-4 py-3 border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold leading-tight truncate">{v.productName}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
@@ -923,10 +1036,10 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                 const totalCost   = summary.totalRevenue - summary.totalProfit;
                 const totalMargin = summary.totalRevenue > 0 ? (summary.totalProfit / summary.totalRevenue) * 100 : 0;
                 return (
-                  <div className="grid grid-cols-[1fr_56px_100px_100px_100px_48px] gap-x-3 px-4 py-3 bg-primary/5 border-t-2 border-primary/20">
+                  <div className="reports-variant-table min-w-[660px] grid grid-cols-[minmax(180px,1fr)_56px_100px_100px_100px_48px] gap-x-3 px-4 py-3 bg-primary/5 border-t-2 border-primary/20">
                     <div>
                       <p className="text-sm font-extrabold text-primary leading-tight">TOTAL</p>
-                      <p className="text-[10px] text-muted-foreground">{variants.length} variants · {summary.salesCount} txns · {totalMargin.toFixed(0)}% margin</p>
+                      <p className="text-[10px] text-muted-foreground">{variants.length} variants · {summary.salesCount} matching sale lines · {totalMargin.toFixed(0)}% margin</p>
                     </div>
                     <span className="text-sm font-extrabold font-mono text-right self-center tabular-nums text-primary">{fmtQty(summary.totalQty)}</span>
                     <span className="text-sm font-extrabold font-mono text-right self-center tabular-nums text-primary">{formatKES(summary.totalRevenue)}</span>
@@ -940,31 +1053,23 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
               })()}
             </div>
 
-            {/* Summary cards — always shown below */}
-            {summary && (
-              <div className="grid grid-cols-1 xs:grid-cols-3 sm:grid-cols-3 gap-2 pt-1">
-                <div className="rounded-xl bg-muted/60 border border-border px-3 py-3">
-                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Total Revenue</p>
-                  <p className="text-lg font-extrabold font-mono tabular-nums mt-0.5">{formatKES(summary.totalRevenue)}</p>
-                </div>
-                <div className="rounded-xl bg-muted/60 border border-border px-3 py-3">
-                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Cost of Goods</p>
-                  <p className="text-lg font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(summary.totalRevenue - summary.totalProfit)}</p>
-                </div>
-                <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 px-3 py-3">
-                  <p className="text-[10px] text-emerald-400 font-medium uppercase tracking-wide">Profit</p>
-                  <p className="text-lg font-extrabold font-mono tabular-nums mt-0.5 text-emerald-400">{formatKES(summary.totalProfit)}</p>
-                </div>
-              </div>
+            <p className="reports-search-cost-note text-[10px] text-muted-foreground">
+              Estimated cost is revenue minus recorded profit; use it for reconciliation, not as a supplier balance due.
+            </p>
+            {showTotal && summary && (
+              <p className="text-[10px] text-muted-foreground">
+                Combined total includes all {variants.length} matching product variants for this period.
+              </p>
             )}
           </>
         )}
 
         {/* Empty prompt */}
-        {query.length < 2 && !isLoading && (
-          <div className="flex flex-col items-center gap-1 py-5 text-muted-foreground/40">
+        {!submittedSearch && (
+          <div className="flex flex-col items-center gap-1 py-5 text-muted-foreground/60">
             <Search className="h-6 w-6" />
-            <p className="text-xs">Type a product name to see its sales</p>
+            <p className="text-xs">{searchText.length < 2 ? "Enter at least two letters, then press Search." : "Press Search to load this product’s sales."}</p>
+            <p className="text-[10px] text-muted-foreground/70">Variants appear individually, then roll up into one combined total.</p>
           </div>
         )}
       </CardContent>
@@ -996,6 +1101,7 @@ export default function Reports() {
     : getDateRange(quickRange);
 
   const isToday = dateRange.from === today && dateRange.to === today;
+  const nurseryBucket: NurserySalesBucket = dateRangeDayCount(dateRange.from, dateRange.to) > 45 ? "month" : "day";
 
   const { data: voidedSales, refetch: refetchVoidedSales } = useQuery({
     queryKey: ["voided-sales", shopId, dateRange.from],
@@ -1062,6 +1168,38 @@ export default function Reports() {
     gcTime: GC,
   });
 
+  const {
+    data: nurserySales,
+    isLoading: nurserySalesLoading,
+    isError: nurserySalesError,
+    refetch: refetchNurserySales,
+  } = useQuery<NurserySalesResponse>({
+    queryKey: ["nursery-analytics-sales", shopId, dateRange.from, dateRange.to, nurseryBucket],
+    queryFn: () => customFetch<NurserySalesResponse>(
+      `/api/nursery/analytics?from=${encodeURIComponent(dateRange.from)}&to=${encodeURIComponent(dateRange.to)}&bucket=${nurseryBucket}`,
+    ),
+    enabled: !!shopId,
+    staleTime: STALE,
+    gcTime: GC,
+  });
+
+  const nurserySalesTotals = useMemo(() => (nurserySales?.rows ?? []).reduce((totals, row) => ({
+    seedlingsSold: totals.seedlingsSold + Number(row.seedlingsSold || 0),
+    totalRevenueCents: totals.totalRevenueCents + Number(row.totalRevenueCents || 0),
+    cashCents: totals.cashCents + Number(row.cashCents || 0),
+    mpesaCents: totals.mpesaCents + Number(row.mpesaCents || 0),
+    creditCents: totals.creditCents + Number(row.creditCents || 0),
+  }), { seedlingsSold: 0, totalRevenueCents: 0, cashCents: 0, mpesaCents: 0, creditCents: 0 }), [nurserySales?.rows]);
+
+  const nurserySalesChartData = useMemo(() => (nurserySales?.rows ?? []).map(row => {
+    const dateForLabel = nurseryBucket === "month" ? `${row.period}-01` : row.period;
+    return {
+      ...row,
+      revenue: Number(row.totalRevenueCents || 0) / 100,
+      label: format(new Date(`${dateForLabel}T12:00:00`), nurseryBucket === "month" ? "MMM yy" : "d MMM"),
+    };
+  }), [nurserySales?.rows, nurseryBucket]);
+
   const monthlySalesChartData = monthlySales?.monthlyBreakdown.map((month) => ({
     ...month,
     monthLabel: MONTH_LABELS[month.month - 1],
@@ -1079,6 +1217,7 @@ export default function Reports() {
         ...(showSalesDetails ? [refetchTopProducts(), refetchCategoryData()] : []),
         ...(showInventoryDetails ? [refetchProductsData()] : []),
         ...(showMonthlySales ? [refetchMonthlySales()] : []),
+        refetchNurserySales(),
       ]);
       setLastManualRefreshAt(Date.now());
     } finally {
@@ -1272,6 +1411,96 @@ export default function Reports() {
             changePct={cashCollectedChangePct}
           />
         </div>
+
+        <Card className="reports-nursery shadow-none" data-testid="card-nursery-analytics">
+          <CardHeader className="flex-row items-start justify-between gap-3 pb-2 pt-4 px-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="mt-0.5 rounded-lg border border-primary/20 bg-primary/10 p-2 text-primary">
+                <Sprout className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="text-sm font-bold">Nursery plant sales</CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {dateRange.from === dateRange.to ? format(new Date(`${dateRange.from}T12:00:00`), "d MMM yyyy") : `${format(new Date(`${dateRange.from}T12:00:00`), "d MMM yyyy")} – ${format(new Date(`${dateRange.to}T12:00:00`), "d MMM yyyy")}`}
+                </p>
+              </div>
+            </div>
+            <Badge variant="outline" className="shrink-0 border-border text-muted-foreground">
+              {nurseryBucket === "month" ? "Monthly view" : "Daily view"}
+            </Badge>
+          </CardHeader>
+          <CardContent className="space-y-4 px-4 pb-4">
+            {nurserySalesLoading && !nurserySales ? (
+              <div className="space-y-3" aria-label="Loading nursery analytics">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <Skeleton className="h-20 rounded-xl" />
+                  <Skeleton className="h-20 rounded-xl" />
+                  <Skeleton className="col-span-2 h-20 rounded-xl sm:col-span-1" />
+                </div>
+                <Skeleton className="h-48 rounded-xl" />
+              </div>
+            ) : nurserySalesError && !nurserySales ? (
+              <div className="flex flex-col items-center gap-3 py-8 text-center">
+                <p className="text-sm text-destructive">Nursery sales could not be loaded.</p>
+                <Button data-testid="button-retry-nursery-analytics" type="button" size="sm" variant="outline" onClick={() => void refetchNurserySales()}>Try again</Button>
+              </div>
+            ) : nurserySales ? (
+              <>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <div className="min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Plant sales value</p>
+                    <p data-testid="text-nursery-analytics-revenue" className="mt-1 truncate text-lg font-bold tabular-nums text-primary">{formatKES(nurserySalesTotals.totalRevenueCents / 100)}</p>
+                  </div>
+                  <div className="min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Plants sold</p>
+                    <p data-testid="text-nursery-analytics-seedlings" className="mt-1 text-lg font-bold tabular-nums">{nurserySalesTotals.seedlingsSold.toLocaleString()}</p>
+                  </div>
+                  <div className="col-span-2 min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3 sm:col-span-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Received · On credit</p>
+                    <p data-testid="text-nursery-analytics-payments" className="mt-1 truncate text-sm font-bold tabular-nums">
+                      {formatKES((nurserySalesTotals.cashCents + nurserySalesTotals.mpesaCents) / 100)}
+                      <span className="px-1.5 text-muted-foreground">·</span>
+                      {formatKES(nurserySalesTotals.creditCents / 100)}
+                    </p>
+                  </div>
+                </div>
+                {nurserySalesChartData.length === 0 ? (
+                  <p data-testid="text-nursery-analytics-empty" className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No nursery plant sales in this period.</p>
+                ) : (
+                  <div className="h-52 sm:h-60" aria-label={nurseryBucket === "month" ? "Monthly nursery plant sales chart" : "Daily nursery plant sales chart"}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={nurserySalesChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="label"
+                          interval={nurserySalesChartData.length > 14 ? "preserveStartEnd" : 0}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          width={48}
+                          tickFormatter={value => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : String(value)}
+                          tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [formatKES(value), "Plant sales"]}
+                          contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
+                        />
+                        <Bar dataKey="revenue" name="Plant sales" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Sales value includes credit transactions. Received is cash plus M-Pesa; credit is shown separately. Nursery sales remain separate from POS inventory and gross-profit figures.
+                </p>
+              </>
+            ) : null}
+          </CardContent>
+        </Card>
 
         <div className="reports-insight-controls" aria-label="Optional analytics details">
           <button

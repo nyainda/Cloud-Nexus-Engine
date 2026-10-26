@@ -43,8 +43,10 @@ import type {
   GetDashboardParams,
   GetDebtsSummaryParams,
   GetHourlySalesParams,
+  GetMonthlySalesParams,
   GetReportRangeParams,
   GetTopProductsParams,
+  GetUnreadNotificationCountParams,
   HealthStatus,
   HourlySales,
   InventoryMovement,
@@ -58,7 +60,9 @@ import type {
   ListSuppliersParams,
   LoginInput,
   MarkAllNotificationsReadParams,
+  MonthlySalesReport,
   Notification,
+  NotificationUnreadCount,
   OcrScanInput,
   OcrScanResult,
   PriceHistory,
@@ -86,7 +90,7 @@ import type {
   SupplierInput,
   SupplierUpdate,
   TopProduct,
-  TransferDebtItemsResponse,
+  TransferDebtItems201,
   UploadUrlRequest,
   UploadUrlResult,
   VerifyPinInput
@@ -2265,57 +2269,6 @@ export function useGetDebt<TData = Awaited<ReturnType<typeof getDebt>>, TError =
 
 
 
-export const getTransferDebtItemsUrl = (debtId: string,) => {
-  return `/api/debts/${debtId}/transfer`
-}
-
-/**
- * @summary Move selected outstanding debt items to another customer
- */
-export const transferDebtItems = async (debtId: string,
-    debtTransferInput: DebtTransferInput, options?: RequestInit): Promise<TransferDebtItemsResponse> => {
-  return customFetch<TransferDebtItemsResponse>(getTransferDebtItemsUrl(debtId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      debtTransferInput,)
-  }
-);}
-
-export const getTransferDebtItemsMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext> => {
-  const mutationKey = ['transferDebtItems'];
-  const {mutation: mutationOptions, request: requestOptions} = options ?
-    options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-    options
-    : {...options, mutation: {...options.mutation, mutationKey}}
-    : {mutation: { mutationKey, }, request: undefined};
-
-  const mutationFn: MutationFunction<Awaited<ReturnType<typeof transferDebtItems>>, {debtId: string;data: BodyType<DebtTransferInput>}> = (props) => {
-    const {debtId,data} = props ?? {};
-    return transferDebtItems(debtId,data,requestOptions)
-  }
-
-  return { mutationFn, ...mutationOptions }}
-
-export type TransferDebtItemsMutationResult = NonNullable<Awaited<ReturnType<typeof transferDebtItems>>>
-export type TransferDebtItemsMutationBody = BodyType<DebtTransferInput>
-export type TransferDebtItemsMutationError = ErrorType<unknown>
-
-export function useTransferDebtItems<TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-  ): UseMutationResult<
-        Awaited<ReturnType<typeof transferDebtItems>>,
-        TError,
-        {debtId: string;data: BodyType<DebtTransferInput>},
-        TContext
-      > {
-  return useMutation(getTransferDebtItemsMutationOptions(options));
-}
-
 export const getUpdateDebtUrl = (debtId: string,) => {
 
 
@@ -2386,6 +2339,78 @@ export const useUpdateDebt = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getUpdateDebtMutationOptions(options));
+    }
+
+export const getTransferDebtItemsUrl = (debtId: string,) => {
+
+
+
+
+  return `/api/debts/${debtId}/transfer`
+}
+
+/**
+ * @summary Move selected outstanding debt items to another customer
+ */
+export const transferDebtItems = async (debtId: string,
+    debtTransferInput: DebtTransferInput, options?: RequestInit): Promise<TransferDebtItems201> => {
+
+  return customFetch<TransferDebtItems201>(getTransferDebtItemsUrl(debtId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      debtTransferInput,)
+  }
+);}
+
+
+
+
+export const getTransferDebtItemsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext> => {
+
+const mutationKey = ['transferDebtItems'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof transferDebtItems>>, {debtId: string;data: BodyType<DebtTransferInput>}> = (props) => {
+          const {debtId,data} = props ?? {};
+
+          return  transferDebtItems(debtId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TransferDebtItemsMutationResult = NonNullable<Awaited<ReturnType<typeof transferDebtItems>>>
+    export type TransferDebtItemsMutationBody = BodyType<DebtTransferInput>
+    export type TransferDebtItemsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Move selected outstanding debt items to another customer
+ */
+export const useTransferDebtItems = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof transferDebtItems>>, TError,{debtId: string;data: BodyType<DebtTransferInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof transferDebtItems>>,
+        TError,
+        {debtId: string;data: BodyType<DebtTransferInput>},
+        TContext
+      > => {
+      return useMutation(getTransferDebtItemsMutationOptions(options));
     }
 
 export const getRecordDebtPaymentUrl = (debtId: string,) => {
@@ -2606,6 +2631,90 @@ export function useListInventoryMovements<TData = Awaited<ReturnType<typeof list
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListInventoryMovementsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetUnreadNotificationCountUrl = (params: GetUnreadNotificationCountParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/notifications/unread-count?${stringifiedParams}` : `/api/notifications/unread-count`
+}
+
+/**
+ * @summary Get the current shop's unread notification count
+ */
+export const getUnreadNotificationCount = async (params: GetUnreadNotificationCountParams, options?: RequestInit): Promise<NotificationUnreadCount> => {
+
+  return customFetch<NotificationUnreadCount>(getGetUnreadNotificationCountUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetUnreadNotificationCountQueryKey = (params?: GetUnreadNotificationCountParams,) => {
+    return [
+    `/api/notifications/unread-count`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetUnreadNotificationCountQueryOptions = <TData = Awaited<ReturnType<typeof getUnreadNotificationCount>>, TError = ErrorType<unknown>>(params: GetUnreadNotificationCountParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUnreadNotificationCount>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetUnreadNotificationCountQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getUnreadNotificationCount>>> = ({ signal }) => getUnreadNotificationCount(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getUnreadNotificationCount>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetUnreadNotificationCountQueryResult = NonNullable<Awaited<ReturnType<typeof getUnreadNotificationCount>>>
+export type GetUnreadNotificationCountQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the current shop's unread notification count
+ */
+
+export function useGetUnreadNotificationCount<TData = Awaited<ReturnType<typeof getUnreadNotificationCount>>, TError = ErrorType<unknown>>(
+ params: GetUnreadNotificationCountParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getUnreadNotificationCount>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetUnreadNotificationCountQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -3386,6 +3495,90 @@ export function useGetReportRange<TData = Awaited<ReturnType<typeof getReportRan
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetReportRangeQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetMonthlySalesUrl = (params: GetMonthlySalesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/reports/monthly-sales?${stringifiedParams}` : `/api/reports/monthly-sales`
+}
+
+/**
+ * @summary Aggregated monthly sales for one calendar year
+ */
+export const getMonthlySales = async (params: GetMonthlySalesParams, options?: RequestInit): Promise<MonthlySalesReport> => {
+
+  return customFetch<MonthlySalesReport>(getGetMonthlySalesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMonthlySalesQueryKey = (params?: GetMonthlySalesParams,) => {
+    return [
+    `/api/reports/monthly-sales`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetMonthlySalesQueryOptions = <TData = Awaited<ReturnType<typeof getMonthlySales>>, TError = ErrorType<void>>(params: GetMonthlySalesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMonthlySales>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonthlySalesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonthlySales>>> = ({ signal }) => getMonthlySales(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMonthlySales>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMonthlySalesQueryResult = NonNullable<Awaited<ReturnType<typeof getMonthlySales>>>
+export type GetMonthlySalesQueryError = ErrorType<void>
+
+
+/**
+ * @summary Aggregated monthly sales for one calendar year
+ */
+
+export function useGetMonthlySales<TData = Awaited<ReturnType<typeof getMonthlySales>>, TError = ErrorType<void>>(
+ params: GetMonthlySalesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMonthlySales>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMonthlySalesQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

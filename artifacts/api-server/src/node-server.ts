@@ -34,7 +34,7 @@ const DB_PATH = path.join(DATA_DIR, "greenlink.db");
 // ── SQLite → D1Database shim ────────────────────────────────────────────────
 function makeD1(sqliteDb: Database.Database): D1Database {
   function runStatement(sql: string, params: unknown[]): D1PreparedStatement {
-    return {
+    const statement = {
       bind(...args: unknown[]) {
         return runStatement(sql, args);
       },
@@ -68,6 +68,8 @@ function makeD1(sqliteDb: Database.Database): D1Database {
         return rows as T[];
       },
     } as D1PreparedStatement;
+    Object.assign(statement, { __sqliteSql: sql, __sqliteParams: params });
+    return statement;
   }
 
   const d1: D1Database = {
@@ -75,15 +77,21 @@ function makeD1(sqliteDb: Database.Database): D1Database {
       return runStatement(sql, []);
     },
     async batch(statements: D1PreparedStatement[]) {
-      const results: any[] = [];
-      for (const stmt of statements) {
-        try {
-          results.push(await (stmt as any).run());
-        } catch {
-          results.push({ success: false, results: [], meta: {} });
-        }
-      }
-      return results;
+      // Match D1's all-or-nothing batch semantics in local development. Running
+      // each statement independently and swallowing errors can leave a debt
+      // without its sale (or vice versa), making local behavior differ from CF.
+      const transaction = sqliteDb.transaction(() =>
+        statements.map((statement) => {
+          const { __sqliteSql, __sqliteParams } = statement as any;
+          const info = sqliteDb.prepare(__sqliteSql).run(...__sqliteParams);
+          return {
+            success: true as const,
+            meta: { changes: info.changes, last_row_id: Number(info.lastInsertRowid) },
+            results: [],
+          };
+        }),
+      );
+      return transaction() as any;
     },
     async dump() {
       return new ArrayBuffer(0);
@@ -371,10 +379,21 @@ async function createApp() {
     }),
   );
 
-  // Inject local env bindings into every request context
+  // Inject local bindings and mirror the Worker cache policy so local
+  // development doesn't accidentally hide cross-device mutations either.
   app.use("*", async (c, next) => {
     Object.assign(c.env, env);
     await next();
+    if (c.req.method === "GET") {
+      const urlPath = new URL(c.req.url).pathname;
+      const isPublic = urlPath === "/api/shops" || urlPath.startsWith("/api/healthz");
+      c.res.headers.set(
+        "Cache-Control",
+        isPublic ? "public, max-age=120, stale-while-revalidate=300" : "private, no-store",
+      );
+    } else {
+      c.res.headers.set("Cache-Control", "no-store");
+    }
   });
 
   app.onError((err, c) => {

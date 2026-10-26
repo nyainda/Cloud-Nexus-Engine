@@ -1,18 +1,28 @@
 import { Hono } from "hono";
-import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, sql, or } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { sales, saleItems, products, debts, debtPayments, notifications } from "@workspace/db/schema";
 import { kvGet, kvSet, CK, CACHE_TTL } from "../lib/cache";
-import { chunk } from "../lib/chunk";
 
 const reportsRouter = new Hono<AppEnv>();
 
+function isValidDateOnly(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId") ?? null;
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
+  if (!isValidDateOnly(date)) return c.json({ error: "date must be a valid YYYY-MM-DD date" }, 400);
 
   // ── KV cache (5 min TTL, busted on every sale or debt payment) ──────────────
   if (shopId) {
@@ -23,16 +33,25 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
 
-  // All reads are independent — fire them in parallel to cut CPU time ~5×
-  const [daySales, lowStockRow, outOfStockRow, pendingDebts, unreadNotifications, itemsSold, cashCollectedRow] = await Promise.all([
-    db.select().from(sales).where(
+  // Aggregate sales in SQLite: the dashboard needs totals, not every sale row.
+  // This keeps response size and Worker CPU flat as transaction history grows.
+  const [daySalesSummary, lowStockRow, outOfStockRow, pendingDebtsRow, unreadNotificationsRow, itemsSold, cashCollectedRow] = await Promise.all([
+    db.select({
+      totalRevenue: sql<number>`COALESCE(SUM(${sales.totalAmount}), 0)`,
+      totalCost: sql<number>`COALESCE(SUM(${sales.totalCost}), 0)`,
+      totalProfit: sql<number>`COALESCE(SUM(${sales.totalProfit}), 0)`,
+      salesCount: sql<number>`COUNT(*)`,
+      cashSales: sql<number>`COALESCE(SUM(CASE WHEN ${sales.saleType} = 'cash' THEN ${sales.totalAmount} ELSE 0 END), 0)`,
+      debtSales: sql<number>`COALESCE(SUM(CASE WHEN ${sales.saleType} = 'debt' THEN ${sales.totalAmount} ELSE 0 END), 0)`,
+      bankSales: sql<number>`COALESCE(SUM(CASE WHEN ${sales.saleType} = 'cash' AND ${sales.paymentMethod} = 'bank' THEN ${sales.totalAmount} ELSE 0 END), 0)`,
+    }).from(sales).where(
       and(
-        shopId ? eq(sales.shopId, shopId) : undefined,
+        eq(sales.shopId, shopId),
         eq(sales.isDeleted, false),
         gte(sales.createdAt, startOfDay),
         lte(sales.createdAt, endOfDay),
       ),
-    ).all(),
+    ).get(),
     // Count low-stock products in SQL — avoids fetching all 2600+ rows just to count
     db.select({ count: sql<number>`COUNT(*)` }).from(products).where(
       and(
@@ -46,46 +65,58 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
         sql`is_active = 1 AND stock_qty = 0`,
       ),
     ).get(),
-    db.select().from(debts).where(
-      and(shopId ? eq(debts.shopId, shopId) : undefined, sql`status != 'paid'`),
-    ).all(),
-    db.select().from(notifications).where(
-      and(shopId ? eq(notifications.shopId, shopId) : undefined, eq(notifications.isRead, false)),
-    ).all(),
-    db.select().from(saleItems).where(
+    db.select({
+      total: sql<number>`COALESCE(SUM(${debts.balance}), 0)`,
+    }).from(debts).where(
+      and(eq(debts.shopId, shopId), sql`status != 'paid'`),
+    ).get(),
+    db.select({
+      count: sql<number>`COUNT(*)`,
+    }).from(notifications).where(
+      and(eq(notifications.shopId, shopId), eq(notifications.isRead, false)),
+    ).get(),
+    // Aggregate product lines in SQLite so the dashboard transfers product-level
+    // summaries instead of every individual sale item to the Worker.
+    db.select({
+      productId: saleItems.productId,
+      productName: saleItems.productName,
+      totalQtySold: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
+      totalRevenue: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+      totalProfit: sql<number>`SUM(${saleItems.totalProfit})`,
+    }).from(saleItems).where(
       sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${startOfDay} AND created_at <= ${endOfDay}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-    ).all(),
+    ).groupBy(saleItems.productId, saleItems.productName).all(),
     db.select({ total: sql<number>`COALESCE(SUM(amount), 0)` }).from(debtPayments).where(
       sql`paid_at >= ${startOfDay} AND paid_at <= ${endOfDay}${shopId ? sql` AND debt_id IN (SELECT id FROM debts WHERE shop_id = ${shopId})` : sql``}`,
     ).get(),
   ]);
 
-  const totalRevenue = daySales.reduce((s, sale) => s + sale.totalAmount, 0);
-  const totalCost = daySales.reduce((s, sale) => s + (sale.totalCost ?? 0), 0);
-  const totalProfit = daySales.reduce((s, sale) => s + (sale.totalProfit ?? 0), 0);
-  const cashSales = daySales.filter((s) => s.saleType === "cash").reduce((sum, s) => sum + s.totalAmount, 0);
-  const debtSales = daySales.filter((s) => s.saleType === "debt").reduce((sum, s) => sum + s.totalAmount, 0);
-  const bankSales = daySales.filter((s) => s.saleType === "cash" && (s as any).paymentMethod === "bank").reduce((sum, s) => sum + s.totalAmount, 0);
+  const totalRevenue = daySalesSummary?.totalRevenue ?? 0;
+  const totalCost = daySalesSummary?.totalCost ?? 0;
+  const totalProfit = daySalesSummary?.totalProfit ?? 0;
+  const cashSales = daySalesSummary?.cashSales ?? 0;
+  const debtSales = daySalesSummary?.debtSales ?? 0;
+  const bankSales = daySalesSummary?.bankSales ?? 0;
   const cashOnlySales = cashSales - bankSales;
 
   const lowStockCount = lowStockRow?.count ?? 0;
   const outOfStockCount = outOfStockRow?.count ?? 0;
-  const pendingDebtsTotal = pendingDebts.reduce((s, d) => s + d.balance, 0);
+  const pendingDebtsTotal = pendingDebtsRow?.total ?? 0;
 
   const productSales = new Map<string, { productId: string; productName: string; totalQtySold: number; totalRevenue: number; totalProfit: number | null }>();
   for (const item of itemsSold) {
     const key = item.productId ?? item.productName;
     const existing = productSales.get(key);
     if (existing) {
-      existing.totalQtySold += item.qty;
-      existing.totalRevenue += item.totalPrice;
+      existing.totalQtySold += item.totalQtySold;
+      existing.totalRevenue += item.totalRevenue;
       existing.totalProfit = (existing.totalProfit ?? 0) + (item.totalProfit ?? 0);
     } else {
       productSales.set(key, {
         productId: item.productId ?? key,
         productName: item.productName,
-        totalQtySold: item.qty,
-        totalRevenue: item.totalPrice,
+        totalQtySold: item.totalQtySold,
+        totalRevenue: item.totalRevenue,
         totalProfit: item.totalProfit,
       });
     }
@@ -102,7 +133,7 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     totalRevenue,
     totalProfit,
     totalCost,
-    salesCount: daySales.length,
+    salesCount: daySalesSummary?.salesCount ?? 0,
     marginPct: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
     cashSales,
     cashOnlySales,
@@ -113,7 +144,7 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
     lowStockCount,
     outOfStockCount,
     pendingDebtsTotal,
-    unreadNotificationsCount: unreadNotifications.length,
+    unreadNotificationsCount: unreadNotificationsRow?.count ?? 0,
   };
   if (shopId) {
     await kvSet(c.env.SESSIONS, CK.dashboard(shopId, date), dashPayload, CACHE_TTL.dashboard);
@@ -123,46 +154,54 @@ reportsRouter.get("/reports/dashboard", requireAuth, async (c) => {
 
 reportsRouter.get("/reports/range", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId") ?? null;
-  const from = c.req.query("from")!;
-  const to = c.req.query("to")!;
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+  if (!from || !to || !isValidDateOnly(from) || !isValidDateOnly(to) || from > to) {
+    return c.json({ error: "from and to must be valid YYYY-MM-DD dates, with from on or before to" }, 400);
+  }
 
   const fromTs = `${from}T00:00:00.000Z`;
   const toTs = `${to}T23:59:59.999Z`;
 
-  const [rangeSales, cashCollectedRow] = await Promise.all([
-    db.select().from(sales).where(
+  // One grouped SQL query replaces transferring every historical sale into
+  // the Worker. Daily rows are also the exact data needed for the chart.
+  const [dailyRows, cashCollectedRow] = await Promise.all([
+    db.select({
+      date: sql<string>`substr(${sales.createdAt}, 1, 10)`,
+      revenue: sql<number>`COALESCE(SUM(${sales.totalAmount}), 0)`,
+      cost: sql<number>`COALESCE(SUM(${sales.totalCost}), 0)`,
+      profit: sql<number>`COALESCE(SUM(${sales.totalProfit}), 0)`,
+      salesCount: sql<number>`COUNT(*)`,
+      cashSales: sql<number>`COALESCE(SUM(CASE WHEN ${sales.saleType} = 'cash' THEN ${sales.totalAmount} ELSE 0 END), 0)`,
+      debtSales: sql<number>`COALESCE(SUM(CASE WHEN ${sales.saleType} = 'debt' THEN ${sales.totalAmount} ELSE 0 END), 0)`,
+    }).from(sales).where(
       and(
-        shopId ? eq(sales.shopId, shopId) : undefined,
+        eq(sales.shopId, shopId),
         eq(sales.isDeleted, false),
         gte(sales.createdAt, fromTs),
         lte(sales.createdAt, toTs),
       ),
-    ).all(),
+    ).groupBy(sql`substr(${sales.createdAt}, 1, 10)`).orderBy(sql`substr(${sales.createdAt}, 1, 10)`).all(),
     db.select({ total: sql<number>`COALESCE(SUM(amount), 0)` }).from(debtPayments).where(
       sql`paid_at >= ${fromTs} AND paid_at <= ${toTs}${shopId ? sql` AND debt_id IN (SELECT id FROM debts WHERE shop_id = ${shopId})` : sql``}`,
     ).get(),
   ]);
 
-  const totalRevenue = rangeSales.reduce((s, sale) => s + sale.totalAmount, 0);
-  const totalCost = rangeSales.reduce((s, sale) => s + (sale.totalCost ?? 0), 0);
-  const totalProfit = rangeSales.reduce((s, sale) => s + (sale.totalProfit ?? 0), 0);
-  const cashSales = rangeSales.filter((s) => s.saleType === "cash").reduce((sum, s) => sum + s.totalAmount, 0);
-  const debtSales = rangeSales.filter((s) => s.saleType === "debt").reduce((sum, s) => sum + s.totalAmount, 0);
+  const totalRevenue = dailyRows.reduce((sum, row) => sum + row.revenue, 0);
+  const totalCost = dailyRows.reduce((sum, row) => sum + row.cost, 0);
+  const totalProfit = dailyRows.reduce((sum, row) => sum + row.profit, 0);
+  const cashSales = dailyRows.reduce((sum, row) => sum + row.cashSales, 0);
+  const debtSales = dailyRows.reduce((sum, row) => sum + row.debtSales, 0);
+  const salesCount = dailyRows.reduce((sum, row) => sum + row.salesCount, 0);
   const cashCollected = cashCollectedRow?.total ?? 0;
-
-  const dailyMap = new Map<string, { date: string; revenue: number; profit: number; salesCount: number }>();
-  for (const sale of rangeSales) {
-    const day = sale.createdAt.slice(0, 10);
-    const existing = dailyMap.get(day);
-    if (existing) {
-      existing.revenue += sale.totalAmount;
-      existing.profit += sale.totalProfit ?? 0;
-      existing.salesCount++;
-    } else {
-      dailyMap.set(day, { date: day, revenue: sale.totalAmount, profit: sale.totalProfit ?? 0, salesCount: 1 });
-    }
-  }
+  const dailyBreakdown = dailyRows.map(({ date, revenue, profit, salesCount }) => ({
+    date, revenue, profit, salesCount,
+  }));
 
   return c.json({
     from,
@@ -171,18 +210,22 @@ reportsRouter.get("/reports/range", requireAuth, async (c) => {
     totalRevenue,
     totalProfit,
     totalCost,
-    salesCount: rangeSales.length,
+    salesCount,
     marginPct: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
     cashSales,
     debtSales,
     cashCollected,
-    dailyBreakdown: Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date)),
+    dailyBreakdown,
   });
 });
 
 reportsRouter.get("/reports/monthly-sales", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId");
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const rawYear = c.req.query("year");
   const year = Number(rawYear);
   const currentYear = new Date().getFullYear();
@@ -237,88 +280,100 @@ reportsRouter.get("/reports/monthly-sales", requireAuth, async (c) => {
 
 reportsRouter.get("/reports/top-products", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId") ?? null;
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const from = c.req.query("from");
   const to = c.req.query("to");
   const limit = parseInt(c.req.query("limit") ?? "10");
 
+  if ((from && !isValidDateOnly(from)) || (to && !isValidDateOnly(to)) || (from && to && from > to)) {
+    return c.json({ error: "from/to must be valid YYYY-MM-DD dates, with from on or before to" }, 400);
+  }
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit), 10) || 10));
+  const productKey = sql`COALESCE(${saleItems.productId}, ${saleItems.productName})`;
 
-  const items = await db
-    .select()
+  // Preserve the historical sale-line name so renaming a catalog product does
+  // not rewrite how older sales appear in this report.
+  // Aggregate at the database so report cost scales with products sold, not
+  // every historical line item.
+  const topProducts = await db
+    .select({
+      productId: productKey,
+      productName: saleItems.productName,
+      totalQtySold: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
+      totalRevenue: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+      totalProfit: sql<number>`COALESCE(SUM(${saleItems.totalProfit}), 0)`,
+    })
     .from(saleItems)
-    .where(
-      sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${fromTs} AND created_at <= ${toTs}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-    )
+    .innerJoin(sales, eq(saleItems.saleId, sales.id))
+    .leftJoin(products, eq(saleItems.productId, products.id))
+    .where(and(
+      eq(sales.shopId, shopId),
+      eq(sales.isDeleted, false),
+      gte(sales.createdAt, fromTs),
+      lte(sales.createdAt, toTs),
+    ))
+    .groupBy(productKey, saleItems.productName)
+    .orderBy(sql`SUM(${saleItems.totalPrice}) DESC`)
+    .limit(safeLimit)
     .all();
 
-  const map = new Map<string, { productId: string; productName: string; totalQtySold: number; totalRevenue: number; totalProfit: number | null }>();
-  for (const item of items) {
-    const key = item.productId ?? item.productName;
-    const existing = map.get(key);
-    if (existing) {
-      existing.totalQtySold += item.qty;
-      existing.totalRevenue += item.totalPrice;
-      existing.totalProfit = (existing.totalProfit ?? 0) + (item.totalProfit ?? 0);
-    } else {
-      map.set(key, {
-        productId: item.productId ?? key,
-        productName: item.productName,
-        totalQtySold: item.qty,
-        totalRevenue: item.totalPrice,
-        totalProfit: item.totalProfit,
-      });
-    }
-  }
-
-  return c.json(
-    Array.from(map.values())
-      .sort((a, b) => b.totalRevenue - a.totalRevenue)
-      .slice(0, limit),
-  );
+  return c.json(topProducts);
 });
 
 reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId") ?? null;
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const from = c.req.query("from");
   const to = c.req.query("to");
 
+  if ((from && !isValidDateOnly(from)) || (to && !isValidDateOnly(to)) || (from && to && from > to)) {
+    return c.json({ error: "from/to must be valid YYYY-MM-DD dates, with from on or before to" }, 400);
+  }
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs = to ? `${to}T23:59:59.999Z` : new Date().toISOString();
 
-  const items = await db.select().from(saleItems).where(
-    sql`sale_id IN (SELECT id FROM sales WHERE is_deleted = 0 AND created_at >= ${fromTs} AND created_at <= ${toTs}${shopId ? sql` AND shop_id = ${shopId}` : sql``})`,
-  ).all();
+  const productKey = sql`COALESCE(${saleItems.productId}, ${saleItems.productName})`;
+  const displayName = sql<string>`COALESCE(${products.canonicalName}, ${saleItems.productName})`;
+  const categoryName = sql<string>`COALESCE(${products.category}, 'Uncategorized')`;
 
-  // Only need category/name for products that actually sold in this range —
-  // not the whole catalog. On a shop with 2,000+ products this previously
-  // read every row (every column) on every single report view regardless of
-  // date range, which is what was driving D1 read-row volume so high.
-  const productIds = Array.from(new Set(items.map((i) => i.productId).filter((id): id is string => !!id)));
-  const allProducts = productIds.length
-    ? (await Promise.all(
-        chunk(productIds).map((batch) =>
-          db
-            .select({ id: products.id, category: products.category, canonicalName: products.canonicalName })
-            .from(products)
-            .where(inArray(products.id, batch))
-            .all(),
-        ),
-      )).flat()
-    : [];
-  const productCategoryMap = new Map(allProducts.map((p) => [p.id, p.category ?? "Uncategorized"]));
-  const productNameMap = new Map(allProducts.map((p) => [p.id, p.canonicalName ?? p.id]));
+  // Return one row per product/category rather than every historical sale line.
+  const items = await db.select({
+    productId: saleItems.productId,
+    productName: displayName,
+    category: categoryName,
+    qty: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
+    totalPrice: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+    totalProfit: sql<number>`COALESCE(SUM(${saleItems.totalProfit}), 0)`,
+  }).from(saleItems)
+    .innerJoin(sales, eq(saleItems.saleId, sales.id))
+    .leftJoin(products, eq(saleItems.productId, products.id))
+    .where(and(
+      eq(sales.shopId, shopId),
+      eq(sales.isDeleted, false),
+      gte(sales.createdAt, fromTs),
+      lte(sales.createdAt, toTs),
+    ))
+    .groupBy(productKey, displayName, categoryName)
+    .all();
 
   type ProdEntry = { productId: string; productName: string; qtySold: number; totalRevenue: number; totalProfit: number };
   type CatEntry = { category: string; totalRevenue: number; totalProfit: number; salesCount: number; products: Map<string, ProdEntry> };
   const map = new Map<string, CatEntry>();
 
   for (const item of items) {
-    const category = (item.productId ? productCategoryMap.get(item.productId) : null) ?? "Uncategorized";
-    const productName = (item.productId ? productNameMap.get(item.productId) : null) ?? item.productName ?? "Unknown";
-    const productKey = item.productId ?? productName;
+    const category = item.category ?? "Uncategorized";
+    const productName = item.productName ?? "Unknown";
+    const key = item.productId ?? productName;
 
     let catEntry = map.get(category);
     if (!catEntry) {
@@ -329,10 +384,10 @@ reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
     catEntry.totalProfit += item.totalProfit ?? 0;
     catEntry.salesCount += item.qty;
 
-    let prodEntry = catEntry.products.get(productKey);
+    let prodEntry = catEntry.products.get(key);
     if (!prodEntry) {
       prodEntry = { productId: item.productId ?? "", productName, qtySold: 0, totalRevenue: 0, totalProfit: 0 };
-      catEntry.products.set(productKey, prodEntry);
+      catEntry.products.set(key, prodEntry);
     }
     prodEntry.qtySold += item.qty;
     prodEntry.totalRevenue += item.totalPrice;
@@ -354,55 +409,73 @@ reportsRouter.get("/reports/category-breakdown", requireAuth, async (c) => {
 
 reportsRouter.get("/reports/hourly", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId") ?? null;
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
+  if (!isValidDateOnly(date)) return c.json({ error: "date must be a valid YYYY-MM-DD date" }, 400);
   const startOfDay = `${date}T00:00:00.000Z`;
   const endOfDay = `${date}T23:59:59.999Z`;
 
-  const daySales = await db
-    .select()
+  // Return 24 compact buckets from SQLite instead of transferring every sale
+  // for the selected day into the Worker.
+  const hourlyRows = await db
+    .select({
+      hour: sql<number>`CAST(substr(${sales.createdAt}, 12, 2) AS INTEGER)`,
+      salesCount: sql<number>`COUNT(*)`,
+      revenue: sql<number>`COALESCE(SUM(${sales.totalAmount}), 0)`,
+    })
     .from(sales)
     .where(
       and(
-        shopId ? eq(sales.shopId, shopId) : undefined,
+        eq(sales.shopId, shopId),
         eq(sales.isDeleted, false),
         gte(sales.createdAt, startOfDay),
         lte(sales.createdAt, endOfDay),
       ),
     )
+    .groupBy(sql`CAST(substr(${sales.createdAt}, 12, 2) AS INTEGER)`)
     .all();
 
-  const hourMap = new Map<number, { hour: number; salesCount: number; revenue: number }>();
-  for (let h = 0; h < 24; h++) hourMap.set(h, { hour: h, salesCount: 0, revenue: 0 });
-  for (const sale of daySales) {
-    const hour = parseInt(sale.createdAt.slice(11, 13));
-    const entry = hourMap.get(hour)!;
-    entry.salesCount++;
-    entry.revenue += sale.totalAmount;
-  }
-
-  return c.json(Array.from(hourMap.values()));
+  const hourMap = new Map(hourlyRows.map((row) => [row.hour, row]));
+  return c.json(Array.from({ length: 24 }, (_, hour) => {
+    const row = hourMap.get(hour);
+    return {
+      hour,
+      salesCount: row?.salesCount ?? 0,
+      revenue: row?.revenue ?? 0,
+    };
+  }));
 });
 
 reportsRouter.get("/reports/debts-summary", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId") ?? null;
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
 
-  const allDebts = await db
-    .select()
-    .from(debts)
-    .where(shopId ? eq(debts.shopId, shopId) : undefined)
-    .all();
-
-  const unpaid = allDebts.filter((d) => d.status === "unpaid");
-  const partial = allDebts.filter((d) => d.status === "partial");
+  const [unpaid, partial] = await Promise.all([
+    db.select({
+      balance: sql<number>`COALESCE(SUM(${debts.balance}), 0)`,
+      totalAmount: sql<number>`COALESCE(SUM(${debts.totalAmount}), 0)`,
+      count: sql<number>`COUNT(*)`,
+    }).from(debts).where(and(eq(debts.shopId, shopId), eq(debts.status, "unpaid"))).get(),
+    db.select({
+      balance: sql<number>`COALESCE(SUM(${debts.balance}), 0)`,
+      count: sql<number>`COUNT(*)`,
+    }).from(debts).where(and(eq(debts.shopId, shopId), eq(debts.status, "partial"))).get(),
+  ]);
 
   return c.json({
-    totalOutstanding: unpaid.reduce((s, d) => s + d.balance, 0) + partial.reduce((s, d) => s + d.balance, 0),
-    totalUnpaid: unpaid.reduce((s, d) => s + d.totalAmount, 0),
-    totalPartial: partial.reduce((s, d) => s + d.balance, 0),
-    unpaidCount: unpaid.length,
-    partialCount: partial.length,
+    totalOutstanding: (unpaid?.balance ?? 0) + (partial?.balance ?? 0),
+    totalUnpaid: unpaid?.totalAmount ?? 0,
+    totalPartial: partial?.balance ?? 0,
+    unpaidCount: unpaid?.count ?? 0,
+    partialCount: partial?.count ?? 0,
   });
 });
 
@@ -412,7 +485,11 @@ reportsRouter.get("/reports/debts-summary", requireAuth, async (c) => {
 // "Roundup 1L" individually AND their combined revenue/profit/qty total.
 reportsRouter.get("/reports/product-search", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId") ?? null;
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const q = (c.req.query("q") ?? "").trim().toLowerCase();
   const from = c.req.query("from");
   const to = c.req.query("to");
@@ -421,98 +498,60 @@ reportsRouter.get("/reports/product-search", requireAuth, async (c) => {
     return c.json({ query: q, variants: [], summary: null });
   }
 
+  if ((from && !isValidDateOnly(from)) || (to && !isValidDateOnly(to)) || (from && to && from > to)) {
+    return c.json({ error: "from/to must be valid YYYY-MM-DD dates, with from on or before to" }, 400);
+  }
   const fromTs = from ? `${from}T00:00:00.000Z` : "2020-01-01T00:00:00.000Z";
   const toTs   = to   ? `${to}T23:59:59.999Z`   : new Date().toISOString();
 
-  // 1. Find all products whose canonical/normalized name contains the query
-  //    so we can also match by productId (catches name changes after the sale)
-  const matchingProducts = await db
-    .select({ id: products.id, canonicalName: products.canonicalName, category: products.category })
-    .from(products)
-    .where(
-      shopId
-        ? and(eq(products.shopId, shopId), sql`lower(canonical_name) LIKE ${"%" + q + "%"}`)
-        : sql`lower(canonical_name) LIKE ${"%" + q + "%"}`,
-    )
+  const productKey = sql`COALESCE(${saleItems.productId}, ${saleItems.productName})`;
+  const displayName = sql<string>`COALESCE(${products.canonicalName}, ${saleItems.productName})`;
+  const categoryName = sql<string>`COALESCE(${products.category}, 'Uncategorized')`;
+  const searchPattern = `%${q}%`;
+
+  // Filter and aggregate in SQLite. The previous version loaded every sale
+  // line in the date range into Worker memory before applying the product
+  // search, making a single-product lookup increasingly expensive over time.
+  const aggregated = await db.select({
+    productId: saleItems.productId,
+    productName: displayName,
+    category: categoryName,
+    totalQty: sql<number>`COALESCE(SUM(${saleItems.qty}), 0)`,
+    totalRevenue: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+    totalProfit: sql<number>`COALESCE(SUM(${saleItems.totalProfit}), 0)`,
+    salesCount: sql<number>`COUNT(*)`,
+  }).from(saleItems)
+    .innerJoin(sales, eq(saleItems.saleId, sales.id))
+    .leftJoin(products, eq(saleItems.productId, products.id))
+    .where(and(
+      eq(sales.shopId, shopId),
+      eq(sales.isDeleted, false),
+      gte(sales.createdAt, fromTs),
+      lte(sales.createdAt, toTs),
+      or(
+        sql`lower(${products.canonicalName}) LIKE ${searchPattern}`,
+        sql`lower(${saleItems.productName}) LIKE ${searchPattern}`,
+      ),
+    ))
+    .groupBy(productKey, displayName, categoryName)
+    .orderBy(sql`SUM(${saleItems.totalPrice}) DESC`)
     .all();
 
-  const matchingProductIds = new Set(matchingProducts.map((p) => p.id));
-  const canonicalNameById  = new Map(matchingProducts.map((p) => [p.id, p.canonicalName]));
-  const categoryById       = new Map(matchingProducts.map((p) => [p.id, p.category ?? "Uncategorized"]));
-
-  // 2. Pull all sale_items in the date range that match either by productId or productName
-  const items = await db
-    .select()
-    .from(saleItems)
-    .where(
-      sql`sale_id IN (
-        SELECT id FROM sales
-        WHERE is_deleted = 0
-          AND created_at >= ${fromTs}
-          AND created_at <= ${toTs}
-          ${shopId ? sql`AND shop_id = ${shopId}` : sql``}
-      )`,
-    )
-    .all();
-
-  // 3. Keep only items that match the query (by productId OR productName substring)
-  const matched = items.filter(
-    (item) =>
-      (item.productId && matchingProductIds.has(item.productId)) ||
-      item.productName.toLowerCase().includes(q),
-  );
-
-  // 4. Group by (productId → canonicalName) so same product sold under old/new
-  //    names still merges correctly. Fall back to productName when no productId.
-  type Variant = {
-    productId: string;
-    productName: string;
-    category: string;
-    totalQty: number;
-    totalRevenue: number;
-    totalProfit: number;
-    salesCount: number;
-  };
-
-  const variantMap = new Map<string, Variant>();
-
-  for (const item of matched) {
-    const key          = item.productId ?? item.productName;
-    const displayName  = item.productId
-      ? (canonicalNameById.get(item.productId) ?? item.productName)
-      : item.productName;
-    const category     = item.productId
-      ? (categoryById.get(item.productId) ?? "Uncategorized")
-      : "Uncategorized";
-
-    const existing = variantMap.get(key);
-    if (existing) {
-      existing.totalQty     += item.qty;
-      existing.totalRevenue += item.totalPrice;
-      existing.totalProfit  += item.totalProfit ?? 0;
-      existing.salesCount   += 1;
-    } else {
-      variantMap.set(key, {
-        productId:    item.productId ?? key,
-        productName:  displayName,
-        category,
-        totalQty:     item.qty,
-        totalRevenue: item.totalPrice,
-        totalProfit:  item.totalProfit ?? 0,
-        salesCount:   1,
-      });
-    }
-  }
-
-  const variants = Array.from(variantMap.values()).sort(
-    (a, b) => b.totalRevenue - a.totalRevenue,
-  );
+  const variants = aggregated.map((item) => ({
+    productId: item.productId ?? item.productName,
+    productName: item.productName,
+    category: item.category,
+    totalQty: item.totalQty,
+    totalRevenue: item.totalRevenue,
+    totalProfit: item.totalProfit,
+    salesCount: item.salesCount,
+  }));
 
   const summary = variants.length === 0 ? null : {
-    totalQty:     variants.reduce((s, v) => s + v.totalQty, 0),
-    totalRevenue: variants.reduce((s, v) => s + v.totalRevenue, 0),
-    totalProfit:  variants.reduce((s, v) => s + v.totalProfit, 0),
-    salesCount:   variants.reduce((s, v) => s + v.salesCount, 0),
+    totalQty: variants.reduce((sum, item) => sum + item.totalQty, 0),
+    totalRevenue: variants.reduce((sum, item) => sum + item.totalRevenue, 0),
+    totalProfit: variants.reduce((sum, item) => sum + item.totalProfit, 0),
+    salesCount: variants.reduce((sum, item) => sum + item.salesCount, 0),
   };
 
   return c.json({ query: q, from: fromTs, to: toTs, variants, summary });

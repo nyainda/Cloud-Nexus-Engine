@@ -1,9 +1,9 @@
-import { useGetDashboard, useListShops } from "@workspace/api-client-react";
+import { useGetDashboard } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatKES } from "@/lib/format";
 import {
   TrendingUp, CreditCard, Package, AlertTriangle, Store,
-  TrendingDown, ArrowUpRight, Percent, ChevronLeft, ChevronRight, CalendarDays
+  TrendingDown, ArrowUpRight, ChevronLeft, ChevronRight, CalendarDays
 } from "lucide-react";
 import { format, subDays, parseISO } from "date-fns";
 import { useState } from "react";
@@ -14,7 +14,6 @@ import {
 } from "recharts";
 
 const SHOP_A_COLOR = "hsl(75 100% 50%)";
-const SHOP_B_COLOR = "hsl(200 80% 55%)";
 
 function StatCard({
   label, value, sub, icon: Icon, color, bg
@@ -97,58 +96,36 @@ export default function OwnerDashboard() {
   const isToday = selectedDate === todayStr;
   const isYesterday = selectedDate === format(subDays(new Date(), 1), "yyyy-MM-dd");
 
-  const { data: shops } = useListShops();
-  const shopA = shops?.[0];
-  const shopB = shops?.[1];
-  const SHOP_A_ID = shopA?.id ?? "";
-  const SHOP_B_ID = shopB?.id ?? "";
-  const SHOP_A_NAME = shopA?.name ?? "Shop A";
-  const SHOP_B_NAME = shopB?.name ?? "Shop B";
+  // Scope this dashboard to the shop selected during authenticated login.
+  // Cross-shop totals require an explicit owner/business-group permission model.
+  const SHOP_A_ID = localStorage.getItem("greenlink_shopId") ?? "";
+  const SHOP_A_NAME = localStorage.getItem("greenlink_shopName") ?? "Current Shop";
 
   const { data: dataA, isLoading: loadingA } = useGetDashboard(
     { shopId: SHOP_A_ID, date: selectedDate },
-    { query: { enabled: !!SHOP_A_ID, refetchInterval: 30_000, refetchIntervalInBackground: false } }
+    { query: { enabled: !!SHOP_A_ID, refetchInterval: 60_000, refetchIntervalInBackground: false } }
   );
-  const { data: dataB, isLoading: loadingB } = useGetDashboard(
-    { shopId: SHOP_B_ID, date: selectedDate },
-    { query: { enabled: !!SHOP_B_ID, refetchInterval: 30_000, refetchIntervalInBackground: false } }
-  );
+  const allLoaded = !loadingA;
 
-  const allLoaded = !loadingA && !loadingB;
-
-  const combined = allLoaded && (dataA || dataB) ? {
-    totalRevenue: (dataA?.totalRevenue ?? 0) + (dataB?.totalRevenue ?? 0),
-    totalProfit: (dataA?.totalProfit ?? 0) + (dataB?.totalProfit ?? 0),
-    pendingDebtsTotal: (dataA?.pendingDebtsTotal ?? 0) + (dataB?.pendingDebtsTotal ?? 0),
-    salesCount: (dataA?.salesCount ?? 0) + (dataB?.salesCount ?? 0),
-    outOfStockCount: (dataA?.outOfStockCount ?? 0) + (dataB?.outOfStockCount ?? 0),
-    lowStockCount: (dataA?.lowStockCount ?? 0) + (dataB?.lowStockCount ?? 0),
-    debtSales: (dataA?.debtSales ?? 0) + (dataB?.debtSales ?? 0),
+  const summary = allLoaded && dataA ? {
+    totalRevenue: dataA.totalRevenue ?? 0,
+    totalProfit: dataA.totalProfit ?? 0,
+    pendingDebtsTotal: dataA.pendingDebtsTotal ?? 0,
+    salesCount: dataA.salesCount ?? 0,
+    outOfStockCount: dataA.outOfStockCount ?? 0,
+    lowStockCount: dataA.lowStockCount ?? 0,
+    debtSales: dataA.debtSales ?? 0,
   } : null;
 
-  const combinedProfitPct = combined && combined.totalRevenue > 0
-    ? (combined.totalProfit / combined.totalRevenue * 100) : 0;
+  const profitPct = summary && summary.totalRevenue > 0
+    ? (summary.totalProfit / summary.totalRevenue * 100) : 0;
 
-  const chartData = [
-    {
-      name: (SHOP_A_NAME ?? "Shop A").split(" ")[0],
-      Revenue: dataA?.totalRevenue ?? 0,
-      Profit: dataA?.totalProfit ?? 0,
-      Debt: dataA?.pendingDebtsTotal ?? 0,
-    },
-    {
-      name: (SHOP_B_NAME ?? "Shop B").split(" ")[0],
-      Revenue: dataB?.totalRevenue ?? 0,
-      Profit: dataB?.totalProfit ?? 0,
-      Debt: dataB?.pendingDebtsTotal ?? 0,
-    },
-  ];
-
-  const revA = dataA?.totalRevenue ?? 0;
-  const revB = dataB?.totalRevenue ?? 0;
-  const totalRev = revA + revB;
-  const pctA = totalRev > 0 ? (revA / totalRev * 100) : 0;
-  const pctB = totalRev > 0 ? (revB / totalRev * 100) : 0;
+  const chartData = [{
+    name: SHOP_A_NAME.split(" ")[0],
+    Revenue: dataA?.totalRevenue ?? 0,
+    Profit: dataA?.totalProfit ?? 0,
+    Debt: dataA?.pendingDebtsTotal ?? 0,
+  }];
 
   return (
     <div className="flex flex-col min-h-full bg-background">
@@ -157,7 +134,7 @@ export default function OwnerDashboard() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold font-display">Owner Dashboard</h1>
-            <p className="text-xs text-muted-foreground">All Shops · Combined</p>
+            <p className="text-xs text-muted-foreground">{SHOP_A_NAME} · Shop summary</p>
           </div>
           <div className={cn(
             "text-[10px] font-bold px-2 py-1 rounded-full border",
@@ -229,47 +206,47 @@ export default function OwnerDashboard() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-6">
-        {/* Combined KPIs */}
+        {/* KPIs for the authenticated shop only */}
         {!allLoaded ? (
           <div className="flex flex-col items-center justify-center h-32 gap-3 text-muted-foreground">
             <div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-            <p className="text-sm">Loading all shops…</p>
+            <p className="text-sm">Loading shop summary…</p>
           </div>
-        ) : combined ? (
+        ) : summary ? (
           <>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 px-0.5">
-                {isToday ? "Combined Today" : isYesterday ? "Combined Yesterday" : `Combined · ${format(parseISO(selectedDate), "d MMM yyyy")}`}
+                {isToday ? "Today" : isYesterday ? "Yesterday" : format(parseISO(selectedDate), "d MMM yyyy")}
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <StatCard
                   label="Total Revenue"
-                  value={formatKES(combined.totalRevenue)}
-                  sub={`${combined.salesCount} transactions`}
+                  value={formatKES(summary.totalRevenue)}
+                  sub={`${summary.salesCount} transactions`}
                   icon={TrendingUp}
                   color="text-primary"
                   bg="bg-primary/10"
                 />
                 <StatCard
                   label="Gross Profit"
-                  value={formatKES(combined.totalProfit)}
-                  sub={`${combinedProfitPct.toFixed(1)}% margin`}
+                  value={formatKES(summary.totalProfit)}
+                  sub={`${profitPct.toFixed(1)}% margin`}
                   icon={ArrowUpRight}
                   color="text-emerald-400"
                   bg="bg-emerald-500/10"
                 />
                 <StatCard
                   label="Outstanding Debt"
-                  value={formatKES(combined.pendingDebtsTotal)}
-                  sub="across all shops"
+                  value={formatKES(summary.pendingDebtsTotal)}
+                  sub="for this shop"
                   icon={CreditCard}
                   color="text-destructive"
                   bg="bg-destructive/10"
                 />
                 <StatCard
                   label="Stock Alerts"
-                  value={String(combined.lowStockCount + combined.outOfStockCount)}
-                  sub={`${combined.outOfStockCount} out, ${combined.lowStockCount} low`}
+                  value={String(summary.lowStockCount + summary.outOfStockCount)}
+                  sub={`${summary.outOfStockCount} out, ${summary.lowStockCount} low`}
                   icon={Package}
                   color="text-orange-400"
                   bg="bg-orange-500/10"
@@ -278,17 +255,17 @@ export default function OwnerDashboard() {
             </div>
 
             {/* Debt issued today */}
-            {combined.debtSales > 0 && (
+            {summary.debtSales > 0 && (
               <div className="flex items-center justify-between bg-destructive/10 border border-destructive/20 rounded-xl px-4 py-3">
                 <div className="flex items-center gap-2">
                   <TrendingDown className="h-4 w-4 text-destructive" />
                   <div>
                     <p className="text-xs font-bold text-destructive">Debt Issued Today</p>
-                    <p className="text-[10px] text-muted-foreground">Combined across shops</p>
+                    <p className="text-[10px] text-muted-foreground">For this shop</p>
                   </div>
                 </div>
                 <span className="font-bold font-mono text-destructive text-sm">
-                  {formatKES(combined.debtSales)}
+                  {formatKES(summary.debtSales)}
                 </span>
               </div>
             )}
@@ -298,7 +275,7 @@ export default function OwnerDashboard() {
               <CardHeader className="pb-2 pt-4 px-4">
                 <CardTitle className="text-sm font-bold flex items-center gap-1.5">
                   <Store className="h-4 w-4 text-primary" />
-                  Shop Comparison
+                  Sales Overview
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-2 pb-4">
@@ -330,10 +307,10 @@ export default function OwnerDashboard() {
               </CardContent>
             </Card>
 
-            {/* Per-shop breakdown */}
+            {/* Authenticated shop details */}
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 px-0.5">
-                Per Shop
+                Shop Details
               </p>
               <div className="space-y-3">
                 <ShopBreakdown
@@ -342,46 +319,9 @@ export default function OwnerDashboard() {
                   data={dataA}
                   isLoading={loadingA}
                 />
-                <ShopBreakdown
-                  shopName={SHOP_B_NAME}
-                  color={SHOP_B_COLOR}
-                  data={dataB}
-                  isLoading={loadingB}
-                />
               </div>
             </div>
 
-            {/* Revenue split */}
-            <Card className="bg-card border-border shadow-none">
-              <CardHeader className="pb-2 pt-4 px-4">
-                <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-                  <Percent className="h-4 w-4 text-primary" />
-                  Revenue Split
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 space-y-3">
-                {[
-                  { name: SHOP_A_NAME, color: SHOP_A_COLOR, pct: pctA },
-                  { name: SHOP_B_NAME, color: SHOP_B_COLOR, pct: pctB },
-                ].map(shop => (
-                  <div key={shop.name} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-foreground flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: shop.color }} />
-                        {shop.name}
-                      </span>
-                      <span className="font-mono text-muted-foreground">{shop.pct.toFixed(1)}%</span>
-                    </div>
-                    <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{ width: `${shop.pct}%`, background: shop.color }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
           </>
         ) : (
           <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground">

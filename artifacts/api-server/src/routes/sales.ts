@@ -17,10 +17,14 @@ function money(value: number): number {
 
 salesRouter.get("/sales", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId");
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
-  const limit = parseInt(c.req.query("limit") ?? "50");
-  const offset = parseInt(c.req.query("offset") ?? "0");
+  const limit = Math.min(200, Math.max(1, Number.parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = Math.max(0, Number.parseInt(c.req.query("offset") ?? "0", 10) || 0);
   const includeVoided = c.req.query("includeVoided") === "true";
 
   const startOfDay = `${date}T00:00:00.000Z`;
@@ -135,6 +139,13 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     debtCustomerPhone?: string;
   }>();
 
+  if (body.saleType !== "cash" && body.saleType !== "debt") {
+    return c.json({ error: "saleType must be cash or debt" }, 400);
+  }
+  if (body.paymentMethod !== undefined && body.paymentMethod !== "cash" && body.paymentMethod !== "bank") {
+    return c.json({ error: "paymentMethod must be cash or bank" }, 400);
+  }
+
   // A debt sale without a customer cannot be reconciled later: it would appear
   // in sales history but never be discoverable in the debt ledger or CRM.
   // Reject it before writing the sale so those two records cannot drift apart.
@@ -165,20 +176,62 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     totalProfit: number | null;
   }> = [];
 
-  // Collect products during the first loop — reused in the stock-deduction loop
-  // to eliminate the N+1 re-fetch (one DB hit per item instead of two).
-  const productMap = new Map<string, typeof products.$inferSelect>();
+  const session = c.get("session");
+  if (!body.shopId || body.shopId !== session.shopId) {
+    return c.json({ error: "Forbidden: shop does not match the authenticated session" }, 403);
+  }
+  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 200) {
+    return c.json({ error: "A sale must contain between 1 and 200 items" }, 400);
+  }
+  for (const item of body.items) {
+    if (
+      !item?.productId ||
+      !Number.isFinite(item.qty) ||
+      item.qty <= 0 ||
+      !Number.isFinite(item.unitPrice) ||
+      item.unitPrice < 0
+    ) {
+      return c.json({ error: "Each item requires a product, positive quantity, and non-negative unit price" }, 400);
+    }
+  }
+  const discountInput = body.discount ?? 0;
+  if (!Number.isFinite(discountInput) || discountInput < 0) {
+    return c.json({ error: "Discount must be a non-negative number" }, 400);
+  }
+
+  // One indexed query for the distinct products in the basket, scoped to the
+  // authenticated shop. This avoids one D1 round trip per line item and stops
+  // cross-shop or inactive products being sold through a forged request.
+  const productIds = Array.from(new Set(body.items.map((item) => item.productId)));
+  // D1 supports at most 100 bound parameters per statement. Chunk IDs
+  // so large baskets remain valid while keeping the queries parallel.
+  const productsInShop = (await Promise.all(
+    chunk(productIds).map((ids) =>
+      db
+        .select()
+        .from(products)
+        .where(and(
+          inArray(products.id, ids),
+          eq(products.shopId, body.shopId),
+          eq(products.isActive, true),
+        ))
+        .all(),
+    ),
+  )).flat();
+  const productMap = new Map<string, typeof products.$inferSelect>(
+    productsInShop.map((product) => [product.id, product] as const),
+  );
+  if (productMap.size !== productIds.length) {
+    return c.json({ error: "One or more products are unavailable in this shop" }, 400);
+  }
 
   for (const item of body.items) {
-    const product = await db
-      .select()
-      .from(products)
-      .where(eq(products.id, item.productId))
-      .get();
-    if (product) productMap.set(item.productId, product);
-
+    const product = productMap.get(item.productId)!;
+    if (!product.allowDecimals && !Number.isInteger(item.qty)) {
+      return c.json({ error: `${product.canonicalName} must be sold in whole units` }, 400);
+    }
     const lineTotal = item.unitPrice * item.qty;
-    const unitCost = product?.purchasePrice ?? null;
+    const unitCost = product.purchasePrice ?? null;
     const unitProfit = unitCost !== null ? item.unitPrice - unitCost : null;
     const lineProfit = unitProfit !== null ? unitProfit * item.qty : null;
 
@@ -190,7 +243,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
       id: crypto.randomUUID(),
       saleId,
       productId: item.productId,
-      productName: product?.canonicalName ?? item.productId,
+      productName: product.canonicalName,
       qty: item.qty,
       unitPrice: item.unitPrice,
       unitCost,
@@ -200,7 +253,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
     });
   }
 
-  const discount = body.discount ?? 0;
+  const discount = discountInput;
   totalAmount = Math.max(0, totalAmount - discount);
 
   const creditSources = debtCustomerName
@@ -277,8 +330,10 @@ salesRouter.post("/sales", requireAuth, async (c) => {
       : []),
   ]);
 
-  for (const item of lineItems) {
-    await db.insert(saleItems).values(item);
+  // D1 limits bound variables per statement. Keep each multi-row insert
+  // comfortably below that limit while avoiding one awaited INSERT per line.
+  for (const itemChunk of chunk(lineItems, 8)) {
+    await db.insert(saleItems).values(itemChunk);
   }
 
   for (const item of body.items) {
@@ -353,11 +408,12 @@ salesRouter.post("/sales", requireAuth, async (c) => {
 salesRouter.get("/sales/:saleId", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const saleId = c.req.param("saleId");
-  const [sale, items] = await Promise.all([
-    db.select().from(sales).where(eq(sales.id, saleId)).get(),
-    db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).all(),
-  ]);
+  const shopId = c.get("session").shopId;
+  const sale = await db.select().from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.shopId, shopId)))
+    .get();
   if (!sale) return c.json({ error: "Not found" }, 404);
+  const items = await db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).all();
   return c.json({ ...sale, items });
 });
 
@@ -368,7 +424,10 @@ salesRouter.delete("/sales/:saleId", requireAuth, async (c) => {
   }>().catch(() => ({})) as { reason?: string; performedBy?: string };
   const db = createDb(c.env.DB);
   const saleId = c.req.param("saleId");
-  const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
+  const shopId = c.get("session").shopId;
+  const sale = await db.select().from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.shopId, shopId)))
+    .get();
   if (!sale) return c.json({ error: "Not found" }, 404);
   if (sale.isDeleted) return c.json({ error: "Sale already voided" }, 409);
   const now = new Date().toISOString();
@@ -459,14 +518,32 @@ salesRouter.post("/returns", requireAuth, async (c) => {
     processedBy?: string;
   }>();
 
-  if (!body.productId || !body.qty || body.qty <= 0)
-    return c.json({ error: "productId and qty > 0 required" }, 400);
+  const sessionShopId = c.get("session").shopId;
+  if (!body.shopId || body.shopId !== sessionShopId) {
+    return c.json({ error: "Forbidden: shop does not match the authenticated session" }, 403);
+  }
+  if (
+    !body.productId ||
+    !Number.isFinite(body.qty) ||
+    body.qty <= 0 ||
+    (body.unitPrice !== undefined && (!Number.isFinite(body.unitPrice) || body.unitPrice < 0))
+  ) {
+    return c.json({ error: "productId, positive quantity, and non-negative unit price are required" }, 400);
+  }
 
   const now = new Date().toISOString();
   const returnId = crypto.randomUUID();
 
-  const product = await db.select().from(products).where(eq(products.id, body.productId)).get();
+  const product = await db.select().from(products).where(
+    and(
+      eq(products.id, body.productId),
+      eq(products.shopId, sessionShopId),
+    ),
+  ).get();
   if (!product) return c.json({ error: "Product not found" }, 404);
+  if (!product.allowDecimals && !Number.isInteger(body.qty)) {
+    return c.json({ error: `${product.canonicalName} must be returned in whole units` }, 400);
+  }
 
   const beforeQty = product.stockQty;
   const afterQty = beforeQty + body.qty;
@@ -544,10 +621,16 @@ salesRouter.post("/returns", requireAuth, async (c) => {
 salesRouter.get("/sales/:saleId/returns", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const saleId = c.req.param("saleId");
+  const shopId = c.get("session").shopId;
+  const sale = await db.select({ id: sales.id }).from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.shopId, shopId)))
+    .get();
+  if (!sale) return c.json({ error: "Not found" }, 404);
+
   const rows = await db
     .select()
     .from(saleReturns)
-    .where(eq(saleReturns.saleId, saleId))
+    .where(and(eq(saleReturns.saleId, saleId), eq(saleReturns.shopId, shopId)))
     .all();
   return c.json(rows);
 });
@@ -556,7 +639,11 @@ salesRouter.get("/sales/:saleId/returns", requireAuth, async (c) => {
 // ─── List all returns for a shop on a date ───────────────────────────────────
 salesRouter.get("/returns", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
-  const shopId = c.req.query("shopId");
+  const requestedShopId = c.req.query("shopId");
+  const shopId = c.get("session").shopId;
+  if (requestedShopId && requestedShopId !== shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
   const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
 
   const startOfDay = `${date}T00:00:00.000Z`;
@@ -567,7 +654,7 @@ salesRouter.get("/returns", requireAuth, async (c) => {
     .from(saleReturns)
     .where(
       and(
-        shopId ? eq(saleReturns.shopId, shopId) : undefined,
+        eq(saleReturns.shopId, shopId),
         gte(saleReturns.createdAt, startOfDay),
         lte(saleReturns.createdAt, endOfDay),
       )
@@ -595,10 +682,30 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     }>;
   }>();
 
-  const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get();
+  const shopId = c.get("session").shopId;
+  if (!body.shopId || body.shopId !== shopId) {
+    return c.json({ error: "Forbidden: shop does not match the authenticated session" }, 403);
+  }
+  const sale = await db.select().from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.shopId, shopId)))
+    .get();
   if (!sale) return c.json({ error: "Sale not found" }, 404);
   if (sale.isDeleted) return c.json({ error: "Cannot return items from a voided sale" }, 400);
-  if (!body.items || body.items.length === 0) return c.json({ error: "No items to return" }, 400);
+  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 200) {
+    return c.json({ error: "A return must contain between 1 and 200 items" }, 400);
+  }
+  for (const item of body.items) {
+    if (
+      !Number.isFinite(item?.qty) ||
+      item.qty <= 0 ||
+      !Number.isFinite(item?.unitPrice) ||
+      item.unitPrice < 0 ||
+      !Number.isFinite(item?.refundAmount) ||
+      item.refundAmount < 0
+    ) {
+      return c.json({ error: "Each return item requires a positive quantity and non-negative price/refund" }, 400);
+    }
+  }
 
   // ── Guard: compute already-returned qty per product for this sale ────────────
   const existingReturnRows = await db
@@ -618,19 +725,37 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
   // ── Fetch original sold quantities ───────────────────────────────────────────
   const soldRows = await db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).all();
   const soldQty: Record<string, number> = {};
+  const maxSoldUnitPrice: Record<string, number> = {};
   for (const si of soldRows) {
-    if (si.productId) soldQty[si.productId] = (soldQty[si.productId] ?? 0) + si.qty;
+    if (si.productId) {
+      soldQty[si.productId] = (soldQty[si.productId] ?? 0) + si.qty;
+      maxSoldUnitPrice[si.productId] = Math.max(maxSoldUnitPrice[si.productId] ?? 0, si.unitPrice);
+    }
+  }
+
+  // Aggregate duplicate product lines before checking the returnable quantity.
+  // Otherwise two individually-valid lines could together return more than sold.
+  const requestedQtyByProduct: Record<string, number> = {};
+  for (const item of body.items) {
+    if (!item.productId) continue;
+    requestedQtyByProduct[item.productId] = (requestedQtyByProduct[item.productId] ?? 0) + item.qty;
+    if (item.unitPrice > (maxSoldUnitPrice[item.productId] ?? -1)) {
+      return c.json({ error: `Return price for "${item.productName}" cannot exceed its recorded sale price` }, 400);
+    }
+    if (item.refundAmount > item.qty * item.unitPrice) {
+      return c.json({ error: `Refund for "${item.productName}" cannot exceed quantity multiplied by unit price` }, 400);
+    }
   }
 
   // ── Validate each return item ────────────────────────────────────────────────
-  for (const item of body.items) {
-    if (!item.productId) continue;
-    const originalQty = soldQty[item.productId] ?? 0;
-    const prevReturned = alreadyReturned[item.productId] ?? 0;
+  for (const [productId, requestedQty] of Object.entries(requestedQtyByProduct)) {
+    const originalQty = soldQty[productId] ?? 0;
+    const prevReturned = alreadyReturned[productId] ?? 0;
     const maxReturnable = originalQty - prevReturned;
-    if (item.qty > maxReturnable) {
+    if (requestedQty > maxReturnable) {
+      const productName = body.items.find((item) => item.productId === productId)?.productName ?? "product";
       return c.json({
-        error: `Cannot return ${item.qty}× "${item.productName}" — only ${maxReturnable} can be returned (${prevReturned} already returned of ${originalQty} sold)`,
+        error: `Cannot return ${requestedQty}× "${productName}" — only ${maxReturnable} can be returned (${prevReturned} already returned of ${originalQty} sold)`,
       }, 400);
     }
   }
@@ -638,7 +763,10 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
   const now = new Date().toISOString();
   const returnId = crypto.randomUUID();
 
-  const totalRefund = body.items.reduce((sum, it) => sum + it.refundAmount, 0);
+  const totalRefund = money(body.items.reduce((sum, it) => sum + it.refundAmount, 0));
+  if (!Number.isFinite(totalRefund) || totalRefund > sale.totalAmount) {
+    return c.json({ error: "Total refund cannot exceed the remaining sale amount" }, 400);
+  }
 
   // Restore stock for each returned product
   for (const item of body.items) {
@@ -646,7 +774,7 @@ salesRouter.post("/sales/:saleId/returns", requireAuth, async (c) => {
     const product = await db
       .select()
       .from(products)
-      .where(eq(products.id, item.productId))
+      .where(and(eq(products.id, item.productId), eq(products.shopId, shopId)))
       .get();
     if (!product) continue;
 

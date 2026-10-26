@@ -150,7 +150,10 @@ productsRouter.get("/products", requireAuth, async (c) => {
           headers: {
             "Content-Type": "application/json",
             "X-Product-Catalog-Version": catalogVersion,
-            "Cache-Control": `private, max-age=${PRODUCT_EDGE_CACHE_TTL}`,
+            // This response is stored under a shop-scoped internal cache key.
+            // `private` prevents the Workers Cache API from storing it; the
+            // response returned to the authenticated browser remains private.
+            "Cache-Control": `public, max-age=${PRODUCT_EDGE_CACHE_TTL}`,
           },
         }),
       ),

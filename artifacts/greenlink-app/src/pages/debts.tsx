@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { format, formatDistanceToNow, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
+import { drawPdfStamp } from "@/lib/pdf-stamp";
 import {
   addDebtToCustomerListCaches,
   applyDebtPayment,
@@ -90,6 +91,7 @@ function debtGenuineCashReceived(debt: any): number {
     .filter(
       (p: any) =>
         p.paymentType !== "reversal" &&
+        Number(p.amount) >= 0 &&
         p.paymentType !== "credit_applied" &&
         !reversedIds.has(p.id),
     )
@@ -292,7 +294,7 @@ function PaymentDialog({ debt }: { debt: any }) {
     // Fire network request in the background.
     // ⚠️ Do NOT call invalidateQueries on success — it triggers a refetch that can
     // return stale cached data and revert the optimistic update. The optimistic patch
-    // above is already authoritative; the 20-second refetchInterval will sync eventually.
+    // above is already authoritative; the 60-second refetchInterval will sync eventually.
     recordPayment.mutateAsync({ debtId: debt.id, data: { amount: paid, recordedBy: userName } })
       .then(() => {
         // Server confirmed — safe to refetch and get any concurrent updates
@@ -474,6 +476,138 @@ function PaymentDialog({ debt }: { debt: any }) {
   );
 }
 
+// ─── Add credit (top-up) dialog ────────────────────────────────────────────────
+// Lets the shop add money to a customer who already holds credit (overpayment)
+// without needing an open debt. The server deepens their existing credit row;
+// we mirror that choice (last credit row by createdAt) for the optimistic patch.
+function AddCreditDialog({ customerName, currentCredit }: { customerName: string; currentCredit: number }) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const qc = useQueryClient();
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const userName = localStorage.getItem("greenlink_userName") || "";
+  const entered = Number(amount) || 0;
+
+  const handleAdd = async () => {
+    if (entered <= 0 || submitting) return;
+    setSubmitting(true);
+    const exactKey = getListDebtsQueryKey({ shopId });
+    const snapshot = qc.getQueryData(exactKey);
+    const paidAt = new Date().toISOString();
+    const requestId = crypto.randomUUID();
+    const payload = {
+      shopId,
+      customerName,
+      amount: entered,
+      recordedBy: userName,
+      note: note.trim() || null,
+      requestId,
+    };
+
+    qc.cancelQueries({ queryKey: exactKey });
+    const cached = qc.getQueryData(exactKey);
+    const creditRows = Array.isArray(cached)
+      ? (cached as any[])
+          .filter((d) => sameCustomer(d.customerName, customerName) && debtCredit(d) > 0)
+          .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+      : [];
+    const target = creditRows[creditRows.length - 1];
+    if (target) {
+      patchDebtCaches(qc, shopId, target.id, (current) => applyDebtPayment(current, entered, paidAt));
+      patchCustomerProfileCaches(qc, shopId, target.id, (current) => applyDebtPayment(current, entered, paidAt));
+    }
+    patchCustomerListCaches(qc, customerName, (customer) => ({
+      ...customer,
+      totalCredit: Math.max(0, Number(customer.totalCredit || 0) + entered),
+    }));
+
+    setOpen(false);
+    setAmount("");
+    setNote("");
+
+    if (!navigator.onLine) {
+      try {
+        await enqueueMutation("customer_credit_topup", shopId, payload);
+        toast.success("Top-up saved offline — will sync on reconnect");
+      } catch {
+        qc.setQueryData(exactKey, snapshot);
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        toast.error("Could not save offline top-up — please retry");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    toast.success(`${formatKES(entered)} added to ${toTitleCase(customerName)}'s credit`);
+    customFetch("/api/debts/customer-credit", { method: "POST", body: JSON.stringify(payload) })
+      .then(() => {
+        qc.invalidateQueries({ queryKey: exactKey });
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      })
+      .catch(() => {
+        qc.setQueryData(exactKey, snapshot);
+        qc.invalidateQueries({ queryKey: exactKey });
+        qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        toast.error("Top-up failed — please retry");
+      })
+      .finally(() => setSubmitting(false));
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setAmount(""); setNote(""); } }}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-7 text-[11px] px-2 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10">
+          <Wallet className="w-3 h-3 mr-1" />Add credit
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Add credit</DialogTitle>
+        </DialogHeader>
+        <div className="bg-muted/40 rounded-xl p-4 border border-border">
+          <p className="font-bold text-foreground">{toTitleCase(customerName)}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Current credit: <span className="text-emerald-400 font-bold font-mono">{formatKES(currentCredit)}</span>
+          </p>
+        </div>
+        <div className="space-y-3">
+          <Label className="text-xs uppercase tracking-wider font-bold">Amount to add (KES)</Label>
+          <Input
+            type="number"
+            className="h-14 text-2xl font-bold font-mono text-center"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0"
+            autoFocus
+          />
+          <div className="grid grid-cols-4 gap-2">
+            {[100, 500, 1000, 5000].map((v) => (
+              <Button key={v} variant="outline" size="sm" className="h-9 text-xs font-semibold font-mono" onClick={() => setAmount(String((Number(amount) || 0) + v))}>
+                +{v}
+              </Button>
+            ))}
+          </div>
+          <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) e.g. M-Pesa top-up" maxLength={120} />
+          {entered > 0 && (
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-400">
+              New credit balance: <strong className="font-mono">{formatKES(currentCredit + entered)}</strong>
+            </div>
+          )}
+        </div>
+        <DialogFooter className="mt-4">
+          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={handleAdd} disabled={entered <= 0 || submitting} className="px-8 min-w-[140px]">
+            Add credit
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Mark as Paid button ───────────────────────────────────────────────────────
 function MarkPaidButton({ debt }: { debt: any }) {
   const [loading, setLoading] = useState(false);
@@ -641,7 +775,7 @@ function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => voi
         </div>
 
         <p className="text-sm text-muted-foreground">
-          Use this for <span className="font-semibold text-foreground">returned goods</span> or <span className="font-semibold text-foreground">data entry mistakes</span>. This permanently removes the debt and all its payment records.
+          Use this for a <span className="font-semibold text-foreground">debt entered by mistake</span>. It permanently removes the record. Debts that have payments or come from a sale can't be deleted — reverse the payments or void the sale instead.
         </p>
 
         <DialogFooter>
@@ -673,6 +807,10 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       ?? shops.find((s: any) => s.id === debt?.shopId)
       ?? shops[0]
       ?? { name: "GreenLink", id: shopId };
+    if (debt?.status === "cancelled") {
+      toast.error("No current debt record is available for a statement.", { id: "debt-pdf" });
+      return;
+    }
     const payments: any[] = debt?.payments ?? [];
     const items: any[]    = debt?.items    ?? [];
     const productSummary = debtProductSummary(items);
@@ -707,6 +845,8 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const isPartial = debt?.status === "partial";
     const statusColor: RGB = isPaid ? GREEN : isPartial ? ORANGE : RED;
     const statusLabel = isPaid ? "PAID IN FULL" : isPartial ? "PARTIALLY PAID" : "OUTSTANDING";
+    const stampSize = 26;
+    const stampX = W - MR - stampSize;
 
     // ── Load shop logo ─────────────────────────────────────────────────────
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
@@ -760,13 +900,23 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         if (shop?.ownerWhatsapp) { doc.text(shop.ownerWhatsapp, ML, sx); sx += 4; }
         if (shop?.email)         { doc.text(shop.email,         ML, sx); }
 
-        // Document type — right
+        drawPdfStamp(doc, {
+          x: stampX,
+          y: 1,
+          size: stampSize,
+          shopName: shop?.name ?? "GreenLink",
+          status: statusLabel,
+          dateLabel: format(new Date(), "dd MMM yyyy"),
+        });
+
+        // Document details — aligned beside the status seal
+        const headerRight = stampX - 3;
         doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...GREEN);
-        doc.text("DEBT STATEMENT", W - MR, 10, { align: "right" });
+        doc.text("DEBT STATEMENT", headerRight, 10, { align: "right" });
         doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...SLATE);
-        doc.text(`#${(debt?.id ?? "").slice(0,8).toUpperCase()}`, W - MR, 18, { align: "right" });
+        doc.text(`#${(debt?.id ?? "").slice(0,8).toUpperCase()}`, headerRight, 18, { align: "right" });
         doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-        doc.text(`Generated: ${generatedAt}`, W - MR, 23, { align: "right" });
+        doc.text(`Generated: ${generatedAt}`, headerRight, 23, { align: "right", maxWidth: 36 });
 
         // Divider
         doc.setDrawColor(...BORD); doc.setLineWidth(0.4);
@@ -913,7 +1063,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       payments.filter((p: any) => p.paymentType === "reversal" && p.reversalOfId).map((p: any) => p.reversalOfId),
     );
     const printablePayments = payments.filter(
-      (p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id),
+      (p: any) => p.paymentType !== "reversal" && Number(p.amount) >= 0 && !reversedPaymentIds.has(p.id),
     );
     for (const p of printablePayments) {
       const paymentAmount = Number(p.amount || 0);
@@ -921,7 +1071,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       running -= paymentAmount;
       histRows.push({
         cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", productSummary,
-          `Payment Received${p.note ? ` · ${p.note}` : ""}`,
+          p.paymentType === "credit_applied"
+            ? "Customer credit applied"
+            : `Payment Received${p.note ? ` · ${p.note}` : ""}`,
           `KES ${paymentAmount.toLocaleString("en-KE")}`,
           `KES ${Math.max(0, running).toLocaleString("en-KE")}`],
         isOpened: false,
@@ -1054,10 +1206,22 @@ function DebtDownloadButton({ debt }: { debt: any }) {
 async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
   toast.loading("Generating customer statement…", { id: "customer-debt-pdf" });
   try {
-    const [shopsData, ...details] = await Promise.all([
+    const currentDebts = group.debts.filter((debt: any) => debt.status !== "cancelled");
+    if (currentDebts.length === 0) {
+      toast.error("No current debt records are available for a statement.", { id: "customer-debt-pdf" });
+      return;
+    }
+    const [shopsData, ...fetchedDetails] = await Promise.all([
       customFetch<any[]>("/api/shops"),
-      ...group.debts.map((d: any) => customFetch<any>(`/api/debts/${d.id}`)),
+      ...currentDebts.map((d: any) => customFetch<any>(`/api/debts/${d.id}`)),
     ]);
+    // Re-check server-fresh statuses so a record cancelled after the customer
+    // list loaded cannot leak into this statement.
+    const details = fetchedDetails.filter((debt: any) => debt?.status !== "cancelled");
+    if (details.length === 0) {
+      toast.error("No current debt records are available for a statement.", { id: "customer-debt-pdf" });
+      return;
+    }
     const shop = (Array.isArray(shopsData) ? shopsData : []).find((s: any) => s.id === shopId) ?? { name: "GreenLink" };
     const { jsPDF } = await import("jspdf");
     const autoTable = (await import("jspdf-autotable")).default;
@@ -1075,6 +1239,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
+    const stampSize = 26;
+    const stampX = W - MR - stampSize;
 
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
     let logoBase64 = "";
@@ -1105,12 +1271,21 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       const scale = Math.min(28 / logoNatW, logoH / logoNatH);
       doc.addImage(logoBase64, "JPEG", ML, 6, logoNatW * scale, logoNatH * scale);
     }
+    drawPdfStamp(doc, {
+      x: stampX,
+      y: 1,
+      size: stampSize,
+      shopName: shop?.name ?? "GreenLink",
+      status,
+      dateLabel: format(new Date(), "dd MMM yyyy"),
+    });
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...slate);
     doc.text(shop.name || "GreenLink", ML + 32, 14);
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
-    doc.text("CUSTOMER DEBT STATEMENT", W - MR, 12, { align: "right" });
+    const headerRight = stampX - 3;
+    doc.text("CUSTOMER DEBT STATEMENT", headerRight, 12, { align: "right", maxWidth: 44 });
     doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...muted);
-    doc.text(`Generated ${format(new Date(), "dd MMM yyyy, HH:mm")}`, W - MR, 17, { align: "right" });
+    doc.text(`Generated ${format(new Date(), "dd MMM yyyy, HH:mm")}`, headerRight, 17, { align: "right", maxWidth: 44 });
     doc.setDrawColor(...border); doc.line(ML, 23, W - MR, 23);
 
     doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...slate);
@@ -1127,7 +1302,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
         `#${String(d.id).slice(0, 8).toUpperCase()}`,
         format(new Date(d.createdAt), "dd MMM yyyy"),
         `${compactDebtProductSummary(d.items)}${d.notes ? ` · ${String(d.notes).slice(0, 42)}` : ""}`,
-         d.status === "cancelled" ? "VOIDED" : d.status === "paid" ? (debtCredit(d) > 0 ? "PAID + CREDIT" : "PAID") : d.status === "partial" ? "PARTIAL" : "UNPAID",
+         d.status === "paid" ? (debtCredit(d) > 0 ? "PAID + CREDIT" : "PAID") : d.status === "partial" ? "PARTIAL" : "UNPAID",
          money(d.totalAmount), money(debtAmountPaid(d)), money(debtBalanceDue(d)),
       ]),
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
@@ -1181,7 +1356,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
           .map((p: any) => p.reversalOfId),
       );
       const printablePayments = (d.payments || [])
-        .filter((p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id))
+        .filter((p: any) => p.paymentType !== "reversal" && Number(p.amount) >= 0 && !reversedPaymentIds.has(p.id))
       let running = Number(d.totalAmount || 0);
       return printablePayments.flatMap((p: any) => {
         const paymentAmount = Number(p.amount || 0);
@@ -1191,7 +1366,9 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
           format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
           `#${String(d.id).slice(0, 8).toUpperCase()}`,
           compactDebtProductSummary(d.items),
-          `Payment received${p.note ? ` · ${p.note}` : ""}`,
+          p.paymentType === "credit_applied"
+            ? "Customer credit applied"
+            : `Payment received${p.note ? ` · ${p.note}` : ""}`,
           p.recordedBy || "—",
           money(paymentAmount),
         ]];
@@ -1235,7 +1412,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     });
     doc.setDrawColor(...border); doc.line(ML, H - 13, W - MR, H - 13);
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...muted);
-    doc.text("This statement includes all debt records currently grouped under this customer.", ML, H - 8);
+    doc.text("This statement shows the customer's current debt balances, payments, and credit.", ML, H - 8);
     const safeName = group.customerName.replace(/[^a-z0-9]/gi, "_");
     doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
     toast.success("Customer statement downloaded!", { id: "customer-debt-pdf" });
@@ -1248,6 +1425,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
 function CustomerDownloadButton({ group }: { group: CustomerGroup }) {
   const [loading, setLoading] = useState(false);
   const shopId = localStorage.getItem("greenlink_shopId") || "";
+  if (!group.debts.some((debt: any) => debt.status !== "cancelled")) return null;
   return (
     <button
       onClick={async (e) => { e.stopPropagation(); if (loading) return; setLoading(true); try { await downloadCustomerPdf(group, shopId); } finally { setLoading(false); } }}
@@ -1329,6 +1507,11 @@ function CustomerGroupRow({
           {group.totalCredit > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(group.totalCredit)} credit</p>}
         </div>
         <span className={cn("hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusCss)}>{statusLabel}</span>
+        {group.totalCredit > 0 && (
+          <span onClick={(e) => e.stopPropagation()} className="shrink-0">
+            <AddCreditDialog customerName={group.customerName} currentCredit={group.totalCredit} />
+          </span>
+        )}
         <CustomerDownloadButton group={group} />
         <ChevronDown className={cn("h-4 w-4 text-muted-foreground/40 transition-transform shrink-0", expanded && "rotate-180 text-primary")} />
       </div>
@@ -1919,7 +2102,12 @@ function DebtDetailPanel({
           {isOwner && !isPaid && !isCancelled && debt.balance > 0 && (
             <DebtTransferDialog debt={debt} items={items} onDone={refreshDebt} />
           )}
-          {/* Financial records stay in the ledger; corrections use reversible entries. */}
+          {/* Only a debt with no sale and no money history can be deleted (the
+              server enforces the same rule); everything else is corrected by
+              reversing payments or voiding the sale. */}
+          {isOwner && !isCancelled && !isLoading && payments.length === 0 && !totalPaid && !(data as any)?.saleId && !(debt as any).saleId && (
+            <DeleteDebtDialog debt={debt} onDeleted={onClose} />
+          )}
         </div>
         {debt.customerPhone && !isPaid && !isCancelled && debt.balance > 0 && (
           <a
@@ -2053,9 +2241,14 @@ function DebtHistoryPanel({ debtId }: { debtId: string }) {
         <span className="text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? "s" : ""}</span>
         <div className="text-right">
           <p className="text-[10px] text-muted-foreground/50">Balance remaining</p>
-          <p className={cn("text-sm font-bold font-mono", (data as any)?.balance === 0 ? "text-emerald-400" : "text-destructive")}>
-            {formatKES((data as any)?.balance ?? 0)}
+          <p className={cn("text-sm font-bold font-mono", debtBalanceDue(data) === 0 ? "text-emerald-400" : "text-destructive")}>
+            {formatKES(debtBalanceDue(data))}
           </p>
+          {debtCredit(data) > 0 && (
+            <p className="text-[10px] text-emerald-400 font-semibold">
+              +{formatKES(debtCredit(data))} customer credit
+            </p>
+          )}
         </div>
       </div>
       </div>
@@ -2262,12 +2455,8 @@ export default function Debts() {
 
   const qc = useQueryClient();
 
-  // No timed polling here: every debt-changing action on this page (payments,
-  // new debt from a sale, edits) already calls invalidateQueries with this
-  // exact key, so React Query refetches right when something actually
-  // changes. We also refetch on window focus / remount, so switching back
-  // to this tab after a while still shows fresh data — we just don't pay
-  // for a D1 read every 5 seconds while nobody is looking, foreground or not.
+  // Invalidate handles writes on this device; polling makes updates from other
+  // devices visible without requiring a page change or cache clear.
   const { data: allDebts, isLoading } = useListDebts(
     { shopId },
     {
@@ -2277,7 +2466,7 @@ export default function Debts() {
         staleTime: 15_000,
         refetchOnWindowFocus: true,
         refetchOnMount: true,
-        refetchInterval: false,
+        refetchInterval: 60_000,
         refetchIntervalInBackground: false,
       },
     }
