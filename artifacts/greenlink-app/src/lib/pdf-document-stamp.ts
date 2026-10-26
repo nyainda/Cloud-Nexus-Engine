@@ -75,7 +75,7 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
   if (options.logoDataUrl) {
     try {
       const maxLogoW = 25;
-      const maxLogoH = 9;
+      const maxLogoH = 8;
       const aspect = options.logoAspectRatio && options.logoAspectRatio > 0 ? options.logoAspectRatio : 2.2;
       let logoW = Math.min(maxLogoW, maxLogoH * aspect);
       let logoH = logoW / aspect;
@@ -83,7 +83,7 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
         logoH = maxLogoH;
         logoW = logoH * aspect;
       }
-      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, y + 14.2 + (maxLogoH - logoH) / 2, logoW, logoH, undefined, "FAST");
+      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, y + 15.0 + (maxLogoH - logoH) / 2, logoW, logoH, undefined, "FAST");
     } catch {
       // Retain the complete stamp if optional logo embedding fails.
     }
