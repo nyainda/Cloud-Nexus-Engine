@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { format, formatDistanceToNow, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
-import { drawPdfDocumentStamp } from "@/lib/pdf-document-stamp";
+import { drawPdfDocumentStamp, prepareStampLogo } from "@/lib/pdf-document-stamp";
 import {
   addDebtToCustomerListCaches,
   applyDebtPayment,
@@ -1159,13 +1159,14 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         ? { status: "PARTIALLY PAID", tone: "amber" as const }
         : { status: "OUTSTANDING", tone: "red" as const };
     doc.setPage(numPages);
+    const stampLogo = await prepareStampLogo(logoBase64 || undefined);
     drawPdfDocumentStamp(doc, {
       shopName: shop?.name ?? "Shop",
       status: debtStamp.status,
       tone: debtStamp.tone,
       reference: `DEBT ${(debt?.id ?? "").slice(0, 8).toUpperCase()}`,
-      logoDataUrl: logoBase64 || undefined,
-      logoAspectRatio: logoNatW > 0 && logoNatH > 0 ? logoNatW / logoNatH : undefined,
+      logoDataUrl: stampLogo.dataUrl,
+      logoAspectRatio: stampLogo.aspectRatio,
       documentType: "DEBT STATEMENT",
       dateLabel: format(new Date(), "dd MMM yyyy"),
     });
