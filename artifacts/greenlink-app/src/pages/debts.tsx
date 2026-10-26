@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { format, formatDistanceToNow, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
+import { drawPdfStamp } from "@/lib/pdf-stamp";
 import {
   addDebtToCustomerListCaches,
   applyDebtPayment,
@@ -844,6 +845,8 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const isPartial = debt?.status === "partial";
     const statusColor: RGB = isPaid ? GREEN : isPartial ? ORANGE : RED;
     const statusLabel = isPaid ? "PAID IN FULL" : isPartial ? "PARTIALLY PAID" : "OUTSTANDING";
+    const stampSize = 26;
+    const stampX = W - MR - stampSize;
 
     // ── Load shop logo ─────────────────────────────────────────────────────
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
@@ -897,13 +900,23 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         if (shop?.ownerWhatsapp) { doc.text(shop.ownerWhatsapp, ML, sx); sx += 4; }
         if (shop?.email)         { doc.text(shop.email,         ML, sx); }
 
-        // Document type — right
+        drawPdfStamp(doc, {
+          x: stampX,
+          y: 1,
+          size: stampSize,
+          shopName: shop?.name ?? "GreenLink",
+          status: statusLabel,
+          dateLabel: format(new Date(), "dd MMM yyyy"),
+        });
+
+        // Document details — aligned beside the status seal
+        const headerRight = stampX - 3;
         doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...GREEN);
-        doc.text("DEBT STATEMENT", W - MR, 10, { align: "right" });
+        doc.text("DEBT STATEMENT", headerRight, 10, { align: "right" });
         doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...SLATE);
-        doc.text(`#${(debt?.id ?? "").slice(0,8).toUpperCase()}`, W - MR, 18, { align: "right" });
+        doc.text(`#${(debt?.id ?? "").slice(0,8).toUpperCase()}`, headerRight, 18, { align: "right" });
         doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-        doc.text(`Generated: ${generatedAt}`, W - MR, 23, { align: "right" });
+        doc.text(`Generated: ${generatedAt}`, headerRight, 23, { align: "right", maxWidth: 36 });
 
         // Divider
         doc.setDrawColor(...BORD); doc.setLineWidth(0.4);
@@ -1226,6 +1239,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
+    const stampSize = 26;
+    const stampX = W - MR - stampSize;
 
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
     let logoBase64 = "";
@@ -1256,12 +1271,21 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       const scale = Math.min(28 / logoNatW, logoH / logoNatH);
       doc.addImage(logoBase64, "JPEG", ML, 6, logoNatW * scale, logoNatH * scale);
     }
+    drawPdfStamp(doc, {
+      x: stampX,
+      y: 1,
+      size: stampSize,
+      shopName: shop?.name ?? "GreenLink",
+      status,
+      dateLabel: format(new Date(), "dd MMM yyyy"),
+    });
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...slate);
     doc.text(shop.name || "GreenLink", ML + 32, 14);
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
-    doc.text("CUSTOMER DEBT STATEMENT", W - MR, 12, { align: "right" });
+    const headerRight = stampX - 3;
+    doc.text("CUSTOMER DEBT STATEMENT", headerRight, 12, { align: "right", maxWidth: 44 });
     doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...muted);
-    doc.text(`Generated ${format(new Date(), "dd MMM yyyy, HH:mm")}`, W - MR, 17, { align: "right" });
+    doc.text(`Generated ${format(new Date(), "dd MMM yyyy, HH:mm")}`, headerRight, 17, { align: "right", maxWidth: 44 });
     doc.setDrawColor(...border); doc.line(ML, 23, W - MR, 23);
 
     doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...slate);

@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { drawPdfStamp } from "@/lib/pdf-stamp";
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -214,8 +215,8 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.setFillColor(...EMERALD);
     doc.rect(0, 0, W, 2.5, "F");
 
-    // Logo — right side of header, max 50×26 bounding box
-    const LOGO_BOX_W = 50, LOGO_BOX_H = 26;
+    // Leave a dedicated column for the status seal beside the shop logo.
+    const LOGO_BOX_W = 22, LOGO_BOX_H = 22;
     if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
       const scale = Math.min(LOGO_BOX_W / logoNatW, LOGO_BOX_H / logoNatH);
       const dW = logoNatW * scale;
@@ -224,18 +225,26 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       const ly = 3 + (LOGO_BOX_H - dH) / 2;
       doc.addImage(logoBase64, "JPEG", lx, ly, dW, dH);
     }
+    drawPdfStamp(doc, {
+      x: W - MR - LOGO_BOX_W - 4 - 25,
+      y: 3.5,
+      size: 25,
+      shopName: shop?.name ?? "GreenLink",
+      status: isInvoice ? "ISSUED" : quotation.status,
+      dateLabel: format(new Date(isInvoice ? quotation.invoiceIssuedAt ?? quotation.createdAt : quotation.createdAt), "dd MMM yyyy"),
+    });
 
     // Shop name + contact on left
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...WHITE);
-    doc.text(shop?.name ?? "Our Shop", ML, 14);
+    doc.text(shop?.name ?? "Our Shop", ML, 14, { maxWidth: 120 });
 
     const shopBits = [shop?.address, shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
     doc.setTextColor(160, 170, 185);
-    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 20.5);
+    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 20.5, { maxWidth: 120 });
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(6);
