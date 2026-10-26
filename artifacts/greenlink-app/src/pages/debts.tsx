@@ -1165,6 +1165,8 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       tone: debtStamp.tone,
       reference: `DEBT ${(debt?.id ?? "").slice(0, 8).toUpperCase()}`,
       logoDataUrl: logoBase64 || undefined,
+      documentType: "DEBT STATEMENT",
+      dateLabel: format(new Date(), "dd MMM yyyy"),
     });
     doc.save(`DebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
     toast.success("Statement downloaded!", { id: "debt-pdf" });
@@ -1418,6 +1420,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       tone: customerStamp.tone,
       reference: "CUSTOMER DEBT STATEMENT",
       logoDataUrl: logoBase64 || undefined,
+      documentType: "CUSTOMER STATEMENT",
+      dateLabel: format(new Date(), "dd MMM yyyy"),
     });
     doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
     toast.success("Customer statement downloaded!", { id: "customer-debt-pdf" });
