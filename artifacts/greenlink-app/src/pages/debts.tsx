@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { format, formatDistanceToNow, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
+import { drawPdfDocumentStamp } from "@/lib/pdf-document-stamp";
 import {
   addDebtToCustomerListCaches,
   applyDebtPayment,
@@ -1151,6 +1152,20 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     for (let p = 1; p <= numPages; p++) { doc.setPage(p); drawFooter(); }
 
     const safeName = (debt?.customerName ?? "customer").replace(/[^a-z0-9]/gi, "_");
+    // Add the branded circular seal using the shop logo already loaded for this PDF.
+    const debtStamp = balanceDue <= 0
+      ? { status: customerCredit > 0 ? "PAID - CREDIT BALANCE" : "PAID", tone: "green" as const }
+      : totalPaid > 0
+        ? { status: "PARTIALLY PAID", tone: "amber" as const }
+        : { status: "OUTSTANDING", tone: "red" as const };
+    doc.setPage(numPages);
+    drawPdfDocumentStamp(doc, {
+      shopName: shop?.name ?? "Shop",
+      status: debtStamp.status,
+      tone: debtStamp.tone,
+      reference: `DEBT ${(debt?.id ?? "").slice(0, 8).toUpperCase()}`,
+      logoDataUrl: logoBase64 || undefined,
+    });
     doc.save(`DebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
     toast.success("Statement downloaded!", { id: "debt-pdf" });
   } catch (err) {
@@ -1390,6 +1405,20 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...muted);
     doc.text("This statement shows the customer's current debt balances, payments, and credit.", ML, H - 8);
     const safeName = group.customerName.replace(/[^a-z0-9]/gi, "_");
+    // Add the branded circular seal based on the aggregate current balance.
+    const customerStamp = totalBalance <= 0
+      ? { status: totalCredit > 0 ? "PAID - CREDIT BALANCE" : "PAID", tone: "green" as const }
+      : totalPaid > 0
+        ? { status: "PARTIALLY PAID", tone: "amber" as const }
+        : { status: "OUTSTANDING", tone: "red" as const };
+    doc.setPage((doc as any).internal.getNumberOfPages());
+    drawPdfDocumentStamp(doc, {
+      shopName: shop?.name ?? "Shop",
+      status: customerStamp.status,
+      tone: customerStamp.tone,
+      reference: "CUSTOMER DEBT STATEMENT",
+      logoDataUrl: logoBase64 || undefined,
+    });
     doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
     toast.success("Customer statement downloaded!", { id: "customer-debt-pdf" });
   } catch (err) {
