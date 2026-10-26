@@ -13,204 +13,183 @@ export interface PdfStampOptions {
   dateLabel?: string;
 }
 
-/**
- * Crop the blank margins around an existing shop logo before embedding it in a stamp.
- * This is why logos with large white margins looked tiny in the earlier PDF output.
- */
-export async function prepareStampLogo(dataUrl?: string): Promise<{ dataUrl?: string; aspectRatio?: number }> {
-  if (!dataUrl || typeof document === "undefined") return {};
-  try {
-    const image = new Image();
-    image.src = dataUrl;
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("Unable to load shop logo"));
-    });
+type RGB = [number, number, number];
 
-    const source = document.createElement("canvas");
-    source.width = image.naturalWidth;
-    source.height = image.naturalHeight;
-    const sourceContext = source.getContext("2d", { willReadFrequently: true });
-    if (!sourceContext) return { dataUrl, aspectRatio: image.naturalWidth / image.naturalHeight };
-    sourceContext.drawImage(image, 0, 0);
-    const pixels = sourceContext.getImageData(0, 0, source.width, source.height).data;
+function drawArcText(
+  doc: jsPDF,
+  text: string,
+  cx: number,
+  cy: number,
+  radius: number,
+  startDeg: number,
+  endDeg: number,
+  color: RGB,
+  requestedFontSize: number,
+  bold = true,
+): void {
+  const chars = [...text.toUpperCase()];
+  if (!chars.length) return;
 
-    let minX = source.width, minY = source.height, maxX = -1, maxY = -1;
-    for (let y = 0; y < source.height; y++) {
-      for (let x = 0; x < source.width; x++) {
-        const i = (y * source.width + x) * 4;
-        const alpha = pixels[i + 3];
-        // Treat near-white JPEG background as empty, but retain all coloured/dark logo artwork.
-        const visible = alpha > 12 && (pixels[i] < 242 || pixels[i + 1] < 242 || pixels[i + 2] < 242);
-        if (visible) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-    if (maxX < minX || maxY < minY) {
-      return { dataUrl, aspectRatio: image.naturalWidth / image.naturalHeight };
-    }
+  doc.setFont("helvetica", bold ? "bold" : "normal");
+  doc.setTextColor(...color);
 
-    const padX = Math.max(2, Math.round((maxX - minX + 1) * 0.035));
-    const padY = Math.max(2, Math.round((maxY - minY + 1) * 0.06));
-    minX = Math.max(0, minX - padX);
-    minY = Math.max(0, minY - padY);
-    maxX = Math.min(source.width - 1, maxX + padX);
-    maxY = Math.min(source.height - 1, maxY + padY);
+  const arcLength = (Math.abs(endDeg - startDeg) * Math.PI / 180) * radius;
+  let fontSize = requestedFontSize;
+  let widths: number[] = [];
+  let totalWidth = 0;
 
-    const crop = document.createElement("canvas");
-    crop.width = maxX - minX + 1;
-    crop.height = maxY - minY + 1;
-    const cropContext = crop.getContext("2d");
-    if (!cropContext) return { dataUrl, aspectRatio: image.naturalWidth / image.naturalHeight };
-    cropContext.fillStyle = "#ffffff";
-    cropContext.fillRect(0, 0, crop.width, crop.height);
-    cropContext.drawImage(source, minX, minY, crop.width, crop.height, 0, 0, crop.width, crop.height);
-    return { dataUrl: crop.toDataURL("image/jpeg", 0.96), aspectRatio: crop.width / crop.height };
-  } catch {
-    return { dataUrl };
-  }
+  // Reduce the actual font size when necessary; do not squeeze letter positions
+  // more tightly than the glyph widths, which would make long names collide.
+  do {
+    doc.setFontSize(fontSize);
+    widths = chars.map((char) => doc.getTextWidth(char));
+    totalWidth = widths.reduce((sum, width) => sum + width, 0);
+    if (totalWidth <= arcLength || fontSize <= 3.4) break;
+    fontSize -= 0.2;
+  } while (fontSize > 3.2);
+
+  const direction = endDeg >= startDeg ? 1 : -1;
+  const totalAngle = (totalWidth / radius) * (180 / Math.PI);
+  let angle = (startDeg + endDeg) / 2 - direction * totalAngle / 2;
+
+  chars.forEach((char, index) => {
+    const advance = widths[index] / radius * (180 / Math.PI);
+    const charAngle = angle + direction * advance / 2;
+    const rad = charAngle * Math.PI / 180;
+    const px = cx + Math.cos(rad) * radius;
+    const py = cy + Math.sin(rad) * radius;
+    const tangent = charAngle + (direction > 0 ? 90 : -90);
+    doc.text(char, px, py, { align: "center", angle: tangent });
+    angle += direction * advance;
+  });
 }
 
-/** Draws a detailed branded business seal. Visual status only, not a legal/cryptographic signature. */
+/**
+ * A clean circular business seal inspired by traditional ink stamps.
+ * No rectangular logo card: the original shop logo sits directly on the white
+ * centre, contained by the inner ring. This is a visual status mark, not a
+ * cryptographic or legally certified signature.
+ */
 export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void {
-  const palette: Record<PdfStampTone, [number, number, number]> = {
-    green: [18, 104, 67],
-    blue: [30, 83, 170],
-    red: [185, 35, 45],
-    amber: [171, 93, 20],
+  const palette: Record<PdfStampTone, RGB> = {
+    green: [0, 112, 72],
+    blue: [25, 79, 170],
+    red: [220, 35, 42],
+    amber: [180, 91, 17],
   };
   const ink = palette[options.tone ?? "blue"];
-  const white: [number, number, number] = [255, 255, 255];
+  const white: RGB = [255, 255, 255];
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
-  // A clear, substantial seal with safe margins from the page edge.
-  const diameter = 50;
+  const diameter = 56;
   const x = pageWidth - 12 - diameter;
-  const y = pageHeight - 17 - diameter;
+  const y = pageHeight - 16 - diameter;
   const cx = x + diameter / 2;
   const cy = y + diameter / 2;
-  const outerR = diameter / 2;
+  const r = diameter / 2;
 
-  // White knockout protects stamp legibility when positioned over document whitespace.
+  // Solid white seal interior prevents page text showing through the stamp.
   doc.setFillColor(...white);
-  doc.circle(cx, cy, outerR - 0.1, "F");
+  doc.circle(cx, cy, r - 0.15, "F");
 
-  // Bold outer ring, inner rings and fine radial engraving.
+  // Outer double-weight rings and the finer inner rings.
   doc.setDrawColor(...ink);
-  doc.setLineWidth(0.85);
-  doc.circle(cx, cy, outerR, "S");
-  doc.setLineWidth(0.32);
-  doc.circle(cx, cy, outerR - 1.35, "S");
-  doc.setLineWidth(0.48);
-  doc.circle(cx, cy, outerR - 2.5, "S");
-  doc.setLineWidth(0.2);
-  doc.circle(cx, cy, outerR - 3.6, "S");
+  doc.setLineWidth(0.9);
+  doc.circle(cx, cy, r, "S");
+  doc.setLineWidth(0.25);
+  doc.circle(cx, cy, r - 1.1, "S");
+  doc.setLineWidth(0.65);
+  doc.circle(cx, cy, r - 2.0, "S");
+  doc.setLineWidth(0.22);
+  doc.circle(cx, cy, r - 4.0, "S");
 
-  for (let i = 0; i < 44; i++) {
-    const angle = (Math.PI * 2 * i) / 44;
+  // Fine ticks around the inside perimeter.
+  for (let i = 0; i < 48; i++) {
+    const a = (i * 360 / 48 - 90) * Math.PI / 180;
     const major = i % 4 === 0;
-    const r1 = outerR - (major ? 5.0 : 4.5);
-    const r2 = outerR - 3.9;
-    doc.setLineWidth(major ? 0.3 : 0.16);
-    doc.line(
-      cx + Math.cos(angle) * r1,
-      cy + Math.sin(angle) * r1,
-      cx + Math.cos(angle) * r2,
-      cy + Math.sin(angle) * r2,
-    );
+    const r1 = r - (major ? 5.0 : 4.5);
+    const r2 = r - 3.7;
+    doc.setLineWidth(major ? 0.28 : 0.14);
+    doc.line(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1, cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
   }
 
-  // Keep the complete logo panel within the circular seal's inner chord.
-  // A wide rectangle near the top crosses the circle boundary; a narrower panel does not.
-  const panelW = 27.5;
-  const panelH = 8.0;
-  const panelX = cx - panelW / 2;
-  const panelY = y + 5.2;
-  doc.setFillColor(...white);
-  doc.roundedRect(panelX, panelY, panelW, panelH, 1.3, 1.3, "F");
-  doc.setDrawColor(...ink);
-  doc.setLineWidth(0.18);
-  doc.roundedRect(panelX, panelY, panelW, panelH, 1.3, 1.3, "S");
+  // Registered shop name follows the upper circular path; no logo card.
+  const shopName = options.shopName.trim() || "BUSINESS";
+  drawArcText(doc, shopName, cx, cy, r - 3.0, -164, -16, ink, 5.0, true);
 
+  // Original logo is placed directly on the white interior. Keep a generous
+  // safety margin inside the inner circle and preserve the image's proportions.
   if (options.logoDataUrl) {
     try {
-      // Use the original logo file, modestly sized with padding on every side.
-      const aspect = options.logoAspectRatio && options.logoAspectRatio > 0 ? options.logoAspectRatio : 2.5;
-      const maxLogoW = panelW - 6.0;
-      const maxLogoH = panelH - 2.0;
+      const maxLogoW = 25;
+      const maxLogoH = 12;
+      const aspect = options.logoAspectRatio && options.logoAspectRatio > 0 ? options.logoAspectRatio : 2.2;
       let logoW = Math.min(maxLogoW, maxLogoH * aspect);
       let logoH = logoW / aspect;
       if (logoH > maxLogoH) {
         logoH = maxLogoH;
         logoW = logoH * aspect;
       }
-      doc.addImage(
-        options.logoDataUrl,
-        "JPEG",
-        cx - logoW / 2,
-        panelY + (panelH - logoH) / 2,
-        logoW,
-        logoH,
-        undefined,
-        "FAST",
-      );
+      const logoY = y + 12.0;
+      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, logoY, logoW, logoH, undefined, "FAST");
     } catch {
-      // The stamp remains legible if the optional logo cannot be embedded.
+      // The text and seal remain usable if an optional logo cannot be embedded.
     }
   }
 
-  // Readable shop identity below the logo panel.
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(5.6);
-  const shopLines = doc
-    .splitTextToSize(options.shopName.trim().toUpperCase() || "SHOP", diameter - 8)
-    .slice(0, 2);
-  doc.text(shopLines, cx, y + 17.1, { align: "center", lineHeightFactor: 1.0 });
-
-  // High-contrast status band: short wording stays bold and easy to read.
-  const ribbonY = y + 21.0;
-  const ribbonH = 7.0;
+  // Solid status band, inset so its ends stay inside the inner circle.
+  const bandY = y + 27.0;
+  const bandH = 7.0;
+  const bandW = 43.0;
   doc.setFillColor(...ink);
-  doc.roundedRect(x + 3.5, ribbonY, diameter - 7, ribbonH, 1.2, 1.2, "F");
+  doc.rect(cx - bandW / 2, bandY, bandW, bandH, "F");
   doc.setTextColor(...white);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(options.status.length > 18 ? 6.1 : options.status.length > 12 ? 7.1 : 8.5);
-  doc.text(options.status.trim().toUpperCase().slice(0, 30), cx, ribbonY + 4.7, {
+  doc.setFontSize(options.status.length > 15 ? 7 : options.status.length > 10 ? 8 : 9);
+  doc.text(options.status.trim().toUpperCase().slice(0, 26), cx, bandY + 4.7, {
     align: "center",
-    maxWidth: diameter - 9,
+    maxWidth: bandW - 3,
   });
 
+  // Document type, date and reference in a clean centred stack.
   doc.setTextColor(...ink);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(5.1);
-  const documentType = (options.documentType || "BUSINESS DOCUMENT").trim().toUpperCase().slice(0, 28);
-  doc.text(documentType, cx, y + 31.1, { align: "center", maxWidth: diameter - 8 });
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(4.9);
-  if (options.dateLabel) {
-    doc.text(options.dateLabel.trim().slice(0, 24), cx, y + 34.2, {
-      align: "center",
-      maxWidth: diameter - 8,
-    });
-  }
-  doc.text(options.reference.trim().slice(0, 34), cx, y + 36.8, {
+  doc.setFontSize(5.2);
+  doc.text((options.documentType || "BUSINESS DOCUMENT").trim().toUpperCase().slice(0, 24), cx, y + 37.0, {
     align: "center",
-    maxWidth: diameter - 8,
+    maxWidth: 39,
   });
 
-  doc.setDrawColor(...ink);
-  doc.setLineWidth(0.25);
-  doc.line(x + 9, y + 37.8, x + diameter - 9, y + 37.8);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(4.4);
-  doc.text("OFFICIAL BUSINESS RECORD", cx, y + 40.5, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(4.8);
+  if (options.dateLabel) {
+    doc.text(options.dateLabel.trim().slice(0, 24), cx, y + 40.0, { align: "center", maxWidth: 39 });
+  }
+  doc.text(options.reference.trim().slice(0, 30), cx, y + 42.8, { align: "center", maxWidth: 39 });
+
+  // Lower curved motto matches the approved circular reference.
+  drawArcText(doc, "OFFICIAL BUSINESS RECORD", cx, cy, r - 3.2, 155, 25, ink, 4.4, true);
+
+  // Side stars balance the composition. Draw them as vector paths so they
+  // render consistently in every PDF viewer without relying on a special font.
+  const drawStar = (starCx: number, starCy: number, outer: number, inner: number) => {
+    const points: Array<[number, number]> = [];
+    for (let i = 0; i < 10; i++) {
+      const a = (-90 + i * 36) * Math.PI / 180;
+      const radius = i % 2 === 0 ? outer : inner;
+      points.push([starCx + Math.cos(a) * radius, starCy + Math.sin(a) * radius]);
+    }
+    doc.setDrawColor(...ink);
+    doc.setFillColor(...ink);
+    for (let i = 0; i < points.length; i++) {
+      const [x1, y1] = points[i];
+      const [x2, y2] = points[(i + 1) % points.length];
+      doc.line(x1, y1, x2, y2);
+    }
+  };
+  drawStar(x + 4.6, cy + 2.8, 1.8, 0.8);
+  drawStar(x + diameter - 4.6, cy + 2.8, 1.8, 0.8);
 
   doc.setTextColor(0, 0, 0);
   doc.setDrawColor(0, 0, 0);
