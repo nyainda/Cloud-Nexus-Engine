@@ -15,60 +15,9 @@ export interface PdfStampOptions {
 
 type RGB = [number, number, number];
 
-function drawArcText(
-  doc: jsPDF,
-  text: string,
-  cx: number,
-  cy: number,
-  radius: number,
-  startDeg: number,
-  endDeg: number,
-  color: RGB,
-  requestedFontSize: number,
-  bold = true,
-): void {
-  const chars = [...text.toUpperCase()];
-  if (!chars.length) return;
-
-  doc.setFont("helvetica", bold ? "bold" : "normal");
-  doc.setTextColor(...color);
-
-  const arcLength = (Math.abs(endDeg - startDeg) * Math.PI / 180) * radius;
-  let fontSize = requestedFontSize;
-  let widths: number[] = [];
-  let totalWidth = 0;
-
-  // Reduce the actual font size when necessary; do not squeeze letter positions
-  // more tightly than the glyph widths, which would make long names collide.
-  do {
-    doc.setFontSize(fontSize);
-    widths = chars.map((char) => doc.getTextWidth(char));
-    totalWidth = widths.reduce((sum, width) => sum + width, 0);
-    if (totalWidth <= arcLength || fontSize <= 3.4) break;
-    fontSize -= 0.2;
-  } while (fontSize > 3.2);
-
-  const direction = endDeg >= startDeg ? 1 : -1;
-  const totalAngle = (totalWidth / radius) * (180 / Math.PI);
-  let angle = (startDeg + endDeg) / 2 - direction * totalAngle / 2;
-
-  chars.forEach((char, index) => {
-    const advance = widths[index] / radius * (180 / Math.PI);
-    const charAngle = angle + direction * advance / 2;
-    const rad = charAngle * Math.PI / 180;
-    const px = cx + Math.cos(rad) * radius;
-    const py = cy + Math.sin(rad) * radius;
-    const tangent = charAngle + (direction > 0 ? 90 : -90);
-    doc.text(char, px, py, { align: "center", angle: tangent });
-    angle += direction * advance;
-  });
-}
-
 /**
- * A clean circular business seal inspired by traditional ink stamps.
- * No rectangular logo card: the original shop logo sits directly on the white
- * centre, contained by the inner ring. This is a visual status mark, not a
- * cryptographic or legally certified signature.
+ * Legible circular business seal. Uses the existing shop logo without a card.
+ * This is a visual document-status mark, not a legal or cryptographic signature.
  */
 export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void {
   const palette: Record<PdfStampTone, RGB> = {
@@ -82,48 +31,51 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
-  const diameter = 56;
+  // A larger 62 mm seal gives every text line room to print clearly.
+  const diameter = 62;
   const x = pageWidth - 12 - diameter;
-  const y = pageHeight - 16 - diameter;
+  const y = pageHeight - 18 - diameter;
   const cx = x + diameter / 2;
   const cy = y + diameter / 2;
   const r = diameter / 2;
 
-  // Solid white seal interior prevents page text showing through the stamp.
+  // Solid white centre ensures document content underneath does not show through.
   doc.setFillColor(...white);
   doc.circle(cx, cy, r - 0.15, "F");
 
-  // Outer double-weight rings and the finer inner rings.
+  // Strong outer rings and restrained inner rings.
   doc.setDrawColor(...ink);
-  doc.setLineWidth(0.9);
+  doc.setLineWidth(0.95);
   doc.circle(cx, cy, r, "S");
-  doc.setLineWidth(0.25);
-  doc.circle(cx, cy, r - 1.1, "S");
-  doc.setLineWidth(0.65);
-  doc.circle(cx, cy, r - 2.0, "S");
+  doc.setLineWidth(0.3);
+  doc.circle(cx, cy, r - 1.2, "S");
+  doc.setLineWidth(0.55);
+  doc.circle(cx, cy, r - 2.4, "S");
   doc.setLineWidth(0.22);
-  doc.circle(cx, cy, r - 4.0, "S");
+  doc.circle(cx, cy, r - 4.1, "S");
 
-  // Fine ticks around the inside perimeter.
+  // Clean radial ticks with enough space around all text.
   for (let i = 0; i < 48; i++) {
     const a = (i * 360 / 48 - 90) * Math.PI / 180;
     const major = i % 4 === 0;
-    const r1 = r - (major ? 5.0 : 4.5);
-    const r2 = r - 3.7;
+    const r1 = r - (major ? 5.3 : 4.7);
+    const r2 = r - 4.0;
     doc.setLineWidth(major ? 0.28 : 0.14);
     doc.line(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1, cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
   }
 
-  // Registered shop name follows the upper circular path; no logo card.
-  const shopName = options.shopName.trim() || "BUSINESS";
-  drawArcText(doc, shopName, cx, cy, r - 3.0, -164, -16, ink, 5.0, true);
+  // Shop name is set horizontally in two clear lines rather than tiny curved letters.
+  doc.setTextColor(...ink);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(options.shopName.length > 35 ? 5.6 : 6.3);
+  const shopLines = doc.splitTextToSize(options.shopName.trim().toUpperCase() || "BUSINESS", 48).slice(0, 2);
+  doc.text(shopLines, cx, y + 8.3, { align: "center", lineHeightFactor: 1.0 });
 
-  // Original logo is placed directly on the white interior. Keep a generous
-  // safety margin inside the inner circle and preserve the image's proportions.
+  // Original shop logo directly on the seal's white centre. No rectangular card.
   if (options.logoDataUrl) {
     try {
       const maxLogoW = 25;
-      const maxLogoH = 12;
+      const maxLogoH = 9;
       const aspect = options.logoAspectRatio && options.logoAspectRatio > 0 ? options.logoAspectRatio : 2.2;
       let logoW = Math.min(maxLogoW, maxLogoH * aspect);
       let logoH = logoW / aspect;
@@ -131,48 +83,53 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
         logoH = maxLogoH;
         logoW = logoH * aspect;
       }
-      const logoY = y + 12.0;
-      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, logoY, logoW, logoH, undefined, "FAST");
+      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, y + 14.2 + (maxLogoH - logoH) / 2, logoW, logoH, undefined, "FAST");
     } catch {
-      // The text and seal remain usable if an optional logo cannot be embedded.
+      // Retain the complete stamp if optional logo embedding fails.
     }
   }
 
-  // Solid status band, inset so its ends stay inside the inner circle.
-  const bandY = y + 27.0;
-  const bandH = 7.0;
-  const bandW = 43.0;
+  // High-contrast status band.
+  const bandY = y + 25.2;
+  const bandW = 46;
+  const bandH = 8;
   doc.setFillColor(...ink);
   doc.rect(cx - bandW / 2, bandY, bandW, bandH, "F");
   doc.setTextColor(...white);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(options.status.length > 15 ? 7 : options.status.length > 10 ? 8 : 9);
-  doc.text(options.status.trim().toUpperCase().slice(0, 26), cx, bandY + 4.7, {
+  doc.setFontSize(options.status.length > 16 ? 7.2 : options.status.length > 11 ? 8.4 : 10);
+  doc.text(options.status.trim().toUpperCase().slice(0, 26), cx, bandY + 5.25, {
     align: "center",
     maxWidth: bandW - 3,
   });
 
-  // Document type, date and reference in a clean centred stack.
+  // Readable metadata stack. These labels are intentionally horizontal.
   doc.setTextColor(...ink);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(5.2);
-  doc.text((options.documentType || "BUSINESS DOCUMENT").trim().toUpperCase().slice(0, 24), cx, y + 37.0, {
+  doc.setFontSize(6.2);
+  doc.text((options.documentType || "BUSINESS DOCUMENT").trim().toUpperCase().slice(0, 24), cx, y + 38.5, {
     align: "center",
-    maxWidth: 39,
+    maxWidth: 48,
   });
 
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(4.8);
+  doc.setFontSize(5.8);
   if (options.dateLabel) {
-    doc.text(options.dateLabel.trim().slice(0, 24), cx, y + 40.0, { align: "center", maxWidth: 39 });
+    doc.text(options.dateLabel.trim().slice(0, 24), cx, y + 42.8, { align: "center", maxWidth: 48 });
   }
-  doc.text(options.reference.trim().slice(0, 30), cx, y + 42.8, { align: "center", maxWidth: 39 });
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.8);
+  doc.text(options.reference.trim().slice(0, 30), cx, y + 47.0, { align: "center", maxWidth: 48 });
 
-  // Lower curved motto matches the approved circular reference.
-  drawArcText(doc, "OFFICIAL BUSINESS RECORD", cx, cy, r - 3.2, 155, 25, ink, 4.4, true);
+  // Clear footer label, not curved into tiny, hard-to-read text.
+  doc.setDrawColor(...ink);
+  doc.setLineWidth(0.3);
+  doc.line(x + 12, y + 49.2, x + diameter - 12, y + 49.2);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(5.3);
+  doc.text("OFFICIAL BUSINESS RECORD", cx, y + 53.0, { align: "center", maxWidth: 48 });
 
-  // Side stars balance the composition. Draw them as vector paths so they
-  // render consistently in every PDF viewer without relying on a special font.
+  // Side stars are drawn as vectors for reliable PDF output.
   const drawStar = (starCx: number, starCy: number, outer: number, inner: number) => {
     const points: Array<[number, number]> = [];
     for (let i = 0; i < 10; i++) {
@@ -188,8 +145,8 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
       doc.line(x1, y1, x2, y2);
     }
   };
-  drawStar(x + 4.6, cy + 2.8, 1.8, 0.8);
-  drawStar(x + diameter - 4.6, cy + 2.8, 1.8, 0.8);
+  drawStar(x + 5.5, cy + 4.0, 1.8, 0.8);
+  drawStar(x + diameter - 5.5, cy + 4.0, 1.8, 0.8);
 
   doc.setTextColor(0, 0, 0);
   doc.setDrawColor(0, 0, 0);
