@@ -126,10 +126,10 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
   }
 
   // The key fix: crop whitespace first, then use a larger logo window without stretching.
-  const panelX = x + 6.4;
-  const panelY = y + 4.0;
-  const panelW = diameter - 12.8;
-  const panelH = 11.2;
+  const panelX = x + 7.2;
+  const panelY = y + 4.6;
+  const panelW = diameter - 14.4;
+  const panelH = 10.4;
   doc.setFillColor(...white);
   doc.roundedRect(panelX, panelY, panelW, panelH, 1.8, 1.8, "F");
   doc.setDrawColor(...ink);
@@ -138,8 +138,12 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
 
   if (options.logoDataUrl) {
     try {
-      const maxLogoW = panelW - 1.6;
-      const maxLogoH = panelH - 1.0;
+      // Keep the complete logo safely inside the panel with generous inner padding.
+      // The crop is fitted, never allowed to touch or cross the panel border.
+      const innerPadX = 2.8;
+      const innerPadY = 1.5;
+      const maxLogoW = panelW - innerPadX * 2;
+      const maxLogoH = panelH - innerPadY * 2;
       const aspect = options.logoAspectRatio && options.logoAspectRatio > 0 ? options.logoAspectRatio : 2.5;
       let logoW = Math.min(maxLogoW, maxLogoH * aspect);
       let logoH = logoW / aspect;
@@ -147,7 +151,9 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
         logoH = maxLogoH;
         logoW = logoH * aspect;
       }
-      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, panelY + (panelH - logoH) / 2, logoW, logoH, undefined, "FAST");
+      const logoX = cx - logoW / 2;
+      const logoY = panelY + (panelH - logoH) / 2;
+      doc.addImage(options.logoDataUrl, "JPEG", logoX, logoY, logoW, logoH, undefined, "FAST");
     } catch {
       // The rest of the seal remains useful if the optional image cannot be embedded.
     }
