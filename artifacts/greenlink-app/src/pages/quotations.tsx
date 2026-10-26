@@ -564,6 +564,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       tone: stamp.tone,
       reference: documentNumber,
       logoDataUrl: logoBase64 || undefined,
+      logoAspectRatio: logoNatW > 0 && logoNatH > 0 ? logoNatW / logoNatH : undefined,
       documentType: isInvoice ? "INVOICE" : "QUOTATION",
       dateLabel: format(new Date(), "dd MMM yyyy"),
     });
