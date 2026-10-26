@@ -261,7 +261,7 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
 
 /**
  * Repeat the official document stamp as a faint watermark on each page.
- * The low-opacity graphics state keeps the document content readable while
+ * The 3% graphics state keeps the document content readable while
  * retaining the same status, date, reference, and shop identity as the final
  * page's visible stamp.
  */
@@ -275,9 +275,9 @@ export function drawPdfWatermark(
   const size = Math.min(56, pageWidth * 0.27, pageHeight * 0.2);
   const x = (pageWidth - size) / 2;
   const y = (pageHeight - size) / 2;
-  const { opacity = 0.06, ...stampOptions } = options;
+  const { opacity = 0.03, ...stampOptions } = options;
   const GraphicsState = (doc as any).GState as
-    | (new (parameters: { opacity: number }) => unknown)
+    | (new (parameters: { opacity: number; "stroke-opacity": number }) => unknown)
     | undefined;
 
   if (!GraphicsState) {
@@ -288,7 +288,7 @@ export function drawPdfWatermark(
     doc.setPage(page);
     doc.saveGraphicsState();
     try {
-      doc.setGState(new GraphicsState({ opacity }));
+      doc.setGState(new GraphicsState({ opacity, "stroke-opacity": opacity }));
       drawPdfStamp(doc, { ...stampOptions, x, y, size });
     } finally {
       doc.restoreGraphicsState();
