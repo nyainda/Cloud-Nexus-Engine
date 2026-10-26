@@ -10,3 +10,4 @@
 - [Cloudflare Worker deploy runtime](cloudflare-deploy-runtime.md) — Wrangler v4 requires Node 22; check the active shell runtime, not pnpm's engine warning, before deploying
 - [Local API runtime](local-api-native-binding.md) — missing better-sqlite3 native bindings can stop the dev workflow before route tests run
 - [OpenAPI generator compatibility](api-generation-compatibility.md) — check generator and schema-library compatibility before accepting broad generated diffs
+- [jsPDF image aliases](jspdf-image-aliases.md) — fixed aliases can make different shop logos reuse the first embedded image; omit aliases or make them unique

@@ -22,7 +22,11 @@ import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { format, formatDistanceToNow, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
-import { drawPdfStamp } from "@/lib/pdf-stamp";
+import {
+  drawPdfStamp,
+  getPdfShopLogoAssets,
+  loadPdfStampLogo,
+} from "@/lib/pdf-stamp";
 import {
   addDebtToCustomerListCaches,
   applyDebtPayment,
@@ -845,13 +849,13 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const isPartial = debt?.status === "partial";
     const statusColor: RGB = isPaid ? GREEN : isPartial ? ORANGE : RED;
     const statusLabel = isPaid ? "PAID IN FULL" : isPartial ? "PARTIALLY PAID" : "OUTSTANDING";
-    const stampSize = 42;
+    const stampSize = 46;
     const stampX = W - MR - stampSize;
-    const stampY = H - 60;
+    const stampY = H - 64;
 
     // ── Load shop logo ─────────────────────────────────────────────────────
-    const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
-    const logoUrl = shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
+    const shopLogoAssets = getPdfShopLogoAssets(shop?.id ?? shopId);
+    const logoUrl = shopLogoAssets.header;
     let logoBase64 = "";
     let logoNatW = 0;
     let logoNatH = 0;
@@ -872,6 +876,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         reader.readAsDataURL(blob);
       });
     } catch { /* logo optional */ }
+    const stampLogoBase64 = await loadPdfStampLogo(shopLogoAssets.seal);
 
     // ── Shared page chrome ─────────────────────────────────────────────────
     function drawHeader(isFirst: boolean) {
@@ -1161,9 +1166,11 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       x: stampX,
       y: stampY,
       size: stampSize,
-      shopName: shop?.name ?? "GreenLink",
+      shopName: shopLogoAssets.sealName,
+      logoData: stampLogoBase64,
       status: statusLabel,
       dateLabel: format(new Date(), "dd MMM yyyy"),
+      documentRef: `#${(debt?.id ?? "").slice(0, 8).toUpperCase()}`,
     });
 
     const safeName = (debt?.customerName ?? "customer").replace(/[^a-z0-9]/gi, "_");
@@ -1242,16 +1249,16 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
-    const stampSize = 42;
+    const stampSize = 46;
     const stampX = W - MR - stampSize;
-    const stampY = H - 60;
+    const stampY = H - 64;
 
-    const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
+    const shopLogoAssets = getPdfShopLogoAssets(shop?.id ?? shopId);
     let logoBase64 = "";
     let logoNatW = 0;
     let logoNatH = 0;
     try {
-      const response = await fetch(shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg");
+      const response = await fetch(shopLogoAssets.header);
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
       await new Promise<void>((resolve) => {
@@ -1268,6 +1275,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
         reader.readAsDataURL(blob);
       });
     } catch { /* logo is optional */ }
+    const stampLogoBase64 = await loadPdfStampLogo(shopLogoAssets.seal);
 
     doc.setFillColor(...green); doc.rect(0, 0, W, 3, "F");
     if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
@@ -1417,9 +1425,11 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       x: stampX,
       y: stampY,
       size: stampSize,
-      shopName: shop?.name ?? "GreenLink",
+      shopName: shopLogoAssets.sealName,
+      logoData: stampLogoBase64,
       status,
       dateLabel: format(new Date(), "dd MMM yyyy"),
+      documentRef: "CUSTOMER STATEMENT",
     });
     const safeName = group.customerName.replace(/[^a-z0-9]/gi, "_");
     doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
