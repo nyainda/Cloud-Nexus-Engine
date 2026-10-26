@@ -125,11 +125,12 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
     );
   }
 
-  // The key fix: crop whitespace first, then use a larger logo window without stretching.
-  const panelX = x + 7.2;
-  const panelY = y + 4.6;
-  const panelW = diameter - 14.4;
-  const panelH = 10.4;
+  // Original logo presentation: a simple centered logo on a white panel.
+  // Use the original supplied image data directly, without cropping or enlarging artwork.
+  const panelX = x + 6.4;
+  const panelY = y + 4.0;
+  const panelW = diameter - 12.8;
+  const panelH = 11.2;
   doc.setFillColor(...white);
   doc.roundedRect(panelX, panelY, panelW, panelH, 1.8, 1.8, "F");
   doc.setDrawColor(...ink);
@@ -138,24 +139,17 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
 
   if (options.logoDataUrl) {
     try {
-      // Keep the complete logo safely inside the panel with generous inner padding.
-      // The crop is fitted, never allowed to touch or cross the panel border.
-      const innerPadX = 2.8;
-      const innerPadY = 1.5;
-      const maxLogoW = panelW - innerPadX * 2;
-      const maxLogoH = panelH - innerPadY * 2;
       const aspect = options.logoAspectRatio && options.logoAspectRatio > 0 ? options.logoAspectRatio : 2.5;
-      let logoW = Math.min(maxLogoW, maxLogoH * aspect);
-      let logoH = logoW / aspect;
-      if (logoH > maxLogoH) {
-        logoH = maxLogoH;
-        logoW = logoH * aspect;
-      }
-      const logoX = cx - logoW / 2;
-      const logoY = panelY + (panelH - logoH) / 2;
-      doc.addImage(options.logoDataUrl, "JPEG", logoX, logoY, logoW, logoH, undefined, "FAST");
+      const logoW = 20;
+      const logoH = logoW / aspect;
+      const maxW = panelW - 3;
+      const maxH = panelH - 2;
+      const scale = Math.min(1, maxW / logoW, maxH / logoH);
+      const drawW = logoW * scale;
+      const drawH = logoH * scale;
+      doc.addImage(options.logoDataUrl, "JPEG", cx - drawW / 2, panelY + (panelH - drawH) / 2, drawW, drawH, undefined, "FAST");
     } catch {
-      // The rest of the seal remains useful if the optional image cannot be embedded.
+      // Keep the seal usable if the optional logo cannot be embedded.
     }
   }
 
