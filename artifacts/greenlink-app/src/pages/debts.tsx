@@ -845,8 +845,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const isPartial = debt?.status === "partial";
     const statusColor: RGB = isPaid ? GREEN : isPartial ? ORANGE : RED;
     const statusLabel = isPaid ? "PAID IN FULL" : isPartial ? "PARTIALLY PAID" : "OUTSTANDING";
-    const stampSize = 26;
+    const stampSize = 42;
     const stampX = W - MR - stampSize;
+    const stampY = H - 60;
 
     // ── Load shop logo ─────────────────────────────────────────────────────
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
@@ -891,26 +892,18 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
           const dW = logoNatW * scale, dH = logoNatH * scale;
           doc.addImage(logoBase64, "JPEG", ML, 7, dW, dH);
         }
-        // Shop name
+        // Shop name and contacts sit beside the existing logo.
+        const brandTextX = ML + 22;
         doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(...SLATE);
-        doc.text(shop?.name ?? "Our Shop", ML, 12);
+        doc.text(shop?.name ?? "Our Shop", brandTextX, 12, { maxWidth: 104 });
         doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...MGRAY);
         let sx = 17;
-        if (shop?.address)       { doc.text(shop.address,       ML, sx); sx += 4; }
-        if (shop?.ownerWhatsapp) { doc.text(shop.ownerWhatsapp, ML, sx); sx += 4; }
-        if (shop?.email)         { doc.text(shop.email,         ML, sx); }
+        if (shop?.address)       { doc.text(shop.address,       brandTextX, sx, { maxWidth: 104 }); sx += 4; }
+        if (shop?.ownerWhatsapp) { doc.text(shop.ownerWhatsapp, brandTextX, sx, { maxWidth: 104 }); sx += 4; }
+        if (shop?.email)         { doc.text(shop.email,         brandTextX, sx, { maxWidth: 104 }); }
 
-        drawPdfStamp(doc, {
-          x: stampX,
-          y: 1,
-          size: stampSize,
-          shopName: shop?.name ?? "GreenLink",
-          status: statusLabel,
-          dateLabel: format(new Date(), "dd MMM yyyy"),
-        });
-
-        // Document details — aligned beside the status seal
-        const headerRight = stampX - 3;
+        // Document details use the full right side now that the seal is at the bottom.
+        const headerRight = W - MR;
         doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...GREEN);
         doc.text("DEBT STATEMENT", headerRight, 10, { align: "right" });
         doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...SLATE);
@@ -1130,10 +1123,11 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
 
     // ── Clean summary bar ─────────────────────────────────────────────────
     const BS_H = 18;
-    if (y + BS_H > H - 20) { doc.addPage(); drawHeader(false); y = 18; }
+    if (y + BS_H > stampY - 8) { doc.addPage(); drawHeader(false); y = 18; }
 
+    const summaryW = CW - stampSize - 10;
     doc.setFillColor(...LGRAY); doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
-    doc.roundedRect(ML, y, CW, BS_H, 2, 2, "FD");
+    doc.roundedRect(ML, y, summaryW, BS_H, 2, 2, "FD");
     // Green left accent
     doc.setFillColor(...GREEN); doc.roundedRect(ML, y, 4, BS_H, 2, 2, "F");
     doc.rect(ML + 4, y, 2, BS_H, "F");
@@ -1146,7 +1140,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         ? [{ label: "CUSTOMER CREDIT", value: `KES ${customerCredit.toLocaleString("en-KE")}`, vc: GREEN }]
         : []),
     ];
-    const colW = CW / cols3.length;
+    const colW = summaryW / cols3.length;
     cols3.forEach((col, i) => {
       const cx = ML + colW * i + colW / 2;
       doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...GREEN);
@@ -1162,6 +1156,15 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     // Footer on all pages
     const numPages = (doc as any).internal.getNumberOfPages();
     for (let p = 1; p <= numPages; p++) { doc.setPage(p); drawFooter(); }
+    doc.setPage(numPages);
+    drawPdfStamp(doc, {
+      x: stampX,
+      y: stampY,
+      size: stampSize,
+      shopName: shop?.name ?? "GreenLink",
+      status: statusLabel,
+      dateLabel: format(new Date(), "dd MMM yyyy"),
+    });
 
     const safeName = (debt?.customerName ?? "customer").replace(/[^a-z0-9]/gi, "_");
     doc.save(`DebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
@@ -1239,8 +1242,9 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
-    const stampSize = 26;
+    const stampSize = 42;
     const stampX = W - MR - stampSize;
+    const stampY = H - 60;
 
     const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
     let logoBase64 = "";
@@ -1271,18 +1275,10 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       const scale = Math.min(28 / logoNatW, logoH / logoNatH);
       doc.addImage(logoBase64, "JPEG", ML, 6, logoNatW * scale, logoNatH * scale);
     }
-    drawPdfStamp(doc, {
-      x: stampX,
-      y: 1,
-      size: stampSize,
-      shopName: shop?.name ?? "GreenLink",
-      status,
-      dateLabel: format(new Date(), "dd MMM yyyy"),
-    });
     doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...slate);
     doc.text(shop.name || "GreenLink", ML + 32, 14);
     doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
-    const headerRight = stampX - 3;
+    const headerRight = W - MR;
     doc.text("CUSTOMER DEBT STATEMENT", headerRight, 12, { align: "right", maxWidth: 44 });
     doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...muted);
     doc.text(`Generated ${format(new Date(), "dd MMM yyyy, HH:mm")}`, headerRight, 17, { align: "right", maxWidth: 44 });
@@ -1395,8 +1391,10 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       columnStyles: { 0: { cellWidth: 31 }, 1: { cellWidth: 22 }, 2: { cellWidth: 34 }, 3: { cellWidth: "auto" }, 4: { cellWidth: 27 }, 5: { cellWidth: 28, halign: "right", fontStyle: "bold" } },
     });
     y = (doc as any).lastAutoTable.finalY + 8;
-    if (y > H - 45) { doc.addPage(); y = 22; }
-    doc.setFillColor(248, 250, 252); doc.setDrawColor(...border); doc.roundedRect(ML, y, CW, 20, 2, 2, "FD");
+    const summaryHeight = 20;
+    const summaryWidth = CW - stampSize - 10;
+    if (y + summaryHeight > stampY - 8) { doc.addPage(); y = 22; }
+    doc.setFillColor(248, 250, 252); doc.setDrawColor(...border); doc.roundedRect(ML, y, summaryWidth, summaryHeight, 2, 2, "FD");
     const summary = [
       ["TOTAL DEBT", money(totalAmount)],
       ["TOTAL PAID", money(totalPaid)],
@@ -1404,7 +1402,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       ...(totalCredit > 0 ? [["CUSTOMER CREDIT", money(totalCredit)]] : []),
     ];
     summary.forEach(([label, value], i) => {
-      const colW = CW / summary.length;
+      const colW = summaryWidth / summary.length;
       const x = ML + colW * i + colW / 2;
       doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...green); doc.text(label, x, y + 7, { align: "center" });
       const valueColor: [number, number, number] = label === "BALANCE DUE" && totalBalance > 0 ? [220, 38, 38] : i === 1 || label === "CUSTOMER CREDIT" ? green : slate;
@@ -1413,6 +1411,16 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     doc.setDrawColor(...border); doc.line(ML, H - 13, W - MR, H - 13);
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...muted);
     doc.text("This statement shows the customer's current debt balances, payments, and credit.", ML, H - 8);
+    const pageCount = (doc as any).internal.getNumberOfPages();
+    doc.setPage(pageCount);
+    drawPdfStamp(doc, {
+      x: stampX,
+      y: stampY,
+      size: stampSize,
+      shopName: shop?.name ?? "GreenLink",
+      status,
+      dateLabel: format(new Date(), "dd MMM yyyy"),
+    });
     const safeName = group.customerName.replace(/[^a-z0-9]/gi, "_");
     doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
     toast.success("Customer statement downloaded!", { id: "customer-debt-pdf" });
