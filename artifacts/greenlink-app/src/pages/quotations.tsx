@@ -564,6 +564,8 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       tone: stamp.tone,
       reference: documentNumber,
       logoDataUrl: logoBase64 || undefined,
+      documentType: isInvoice ? "INVOICE" : "QUOTATION",
+      dateLabel: format(new Date(), "dd MMM yyyy"),
     });
 
     doc.save(custSlug ? `${custSlug}_${documentNumber}.pdf` : `${documentNumber}.pdf`);
