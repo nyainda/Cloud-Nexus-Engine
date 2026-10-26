@@ -12,3 +12,4 @@
 - [OpenAPI generator compatibility](api-generation-compatibility.md) — check generator and schema-library compatibility before accepting broad generated diffs
 - [jsPDF image aliases](jspdf-image-aliases.md) — fixed aliases can make different shop logos reuse the first embedded image; omit aliases or make them unique
 - [Customer credit accounting](customer-credit-accounting.md) — keep overpayments distinct from debt due; track safe reversal limits until credit source links exist
+- [jsPDF watermark transparency](jspdf-watermark-transparency.md) — set both fill and stroke opacity; jsPDF's fill opacity alone leaves stamp outlines fully visible
