@@ -8,6 +8,7 @@ export interface PdfStampOptions {
   reference: string;
   tone?: PdfStampTone;
   logoDataUrl?: string;
+  logoAspectRatio?: number;
   documentType?: string;
   dateLabel?: string;
 }
@@ -75,10 +76,13 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
 
   if (options.logoDataUrl) {
     try {
-      // Keep aspect ratio, use the largest dimensions that fit the white logo panel.
-      const logoW = 27;
-      const logoH = 8.1;
-      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, logoPanelY + 0.55, logoW, logoH, undefined, "FAST");
+      // Fit the supplied logo into the panel without stretching its original proportions.
+      const maxLogoW = logoPanelW - 2;
+      const maxLogoH = logoPanelH - 1.1;
+      const aspect = options.logoAspectRatio && options.logoAspectRatio > 0 ? options.logoAspectRatio : 2.5;
+      const logoW = Math.min(maxLogoW, maxLogoH * aspect);
+      const logoH = logoW / aspect;
+      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, logoPanelY + (logoPanelH - logoH) / 2, logoW, logoH, undefined, "FAST");
     } catch {
       // Retain all text and borders if image embedding fails.
     }
@@ -132,7 +136,7 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
   doc.line(x + 9, y + 35.7, x + diameter - 9, y + 35.7);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(4.1);
-  doc.text("ISSUED BY SHOP MANAGEMENT", cx, y + 38.5, { align: "center" });
+  doc.text("OFFICIAL BUSINESS RECORD", cx, y + 38.5, { align: "center" });
 
   // Restore neutral state for downstream drawing.
   doc.setTextColor(0, 0, 0);
