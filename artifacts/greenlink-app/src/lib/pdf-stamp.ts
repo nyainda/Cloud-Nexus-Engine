@@ -110,7 +110,7 @@ function drawArcText(
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...color);
 
-  const tracking = 0.18;
+  const tracking = 0.1;
   const maxArcLength = radius * (Math.PI * 0.82);
   let fontSize = requestedFontSize;
   let widths: number[] = [];
@@ -164,17 +164,15 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
   const { ink, wash } = getStampPalette(status);
   const statusLabel = getStampStatusLabel(status);
 
-  // Three rings and curved lettering follow the branded seals in the supplied reference.
+  // Keep the lettering centered in the clear band between the outer and inner rings.
   doc.setFillColor(...wash);
   doc.setDrawColor(...ink);
   doc.setLineWidth(0.75 * scale);
   doc.circle(centerX, centerY, size / 2 - 0.55 * scale, "FD");
-  doc.setLineWidth(0.28 * scale);
-  doc.circle(centerX, centerY, size / 2 - 2.35 * scale, "S");
-  doc.setLineWidth(0.18 * scale);
-  doc.circle(centerX, centerY, size / 2 - 4.1 * scale, "S");
+  doc.setLineWidth(0.25 * scale);
+  doc.circle(centerX, centerY, size / 2 - 4.8 * scale, "S");
 
-  const arcRadius = size / 2 - 4.6 * scale;
+  const arcRadius = size / 2 - 2.675 * scale;
   drawArcText(
     doc,
     shopName,
@@ -198,12 +196,11 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
     4.8 * scale,
   );
 
-  const starX = centerX + size / 2 - 5.8 * scale;
+  const starX = centerX + arcRadius;
   drawFourPointStar(doc, starX, centerY, 1.15 * scale, ink);
-  drawFourPointStar(doc, centerX - size / 2 + 5.8 * scale, centerY, 1.15 * scale, ink);
+  drawFourPointStar(doc, centerX - arcRadius, centerY, 1.15 * scale, ink);
 
   const logoArea = {
-    x: centerX - size * 0.37,
     y: y + 9.1 * scale,
     width: size * 0.74,
     height: 14.2 * scale,
@@ -240,21 +237,21 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
   );
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize((statusLabel.length > 10 ? 7.1 : 8.2) * scale);
+  doc.setFontSize(Math.max(statusLabel.length > 10 ? 4.9 : 5.3, (statusLabel.length > 10 ? 7.1 : 8.2) * scale));
   doc.text(statusLabel, centerX, badgeY + 5.3 * scale, {
     align: "center",
     maxWidth: badgeWidth - 3 * scale,
   });
 
   doc.setTextColor(...ink);
-  doc.setFontSize(5.1 * scale);
+  doc.setFontSize(Math.max(4, 5.1 * scale));
   doc.text(dateLabel.toUpperCase(), centerX, y + 35 * scale, {
     align: "center",
     maxWidth: size - 12 * scale,
   });
   if (documentRef) {
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(3.7 * scale);
+    doc.setFontSize(Math.max(3.2, 3.7 * scale));
     doc.text(documentRef.toUpperCase(), centerX, y + 38 * scale, {
       align: "center",
       maxWidth: size - 13 * scale,
