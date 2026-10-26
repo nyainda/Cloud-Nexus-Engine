@@ -103,6 +103,42 @@ function debtGenuineCashReceived(debt: any): number {
     .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
 }
 
+function debtHasEffectivePaymentHistory(debt: any): boolean {
+  const payments = debt?.payments || [];
+  const reversedIds = new Set(
+    payments
+      .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
+      .map((p: any) => p.reversalOfId),
+  );
+  return payments.some(
+    (p: any) =>
+      p.paymentType !== "reversal" &&
+      Number(p.amount) >= 0 &&
+      !reversedIds.has(p.id),
+  );
+}
+
+// Older records can be marked paid while their stored balance/payment rows
+// were never updated. PDFs follow the app's settled status in that case and
+// label the history as a paid mark, not as a cash or credit transaction.
+function debtPdfBalanceDue(debt: any): number {
+  return debt?.status === "paid" ? 0 : debtBalanceDue(debt);
+}
+
+function debtPdfAmountPaid(debt: any): number {
+  if (debt?.status === "paid" && !debtHasEffectivePaymentHistory(debt)) {
+    return Math.max(Number(debt?.totalAmount || 0), debtAmountPaid(debt));
+  }
+  return debtAmountPaid(debt);
+}
+
+function debtPdfTotalPaid(debt: any): number {
+  if (debt?.status === "paid" && !debtHasEffectivePaymentHistory(debt)) {
+    return Math.max(Number(debt?.totalAmount || 0), debtAmountPaid(debt));
+  }
+  return debtGenuineCashReceived(debt);
+}
+
 function sameCustomer(a: string, b: string): boolean {
   return a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -834,9 +870,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const payments: any[] = debt?.payments ?? [];
     const items: any[]    = debt?.items    ?? [];
     const productSummary = debtProductSummary(items);
-    const balanceDue = debtBalanceDue(debt);
+    const balanceDue = debtPdfBalanceDue(debt);
     const customerCredit = debtCredit(debt);
-    const totalPaid = debtAmountPaid(debt);
+    const totalPaid = debtPdfAmountPaid(debt);
     const openedDate = format(new Date(debt?.createdAt), "dd MMM yyyy");
     const daysOpen   = differenceInDays(new Date(), new Date(debt?.createdAt));
     const generatedAt = format(new Date(), "dd MMM yyyy, h:mm a");
@@ -1105,7 +1141,19 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         });
       }
     }
-    if (histRows.length === 1) {
+    if (isPaid && !debtHasEffectivePaymentHistory(debt)) {
+      histRows.push({
+        cells: [
+          format(new Date(debt?.paidAt ?? debt?.createdAt), "dd MMM yyyy, HH:mm"),
+          "System",
+          productSummary,
+          "Marked paid (payment details unavailable)",
+          `KES ${debtPdfAmountPaid(debt).toLocaleString("en-KE")}`,
+          "KES 0",
+        ],
+        isOpened: false,
+      });
+    } else if (histRows.length === 1) {
       histRows.push({ cells: ["—", "—", productSummary, "No payments recorded yet", "—", "—"], isOpened: false });
     }
 
@@ -1266,9 +1314,9 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const muted: [number, number, number] = [100, 116, 139];
     const border: [number, number, number] = [226, 232, 240];
     const totalAmount = details.reduce((s, d: any) => s + Number(d?.totalAmount || 0), 0);
-    const totalBalance = details.reduce((s, d: any) => s + debtBalanceDue(d), 0);
+    const totalBalance = details.reduce((s, d: any) => s + debtPdfBalanceDue(d), 0);
     const totalCredit = details.reduce((s, d: any) => s + debtCredit(d), 0);
-    const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
+    const totalPaid = details.reduce((s, d: any) => s + debtPdfTotalPaid(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
     const stampSize = 32;
@@ -1329,7 +1377,7 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
         format(new Date(d.createdAt), "dd MMM yyyy"),
         `${compactDebtProductSummary(d.items)}${d.notes ? ` · ${String(d.notes).slice(0, 42)}` : ""}`,
          d.status === "paid" ? (debtCredit(d) > 0 ? "PAID + CREDIT" : "PAID") : d.status === "partial" ? "PARTIAL" : "UNPAID",
-         money(d.totalAmount), money(debtAmountPaid(d)), money(debtBalanceDue(d)),
+         money(d.totalAmount), money(debtPdfAmountPaid(d)), money(debtPdfBalanceDue(d)),
       ]),
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
       bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
@@ -1383,6 +1431,16 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       );
       const printablePayments = (d.payments || [])
         .filter((p: any) => p.paymentType !== "reversal" && Number(p.amount) >= 0 && !reversedPaymentIds.has(p.id))
+      if (printablePayments.length === 0 && d.status === "paid") {
+        return [[
+          format(new Date(d.paidAt ?? d.createdAt), "dd MMM yyyy, HH:mm"),
+          `#${String(d.id).slice(0, 8).toUpperCase()}`,
+          compactDebtProductSummary(d.items),
+          "Marked paid (payment details unavailable)",
+          "—",
+          money(debtPdfAmountPaid(d)),
+        ]];
+      }
       let running = Number(d.totalAmount || 0);
       return printablePayments.flatMap((p: any) => {
         const paymentAmount = Number(p.amount || 0);
