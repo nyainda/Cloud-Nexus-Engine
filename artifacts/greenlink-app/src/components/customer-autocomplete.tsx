@@ -13,6 +13,7 @@ export interface CrmEntry {
   email: string | null;
   registered: boolean;
   totalBalance: number;
+  totalCredit: number;
   totalOwed: number;
   debtCount: number;
   activeCount: number;
@@ -22,6 +23,7 @@ export interface SelectedCustomer {
   name: string;
   phone: string;
   totalBalance: number;
+  totalCredit: number;
   registered: boolean;
 }
 
@@ -136,6 +138,7 @@ export function CustomerAutocomplete({
                   name: s.name,
                   phone: s.phone || "",
                   totalBalance: s.totalBalance,
+                  totalCredit: s.totalCredit ?? 0,
                   registered: s.registered,
                 });
                 setOpen(false);
@@ -174,6 +177,11 @@ export function CustomerAutocomplete({
               {s.totalBalance > 0 && (
                 <span className="text-[9px] font-bold font-mono text-destructive bg-destructive/10 border border-destructive/20 px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap">
                   {formatKES(s.totalBalance)} owed
+                </span>
+              )}
+              {s.totalCredit > 0 && (
+                <span className="text-[9px] font-bold font-mono text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap">
+                  {formatKES(s.totalCredit)} credit
                 </span>
               )}
             </button>

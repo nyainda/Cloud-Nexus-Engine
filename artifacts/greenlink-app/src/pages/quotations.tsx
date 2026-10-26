@@ -15,6 +15,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
   drawPdfStamp,
+  drawPdfWatermark,
   getPdfShopLogoAssets,
   loadPdfStampLogo,
 } from "@/lib/pdf-stamp";
@@ -54,6 +55,14 @@ interface Quotation {
 
 const KES = (n: number) =>
   "KES " + n.toLocaleString("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+function getQuotationShopName(shop: any): string {
+  const shopId = shop?.id ?? localStorage.getItem("greenlink_shopId");
+  if (shopId === "shop-sunrise") {
+    return getPdfShopLogoAssets(shopId).sealName;
+  }
+  return shop?.name ?? "Our Shop";
+}
 
 const STATUS_META = {
   draft:    { label: "Draft",    color: "text-zinc-300 bg-zinc-400/[0.08] border-zinc-400/20", dot: "bg-zinc-400" },
@@ -109,6 +118,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     // ── Load shop logo ─────────────────────────────────────────────────────────
     const currentShopId = shop?.id ?? localStorage.getItem("greenlink_shopId") ?? undefined;
     const shopLogoAssets = getPdfShopLogoAssets(currentShopId);
+    const shopDisplayName = getQuotationShopName(shop);
     const logoUrl = shopLogoAssets.header;
     let logoBase64 = "";
     let logoNatW = 0;
@@ -167,11 +177,11 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       doc.rect(0, H - 14, W, 1.2, "F");
       const cols = [ML, W / 2, W - MR];
       const align: ("left"|"center"|"right")[] = ["left","center","right"];
-      const heads = ["LOCATION", "CONTACT", shop?.name ? "SHOP" : ""];
+      const heads = ["LOCATION", "CONTACT", shopDisplayName ? "SHOP" : ""];
       const bits: string[] = [
         shop?.address ?? "",
         [shop?.ownerWhatsapp, shop?.email].filter(Boolean).join("  ·  "),
-        shop?.name ?? "",
+        shopDisplayName,
       ];
       heads.forEach((h, i) => {
         if (!h && !bits[i]) return;
@@ -197,7 +207,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6);
       doc.setTextColor(180, 188, 200);
-      doc.text(`${shop?.name ?? ""}  ·  ${documentNumber}  ·  continued`, ML, 6.5);
+      doc.text(`${shopDisplayName}  ·  ${documentNumber}  ·  continued`, ML, 6.5);
       doc.text(`Page ${pg} of ${total}`, W - MR, 6.5, { align: "right" });
       // Reset graphics state so autotable inherits clean defaults after this hook
       doc.setFillColor(...WHITE);
@@ -236,7 +246,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...WHITE);
-    doc.text(shop?.name ?? "Our Shop", ML, 14, { maxWidth: 120 });
+    doc.text(shopDisplayName, ML, 14, { maxWidth: 120 });
 
     const shopBits = [shop?.address, shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
     doc.setFont("helvetica", "normal");
@@ -560,11 +570,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       doc.setPage(p);
       drawFooter();
     }
-    doc.setPage(numPages);
-    drawPdfStamp(doc, {
-      x: stampX,
-      y: stampY,
-      size: stampSize,
+    const stampOptions = {
       shopName: shopLogoAssets.sealName,
       logoData: stampLogoBase64,
       status: isInvoice ? "ISSUED" : quotation.status,
@@ -573,6 +579,14 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
         "dd MMM yyyy",
       ),
       documentRef: documentNumber,
+    };
+    drawPdfWatermark(doc, stampOptions);
+    doc.setPage(numPages);
+    drawPdfStamp(doc, {
+      x: stampX,
+      y: stampY,
+      size: stampSize,
+      ...stampOptions,
     });
 
     const custSlug = (quotation.customerName?.trim() || "")
@@ -594,7 +608,7 @@ function buildWhatsAppText(q: Quotation, shop: any, documentType: "quotation" | 
   const documentNumber = isInvoice ? q.invoiceNumber! : q.quoteNumber;
   const lines: string[] = [
     `*${isInvoice ? "INVOICE" : "QUOTATION"} — ${documentNumber}*`,
-    `_${shop?.name ?? "Our Shop"}_`,
+    `_${getQuotationShopName(shop)}_`,
     "",
     `👤 *Customer:* ${q.customerName}`,
     ...(q.customerPhone ? [`📞 *Phone:* ${q.customerPhone}`] : []),
@@ -643,6 +657,7 @@ function shareWhatsApp(q: Quotation, shop: any, documentType: "quotation" | "inv
 
 function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: any; onClose: () => void }) {
   const [downloading, setDownloading] = useState(false);
+  const shopDisplayName = getQuotationShopName(shop);
 
   const handleDownload = async () => {
     setDownloading(true);
@@ -694,7 +709,7 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
             <div style={{ padding: "28px 36px 26px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "20px", flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: "180px" }}>
                 <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.25em", color: "#C8FF00", textTransform: "uppercase", marginBottom: "8px", margin: "0 0 8px" }}>Official Quotation</p>
-                <h1 style={{ fontSize: "24px", fontWeight: 900, color: "#fff", margin: "0 0 8px", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{shop?.name ?? "Our Shop"}</h1>
+                <h1 style={{ fontSize: "24px", fontWeight: 900, color: "#fff", margin: "0 0 8px", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{shopDisplayName}</h1>
                 <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
                   {shop?.address && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.address}</span>}
                   {shop?.ownerWhatsapp && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.ownerWhatsapp}</span>}
@@ -794,7 +809,7 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
               <p style={{ fontSize: "10px", color: "#94a3b8", lineHeight: 1.6, margin: 0 }}>
                 Valid {quotation.validUntil ? `until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}` : "for 30 days from issue"} · Prices subject to availability
               </p>
-              <p style={{ fontSize: "11px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{shop?.name ?? ""}</p>
+              <p style={{ fontSize: "11px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{shopDisplayName}</p>
             </div>
           </div>
         </div>

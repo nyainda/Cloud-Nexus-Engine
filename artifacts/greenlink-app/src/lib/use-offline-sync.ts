@@ -171,6 +171,7 @@ export function useOfflineSync(shopId: string) {
       qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
       // Offline sales can create debts; refresh the Customers/CRM views too.
       qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
       qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
 
       // ── Conflict detection ──────────────────────────────────────────────────

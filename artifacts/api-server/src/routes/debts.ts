@@ -1043,11 +1043,27 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
   if (original.paymentType === "reversal" || original.amount <= 0) {
     return c.json({ error: "Only an original payment can be reversed" }, 400);
   }
+  if (original.paymentType === "credit_applied") {
+    return c.json({
+      error: "This credit was moved from another debt or sale and cannot be safely reversed from this screen.",
+    }, 409);
+  }
   const existingReversal = await db.select({ id: debtPayments.id })
     .from(debtPayments)
     .where(and(eq(debtPayments.debtId, debtId), eq(debtPayments.reversalOfId, paymentId)))
     .get();
   if (existingReversal) return c.json({ error: "This payment has already been reversed" }, 409);
+
+  const currentBalance = Number(debt.balance || 0);
+  const currentAmountPaid = Number(debt.amountPaid || 0);
+  const restoredBalance = currentBalance + Number(original.amount);
+  const restoredAmountPaid = Math.max(0, currentAmountPaid - Number(original.amount));
+  const expectedBalanceAfterReversal = Number(debt.totalAmount || 0) - restoredAmountPaid;
+  if (restoredBalance > expectedBalanceAfterReversal + 0.005) {
+    return c.json({
+      error: "This payment's customer credit has already been used. A ledger correction is needed before it can be safely reversed.",
+    }, 409);
+  }
 
   const now = new Date().toISOString();
   const reversalId = crypto.randomUUID();

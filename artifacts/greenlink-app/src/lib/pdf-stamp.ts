@@ -258,3 +258,40 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
     });
   }
 }
+
+/**
+ * Repeat the official document stamp as a faint watermark on each page.
+ * The low-opacity graphics state keeps the document content readable while
+ * retaining the same status, date, reference, and shop identity as the final
+ * page's visible stamp.
+ */
+export function drawPdfWatermark(
+  doc: jsPDF,
+  options: Omit<PdfStampOptions, "x" | "y" | "size"> & { opacity?: number },
+): void {
+  const pageCount = (doc as any).internal.getNumberOfPages() as number;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const size = Math.min(56, pageWidth * 0.27, pageHeight * 0.2);
+  const x = (pageWidth - size) / 2;
+  const y = (pageHeight - size) / 2;
+  const { opacity = 0.06, ...stampOptions } = options;
+  const GraphicsState = (doc as any).GState as
+    | (new (parameters: { opacity: number }) => unknown)
+    | undefined;
+
+  if (!GraphicsState) {
+    throw new Error("This PDF renderer does not support watermark transparency.");
+  }
+
+  for (let page = 1; page <= pageCount; page++) {
+    doc.setPage(page);
+    doc.saveGraphicsState();
+    try {
+      doc.setGState(new GraphicsState({ opacity }));
+      drawPdfStamp(doc, { ...stampOptions, x, y, size });
+    } finally {
+      doc.restoreGraphicsState();
+    }
+  }
+}

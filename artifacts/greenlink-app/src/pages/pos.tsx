@@ -372,6 +372,8 @@ interface CartPanelProps {
   setPaymentMethod: (v: "cash" | "bank") => void;
   selectedCustomerBalance: number | null;
   setSelectedCustomerBalance: (v: number | null) => void;
+  selectedCustomerCredit: number | null;
+  setSelectedCustomerCredit: (v: number | null) => void;
   autoPrint: boolean;
   onAutoPrintChange: (v: boolean) => void;
 }
@@ -383,6 +385,7 @@ const CartPanel = memo(function CartPanel({
   setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout, setQtyDirect,
   paymentMethod, setPaymentMethod,
   selectedCustomerBalance, setSelectedCustomerBalance,
+  selectedCustomerCredit, setSelectedCustomerCredit,
   autoPrint, onAutoPrintChange,
 }: CartPanelProps) {
   return (
@@ -552,15 +555,22 @@ const CartPanel = memo(function CartPanel({
                 onChange={(v) => {
                   setDebtCustomerName(v);
                   setSelectedCustomerBalance(null);
+                  setSelectedCustomerCredit(null);
                 }}
                 onSelect={(c: SelectedCustomer) => {
                   setDebtCustomerName(c.name);
                   if (c.phone) setDebtCustomerPhone(c.phone);
                   setSelectedCustomerBalance(c.totalBalance);
+                  setSelectedCustomerCredit(c.totalCredit);
                 }}
                 showBalanceWarning
                 selectedBalance={selectedCustomerBalance ?? undefined}
               />
+              {selectedCustomerCredit != null && selectedCustomerCredit > 0 && (
+                <p className="mt-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-[11px] text-emerald-500">
+                  Available credit: <strong>{formatKES(selectedCustomerCredit)}</strong>. On a debt sale, up to {formatKES(Math.min(selectedCustomerCredit, total))} will be applied automatically.
+                </p>
+              )}
             </div>
             <div className="relative">
               <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
@@ -912,6 +922,7 @@ export default function POS() {
   const [debtCustomerName, setDebtCustomerName] = useState("");
   const [debtCustomerPhone, setDebtCustomerPhone] = useState("");
   const [selectedCustomerBalance, setSelectedCustomerBalance] = useState<number | null>(null);
+  const [selectedCustomerCredit, setSelectedCustomerCredit] = useState<number | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "bank">("cash");
   const createSale = useCreateSale();
   // Guard against double-tapping the checkout button — cleared in onSettled / onError / offline path
@@ -1147,7 +1158,7 @@ export default function POS() {
       }) };
     });
 
-    setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setSelectedCustomerBalance(null); setShowCartMobile(false);
+    setCart([]); setDiscount(0); setDebtCustomerName(""); setDebtCustomerPhone(""); setSelectedCustomerBalance(null); setSelectedCustomerCredit(null); setShowCartMobile(false);
     // Show confirmation immediately — don't wait for the network
     const successMsg = saleType === "debt" ? "✓ Debt recorded!" : chosenMethod === "bank" ? "✓ Bank payment complete!" : "✓ Cash sale complete!";
     toast.success(successMsg);
@@ -1236,6 +1247,7 @@ export default function POS() {
             // CRM powers both the Customers page and customer profile/debt views.
             // Keep it fresh when a debt is created from POS.
             qc.invalidateQueries({ queryKey: ["/api/crm"] });
+            qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
           }
           qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
@@ -1254,6 +1266,7 @@ export default function POS() {
     setShowCartMobile, updateQty, removeFromCart, updatePrice, handleCheckout, setQtyDirect,
     paymentMethod, setPaymentMethod,
     selectedCustomerBalance, setSelectedCustomerBalance,
+    selectedCustomerCredit, setSelectedCustomerCredit,
     autoPrint, onAutoPrintChange: handleAutoPrintChange,
   };
 
