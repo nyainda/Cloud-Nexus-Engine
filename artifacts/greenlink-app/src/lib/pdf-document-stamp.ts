@@ -164,12 +164,25 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
   // Lower curved motto matches the approved circular reference.
   drawArcText(doc, "OFFICIAL BUSINESS RECORD", cx, cy, r - 3.2, 155, 25, ink, 4.4, true);
 
-  // Side stars balance the composition.
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text("★", x + 7.1, cy + 3.0, { align: "center" });
-  doc.text("★", x + diameter - 7.1, cy + 3.0, { align: "center" });
+  // Side stars balance the composition. Draw them as vector paths so they
+  // render consistently in every PDF viewer without relying on a special font.
+  const drawStar = (starCx: number, starCy: number, outer: number, inner: number) => {
+    const points: Array<[number, number]> = [];
+    for (let i = 0; i < 10; i++) {
+      const a = (-90 + i * 36) * Math.PI / 180;
+      const radius = i % 2 === 0 ? outer : inner;
+      points.push([starCx + Math.cos(a) * radius, starCy + Math.sin(a) * radius]);
+    }
+    doc.setDrawColor(...ink);
+    doc.setFillColor(...ink);
+    for (let i = 0; i < points.length; i++) {
+      const [x1, y1] = points[i];
+      const [x2, y2] = points[(i + 1) % points.length];
+      doc.line(x1, y1, x2, y2);
+    }
+  };
+  drawStar(x + 4.6, cy + 2.8, 1.8, 0.8);
+  drawStar(x + diameter - 4.6, cy + 2.8, 1.8, 0.8);
 
   doc.setTextColor(0, 0, 0);
   doc.setDrawColor(0, 0, 0);
