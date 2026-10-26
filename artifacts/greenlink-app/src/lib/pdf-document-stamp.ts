@@ -24,35 +24,42 @@ function drawArcText(
   startDeg: number,
   endDeg: number,
   color: RGB,
-  fontSize: number,
+  requestedFontSize: number,
   bold = true,
 ): void {
   const chars = [...text.toUpperCase()];
   if (!chars.length) return;
 
   doc.setFont("helvetica", bold ? "bold" : "normal");
-  doc.setFontSize(fontSize);
   doc.setTextColor(...color);
 
-  // Use jsPDF's own font metrics so longer shop names still fit their arc.
-  const widths = chars.map((char) => doc.getTextWidth(char || " "));
-  const totalWidth = widths.reduce((sum, width) => sum + width, 0);
   const arcLength = (Math.abs(endDeg - startDeg) * Math.PI / 180) * radius;
-  const scale = totalWidth > arcLength ? arcLength / totalWidth : 1;
-  const scaledWidths = widths.map((width) => width * scale);
-  const totalScaledWidth = scaledWidths.reduce((sum, width) => sum + width, 0);
-  const totalAngle = (totalScaledWidth / radius) * (180 / Math.PI);
+  let fontSize = requestedFontSize;
+  let widths: number[] = [];
+  let totalWidth = 0;
+
+  // Reduce the actual font size when necessary; do not squeeze letter positions
+  // more tightly than the glyph widths, which would make long names collide.
+  do {
+    doc.setFontSize(fontSize);
+    widths = chars.map((char) => doc.getTextWidth(char));
+    totalWidth = widths.reduce((sum, width) => sum + width, 0);
+    if (totalWidth <= arcLength || fontSize <= 3.4) break;
+    fontSize -= 0.2;
+  } while (fontSize > 3.2);
+
   const direction = endDeg >= startDeg ? 1 : -1;
+  const totalAngle = (totalWidth / radius) * (180 / Math.PI);
   let angle = (startDeg + endDeg) / 2 - direction * totalAngle / 2;
 
   chars.forEach((char, index) => {
-    const advance = scaledWidths[index] / radius * (180 / Math.PI);
+    const advance = widths[index] / radius * (180 / Math.PI);
     const charAngle = angle + direction * advance / 2;
     const rad = charAngle * Math.PI / 180;
-    const x = cx + Math.cos(rad) * radius;
-    const y = cy + Math.sin(rad) * radius;
+    const px = cx + Math.cos(rad) * radius;
+    const py = cy + Math.sin(rad) * radius;
     const tangent = charAngle + (direction > 0 ? 90 : -90);
-    doc.text(char, x, y, { align: "center", angle: tangent });
+    doc.text(char, px, py, { align: "center", angle: tangent });
     angle += direction * advance;
   });
 }
