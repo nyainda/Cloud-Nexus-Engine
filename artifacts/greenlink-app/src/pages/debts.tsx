@@ -849,9 +849,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const isPartial = debt?.status === "partial";
     const statusColor: RGB = isPaid ? GREEN : isPartial ? ORANGE : RED;
     const statusLabel = isPaid ? "PAID IN FULL" : isPartial ? "PARTIALLY PAID" : "OUTSTANDING";
-    const stampSize = 46;
+    const stampSize = 32;
     const stampX = W - MR - stampSize;
-    const stampY = H - 64;
+    const stampY = H - 49;
 
     // ── Load shop logo ─────────────────────────────────────────────────────
     const shopLogoAssets = getPdfShopLogoAssets(shop?.id ?? shopId);
@@ -1128,9 +1128,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
 
     // ── Clean summary bar ─────────────────────────────────────────────────
     const BS_H = 18;
-    if (y + BS_H > stampY - 8) { doc.addPage(); drawHeader(false); y = 18; }
+    if (y + BS_H > stampY - 4) { doc.addPage(); drawHeader(false); y = 18; }
 
-    const summaryW = CW - stampSize - 10;
+    const summaryW = CW;
     doc.setFillColor(...LGRAY); doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
     doc.roundedRect(ML, y, summaryW, BS_H, 2, 2, "FD");
     // Green left accent
@@ -1249,9 +1249,9 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
-    const stampSize = 46;
+    const stampSize = 32;
     const stampX = W - MR - stampSize;
-    const stampY = H - 64;
+    const stampY = H - 49;
 
     const shopLogoAssets = getPdfShopLogoAssets(shop?.id ?? shopId);
     let logoBase64 = "";
@@ -1400,8 +1400,17 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     });
     y = (doc as any).lastAutoTable.finalY + 8;
     const summaryHeight = 20;
-    const summaryWidth = CW - stampSize - 10;
-    if (y + summaryHeight > stampY - 8) { doc.addPage(); y = 22; }
+    const summaryWidth = CW;
+    if (y + summaryHeight > stampY - 4) {
+      doc.addPage();
+      const pageNumber = (doc as any).internal.getNumberOfPages();
+      doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
+      doc.text("CUSTOMER DEBT STATEMENT — SUMMARY", ML, 12);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...muted);
+      doc.text(`Page ${pageNumber}`, W - MR, 12, { align: "right" });
+      doc.setDrawColor(...border); doc.line(ML, 16, W - MR, 16);
+      y = 22;
+    }
     doc.setFillColor(248, 250, 252); doc.setDrawColor(...border); doc.roundedRect(ML, y, summaryWidth, summaryHeight, 2, 2, "FD");
     const summary = [
       ["TOTAL DEBT", money(totalAmount)],

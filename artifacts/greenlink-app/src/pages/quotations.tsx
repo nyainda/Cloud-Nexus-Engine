@@ -377,9 +377,9 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       : defaultTerms;
     const TERMS_H = Math.max(26, termLines.length * 4.5 + 14);
 
-    const stampSize = 46;
+    const stampSize = 32;
     const stampX = W - MR - stampSize;
-    const stampY = H - 64;
+    const stampY = H - 49;
     const totalRowsHeight = quotation.discountAmount > 0 ? 26 : 9;
     const estimatedThankYouY = ty + totalRowsHeight + 4;
     const estimatedSignatureY = Math.max(
@@ -534,7 +534,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     // Signature lines remain in a dedicated left-side area, clear of the seal.
     const sigY = Math.max(PAY_Y + PAY_H + 9, TY_BOX_Y + TY_BOX_H + 9);
     const signatureGap = 8;
-    const signatureColumnWidth = (CW - stampSize - signatureGap * 2) / 2;
+    const signatureColumnWidth = (CW - signatureGap) / 2;
     const preparedX = ML;
     const receivedX = ML + signatureColumnWidth + signatureGap;
     doc.setDrawColor(...BORD);
