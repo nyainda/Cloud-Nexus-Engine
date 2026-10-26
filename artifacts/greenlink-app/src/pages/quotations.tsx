@@ -215,8 +215,9 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.setFillColor(...EMERALD);
     doc.rect(0, 0, W, 2.5, "F");
 
-    // Leave a dedicated column for the status seal beside the shop logo.
-    const LOGO_BOX_W = 22, LOGO_BOX_H = 22;
+    // Keep the existing shop logo prominent in the header; the status seal
+    // sits in its own reserved area at the bottom of the final page.
+    const LOGO_BOX_W = 50, LOGO_BOX_H = 26;
     if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
       const scale = Math.min(LOGO_BOX_W / logoNatW, LOGO_BOX_H / logoNatH);
       const dW = logoNatW * scale;
@@ -225,15 +226,6 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       const ly = 3 + (LOGO_BOX_H - dH) / 2;
       doc.addImage(logoBase64, "JPEG", lx, ly, dW, dH);
     }
-    drawPdfStamp(doc, {
-      x: W - MR - LOGO_BOX_W - 4 - 25,
-      y: 3.5,
-      size: 25,
-      shopName: shop?.name ?? "GreenLink",
-      status: isInvoice ? "ISSUED" : quotation.status,
-      dateLabel: format(new Date(isInvoice ? quotation.invoiceIssuedAt ?? quotation.createdAt : quotation.createdAt), "dd MMM yyyy"),
-    });
-
     // Shop name + contact on left
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
@@ -356,17 +348,6 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
 
     let ty: number = (doc as any).lastAutoTable.finalY + 6;
 
-    const BOT_ESTIMATE = 85;
-    if (ty + BOT_ESTIMATE > H - 16) {
-      doc.addPage();
-      doc.setFillColor(...WHITE);
-      doc.rect(0, 0, W, H, "F");
-      const newPg = (doc as any).internal.getNumberOfPages();
-      drawContinuationHeader(newPg, newPg);
-      ty = 14;
-    }
-
-    // ── BOTTOM SECTION ────────────────────────────────────────────────────────
     const LCW = CW * 0.52;
     const RCW = CW - LCW - 5;
     const LCX = ML;
@@ -389,6 +370,27 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       ? (doc.splitTextToSize(quotation.notes, LCW - 12) as string[])
       : defaultTerms;
     const TERMS_H = Math.max(26, termLines.length * 4.5 + 14);
+
+    const stampSize = 42;
+    const stampX = W - MR - stampSize;
+    const stampY = H - 60;
+    const totalRowsHeight = quotation.discountAmount > 0 ? 26 : 9;
+    const estimatedThankYouY = ty + totalRowsHeight + 4;
+    const estimatedSignatureY = Math.max(
+      ty + TERMS_H + 51,
+      estimatedThankYouY + 27,
+    );
+    const estimatedSignatureBottom = estimatedSignatureY + 6.5;
+    if (estimatedSignatureBottom > stampY - 5) {
+      doc.addPage();
+      doc.setFillColor(...WHITE);
+      doc.rect(0, 0, W, H, "F");
+      const newPg = (doc as any).internal.getNumberOfPages();
+      drawContinuationHeader(newPg, newPg);
+      ty = 14;
+    }
+
+    // ── BOTTOM SECTION ────────────────────────────────────────────────────────
 
     infoBox(LCX, ty, LCW, TERMS_H, "TERMS & CONDITIONS");
     doc.setFont("helvetica", "normal");
@@ -523,25 +525,28 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.setTextColor(...MGRAY);
     doc.text("We appreciate your trust in us.", RCX + RCW / 2 + 2, TY_BOX_Y + 13.5, { align: "center" });
 
-    // Signature lines
+    // Signature lines remain in a dedicated left-side area, clear of the seal.
     const sigY = Math.max(PAY_Y + PAY_H + 9, TY_BOX_Y + TY_BOX_H + 9);
+    const signatureGap = 8;
+    const signatureColumnWidth = (CW - stampSize - signatureGap * 2) / 2;
+    const preparedX = ML;
+    const receivedX = ML + signatureColumnWidth + signatureGap;
     doc.setDrawColor(...BORD);
     doc.setLineWidth(0.3);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
     doc.setTextColor(...MGRAY);
-    doc.text("Prepared By:", ML, sigY);
-    doc.line(ML + 24, sigY + 0.5, ML + CW * 0.42, sigY + 0.5);
+    doc.text("Prepared By:", preparedX, sigY);
+    doc.line(preparedX + 24, sigY + 0.5, preparedX + signatureColumnWidth, sigY + 0.5);
     doc.setFontSize(6.5);
-    doc.text("Name:", ML, sigY + 6);
-    doc.line(ML + 11, sigY + 6.5, ML + CW * 0.42, sigY + 6.5);
-    const rSigX = W - MR - CW * 0.42;
+    doc.text("Name:", preparedX, sigY + 6);
+    doc.line(preparedX + 11, sigY + 6.5, preparedX + signatureColumnWidth, sigY + 6.5);
     doc.setFontSize(7);
-    doc.text("Received By:", rSigX, sigY);
-    doc.line(rSigX + 24, sigY + 0.5, W - MR, sigY + 0.5);
+    doc.text("Received By:", receivedX, sigY);
+    doc.line(receivedX + 24, sigY + 0.5, receivedX + signatureColumnWidth, sigY + 0.5);
     doc.setFontSize(6.5);
-    doc.text("Name:", rSigX, sigY + 6);
-    doc.line(rSigX + 11, sigY + 6.5, W - MR, sigY + 6.5);
+    doc.text("Name:", receivedX, sigY + 6);
+    doc.line(receivedX + 11, sigY + 6.5, receivedX + signatureColumnWidth, sigY + 6.5);
 
     // Footer on every page
     const numPages: number = (doc as any).internal.getNumberOfPages();
@@ -549,6 +554,18 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       doc.setPage(p);
       drawFooter();
     }
+    doc.setPage(numPages);
+    drawPdfStamp(doc, {
+      x: stampX,
+      y: stampY,
+      size: stampSize,
+      shopName: shop?.name ?? "GreenLink",
+      status: isInvoice ? "ISSUED" : quotation.status,
+      dateLabel: format(
+        new Date(isInvoice ? quotation.invoiceIssuedAt ?? quotation.createdAt : quotation.createdAt),
+        "dd MMM yyyy",
+      ),
+    });
 
     const custSlug = (quotation.customerName?.trim() || "")
       .replace(/[^a-z0-9]/gi, "_")
