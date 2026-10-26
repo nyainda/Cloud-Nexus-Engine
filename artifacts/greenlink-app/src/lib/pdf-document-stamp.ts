@@ -12,10 +12,7 @@ export interface PdfStampOptions {
   dateLabel?: string;
 }
 
-/**
- * Draws a detailed branded seal using the existing shop logo.
- * It is a visual status indicator, not a cryptographic or legally certified signature.
- */
+/** Draws a detailed branded business seal. Visual status only, not a legal/cryptographic signature. */
 export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void {
   const palette: Record<PdfStampTone, [number, number, number]> = {
     green: [18, 104, 67],
@@ -24,39 +21,39 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
     amber: [171, 93, 20],
   };
   const ink = palette[options.tone ?? "blue"];
-  const paper: [number, number, number] = [255, 255, 255];
+  const white: [number, number, number] = [255, 255, 255];
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
-  // A larger, detailed 44 mm seal; leave a print-safe margin at the page edge.
-  const diameter = 44;
+  // 46 mm detailed seal, anchored inside the print-safe lower-right margin.
+  const diameter = 46;
   const x = pageWidth - 12 - diameter;
   const y = pageHeight - 15 - diameter;
   const cx = x + diameter / 2;
   const cy = y + diameter / 2;
   const outerR = diameter / 2;
 
-  // White knockout prevents underlying document text showing through the seal.
-  doc.setFillColor(...paper);
+  // White knockout keeps text and table lines behind the stamp from showing through.
+  doc.setFillColor(...white);
   doc.circle(cx, cy, outerR - 0.1, "F");
 
-  // Triple rings and fine inner keyline create the formal ink-seal look.
+  // Triple-ring engraving with small radial ticks.
   doc.setDrawColor(...ink);
-  doc.setLineWidth(0.75);
+  doc.setLineWidth(0.8);
   doc.circle(cx, cy, outerR, "S");
   doc.setLineWidth(0.25);
   doc.circle(cx, cy, outerR - 1.2, "S");
   doc.setLineWidth(0.45);
   doc.circle(cx, cy, outerR - 2.2, "S");
   doc.setLineWidth(0.18);
-  doc.circle(cx, cy, outerR - 3.1, "S");
+  doc.circle(cx, cy, outerR - 3.2, "S");
 
-  // Fine radial markers around the ring add detail while keeping the text clean.
-  doc.setLineWidth(0.22);
-  for (let i = 0; i < 32; i++) {
-    const angle = (Math.PI * 2 * i) / 32;
-    const r1 = i % 4 === 0 ? outerR - 4.5 : outerR - 4.0;
-    const r2 = outerR - 3.4;
+  for (let i = 0; i < 40; i++) {
+    const angle = (Math.PI * 2 * i) / 40;
+    const major = i % 5 === 0;
+    const r1 = outerR - (major ? 4.8 : 4.2);
+    const r2 = outerR - 3.5;
+    doc.setLineWidth(major ? 0.3 : 0.16);
     doc.line(
       cx + Math.cos(angle) * r1,
       cy + Math.sin(angle) * r1,
@@ -65,68 +62,79 @@ export function drawPdfDocumentStamp(doc: jsPDF, options: PdfStampOptions): void
     );
   }
 
-  // Real shop logo, preserving its aspect ratio within a white logo panel.
+  // Large, clear logo panel: white capsule makes the actual supplied shop logo readable.
+  const logoPanelX = x + 7.5;
+  const logoPanelY = y + 3.8;
+  const logoPanelW = diameter - 15;
+  const logoPanelH = 9.4;
+  doc.setFillColor(...white);
+  doc.roundedRect(logoPanelX, logoPanelY, logoPanelW, logoPanelH, 1.8, 1.8, "F");
+  doc.setDrawColor(...ink);
+  doc.setLineWidth(0.2);
+  doc.roundedRect(logoPanelX, logoPanelY, logoPanelW, logoPanelH, 1.8, 1.8, "S");
+
   if (options.logoDataUrl) {
     try {
-      const logoW = 17;
-      const logoH = 7.2;
-      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, y + 4.1, logoW, logoH, undefined, "FAST");
+      // Keep aspect ratio, use the largest dimensions that fit the white logo panel.
+      const logoW = 27;
+      const logoH = 8.1;
+      doc.addImage(options.logoDataUrl, "JPEG", cx - logoW / 2, logoPanelY + 0.55, logoW, logoH, undefined, "FAST");
     } catch {
-      // Keep the status seal usable if an optional logo cannot be embedded.
+      // Retain all text and borders if image embedding fails.
     }
   }
 
-  // Shop identity, split to fit the seal instead of clipping long registered names.
+  // Shop identity directly beneath the logo; fit long registered names on two lines.
   doc.setTextColor(...ink);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(5.0);
+  doc.setFontSize(4.8);
   const shopLines = doc
-    .splitTextToSize(options.shopName.trim().toUpperCase() || "SHOP", diameter - 10)
+    .splitTextToSize(options.shopName.trim().toUpperCase() || "SHOP", diameter - 9)
     .slice(0, 2);
-  doc.text(shopLines, cx, y + 12.1, { align: "center", lineHeightFactor: 1.0 });
+  doc.text(shopLines, cx, y + 15.1, { align: "center", lineHeightFactor: 1.0 });
 
-  // Status ribbon is the main focal point of the stamp.
-  const ribbonY = y + 17;
-  const ribbonH = 6.1;
+  // High-contrast status band is the strongest element in the seal.
+  const ribbonY = y + 19.2;
+  const ribbonH = 6.5;
   doc.setFillColor(...ink);
-  doc.rect(x + 3.5, ribbonY, diameter - 7, ribbonH, "F");
-  doc.setTextColor(...paper);
+  doc.roundedRect(x + 3.7, ribbonY, diameter - 7.4, ribbonH, 1.1, 1.1, "F");
+  doc.setTextColor(...white);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(options.status.length > 17 ? 6 : options.status.length > 12 ? 7 : 8);
-  doc.text(options.status.trim().toUpperCase().slice(0, 30), cx, ribbonY + 4.05, {
+  doc.setFontSize(options.status.length > 17 ? 5.8 : options.status.length > 12 ? 6.8 : 8);
+  doc.text(options.status.trim().toUpperCase().slice(0, 30), cx, ribbonY + 4.35, {
     align: "center",
-    maxWidth: diameter - 9,
+    maxWidth: diameter - 9.5,
   });
 
-  // Document type and issue date make the seal more informative and traceable.
+  // Replace generic "DIGITAL DOCUMENT STAMP" with a useful, professional phrase.
   doc.setTextColor(...ink);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(4.7);
-  const type = (options.documentType || "BUSINESS DOCUMENT").trim().toUpperCase().slice(0, 28);
-  doc.text(type, cx, y + 26.1, { align: "center", maxWidth: diameter - 8 });
+  doc.setFontSize(4.8);
+  const documentType = (options.documentType || "BUSINESS DOCUMENT").trim().toUpperCase().slice(0, 28);
+  doc.text(documentType, cx, y + 29.0, { align: "center", maxWidth: diameter - 8 });
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(4.6);
   if (options.dateLabel) {
-    doc.text(options.dateLabel.trim().slice(0, 24), cx, y + 29.1, {
+    doc.text(options.dateLabel.trim().slice(0, 24), cx, y + 32.0, {
       align: "center",
       maxWidth: diameter - 8,
     });
   }
-  doc.text(options.reference.trim().slice(0, 34), cx, y + 32.0, {
+  doc.text(options.reference.trim().slice(0, 34), cx, y + 34.7, {
     align: "center",
     maxWidth: diameter - 8,
   });
 
-  // Decorative separators and a restrained footer label finish the seal.
+  // A short, meaningful closing line; avoid the generic technical phrase.
   doc.setDrawColor(...ink);
   doc.setLineWidth(0.25);
-  doc.line(x + 9, y + 33.1, x + diameter - 9, y + 33.1);
+  doc.line(x + 9, y + 35.7, x + diameter - 9, y + 35.7);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(4.2);
-  doc.text("DIGITAL DOCUMENT STAMP", cx, y + 35.8, { align: "center" });
+  doc.setFontSize(4.1);
+  doc.text("ISSUED BY SHOP MANAGEMENT", cx, y + 38.5, { align: "center" });
 
-  // Restore neutral text/drawing state for any subsequent PDF operations.
+  // Restore neutral state for downstream drawing.
   doc.setTextColor(0, 0, 0);
   doc.setDrawColor(0, 0, 0);
   doc.setLineWidth(0.2);
