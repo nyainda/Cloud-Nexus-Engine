@@ -20,6 +20,7 @@ interface StampPalette {
 
 interface PdfShopLogoAssets {
   header: string;
+  printHeader: string;
   seal: string;
   sealName: string;
 }
@@ -27,11 +28,13 @@ interface PdfShopLogoAssets {
 const PDF_SHOP_LOGOS: Record<string, PdfShopLogoAssets> = {
   "shop-greenlink": {
     header: "/logo-greenlink.jpg",
+    printHeader: "/logo-greenlink-pdf.jpg",
     seal: "/logo-greenlink-stamp.png",
     sealName: "GreenLink Farm Supplies & Services Ltd",
   },
   "shop-sunrise": {
     header: "/logo-sunrise.jpg",
+    printHeader: "/logo-sunrise-pdf.jpg",
     seal: "/logo-sunrise-stamp.png",
     sealName: "Kabatha Sunrise Farm Supplies & Services Ltd",
   },
