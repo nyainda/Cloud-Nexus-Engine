@@ -314,7 +314,7 @@ export function drawPdfWatermark(
   const pageCount = (doc as any).internal.getNumberOfPages() as number;
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const size = Math.min(56, pageWidth * 0.27, pageHeight * 0.2);
+  const size = Math.min(50, pageWidth * 0.24, pageHeight * 0.18);
   const x = (pageWidth - size) / 2;
   const y = (pageHeight - size) / 2;
   const { opacity = 1, ...stampOptions } = options;
