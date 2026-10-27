@@ -434,9 +434,9 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       : defaultTerms;
     const TERMS_H = Math.max(25, termLines.length * 4.2 + 12);
 
-    const stampSize = 32;
+    const stampSize = 42;
     const stampX = W - MR - stampSize;
-    const stampY = H - 49;
+    const stampY = H - 59;
     const PAY_H = 35;
     const totalRowsHeight = quotation.discountAmount > 0 ? 26.5 : 9.5;
     const rightColumnHeight = totalRowsHeight + 4 + 16;
