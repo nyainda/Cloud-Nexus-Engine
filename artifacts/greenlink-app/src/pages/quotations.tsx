@@ -153,6 +153,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       });
     } catch { /* logo optional */ }
     const stampLogoBase64 = await loadPdfStampLogo(shopLogoAssets.seal);
+    const pdfLocation = "Nanyuki, Kenya";
 
     // ── Helper: softly tinted info box with a precise brand accent ────────────
     function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
@@ -206,32 +207,55 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     }
 
     // ── Helper: footer ─────────────────────────────────────────────────────────
-    function drawFooter() {
+    function drawFooter(page: number, totalPages: number) {
+      const footerTop = H - 14;
       doc.setFillColor(...DARK);
-      doc.rect(0, H - 14, W, 14, "F");
+      doc.rect(0, footerTop, W, 14, "F");
       doc.setFillColor(...EMERALD);
-      doc.rect(0, H - 14, W, 1.5, "F");
-      const cols = [ML, W / 2, W - MR];
-      const align: ("left"|"center"|"right")[] = ["left","center","right"];
-      const heads = ["LOCATION", "CONTACT", shop?.name ? "BUSINESS" : ""];
-      const bits: string[] = [
-        shop?.address ?? "",
-        [shop?.ownerWhatsapp, shop?.email].filter(Boolean).join("  ·  "),
-        shop?.name ?? "",
-      ];
-      heads.forEach((h, i) => {
-        if (!h && !bits[i]) return;
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(6);
-        doc.setTextColor(...EMERALD);
-        doc.text(h, cols[i], H - 9, { align: align[i] });
+      doc.rect(0, footerTop, W, 1.4, "F");
+
+      const dividerColor: RGB = [74, 101, 91];
+      doc.setDrawColor(...dividerColor);
+      doc.setLineWidth(0.2);
+      doc.line(62, footerTop + 3.2, 62, H - 2.8);
+      doc.line(143, footerTop + 3.2, 143, H - 2.8);
+
+      const labelColor: RGB = isInvoice ? [168, 220, 188] : [177, 202, 242];
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(5.5);
+      doc.setTextColor(...labelColor);
+      doc.text("LOCATION", ML + 6, H - 9.4);
+      doc.text("CONTACT", 68, H - 9.4);
+      doc.text(`PAGE ${page} OF ${totalPages}`, W - MR, H - 9.4, { align: "right" });
+
+      doc.setDrawColor(230, 241, 235);
+      doc.setLineWidth(0.35);
+      doc.circle(ML + 1.8, H - 5.9, 1.2, "S");
+      doc.setFillColor(...labelColor);
+      doc.circle(ML + 1.8, H - 5.9, 0.35, "F");
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.1);
+      doc.setTextColor(...WHITE);
+      const location = fitOneLine(pdfLocation, 40, 6.1);
+      doc.setFontSize(location.fontSize);
+      doc.text(location.text, ML + 6, H - 4.4);
+
+      const contactValues = [shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
+      contactValues.slice(0, 2).forEach((value, index) => {
+        const fitted = fitOneLine(value, 70, 5.8);
         doc.setFont("helvetica", "normal");
-        doc.setTextColor(180, 188, 200);
-        doc.text(bits[i], cols[i], H - 4.8, {
-          align: align[i],
-          maxWidth: i === 1 ? 82 : i === 2 ? 52 : 58,
-        });
+        doc.setFontSize(fitted.fontSize);
+        doc.setTextColor(...WHITE);
+        doc.text(fitted.text, 68, H - (index === 0 ? 7.1 : 3.7));
       });
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.1);
+      doc.setTextColor(...WHITE);
+      const business = fitOneLine(shop?.name ?? shopLogoAssets.sealName, 53, 6.1);
+      doc.setFontSize(business.fontSize);
+      doc.text(business.text, W - MR, H - 4.4, { align: "right" });
     }
 
     // ── Helper: continuation header (pages 2+) ────────────────────────────────
@@ -284,7 +308,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.setLineWidth(0.35);
     doc.line(contactX - 3.5, 7, contactX - 3.5, 29);
     const headerContacts = [
-      ["ADDRESS", shop?.address],
+      ["LOCATION", pdfLocation],
       ["PHONE", shop?.ownerWhatsapp],
       ["EMAIL", shop?.email],
     ].filter(([, value]) => Boolean(value)) as [string, string][];
@@ -623,7 +647,7 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     for (let p = 1; p <= numPages; p++) {
       doc.setPage(p);
       if (p > 1) drawContinuationHeader(p, numPages);
-      drawFooter();
+      drawFooter(p, numPages);
     }
     doc.setPage(numPages);
     drawPdfStamp(doc, {

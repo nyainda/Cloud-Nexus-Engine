@@ -12,3 +12,4 @@
 - [OpenAPI generator compatibility](api-generation-compatibility.md) — check generator and schema-library compatibility before accepting broad generated diffs
 - [jsPDF image aliases](jspdf-image-aliases.md) — fixed aliases can make different shop logos reuse the first embedded image; omit aliases or make them unique
 - [PDF page spacing](pdf-spacing.md) — keep invoice, quotation, and debt PDFs compact without shrinking tables or letting stamps waste usable space
+- [Printed business location](official-business-location.md) — customer-facing invoice and quotation PDFs should show Nanyuki, Kenya
