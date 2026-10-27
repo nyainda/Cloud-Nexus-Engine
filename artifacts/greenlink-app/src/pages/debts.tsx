@@ -1082,9 +1082,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         ]),
         headStyles: { fillColor: SLATE, textColor: WHITE, fontStyle: "bold", fontSize: 7.5,
           cellPadding: { top: 4, bottom: 4, left: 4, right: 4 } },
-        bodyStyles: { fontSize: 8, cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
+        bodyStyles: { fillColor: false, fontSize: 8, cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
           textColor: SLATE, lineColor: BORD, lineWidth: 0.2 },
-        alternateRowStyles: { fillColor: LGRAY },
+        alternateRowStyles: { fillColor: false },
         columnStyles: {
           0: { cellWidth: 14, halign: "center", fontStyle: "bold", textColor: MGRAY },
           1: { cellWidth: "auto" },
@@ -1164,9 +1164,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       body: histRows.map(r => r.cells),
       headStyles: { fillColor: SLATE, textColor: WHITE, fontStyle: "bold", fontSize: 7.5,
         cellPadding: { top: 4, bottom: 4, left: 4, right: 4 } },
-      bodyStyles: { fontSize: 8, cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
+      bodyStyles: { fillColor: false, fontSize: 8, cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
         textColor: SLATE, lineColor: BORD, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: LGRAY },
+      alternateRowStyles: { fillColor: false },
       columnStyles: {
         0: { cellWidth: 31 },
         1: { cellWidth: 24 },
@@ -1380,8 +1380,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
          money(d.totalAmount), money(debtPdfAmountPaid(d)), money(debtPdfBalanceDue(d)),
       ]),
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-      bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      bodyStyles: { fillColor: false, fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+      alternateRowStyles: { fillColor: false },
       columnStyles: { 0: { cellWidth: 23 }, 1: { cellWidth: 27 }, 2: { cellWidth: "auto" }, 3: { cellWidth: 22, fontStyle: "bold" }, 4: { cellWidth: 28, halign: "right" }, 5: { cellWidth: 28, halign: "right" }, 6: { cellWidth: 31, halign: "right", fontStyle: "bold" } },
     });
 
@@ -1408,8 +1408,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
         head: [["Debt Ref", "Product / Description", "Qty", "Unit Price", "Total"]],
         body: itemRows,
         headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-        bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
+        bodyStyles: { fillColor: false, fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+        alternateRowStyles: { fillColor: false },
         columnStyles: {
           0: { cellWidth: 25 },
           1: { cellWidth: "auto" },
@@ -1474,8 +1474,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       head: [["Date & Time", "Debt Ref", "Products", "Entry", "Recorded By", "Amount"]],
       body: paymentRows.length ? paymentRows : [["—", "—", "—", "No payments recorded", "—", "—"]],
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-      bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      bodyStyles: { fillColor: false, fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+      alternateRowStyles: { fillColor: false },
       columnStyles: { 0: { cellWidth: 31 }, 1: { cellWidth: 22 }, 2: { cellWidth: 34 }, 3: { cellWidth: "auto" }, 4: { cellWidth: 27 }, 5: { cellWidth: 28, halign: "right", fontStyle: "bold" } },
     });
     y = (doc as any).lastAutoTable.finalY + 8;

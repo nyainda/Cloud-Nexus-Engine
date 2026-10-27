@@ -331,13 +331,14 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
         halign: "center",
       },
       bodyStyles: {
+        fillColor: false,
         fontSize: 7.5,
         cellPadding: { top: 2, bottom: 2, left: 3.5, right: 3.5 },
         textColor: DKTXT,
         lineColor: BORD,
         lineWidth: 0.15,
       },
-      alternateRowStyles: { fillColor: LGRAY },
+      alternateRowStyles: { fillColor: false },
       columnStyles: {
         0: { cellWidth: 10,   halign: "center", fontStyle: "bold", textColor: MGRAY, fontSize: 6.5 },
         1: { cellWidth: "auto", halign: "left" },

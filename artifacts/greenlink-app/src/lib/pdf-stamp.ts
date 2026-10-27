@@ -98,6 +98,23 @@ function softenStampColor(color: StampColor, whiteMix: number): StampColor {
   return color.map(channel => Math.round(channel + (255 - channel) * whiteMix)) as StampColor;
 }
 
+function placeWatermarkBehindPageContent(doc: jsPDF, pageNumber: number, watermarkStart: number): void {
+  const pages = (doc as any).internal.pages as string[][];
+  const pageCommands = pages?.[pageNumber];
+  if (!Array.isArray(pageCommands) || watermarkStart > pageCommands.length) {
+    throw new Error(`Could not position the PDF watermark on page ${pageNumber}.`);
+  }
+
+  const watermarkCommands = pageCommands.splice(watermarkStart);
+  const firstPaintIndex = pageCommands.findIndex(command =>
+    ["f", "f*", "B", "B*"].includes(String(command).trim()),
+  );
+  // Preserve an existing page background/header band, then paint the seal
+  // before the document's text and tables.
+  const insertAt = firstPaintIndex >= 0 ? firstPaintIndex + 1 : Math.min(2, pageCommands.length);
+  pageCommands.splice(insertAt, 0, ...watermarkCommands);
+}
+
 function drawArcText(
   doc: jsPDF,
   text: string,
@@ -167,8 +184,8 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
   const centerX = x + size / 2;
   const centerY = y + size / 2;
   const { ink, wash } = getStampPalette(status);
-  const detailInk = watermark ? softenStampColor(ink, 0.5) : ink;
-  const detailWash = watermark ? softenStampColor(wash, 0.15) : wash;
+  const detailInk = watermark ? softenStampColor(ink, 0.6) : ink;
+  const detailWash = watermark ? softenStampColor(wash, 0.2) : wash;
   const statusLabel = getStampStatusLabel(status);
 
   // Keep the lettering centered in the clear band between the outer and inner rings.
@@ -234,7 +251,7 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
     if (!GraphicsState) throw new Error("This PDF renderer does not support watermark transparency.");
     doc.saveGraphicsState();
     try {
-      doc.setGState(new GraphicsState({ opacity: 0.5, "stroke-opacity": 0.5 }));
+      doc.setGState(new GraphicsState({ opacity: 0.4, "stroke-opacity": 0.4 }));
       doc.addImage(...logoArgs);
     } finally {
       doc.restoreGraphicsState();
@@ -246,7 +263,7 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
   const badgeY = y + 24.4 * scale;
   const badgeWidth = size - 12 * scale;
   const badgeHeight = 8 * scale;
-  const badgeFill = watermark ? softenStampColor(ink, 0.82) : ink;
+  const badgeFill = watermark ? softenStampColor(ink, 0.87) : ink;
   doc.setFillColor(...badgeFill);
   doc.setDrawColor(...badgeFill);
   doc.roundedRect(
@@ -311,6 +328,11 @@ export function drawPdfWatermark(
 
   for (let page = 1; page <= pageCount; page++) {
     doc.setPage(page);
+    const pageCommands = (doc as any).internal.pages?.[page] as string[] | undefined;
+    if (!Array.isArray(pageCommands)) {
+      throw new Error(`Could not access the PDF page content for watermarking page ${page}.`);
+    }
+    const watermarkStart = pageCommands.length;
     doc.saveGraphicsState();
     try {
       doc.setGState(new GraphicsState({ opacity, "stroke-opacity": opacity }));
@@ -318,5 +340,6 @@ export function drawPdfWatermark(
     } finally {
       doc.restoreGraphicsState();
     }
+    placeWatermarkBehindPageContent(doc, page, watermarkStart);
   }
 }
