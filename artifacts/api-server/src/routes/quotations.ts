@@ -234,6 +234,7 @@ quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
   return c.json({
     ...issued,
     items: (() => { try { return JSON.parse(issued.itemsJson); } catch { return []; } })(),
+    invoiceSnapshot: parseInvoiceSnapshot((issued as any).invoiceSnapshotJson),
   }, 201);
 });
 
