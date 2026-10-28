@@ -329,7 +329,9 @@ export async function downloadSalesHistoryPdf(sales: any[], options: { dateLabel
   const margin = 12;
   const includeProfit = Boolean(options.includeProfit);
   const total = sales.reduce((sum, sale) => sum + Number(sale.totalAmount ?? 0), 0);
-  const profit = sales.reduce((sum, sale) => sum + Number(sale.totalProfit ?? 0), 0);
+  const knownProfitSales = sales.filter(sale => sale.totalProfit != null && Number.isFinite(Number(sale.totalProfit)));
+  const unknownProfitCount = sales.length - knownProfitSales.length;
+  const profit = knownProfitSales.reduce((sum, sale) => sum + Number(sale.totalProfit), 0);
   const cashCount = sales.filter(sale => sale.saleType !== "debt" && sale.paymentMethod !== "bank").length;
   const mpesaCount = sales.filter(sale => sale.saleType !== "debt" && sale.paymentMethod === "bank").length;
   const debtCount = sales.filter(sale => sale.saleType === "debt").length;
@@ -349,7 +351,7 @@ export async function downloadSalesHistoryPdf(sales: any[], options: { dateLabel
   const summary = [
     { label: "TOTAL SALES", value: String(sales.length) }, { label: "CASH", value: String(cashCount) },
     { label: "M-PESA", value: String(mpesaCount) }, { label: "CREDIT / DEBT", value: String(debtCount) },
-    { label: "REVENUE", value: money(total) }, ...(includeProfit ? [{ label: "PROFIT", value: money(profit) }] : []),
+    { label: "REVENUE", value: money(total) }, ...(includeProfit ? [{ label: "PROFIT", value: unknownProfitCount ? money(profit) + " + N/A" : money(profit) }] : []),
   ];
   const summaryW = (pageWidth - margin * 2 - (summary.length - 1) * 3) / summary.length;
   summary.forEach((item, index) => {
@@ -363,7 +365,7 @@ export async function downloadSalesHistoryPdf(sales: any[], options: { dateLabel
     const items = (Array.isArray(sale.items) ? sale.items : []).map((item: any) => String(item.productName || "Item") + " × " + String(item.qty ?? 0)).join(", ");
     return [String(index + 1), sale.createdAt ? format(new Date(sale.createdAt), "HH:mm") : "—",
       String(sale.id || "").slice(0, 8).toUpperCase() || "—", payment, String(sale.debtCustomerName || sale.servedBy || "—"),
-      items || "Item details unavailable", money(sale.totalAmount), ...(includeProfit ? [money(sale.totalProfit)] : [])];
+      items || "Item details unavailable", money(sale.totalAmount), ...(includeProfit ? [sale.totalProfit == null || !Number.isFinite(Number(sale.totalProfit)) ? "N/A" : money(sale.totalProfit)] : [])];
   });
   autoTable(doc, {
     startY: 61,
