@@ -224,8 +224,8 @@ async function downloadPdf(
     ? quotation.invoiceNumber!
     : quotation.quoteNumber;
   const pdfData =
-    isInvoice && pdfData.invoiceSnapshot
-      ? { ...quotation, ...pdfData.invoiceSnapshot }
+    isInvoice && quotation.invoiceSnapshot
+      ? { ...quotation, ...quotation.invoiceSnapshot }
       : quotation;
   toast.loading(`Generating ${isInvoice ? "invoice" : "quotation"} PDF…`, {
     id: "pdf",
