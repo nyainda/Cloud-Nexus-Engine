@@ -7,6 +7,11 @@ import { quotations, shops } from "@workspace/db/schema";
 
 const quotationsRouter = new Hono<AppEnv>();
 
+function parseInvoiceSnapshot(value: string | null | undefined) {
+  if (!value) return null;
+  try { return JSON.parse(value); } catch { return null; }
+}
+
 // ── List quotations ────────────────────────────────────────────────────────────
 quotationsRouter.get("/quotations", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
@@ -34,6 +39,7 @@ quotationsRouter.get("/quotations", requireAuth, async (c) => {
   return c.json(rows.map((q) => ({
     ...q,
     items: (() => { try { return JSON.parse(q.itemsJson); } catch { return []; } })(),
+    invoiceSnapshot: parseInvoiceSnapshot((q as any).invoiceSnapshotJson),
   })));
 });
 
@@ -49,6 +55,7 @@ quotationsRouter.get("/quotations/:id", requireAuth, async (c) => {
   return c.json({
     ...q,
     items: (() => { try { return JSON.parse(q.itemsJson); } catch { return []; } })(),
+    invoiceSnapshot: parseInvoiceSnapshot((q as any).invoiceSnapshotJson),
   });
 });
 
@@ -138,9 +145,7 @@ quotationsRouter.patch("/quotations/:id", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
   const existing = await db.select().from(quotations).where(eq(quotations.id, c.req.param("id"))).get();
   if (!existing) return c.json({ error: "Not found" }, 404);
-  if (existing.invoiceNumber) {
-    return c.json({ error: "This quotation has an issued invoice and can no longer be changed." }, 409);
-  }
+  // Editing the quotation after invoice issuance is allowed. The invoice snapshot is immutable.
 
   const patch: Partial<typeof quotations.$inferInsert> = {};
   if (body.status) patch.status = body.status;
@@ -168,6 +173,7 @@ quotationsRouter.patch("/quotations/:id", requireAuth, async (c) => {
   return c.json({
     ...q!,
     items: (() => { try { return JSON.parse(q!.itemsJson); } catch { return []; } })(),
+    invoiceSnapshot: parseInvoiceSnapshot((q as any).invoiceSnapshotJson),
   });
 });
 
@@ -187,6 +193,7 @@ quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
     return c.json({
       ...existing,
       items: (() => { try { return JSON.parse(existing.itemsJson); } catch { return []; } })(),
+      invoiceSnapshot: parseInvoiceSnapshot((existing as any).invoiceSnapshotJson),
     });
   }
   if (existing.status !== "accepted") {
@@ -197,11 +204,23 @@ quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
   // idempotent and avoids allocating duplicate sequence numbers concurrently.
   const invoiceNumber = `INV-${existing.quoteNumber.replace(/^Q-/i, "")}`;
   const invoiceIssuedAt = new Date().toISOString();
+  const invoiceSnapshot = {
+    customerName: existing.customerName,
+    customerPhone: existing.customerPhone,
+    customerEmail: existing.customerEmail,
+    notes: existing.notes,
+    validUntil: existing.validUntil,
+    subtotal: existing.subtotal,
+    discountAmount: existing.discountAmount,
+    total: existing.total,
+    items: (() => { try { return JSON.parse(existing.itemsJson); } catch { return []; } })(),
+    createdAt: existing.createdAt,
+  };
   await c.env.DB.prepare(`
     UPDATE quotations
-    SET invoice_number = ?, invoice_issued_at = ?
+    SET invoice_number = ?, invoice_issued_at = ?, invoice_snapshot_json = ?
     WHERE id = ? AND shop_id = ? AND status = 'accepted' AND invoice_number IS NULL
-  `).bind(invoiceNumber, invoiceIssuedAt, quotationId, session.shopId).run();
+  `).bind(invoiceNumber, invoiceIssuedAt, JSON.stringify(invoiceSnapshot), quotationId, session.shopId).run();
 
   const issued = await db
     .select()
@@ -215,6 +234,7 @@ quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
   return c.json({
     ...issued,
     items: (() => { try { return JSON.parse(issued.itemsJson); } catch { return []; } })(),
+    invoiceSnapshot: parseInvoiceSnapshot((issued as any).invoiceSnapshotJson),
   }, 201);
 });
 
