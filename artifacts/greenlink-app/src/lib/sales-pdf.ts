@@ -315,3 +315,70 @@ export async function downloadSalePdf(sale: any, returns: any[] = []): Promise<v
 
   doc.save(`sales-receipt-${safeFilePart(ref)}.pdf`);
 }
+
+/** Download a PDF report for the currently filtered sales-history list. */
+export async function downloadSalesHistoryPdf(sales: any[], options: { dateLabel: string; filterLabel?: string; includeProfit?: boolean }): Promise<void> {
+  if (!sales.length) throw new Error("There are no sales to export.");
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const assets = getPdfShopLogoAssets(shopId);
+  const shopName = localStorage.getItem("greenlink_shopName") || assets.sealName;
+  const logo = await loadHeaderLogo(assets.printHeader);
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 12;
+  const includeProfit = Boolean(options.includeProfit);
+  const total = sales.reduce((sum, sale) => sum + Number(sale.totalAmount ?? 0), 0);
+  const profit = sales.reduce((sum, sale) => sum + Number(sale.totalProfit ?? 0), 0);
+  const cashCount = sales.filter(sale => sale.saleType !== "debt" && sale.paymentMethod !== "bank").length;
+  const mpesaCount = sales.filter(sale => sale.saleType !== "debt" && sale.paymentMethod === "bank").length;
+  const debtCount = sales.filter(sale => sale.saleType === "debt").length;
+  doc.setProperties({ title: shopName + " Sales History - " + options.dateLabel, subject: "Sales history report", creator: shopName });
+  doc.setFillColor(...WHITE); doc.rect(0, 0, pageWidth, pageHeight, "F");
+  doc.setFillColor(...BRAND); doc.rect(0, 0, pageWidth, 2, "F");
+  const logoScale = Math.min(42 / logo.width, 19 / logo.height);
+  doc.addImage(logo.data, "JPEG", margin, 5, logo.width * logoScale, logo.height * logoScale);
+  doc.setFont("helvetica", "bold"); doc.setTextColor(...DARK); doc.setFontSize(17);
+  doc.text("SALES HISTORY REPORT", pageWidth - margin, 12, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTED);
+  doc.text(options.dateLabel + (options.filterLabel ? " · " + options.filterLabel : ""), pageWidth - margin, 18, { align: "right" });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...TEXT); doc.text(shopName, margin, 29);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MUTED);
+  doc.text("Generated " + format(new Date(), "dd MMM yyyy, h:mm a") + " · " + sales.length + " transaction(s)", margin, 34);
+  const summaryY = 40;
+  const summaryW = includeProfit ? 68 : 83;
+  const summary = [
+    { label: "TOTAL SALES", value: String(sales.length) }, { label: "CASH", value: String(cashCount) },
+    { label: "M-PESA", value: String(mpesaCount) }, { label: "CREDIT / DEBT", value: String(debtCount) },
+    { label: "REVENUE", value: money(total) }, ...(includeProfit ? [{ label: "PROFIT", value: money(profit) }] : []),
+  ];
+  summary.forEach((item, index) => {
+    const x = margin + index * (summaryW + 3);
+    doc.setFillColor(...PALE); doc.roundedRect(x, summaryY, summaryW, 16, 1.5, 1.5, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(5.8); doc.setTextColor(...MUTED); doc.text(item.label, x + 3, summaryY + 5);
+    doc.setFontSize(8.2); doc.setTextColor(...DARK); doc.text(item.value, x + 3, summaryY + 11.5);
+  });
+  const body = sales.map((sale, index) => {
+    const payment = sale.saleType === "debt" ? "Credit / debt" : sale.paymentMethod === "bank" ? "M-Pesa" : "Cash";
+    const items = (Array.isArray(sale.items) ? sale.items : []).map((item: any) => String(item.productName || "Item") + " × " + String(item.qty ?? 0)).join(", ");
+    return [String(index + 1), sale.createdAt ? format(new Date(sale.createdAt), "HH:mm") : "—",
+      String(sale.id || "").slice(0, 8).toUpperCase() || "—", payment, String(sale.debtCustomerName || sale.servedBy || "—"),
+      items || "Item details unavailable", money(sale.totalAmount), ...(includeProfit ? [money(sale.totalProfit)] : [])];
+  });
+  autoTable(doc, {
+    startY: 61,
+    head: [["#", "TIME", "SALE REF", "PAYMENT", "CUSTOMER / CASHIER", "ITEMS", "TOTAL", ...(includeProfit ? ["PROFIT"] : [])]],
+    body, theme: "grid", margin: { left: margin, right: margin, top: 10, bottom: 16 },
+    styles: { font: "helvetica", fontSize: 7, textColor: TEXT, lineColor: BORDER, lineWidth: 0.18, cellPadding: 2.2, valign: "middle", overflow: "linebreak" },
+    headStyles: { fillColor: DARK, textColor: WHITE, fontStyle: "bold", fontSize: 6.5 },
+    alternateRowStyles: { fillColor: [248, 250, 249] },
+    columnStyles: { 0: { cellWidth: 8, halign: "center" }, 1: { cellWidth: 15 }, 2: { cellWidth: 22 }, 3: { cellWidth: 25 }, 4: { cellWidth: 38 }, 5: { cellWidth: "auto" }, 6: { cellWidth: 29, halign: "right", fontStyle: "bold" }, ...(includeProfit ? { 7: { cellWidth: 27, halign: "right" as const } } : {}) },
+    didDrawPage: () => {
+      const page = doc.internal.getCurrentPageInfo().pageNumber;
+      doc.setFillColor(...DARK); doc.rect(0, pageHeight - 9, pageWidth, 9, "F");
+      doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.setTextColor(...WHITE);
+      doc.text(shopName, margin, pageHeight - 3.5); doc.text("Page " + page, pageWidth - margin, pageHeight - 3.5, { align: "right" });
+    },
+  });
+  doc.save("sales-history-" + safeFilePart(options.dateLabel) + ".pdf");
+}
