@@ -611,7 +611,9 @@ async function downloadPdf(
       alternateRowStyles: { fillColor: false },
       columnStyles: {
         0: {
-          cellWidth: 9,
+          // Keep two-digit item numbers (10, 11, …) on a single line in the PDF.
+          cellWidth: 12,
+          cellPadding: { top: 2, bottom: 2, left: 1.5, right: 1.5 },
           halign: "center",
           fontStyle: "bold",
           textColor: MGRAY,
