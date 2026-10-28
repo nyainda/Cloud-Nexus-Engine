@@ -77,6 +77,18 @@ interface Quotation {
   items: QuotationItem[];
   invoiceNumber: string | null;
   invoiceIssuedAt: string | null;
+  invoiceSnapshot?: {
+    customerName: string;
+    customerPhone: string;
+    customerEmail: string | null;
+    notes: string | null;
+    validUntil: string | null;
+    subtotal: number;
+    discountAmount: number;
+    total: number;
+    items: QuotationItem[];
+    createdAt: string;
+  } | null;
   createdBy: string | null;
   createdAt: string;
 }
@@ -211,6 +223,10 @@ async function downloadPdf(
   const documentNumber = isInvoice
     ? quotation.invoiceNumber!
     : quotation.quoteNumber;
+  const pdfData =
+    isInvoice && pdfData.invoiceSnapshot
+      ? { ...quotation, ...pdfData.invoiceSnapshot }
+      : quotation;
   toast.loading(`Generating ${isInvoice ? "invoice" : "quotation"} PDF…`, {
     id: "pdf",
   });
@@ -532,21 +548,21 @@ async function downloadPdf(
         LBW,
         "Date",
         format(
-          new Date(quotation.invoiceIssuedAt ?? quotation.createdAt),
+          new Date(pdfData.invoiceIssuedAt ?? pdfData.createdAt),
           "dd MMM yyyy",
         ),
       );
       fy += GAP;
-      fieldRow(LBX, fy, LBW, "Quote Ref.", quotation.quoteNumber);
+      fieldRow(LBX, fy, LBW, "Quote Ref.", pdfData.quoteNumber);
     } else {
-      fieldRow(LBX, fy, LBW, "Quote No.", quotation.quoteNumber);
+      fieldRow(LBX, fy, LBW, "Quote No.", pdfData.quoteNumber);
       fy += GAP;
       fieldRow(
         LBX,
         fy,
         LBW,
         "Date",
-        format(new Date(quotation.createdAt), "dd MMM yyyy"),
+        format(new Date(pdfData.createdAt), "dd MMM yyyy"),
       );
       fy += GAP;
       fieldRow(
@@ -554,19 +570,19 @@ async function downloadPdf(
         fy,
         LBW,
         "Valid Until",
-        quotation.validUntil
-          ? format(new Date(quotation.validUntil), "dd MMM yyyy")
+        pdfData.validUntil
+          ? format(new Date(pdfData.validUntil), "dd MMM yyyy")
           : "—",
       );
     }
 
     infoBox(RBX, y, RBW, INFO_H, "CUSTOMER DETAILS");
     let qy = y + 14;
-    fieldRow(RBX, qy, RBW, "Bill To", quotation.customerName);
+    fieldRow(RBX, qy, RBW, "Bill To", pdfData.customerName);
     qy += GAP;
-    fieldRow(RBX, qy, RBW, "Phone", quotation.customerPhone ?? "");
+    fieldRow(RBX, qy, RBW, "Phone", pdfData.customerPhone ?? "");
     qy += GAP;
-    fieldRow(RBX, qy, RBW, "Email", quotation.customerEmail ?? "");
+    fieldRow(RBX, qy, RBW, "Email", pdfData.customerEmail ?? "");
     y += INFO_H + 5;
 
     // ── ITEMS TABLE ───────────────────────────────────────────────────────────
@@ -584,7 +600,7 @@ async function downloadPdf(
           "TOTAL (KES)",
         ],
       ],
-      body: quotation.items.map((item, i) => [
+      body: pdfData.items.map((item, i) => [
         String(i + 1),
         item.productName,
         item.qty % 1 === 0 ? String(item.qty) : item.qty.toFixed(2),
@@ -668,8 +684,8 @@ async function downloadPdf(
           "Availability is subject to stock at the time of order.",
           "Delivery charges may apply depending on location.",
         ];
-    const termLines: string[] = quotation.notes
-      ? (doc.splitTextToSize(quotation.notes, LCW - 12) as string[])
+    const termLines: string[] = pdfData.notes
+      ? (doc.splitTextToSize(pdfData.notes, LCW - 12) as string[])
       : defaultTerms;
     const TERMS_H = Math.max(25, termLines.length * 4.2 + 12);
 
@@ -677,7 +693,7 @@ async function downloadPdf(
     const stampX = W - MR - stampSize;
     const stampY = H - 59;
     const PAY_H = 35;
-    const totalRowsHeight = quotation.discountAmount > 0 ? 26.5 : 9.5;
+    const totalRowsHeight = pdfData.discountAmount > 0 ? 26.5 : 9.5;
     const rightColumnHeight = totalRowsHeight + 4 + 16;
     const getBottomSectionPositions = (sectionY: number) => {
       const amountWordsY = sectionY + Math.max(PAY_H, rightColumnHeight) + 8;
@@ -821,13 +837,13 @@ async function downloadPdf(
       ry += highlight ? ROW_H + 1 : ROW_H;
     }
 
-    if (quotation.discountAmount > 0) {
-      totRow("SUBTOTAL", KES(quotation.subtotal));
-      totRow("DISCOUNT", `− ${KES(quotation.discountAmount)}`);
+    if (pdfData.discountAmount > 0) {
+      totRow("SUBTOTAL", KES(pdfData.subtotal));
+      totRow("DISCOUNT", `− ${KES(pdfData.discountAmount)}`);
     }
     totRow(
       isInvoice ? "AMOUNT DUE" : "TOTAL AMOUNT",
-      KES(quotation.total),
+      KES(pdfData.total),
       true,
     );
 
@@ -865,7 +881,7 @@ async function downloadPdf(
     doc.setFont("helvetica", "normal");
     doc.setTextColor(...DKTXT);
     doc.text(
-      amountInWords(quotation.total),
+      amountInWords(pdfData.total),
       ML + 31,
       bottomPositions.amountWordsY + 4.5,
       {
@@ -879,7 +895,7 @@ async function downloadPdf(
       bottomPositions.termsY,
       LCW,
       TERMS_H,
-      quotation.notes ? "NOTES & CONDITIONS" : "TERMS & CONDITIONS",
+      pdfData.notes ? "NOTES & CONDITIONS" : "TERMS & CONDITIONS",
     );
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.2);
@@ -914,12 +930,12 @@ async function downloadPdf(
     const stampOptions = {
       shopName: shopLogoAssets.sealName,
       logoData: stampLogoBase64,
-      status: isInvoice ? "ISSUED" : quotation.status,
+      status: isInvoice ? "ISSUED" : pdfData.status,
       dateLabel: format(
         new Date(
           isInvoice
-            ? (quotation.invoiceIssuedAt ?? quotation.createdAt)
-            : quotation.createdAt,
+            ? (pdfData.invoiceIssuedAt ?? pdfData.createdAt)
+            : pdfData.createdAt,
         ),
         "dd MMM yyyy",
       ),
@@ -934,7 +950,7 @@ async function downloadPdf(
       ...stampOptions,
     });
 
-    const custSlug = (quotation.customerName?.trim() || "")
+    const custSlug = (pdfData.customerName?.trim() || "")
       .replace(/[^a-z0-9]/gi, "_")
       .replace(/_+/g, "_")
       .replace(/^_+|_+$/g, "");
@@ -2747,18 +2763,18 @@ function QuotationCard({
           >
             <Eye className="h-4 w-4" />
           </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+            title={q.invoiceNumber ? "Edit quotation (issued invoice remains unchanged)" : "Edit"}
+            aria-label="Edit quotation"
+            data-testid={`button-edit-quotation-${q.id}`}
+          >
+            <Edit2 className="h-4 w-4" />
+          </button>
           {!q.invoiceNumber && (
             <>
-              <button
-                type="button"
-                onClick={onEdit}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
-                title="Edit"
-                aria-label="Edit quotation"
-                data-testid={`button-edit-quotation-${q.id}`}
-              >
-                <Edit2 className="h-4 w-4" />
-              </button>
               <div className="relative">
                 <button
                   type="button"
