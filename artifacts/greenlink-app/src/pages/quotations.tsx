@@ -35,8 +35,12 @@ import {
   Copy,
   MoreVertical,
   TrendingUp,
+  FileSpreadsheet,
+  Upload,
+  ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
@@ -1766,6 +1770,15 @@ function QuotationBuilder({
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [manualItemOpen, setManualItemOpen] = useState(false);
+  const [manualName, setManualName] = useState("");
+  const [manualUnit, setManualUnit] = useState("unit");
+  const [manualQty, setManualQty] = useState("1");
+  const [manualPrice, setManualPrice] = useState("");
+  const [importPreview, setImportPreview] = useState<QuotationItem[]>([]);
+  const [importFileName, setImportFileName] = useState("");
+  const [importing, setImporting] = useState(false);
 
   const productParams = { shopId, limit: 3000 };
   const { data: productsData } = useListProducts(productParams, {
@@ -1853,6 +1866,127 @@ function QuotationBuilder({
       searchInputRef.current?.focus();
     }, 0);
   }, []);
+
+  const addManualItem = () => {
+    const name = manualName.trim();
+    const qty = Number(manualQty);
+    const unitPrice = Number(manualPrice);
+    if (!name) {
+      toast.error("Enter an item description");
+      return;
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      toast.error("Quantity must be greater than zero");
+      return;
+    }
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      toast.error("Enter a valid unit price");
+      return;
+    }
+    setItems((prev) => [
+      ...prev,
+      {
+        productName: name,
+        unit: manualUnit.trim() || "unit",
+        qty,
+        unitPrice,
+        total: qty * unitPrice,
+      },
+    ]);
+    setManualName("");
+    setManualUnit("unit");
+    setManualQty("1");
+    setManualPrice("");
+    setManualItemOpen(false);
+    toast.success("Manual item added to quotation");
+  };
+
+  const handleExcelImport = async (file?: File) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const bytes = await file.arrayBuffer();
+      const workbook = XLSX.read(bytes, { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!firstSheet) throw new Error("The selected file has no worksheet");
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, {
+        header: 1,
+        defval: "",
+        raw: false,
+      }) as unknown[][];
+      const clean = (value: unknown) => String(value ?? "").trim();
+      const key = (value: unknown) => clean(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+      const descriptionKeys = new Set(["description", "item", "itemname", "product", "productname", "name", "details"]);
+      const qtyKeys = new Set(["qty", "quantity", "count"]);
+      const priceKeys = new Set(["unitprice", "price", "rate", "unitcost", "sellingprice"]);
+      const unitKeys = new Set(["unit", "uom", "measure", "unitofmeasure"]);
+      const nonEmptyRows = rows.filter((row) => row.some((cell) => clean(cell) !== ""));
+      if (nonEmptyRows.length === 0) throw new Error("The selected file is empty");
+
+      const headerIndex = nonEmptyRows.findIndex((row) => {
+        const keys = row.map(key);
+        return keys.some((v) => descriptionKeys.has(v)) &&
+          keys.some((v) => qtyKeys.has(v)) &&
+          keys.some((v) => priceKeys.has(v));
+      });
+      let descriptionCol = 0, qtyCol = 1, priceCol = 2, unitCol = 3;
+      let dataRows = nonEmptyRows;
+      if (headerIndex >= 0) {
+        const headers = nonEmptyRows[headerIndex].map(key);
+        descriptionCol = headers.findIndex((v) => descriptionKeys.has(v));
+        qtyCol = headers.findIndex((v) => qtyKeys.has(v));
+        priceCol = headers.findIndex((v) => priceKeys.has(v));
+        const foundUnit = headers.findIndex((v) => unitKeys.has(v));
+        if (foundUnit >= 0) unitCol = foundUnit;
+        dataRows = nonEmptyRows.slice(headerIndex + 1);
+      }
+
+      const parsed: QuotationItem[] = [];
+      let skipped = 0;
+      for (const row of dataRows) {
+        const productName = clean(row[descriptionCol]);
+        if (!productName) {
+          skipped++;
+          continue;
+        }
+        const qtyText = clean(row[qtyCol]).replace(/,/g, "");
+        const priceText = clean(row[priceCol]).replace(/,/g, "").replace(/^KES\s*/i, "");
+        const qty = Number(qtyText);
+        const unitPrice = Number(priceText);
+        if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
+          skipped++;
+          continue;
+        }
+        parsed.push({
+          productName,
+          unit: clean(row[unitCol]) || "unit",
+          qty,
+          unitPrice,
+          total: qty * unitPrice,
+        });
+      }
+      if (parsed.length === 0) {
+        throw new Error("No valid rows found. Use columns for Description, Quantity and Unit Price.");
+      }
+      setImportPreview(parsed);
+      setImportFileName(file.name);
+      toast.success(`Prepared ${parsed.length} item(s) for review${skipped ? `; skipped ${skipped} invalid row(s)` : ""}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not read this spreadsheet");
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
+  const confirmImport = () => {
+    if (importPreview.length === 0) return;
+    setItems((prev) => [...prev, ...importPreview]);
+    const count = importPreview.length;
+    setImportPreview([]);
+    setImportFileName("");
+    toast.success(`Added ${count} item(s) to the quotation`);
+  };
 
   const updateItem = (
     idx: number,
@@ -2031,6 +2165,98 @@ function QuotationBuilder({
                 </span>
               )}
             </div>
+
+            {/* Add item methods: catalogue, manual entry, or spreadsheet import */}
+            <div className="flex flex-wrap gap-2 p-3 border-b border-border/30">
+              <button
+                type="button"
+                onClick={() => setManualItemOpen((open) => !open)}
+                className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add manual item
+              </button>
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                disabled={importing}
+                className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2 text-xs font-bold text-foreground hover:bg-muted/60 disabled:opacity-50"
+              >
+                {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+                {importing ? "Reading file…" : "Import Excel / CSV"}
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={(event) => void handleExcelImport(event.target.files?.[0])}
+              />
+              <p className="basis-full text-[10px] text-muted-foreground">
+                Manual and imported lines are quotation-only; they do not change stock or the product catalogue.
+              </p>
+            </div>
+
+            {manualItemOpen && (
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 p-3 border-b border-border/30 bg-primary/[0.03]">
+                <label className="sm:col-span-5 text-[11px] font-semibold text-muted-foreground">
+                  Description
+                  <input value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="e.g. HDPE PIPE 32MM" className="mt-1 w-full h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                </label>
+                <label className="sm:col-span-2 text-[11px] font-semibold text-muted-foreground">
+                  Unit
+                  <input value={manualUnit} onChange={(e) => setManualUnit(e.target.value)} placeholder="pcs, m, kg" className="mt-1 w-full h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                </label>
+                <label className="sm:col-span-2 text-[11px] font-semibold text-muted-foreground">
+                  Quantity
+                  <input type="number" min="0.001" step="any" value={manualQty} onChange={(e) => setManualQty(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                </label>
+                <label className="sm:col-span-3 text-[11px] font-semibold text-muted-foreground">
+                  Unit price (KES)
+                  <input type="number" min="0" step="any" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} placeholder="0" className="mt-1 w-full h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                </label>
+                <div className="sm:col-span-12 flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    Line amount: <strong className="text-foreground">{KES((Number(manualQty) || 0) * (Number(manualPrice) || 0))}</strong>
+                  </p>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setManualItemOpen(false)} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted">Cancel</button>
+                    <button type="button" onClick={addManualItem} className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground hover:opacity-90"><Plus className="mr-1 inline h-3.5 w-3.5" /> Add item</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {importPreview.length > 0 && (
+              <div className="p-3 border-b border-border/30 bg-muted/10">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <div>
+                    <p className="text-sm font-bold text-foreground">Review spreadsheet import</p>
+                    <p className="text-[11px] text-muted-foreground">{importFileName} · {importPreview.length} valid line(s)</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { setImportPreview([]); setImportFileName(""); }} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted">Cancel import</button>
+                    <button type="button" onClick={confirmImport} className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground hover:opacity-90"><CheckCircle2 className="mr-1 inline h-3.5 w-3.5" /> Add {importPreview.length} lines</button>
+                  </div>
+                </div>
+                <div className="max-h-56 overflow-auto rounded-lg border border-border bg-card">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-muted text-muted-foreground">
+                      <tr><th className="p-2 text-left">Description</th><th className="p-2 text-right">Qty</th><th className="p-2 text-right">Unit price</th><th className="p-2 text-right">Amount</th></tr>
+                    </thead>
+                    <tbody>
+                      {importPreview.map((item, index) => (
+                        <tr key={index} className="border-t border-border/50">
+                          <td className="p-2 text-foreground">{item.productName}<span className="ml-1 text-muted-foreground">({item.unit})</span></td>
+                          <td className="p-2 text-right tabular-nums">{item.qty}</td>
+                          <td className="p-2 text-right tabular-nums">{KES(item.unitPrice)}</td>
+                          <td className="p-2 text-right font-semibold tabular-nums">{KES(item.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Search */}
             <div
