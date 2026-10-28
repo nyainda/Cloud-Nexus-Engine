@@ -346,12 +346,12 @@ export async function downloadSalesHistoryPdf(sales: any[], options: { dateLabel
   doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MUTED);
   doc.text("Generated " + format(new Date(), "dd MMM yyyy, h:mm a") + " · " + sales.length + " transaction(s)", margin, 34);
   const summaryY = 40;
-  const summaryW = includeProfit ? 68 : 83;
   const summary = [
     { label: "TOTAL SALES", value: String(sales.length) }, { label: "CASH", value: String(cashCount) },
     { label: "M-PESA", value: String(mpesaCount) }, { label: "CREDIT / DEBT", value: String(debtCount) },
     { label: "REVENUE", value: money(total) }, ...(includeProfit ? [{ label: "PROFIT", value: money(profit) }] : []),
   ];
+  const summaryW = (pageWidth - margin * 2 - (summary.length - 1) * 3) / summary.length;
   summary.forEach((item, index) => {
     const x = margin + index * (summaryW + 3);
     doc.setFillColor(...PALE); doc.roundedRect(x, summaryY, summaryW, 16, 1.5, 1.5, "F");
