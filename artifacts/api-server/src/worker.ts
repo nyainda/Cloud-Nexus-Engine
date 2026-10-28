@@ -22,6 +22,13 @@ async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
     "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
     "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
+    "ALTER TABLE quotations ADD COLUMN invoice_snapshot_json TEXT",
+    `UPDATE quotations SET invoice_snapshot_json = json_object(
+      'customerName', customer_name, 'customerPhone', customer_phone,
+      'customerEmail', customer_email, 'notes', notes, 'validUntil', valid_until,
+      'subtotal', subtotal, 'discountAmount', discount_amount, 'total', total,
+      'items', json(items_json), 'createdAt', COALESCE(invoice_issued_at, created_at)
+    ) WHERE invoice_number IS NOT NULL AND invoice_snapshot_json IS NULL`,
   ]) {
     try { await db.prepare(statement).run(); } catch { /* column already exists */ }
   }
@@ -399,6 +406,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       items_json TEXT NOT NULL DEFAULT '[]',
       invoice_number TEXT,
       invoice_issued_at TEXT,
+      invoice_snapshot_json TEXT,
       created_by TEXT,
       created_at TEXT NOT NULL
     )`,
@@ -454,6 +462,9 @@ async function bootstrapD1(db: D1Database): Promise<void> {
         discount_amount REAL NOT NULL DEFAULT 0,
         total REAL NOT NULL DEFAULT 0,
         items_json TEXT NOT NULL DEFAULT '[]',
+        invoice_number TEXT,
+        invoice_issued_at TEXT,
+        invoice_snapshot_json TEXT,
         created_by TEXT,
         created_at TEXT NOT NULL
       )`).run();
