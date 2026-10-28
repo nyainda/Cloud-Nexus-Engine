@@ -7,7 +7,7 @@ import { quotations, shops } from "@workspace/db/schema";
 
 const quotationsRouter = new Hono<AppEnv>();
 
-function parseInvoiceSnapshot(value: string | null | undefined) {
+function parseInvoiceSnapshot(value: string | null | undefined): any | null {
   if (!value) return null;
   try { return JSON.parse(value); } catch { return null; }
 }
@@ -169,7 +169,36 @@ quotationsRouter.patch("/quotations/:id", requireAuth, async (c) => {
   }
 
   await db.update(quotations).set(patch).where(eq(quotations.id, c.req.param("id")));
-  const q = await db.select().from(quotations).where(eq(quotations.id, c.req.param("id"))).get();
+  let q = await db.select().from(quotations).where(eq(quotations.id, c.req.param("id"))).get();
+
+  // After invoice issuance, every quotation save creates a new invoice revision.
+  // Keep the latest snapshot as the source for invoice PDFs and retain every revision in history.
+  if (q?.invoiceNumber) {
+    const previous = parseInvoiceSnapshot((q as any).invoiceSnapshotJson);
+    const revisionNumber = Math.max(1, Number(previous?.revisionNumber ?? 1) + 1);
+    const revisedAt = new Date().toISOString();
+    const nextSnapshot = {
+      customerName: q.customerName,
+      customerPhone: q.customerPhone,
+      customerEmail: q.customerEmail,
+      notes: q.notes,
+      validUntil: q.validUntil,
+      subtotal: q.subtotal,
+      discountAmount: q.discountAmount,
+      total: q.total,
+      items: (() => { try { return JSON.parse(q.itemsJson); } catch { return []; } })(),
+      createdAt: q.createdAt,
+      revisionNumber,
+      revisedAt,
+    };
+    await c.env.DB.prepare(`
+      INSERT INTO invoice_revisions (id, quotation_id, invoice_number, revision_number, snapshot_json, revised_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(crypto.randomUUID(), q.id, q.invoiceNumber, revisionNumber, JSON.stringify(nextSnapshot), revisedAt).run();
+    await c.env.DB.prepare("UPDATE quotations SET invoice_snapshot_json = ? WHERE id = ? AND shop_id = ?")
+      .bind(JSON.stringify(nextSnapshot), q.id, c.get("session").shopId).run();
+    q = await db.select().from(quotations).where(eq(quotations.id, c.req.param("id"))).get();
+  }
   return c.json({
     ...q!,
     items: (() => { try { return JSON.parse(q!.itemsJson); } catch { return []; } })(),
@@ -205,6 +234,8 @@ quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
   const invoiceNumber = `INV-${existing.quoteNumber.replace(/^Q-/i, "")}`;
   const invoiceIssuedAt = new Date().toISOString();
   const invoiceSnapshot = {
+    revisionNumber: 1,
+    revisedAt: null,
     customerName: existing.customerName,
     customerPhone: existing.customerPhone,
     customerEmail: existing.customerEmail,
@@ -230,6 +261,10 @@ quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
   if (!issued?.invoiceNumber) {
     return c.json({ error: "Could not issue invoice. Refresh and try again." }, 409);
   }
+  await c.env.DB.prepare(`
+    INSERT OR IGNORE INTO invoice_revisions (id, quotation_id, invoice_number, revision_number, snapshot_json, revised_at)
+    VALUES (?, ?, ?, 1, ?, ?)
+  `).bind(crypto.randomUUID(), issued.id, invoiceNumber, JSON.stringify(invoiceSnapshot), invoiceIssuedAt).run();
 
   return c.json({
     ...issued,
