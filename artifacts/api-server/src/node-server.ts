@@ -216,6 +216,7 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
         items_json TEXT NOT NULL DEFAULT '[]',
         invoice_number TEXT,
         invoice_issued_at TEXT,
+        invoice_snapshot_json TEXT,
         created_by TEXT,
         created_at TEXT NOT NULL
       )`).run();
@@ -319,6 +320,13 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     "ALTER TABLE quotations ADD COLUMN items_json TEXT DEFAULT '[]'",
     "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
     "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
+    "ALTER TABLE quotations ADD COLUMN invoice_snapshot_json TEXT",
+    `UPDATE quotations SET invoice_snapshot_json = json_object(
+      'customerName', customer_name, 'customerPhone', customer_phone,
+      'customerEmail', customer_email, 'notes', notes, 'validUntil', valid_until,
+      'subtotal', subtotal, 'discountAmount', discount_amount, 'total', total,
+      'items', json(items_json), 'createdAt', COALESCE(invoice_issued_at, created_at)
+    ) WHERE invoice_number IS NOT NULL AND invoice_snapshot_json IS NULL`,
   ];
   for (const m of MIGRATIONS) {
     try {
