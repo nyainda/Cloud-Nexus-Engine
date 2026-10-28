@@ -295,11 +295,8 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   }
 
   if (marker) {
-    const invoiceMarker = await db
-      .prepare("SELECT key FROM app_migrations WHERE key = ?")
-      .bind(QUOTATION_INVOICE_MARKER)
-      .first<{ key: string }>();
-    if (!invoiceMarker) await ensureQuotationInvoiceColumns(db);
+    // Idempotently ensure the invoice snapshot column exists and backfill legacy invoices.
+    await ensureQuotationInvoiceColumns(db);
     await ensureNurseryRegister(db);
     await ensureNurseryCustomerCredit(db);
     await ensureNurseryIndividualEntries(db);
