@@ -24,6 +24,7 @@ import { format, formatDistanceToNow, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
   drawPdfStamp,
+  drawPdfWatermark,
   getPdfShopLogoAssets,
   loadPdfStampLogo,
 } from "@/lib/pdf-stamp";
@@ -100,6 +101,42 @@ function debtGenuineCashReceived(debt: any): number {
         !reversedIds.has(p.id),
     )
     .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+}
+
+function debtHasEffectivePaymentHistory(debt: any): boolean {
+  const payments = debt?.payments || [];
+  const reversedIds = new Set(
+    payments
+      .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
+      .map((p: any) => p.reversalOfId),
+  );
+  return payments.some(
+    (p: any) =>
+      p.paymentType !== "reversal" &&
+      Number(p.amount) >= 0 &&
+      !reversedIds.has(p.id),
+  );
+}
+
+// Older records can be marked paid while their stored balance/payment rows
+// were never updated. PDFs follow the app's settled status in that case and
+// label the history as a paid mark, not as a cash or credit transaction.
+function debtPdfBalanceDue(debt: any): number {
+  return debt?.status === "paid" ? 0 : debtBalanceDue(debt);
+}
+
+function debtPdfAmountPaid(debt: any): number {
+  if (debt?.status === "paid" && !debtHasEffectivePaymentHistory(debt)) {
+    return Math.max(Number(debt?.totalAmount || 0), debtAmountPaid(debt));
+  }
+  return debtAmountPaid(debt);
+}
+
+function debtPdfTotalPaid(debt: any): number {
+  if (debt?.status === "paid" && !debtHasEffectivePaymentHistory(debt)) {
+    return Math.max(Number(debt?.totalAmount || 0), debtAmountPaid(debt));
+  }
+  return debtGenuineCashReceived(debt);
 }
 
 function sameCustomer(a: string, b: string): boolean {
@@ -219,6 +256,7 @@ function PaymentDialog({ debt }: { debt: any }) {
         } catch {
           qc.setQueryData(exactKey, snapshot);
           qc.invalidateQueries({ queryKey: ["/api/crm"] });
+          qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
           toast.error("Could not save offline payment — please retry");
         } finally {
           setSubmitting(false);
@@ -240,11 +278,13 @@ function PaymentDialog({ debt }: { debt: any }) {
           qc.invalidateQueries({ queryKey: exactKey });
           allocations.forEach(({ debt: d }) => qc.invalidateQueries({ queryKey: getGetDebtQueryKey(d.id) }));
           qc.invalidateQueries({ queryKey: ["/api/crm"] });
+          qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
         })
         .catch(() => {
           qc.setQueryData(exactKey, snapshot);
           allocations.forEach(({ debt: d }) => qc.invalidateQueries({ queryKey: getGetDebtQueryKey(d.id) }));
           qc.invalidateQueries({ queryKey: ["/api/crm"] });
+          qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
           toast.error("Payment failed — please retry");
         })
         .finally(() => {
@@ -286,6 +326,7 @@ function PaymentDialog({ debt }: { debt: any }) {
       } catch {
         qc.invalidateQueries({ queryKey: exactKey });
         qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
         toast.error("Could not save offline payment — please retry");
       } finally {
         setSubmitting(false);
@@ -305,11 +346,13 @@ function PaymentDialog({ debt }: { debt: any }) {
         qc.invalidateQueries({ queryKey: exactKey });
         qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
         qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
       })
       .catch(() => {
         qc.setQueryData(exactKey, snapshot);
         qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
         qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
         toast.error("Payment failed — please retry");
       })
       .finally(() => {
@@ -538,6 +581,7 @@ function AddCreditDialog({ customerName, currentCredit }: { customerName: string
       } catch {
         qc.setQueryData(exactKey, snapshot);
         qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
         toast.error("Could not save offline top-up — please retry");
       } finally {
         setSubmitting(false);
@@ -550,11 +594,13 @@ function AddCreditDialog({ customerName, currentCredit }: { customerName: string
       .then(() => {
         qc.invalidateQueries({ queryKey: exactKey });
         qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
       })
       .catch(() => {
         qc.setQueryData(exactKey, snapshot);
         qc.invalidateQueries({ queryKey: exactKey });
         qc.invalidateQueries({ queryKey: ["/api/crm"] });
+        qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
         toast.error("Top-up failed — please retry");
       })
       .finally(() => setSubmitting(false));
@@ -659,10 +705,12 @@ function MarkPaidButton({ debt }: { debt: any }) {
       qc.invalidateQueries({ queryKey: exactKey });
       qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
       qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
     } catch {
       qc.setQueryData(exactKey, snapshot);
       qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
       qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
       setCompleted(false);
       toast.error("Failed to mark paid — please retry");
     } finally {
@@ -685,6 +733,8 @@ function MarkPaidButton({ debt }: { debt: any }) {
 
 function ReversePaymentButton({ debtId, payment, onDone }: { debtId: string; payment: any; onDone: () => void }) {
   const [loading, setLoading] = useState(false);
+  const qc = useQueryClient();
+  const shopId = localStorage.getItem("greenlink_shopId") || "";
   const reverse = async () => {
     if (loading) return;
     const reason = window.prompt("Why is this payment being reversed?", "Payment recorded by mistake");
@@ -696,6 +746,8 @@ function ReversePaymentButton({ debtId, payment, onDone }: { debtId: string; pay
         body: JSON.stringify({ reason: reason.trim() || "Payment correction" }),
       });
       toast.success("Payment reversed — the balance has been restored");
+      qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
       onDone();
     } catch (error: any) {
       toast.error(error?.message || "Could not reverse this payment");
@@ -818,9 +870,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const payments: any[] = debt?.payments ?? [];
     const items: any[]    = debt?.items    ?? [];
     const productSummary = debtProductSummary(items);
-    const balanceDue = debtBalanceDue(debt);
+    const balanceDue = debtPdfBalanceDue(debt);
     const customerCredit = debtCredit(debt);
-    const totalPaid = debtAmountPaid(debt);
+    const totalPaid = debtPdfAmountPaid(debt);
     const openedDate = format(new Date(debt?.createdAt), "dd MMM yyyy");
     const daysOpen   = differenceInDays(new Date(), new Date(debt?.createdAt));
     const generatedAt = format(new Date(), "dd MMM yyyy, h:mm a");
@@ -848,7 +900,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const isPaid    = debt?.status === "paid";
     const isPartial = debt?.status === "partial";
     const statusColor: RGB = isPaid ? GREEN : isPartial ? ORANGE : RED;
-    const statusLabel = isPaid ? "PAID IN FULL" : isPartial ? "PARTIALLY PAID" : "OUTSTANDING";
+    const statusLabel = isPaid
+      ? customerCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL"
+      : isPartial ? "PARTIALLY PAID" : "OUTSTANDING";
     const stampSize = 32;
     const stampX = W - MR - stampSize;
     const stampY = H - 49;
@@ -995,7 +1049,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const summaryRows = [
       { label: "Total Debt",  value: `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`, color: SLATE   },
       { label: "Amount Paid", value: `KES ${totalPaid.toLocaleString("en-KE")}`,                color: GREEN   },
-      { label: "Balance Due", value: `KES ${balanceDue.toLocaleString("en-KE")}`,               color: isPaid ? GREEN : statusColor },
+      { label: balanceDue <= 0.005 ? "Paid in Full" : "Balance Due", value: `KES ${balanceDue.toLocaleString("en-KE")}`, color: isPaid ? GREEN : statusColor },
       ...(customerCredit > 0
         ? [{ label: "Customer Credit", value: `KES ${customerCredit.toLocaleString("en-KE")}`, color: GREEN }]
         : []),
@@ -1028,9 +1082,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         ]),
         headStyles: { fillColor: SLATE, textColor: WHITE, fontStyle: "bold", fontSize: 7.5,
           cellPadding: { top: 4, bottom: 4, left: 4, right: 4 } },
-        bodyStyles: { fontSize: 8, cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
+        bodyStyles: { fillColor: false, fontSize: 8, cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
           textColor: SLATE, lineColor: BORD, lineWidth: 0.2 },
-        alternateRowStyles: { fillColor: LGRAY },
+        alternateRowStyles: { fillColor: false },
         columnStyles: {
           0: { cellWidth: 14, halign: "center", fontStyle: "bold", textColor: MGRAY },
           1: { cellWidth: "auto" },
@@ -1087,7 +1141,19 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
         });
       }
     }
-    if (histRows.length === 1) {
+    if (isPaid && !debtHasEffectivePaymentHistory(debt)) {
+      histRows.push({
+        cells: [
+          format(new Date(debt?.paidAt ?? debt?.createdAt), "dd MMM yyyy, HH:mm"),
+          "System",
+          productSummary,
+          "Marked paid (payment details unavailable)",
+          `KES ${debtPdfAmountPaid(debt).toLocaleString("en-KE")}`,
+          "KES 0",
+        ],
+        isOpened: false,
+      });
+    } else if (histRows.length === 1) {
       histRows.push({ cells: ["—", "—", productSummary, "No payments recorded yet", "—", "—"], isOpened: false });
     }
 
@@ -1098,9 +1164,9 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
       body: histRows.map(r => r.cells),
       headStyles: { fillColor: SLATE, textColor: WHITE, fontStyle: "bold", fontSize: 7.5,
         cellPadding: { top: 4, bottom: 4, left: 4, right: 4 } },
-      bodyStyles: { fontSize: 8, cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
+      bodyStyles: { fillColor: false, fontSize: 8, cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
         textColor: SLATE, lineColor: BORD, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: LGRAY },
+      alternateRowStyles: { fillColor: false },
       columnStyles: {
         0: { cellWidth: 31 },
         1: { cellWidth: 24 },
@@ -1140,7 +1206,7 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     const cols3 = [
       { label: "TOTAL DEBT",  value: `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`, vc: SLATE },
       { label: "PAID",        value: `KES ${totalPaid.toLocaleString("en-KE")}`,                vc: GREEN },
-      { label: "BALANCE DUE", value: `KES ${balanceDue.toLocaleString("en-KE")}`,               vc: isPaid ? GREEN : statusColor },
+      { label: balanceDue <= 0.005 ? "PAID IN FULL" : "BALANCE DUE", value: `KES ${balanceDue.toLocaleString("en-KE")}`, vc: isPaid ? GREEN : statusColor },
       ...(customerCredit > 0
         ? [{ label: "CUSTOMER CREDIT", value: `KES ${customerCredit.toLocaleString("en-KE")}`, vc: GREEN }]
         : []),
@@ -1161,16 +1227,20 @@ async function downloadDebtPdf(debtId: string, shopId: string) {
     // Footer on all pages
     const numPages = (doc as any).internal.getNumberOfPages();
     for (let p = 1; p <= numPages; p++) { doc.setPage(p); drawFooter(); }
-    doc.setPage(numPages);
-    drawPdfStamp(doc, {
-      x: stampX,
-      y: stampY,
-      size: stampSize,
+    const stampOptions = {
       shopName: shopLogoAssets.sealName,
       logoData: stampLogoBase64,
       status: statusLabel,
       dateLabel: format(new Date(), "dd MMM yyyy"),
       documentRef: `#${(debt?.id ?? "").slice(0, 8).toUpperCase()}`,
+    };
+    drawPdfWatermark(doc, stampOptions);
+    doc.setPage(numPages);
+    drawPdfStamp(doc, {
+      x: stampX,
+      y: stampY,
+      size: stampSize,
+      ...stampOptions,
     });
 
     const safeName = (debt?.customerName ?? "customer").replace(/[^a-z0-9]/gi, "_");
@@ -1244,9 +1314,9 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const muted: [number, number, number] = [100, 116, 139];
     const border: [number, number, number] = [226, 232, 240];
     const totalAmount = details.reduce((s, d: any) => s + Number(d?.totalAmount || 0), 0);
-    const totalBalance = details.reduce((s, d: any) => s + debtBalanceDue(d), 0);
+    const totalBalance = details.reduce((s, d: any) => s + debtPdfBalanceDue(d), 0);
     const totalCredit = details.reduce((s, d: any) => s + debtCredit(d), 0);
-    const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
+    const totalPaid = details.reduce((s, d: any) => s + debtPdfTotalPaid(d), 0);
     const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
     const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
     const stampSize = 32;
@@ -1307,11 +1377,11 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
         format(new Date(d.createdAt), "dd MMM yyyy"),
         `${compactDebtProductSummary(d.items)}${d.notes ? ` · ${String(d.notes).slice(0, 42)}` : ""}`,
          d.status === "paid" ? (debtCredit(d) > 0 ? "PAID + CREDIT" : "PAID") : d.status === "partial" ? "PARTIAL" : "UNPAID",
-         money(d.totalAmount), money(debtAmountPaid(d)), money(debtBalanceDue(d)),
+         money(d.totalAmount), money(debtPdfAmountPaid(d)), money(debtPdfBalanceDue(d)),
       ]),
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-      bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      bodyStyles: { fillColor: false, fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+      alternateRowStyles: { fillColor: false },
       columnStyles: { 0: { cellWidth: 23 }, 1: { cellWidth: 27 }, 2: { cellWidth: "auto" }, 3: { cellWidth: 22, fontStyle: "bold" }, 4: { cellWidth: 28, halign: "right" }, 5: { cellWidth: 28, halign: "right" }, 6: { cellWidth: 31, halign: "right", fontStyle: "bold" } },
     });
 
@@ -1338,8 +1408,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
         head: [["Debt Ref", "Product / Description", "Qty", "Unit Price", "Total"]],
         body: itemRows,
         headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-        bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
+        bodyStyles: { fillColor: false, fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+        alternateRowStyles: { fillColor: false },
         columnStyles: {
           0: { cellWidth: 25 },
           1: { cellWidth: "auto" },
@@ -1361,6 +1431,16 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       );
       const printablePayments = (d.payments || [])
         .filter((p: any) => p.paymentType !== "reversal" && Number(p.amount) >= 0 && !reversedPaymentIds.has(p.id))
+      if (printablePayments.length === 0 && d.status === "paid") {
+        return [[
+          format(new Date(d.paidAt ?? d.createdAt), "dd MMM yyyy, HH:mm"),
+          `#${String(d.id).slice(0, 8).toUpperCase()}`,
+          compactDebtProductSummary(d.items),
+          "Marked paid (payment details unavailable)",
+          "—",
+          money(debtPdfAmountPaid(d)),
+        ]];
+      }
       let running = Number(d.totalAmount || 0);
       return printablePayments.flatMap((p: any) => {
         const paymentAmount = Number(p.amount || 0);
@@ -1394,8 +1474,8 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
       head: [["Date & Time", "Debt Ref", "Products", "Entry", "Recorded By", "Amount"]],
       body: paymentRows.length ? paymentRows : [["—", "—", "—", "No payments recorded", "—", "—"]],
       headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-      bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      bodyStyles: { fillColor: false, fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
+      alternateRowStyles: { fillColor: false },
       columnStyles: { 0: { cellWidth: 31 }, 1: { cellWidth: 22 }, 2: { cellWidth: 34 }, 3: { cellWidth: "auto" }, 4: { cellWidth: 27 }, 5: { cellWidth: 28, halign: "right", fontStyle: "bold" } },
     });
     y = (doc as any).lastAutoTable.finalY + 8;
@@ -1415,30 +1495,34 @@ async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
     const summary = [
       ["TOTAL DEBT", money(totalAmount)],
       ["TOTAL PAID", money(totalPaid)],
-      ["BALANCE DUE", money(totalBalance)],
+      [totalBalance <= 0.005 ? "PAID IN FULL" : "BALANCE DUE", money(totalBalance)],
       ...(totalCredit > 0 ? [["CUSTOMER CREDIT", money(totalCredit)]] : []),
     ];
     summary.forEach(([label, value], i) => {
       const colW = summaryWidth / summary.length;
       const x = ML + colW * i + colW / 2;
       doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...green); doc.text(label, x, y + 7, { align: "center" });
-      const valueColor: [number, number, number] = label === "BALANCE DUE" && totalBalance > 0 ? [220, 38, 38] : i === 1 || label === "CUSTOMER CREDIT" ? green : slate;
+      const valueColor: [number, number, number] = label === "BALANCE DUE" && totalBalance > 0 ? [220, 38, 38] : i === 1 || label === "CUSTOMER CREDIT" || label === "PAID IN FULL" ? green : slate;
       doc.setFontSize(9); doc.setTextColor(...valueColor); doc.text(value, x, y + 14, { align: "center" });
     });
     doc.setDrawColor(...border); doc.line(ML, H - 13, W - MR, H - 13);
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...muted);
     doc.text("This statement shows the customer's current debt balances, payments, and credit.", ML, H - 8);
     const pageCount = (doc as any).internal.getNumberOfPages();
-    doc.setPage(pageCount);
-    drawPdfStamp(doc, {
-      x: stampX,
-      y: stampY,
-      size: stampSize,
+    const stampOptions = {
       shopName: shopLogoAssets.sealName,
       logoData: stampLogoBase64,
       status,
       dateLabel: format(new Date(), "dd MMM yyyy"),
       documentRef: "CUSTOMER STATEMENT",
+    };
+    drawPdfWatermark(doc, stampOptions);
+    doc.setPage(pageCount);
+    drawPdfStamp(doc, {
+      x: stampX,
+      y: stampY,
+      size: stampSize,
+      ...stampOptions,
     });
     const safeName = group.customerName.replace(/[^a-z0-9]/gi, "_");
     doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
@@ -1946,7 +2030,9 @@ function DebtDetailPanel({
                 <p className="text-sm font-bold font-mono text-emerald-400">{formatKES(totalPaid)}</p>
               </div>
               <div className={cn("rounded-xl p-3 border", isPaid ? "bg-emerald-500/5 border-emerald-500/15" : "bg-destructive/5 border-destructive/15")}>
-                <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Balance Due</p>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
+                  {balanceDue <= 0.005 ? "Paid in Full" : "Balance Due"}
+                </p>
                  <p className={cn("text-sm font-bold font-mono", statusColor)}>{formatKES(balanceDue)}</p>
               </div>
               <div className="bg-muted/30 rounded-xl p-3 border border-border/40">
@@ -2358,9 +2444,11 @@ function AddDebtDialog({ shopId, onAdded }: { shopId: string; onAdded: () => voi
       });
       onAdded();
       qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
     } catch {
       qc.setQueryData(debtListKey, debtSnapshot);
       qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
       toast.error("Failed to record debt — please retry");
     } finally {
       setSaving(false);

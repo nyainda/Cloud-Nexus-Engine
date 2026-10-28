@@ -46,7 +46,18 @@ export function patchCustomerListCaches(
     Array.isArray(old)
       ? old.map((customer: any) =>
           sameCustomerName(customer.name, customerName)
-            ? updater(customer)
+            ? (() => {
+                const updated = updater(customer);
+                return {
+                  ...updated,
+                  totalPaid: Math.max(
+                    0,
+                    Number(updated.totalOwed || 0) -
+                      Number(updated.totalBalance || 0) +
+                      Number(updated.totalCredit || 0),
+                  ),
+                };
+              })()
             : customer,
         )
       : old,
@@ -76,11 +87,17 @@ export function patchCustomerProfileCaches(
       );
       const totalBalance = debts.reduce(
         (sum: number, debt: any) =>
-          sum + (debt.status === "cancelled" ? 0 : Number(debt.balance || 0)),
+          sum + (debt.status === "cancelled" ? 0 : Math.max(0, Number(debt.balance || 0))),
+        0,
+      );
+      const totalCredit = debts.reduce(
+        (sum: number, debt: any) =>
+          sum + (debt.status === "cancelled" ? 0 : Math.max(0, -Number(debt.balance || 0))),
         0,
       );
       const totalOwed = debts.reduce(
-        (sum: number, debt: any) => sum + Number(debt.totalAmount || 0),
+        (sum: number, debt: any) =>
+          sum + (debt.status === "cancelled" ? 0 : Number(debt.totalAmount || 0)),
         0,
       );
 
@@ -90,8 +107,9 @@ export function patchCustomerProfileCaches(
         stats: {
           ...old.stats,
           totalBalance,
+          totalCredit,
           totalOwed,
-          totalPaid: totalOwed - totalBalance,
+          totalPaid: Math.max(0, totalOwed - totalBalance + totalCredit),
           debtCount: debts.length,
           activeCount: debts.filter(
             (debt: any) =>
@@ -148,8 +166,14 @@ export function addDebtToCustomerListCaches(
         i === index
           ? {
               ...customer,
-              totalBalance: Number(customer.totalBalance || 0) + debt.balance,
+              totalBalance: Number(customer.totalBalance || 0) + Math.max(0, debt.balance),
+              totalCredit: Number(customer.totalCredit || 0) + Math.max(0, -debt.balance),
               totalOwed: Number(customer.totalOwed || 0) + debt.totalAmount,
+              totalPaid:
+                Number(customer.totalOwed || 0) +
+                debt.totalAmount -
+                (Number(customer.totalBalance || 0) + Math.max(0, debt.balance)) +
+                (Number(customer.totalCredit || 0) + Math.max(0, -debt.balance)),
               debtCount: Number(customer.debtCount || 0) + 1,
               activeCount: Number(customer.activeCount || 0) + 1,
               lastActivity: debt.createdAt,
@@ -170,8 +194,10 @@ export function addDebtToCustomerListCaches(
         notes: null,
         creditLimit: null,
         registered: false,
-        totalBalance: debt.balance,
+        totalBalance: Math.max(0, debt.balance),
+        totalCredit: Math.max(0, -debt.balance),
         totalOwed: debt.totalAmount,
+        totalPaid: Math.max(0, debt.totalAmount - Math.max(0, debt.balance) + Math.max(0, -debt.balance)),
         debtCount: 1,
         activeCount: 1,
         lastActivity: debt.createdAt,

@@ -11,6 +11,7 @@ export interface PdfStampOptions {
   status: string;
   dateLabel: string;
   documentRef?: string;
+  watermark?: boolean;
 }
 
 interface StampPalette {
@@ -96,6 +97,27 @@ function getStampStatusLabel(status: string): string {
   return status.toUpperCase();
 }
 
+function softenStampColor(color: StampColor, whiteMix: number): StampColor {
+  return color.map(channel => Math.round(channel + (255 - channel) * whiteMix)) as StampColor;
+}
+
+function placeWatermarkBehindPageContent(doc: jsPDF, pageNumber: number, watermarkStart: number): void {
+  const pages = (doc as any).internal.pages as string[][];
+  const pageCommands = pages?.[pageNumber];
+  if (!Array.isArray(pageCommands) || watermarkStart > pageCommands.length) {
+    throw new Error(`Could not position the PDF watermark on page ${pageNumber}.`);
+  }
+
+  const watermarkCommands = pageCommands.splice(watermarkStart);
+  const firstPaintIndex = pageCommands.findIndex(command =>
+    ["f", "f*", "B", "B*"].includes(String(command).trim()),
+  );
+  // Preserve an existing page background/header band, then paint the seal
+  // before the document's text and tables.
+  const insertAt = firstPaintIndex >= 0 ? firstPaintIndex + 1 : Math.min(2, pageCommands.length);
+  pageCommands.splice(insertAt, 0, ...watermarkCommands);
+}
+
 function drawArcText(
   doc: jsPDF,
   text: string,
@@ -160,16 +182,18 @@ function drawFourPointStar(doc: jsPDF, x: number, y: number, radius: number, col
 
 /** Draw a print-sharp, branded status seal in a reserved page area. */
 export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
-  const { x, y, size, shopName, logoData, status, dateLabel, documentRef } = options;
+  const { x, y, size, shopName, logoData, status, dateLabel, documentRef, watermark = false } = options;
   const scale = size / 46;
   const centerX = x + size / 2;
   const centerY = y + size / 2;
   const { ink, wash } = getStampPalette(status);
+  const detailInk = watermark ? softenStampColor(ink, 0.6) : ink;
+  const detailWash = watermark ? softenStampColor(wash, 0.2) : wash;
   const statusLabel = getStampStatusLabel(status);
 
   // Keep the lettering centered in the clear band between the outer and inner rings.
-  doc.setFillColor(...wash);
-  doc.setDrawColor(...ink);
+  doc.setFillColor(...detailWash);
+  doc.setDrawColor(...detailInk);
   doc.setLineWidth(0.75 * scale);
   doc.circle(centerX, centerY, size / 2 - 0.55 * scale, "FD");
   doc.setLineWidth(0.25 * scale);
@@ -184,7 +208,7 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
     arcRadius,
     -Math.PI / 2,
     1,
-    ink,
+    detailInk,
     4.8 * scale,
   );
   drawArcText(
@@ -195,13 +219,13 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
     arcRadius,
     Math.PI / 2,
     -1,
-    ink,
+    detailInk,
     4.8 * scale,
   );
 
   const starX = centerX + arcRadius;
-  drawFourPointStar(doc, starX, centerY, 1.15 * scale, ink);
-  drawFourPointStar(doc, centerX - arcRadius, centerY, 1.15 * scale, ink);
+  drawFourPointStar(doc, starX, centerY, 1.15 * scale, detailInk);
+  drawFourPointStar(doc, centerX - arcRadius, centerY, 1.15 * scale, detailInk);
 
   const logoArea = {
     y: y + 9.1 * scale,
@@ -215,20 +239,36 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
   );
   const logoWidth = logoProperties.width * logoScale;
   const logoHeight = logoProperties.height * logoScale;
-  doc.addImage(
+  const logoArgs = [
     logoData,
     "PNG",
     centerX - logoWidth / 2,
     logoArea.y + (logoArea.height - logoHeight) / 2,
     logoWidth,
     logoHeight,
-  );
+  ] as const;
+  if (watermark) {
+    const GraphicsState = (doc as any).GState as
+      | (new (parameters: { opacity: number; "stroke-opacity": number }) => unknown)
+      | undefined;
+    if (!GraphicsState) throw new Error("This PDF renderer does not support watermark transparency.");
+    doc.saveGraphicsState();
+    try {
+      doc.setGState(new GraphicsState({ opacity: 0.4, "stroke-opacity": 0.4 }));
+      doc.addImage(...logoArgs);
+    } finally {
+      doc.restoreGraphicsState();
+    }
+  } else {
+    doc.addImage(...logoArgs);
+  }
 
   const badgeY = y + 24.4 * scale;
   const badgeWidth = size - 12 * scale;
   const badgeHeight = 8 * scale;
-  doc.setFillColor(...ink);
-  doc.setDrawColor(...ink);
+  const badgeFill = watermark ? softenStampColor(ink, 0.87) : ink;
+  doc.setFillColor(...badgeFill);
+  doc.setDrawColor(...badgeFill);
   doc.roundedRect(
     centerX - badgeWidth / 2,
     badgeY,
@@ -238,7 +278,8 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
     2.2 * scale,
     "F",
   );
-  doc.setTextColor(255, 255, 255);
+  if (watermark) doc.setTextColor(...detailInk);
+  else doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(Math.max(statusLabel.length > 10 ? 4.9 : 5.3, (statusLabel.length > 10 ? 7.1 : 8.2) * scale));
   doc.text(statusLabel, centerX, badgeY + 5.3 * scale, {
@@ -246,7 +287,7 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
     maxWidth: badgeWidth - 3 * scale,
   });
 
-  doc.setTextColor(...ink);
+  doc.setTextColor(...detailInk);
   doc.setFontSize(Math.max(4, 5.1 * scale));
   doc.text(dateLabel.toUpperCase(), centerX, y + 35 * scale, {
     align: "center",
@@ -259,5 +300,49 @@ export function drawPdfStamp(doc: jsPDF, options: PdfStampOptions): void {
       align: "center",
       maxWidth: size - 13 * scale,
     });
+  }
+}
+
+/**
+ * Repeat the official document stamp as a softly colored watermark on each page.
+ * Lightened stamp details and a translucent logo keep it visible without
+ * competing with document content.
+ * retaining the same status, date, reference, and shop identity as the final
+ * page's visible stamp.
+ */
+export function drawPdfWatermark(
+  doc: jsPDF,
+  options: Omit<PdfStampOptions, "x" | "y" | "size"> & { opacity?: number },
+): void {
+  const pageCount = (doc as any).internal.getNumberOfPages() as number;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const size = Math.min(45, pageWidth * 0.216, pageHeight * 0.162);
+  const x = (pageWidth - size) / 2;
+  const y = (pageHeight - size) / 2;
+  const { opacity = 1, ...stampOptions } = options;
+  const GraphicsState = (doc as any).GState as
+    | (new (parameters: { opacity: number; "stroke-opacity": number }) => unknown)
+    | undefined;
+
+  if (!GraphicsState) {
+    throw new Error("This PDF renderer does not support watermark transparency.");
+  }
+
+  for (let page = 1; page <= pageCount; page++) {
+    doc.setPage(page);
+    const pageCommands = (doc as any).internal.pages?.[page] as string[] | undefined;
+    if (!Array.isArray(pageCommands)) {
+      throw new Error(`Could not access the PDF page content for watermarking page ${page}.`);
+    }
+    const watermarkStart = pageCommands.length;
+    doc.saveGraphicsState();
+    try {
+      doc.setGState(new GraphicsState({ opacity, "stroke-opacity": opacity }));
+      drawPdfStamp(doc, { ...stampOptions, x, y, size, watermark: true });
+    } finally {
+      doc.restoreGraphicsState();
+    }
+    placeWatermarkBehindPageContent(doc, page, watermarkStart);
   }
 }

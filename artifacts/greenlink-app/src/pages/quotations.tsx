@@ -1,20 +1,47 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import {
-  customFetch, useListProducts, useGetShop,
-  getListProductsQueryKey, getGetShopQueryKey,
+  customFetch,
+  useListProducts,
+  useGetShop,
+  getListProductsQueryKey,
+  getGetShopQueryKey,
 } from "@workspace/api-client-react";
 import {
-  Plus, Search, Trash2, ChevronLeft, Printer, CheckCircle2,
-  XCircle, Clock, FileText, User, Phone, Mail, Calendar, StickyNote,
-  Edit2, Package, Loader2, X, Eye, Download, MessageCircle,
-  ChevronDown, ChevronUp, ShoppingCart, Copy, MoreVertical, TrendingUp,
+  Plus,
+  Search,
+  Trash2,
+  ChevronLeft,
+  Printer,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  FileText,
+  User,
+  Phone,
+  Mail,
+  Calendar,
+  StickyNote,
+  Edit2,
+  Package,
+  Loader2,
+  X,
+  Eye,
+  Download,
+  MessageCircle,
+  ChevronDown,
+  ChevronUp,
+  ShoppingCart,
+  Copy,
+  MoreVertical,
+  TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
   drawPdfStamp,
+  drawPdfWatermark,
   getPdfShopLogoAssets,
   loadPdfStampLogo,
 } from "@/lib/pdf-stamp";
@@ -53,22 +80,59 @@ interface Quotation {
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 const KES = (n: number) =>
-  "KES " + n.toLocaleString("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  "KES " +
+  n.toLocaleString("en-KE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
 
 function amountInWords(amount: number): string {
   const small = [
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-    "seventeen", "eighteen", "nineteen",
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
   ];
-  const tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+  const tens = [
+    "",
+    "",
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+  ];
   const wholeWords = (value: number): string => {
     if (value < 20) return small[value];
-    if (value < 100) return `${tens[Math.floor(value / 10)]}${value % 10 ? ` ${small[value % 10]}` : ""}`;
-    if (value < 1_000) return `${small[Math.floor(value / 100)]} hundred${value % 100 ? ` ${wholeWords(value % 100)}` : ""}`;
-    if (value < 1_000_000) return `${wholeWords(Math.floor(value / 1_000))} thousand${value % 1_000 ? ` ${wholeWords(value % 1_000)}` : ""}`;
-    if (value < 1_000_000_000) return `${wholeWords(Math.floor(value / 1_000_000))} million${value % 1_000_000 ? ` ${wholeWords(value % 1_000_000)}` : ""}`;
-    if (value < 1_000_000_000_000) return `${wholeWords(Math.floor(value / 1_000_000_000))} billion${value % 1_000_000_000 ? ` ${wholeWords(value % 1_000_000_000)}` : ""}`;
+    if (value < 100)
+      return `${tens[Math.floor(value / 10)]}${value % 10 ? ` ${small[value % 10]}` : ""}`;
+    if (value < 1_000)
+      return `${small[Math.floor(value / 100)]} hundred${value % 100 ? ` ${wholeWords(value % 100)}` : ""}`;
+    if (value < 1_000_000)
+      return `${wholeWords(Math.floor(value / 1_000))} thousand${value % 1_000 ? ` ${wholeWords(value % 1_000)}` : ""}`;
+    if (value < 1_000_000_000)
+      return `${wholeWords(Math.floor(value / 1_000_000))} million${value % 1_000_000 ? ` ${wholeWords(value % 1_000_000)}` : ""}`;
+    if (value < 1_000_000_000_000)
+      return `${wholeWords(Math.floor(value / 1_000_000_000))} billion${value % 1_000_000_000 ? ` ${wholeWords(value % 1_000_000_000)}` : ""}`;
     return value.toLocaleString("en-KE");
   };
   const centsTotal = Math.round(Math.max(0, Number(amount) || 0) * 100);
@@ -77,18 +141,51 @@ function amountInWords(amount: number): string {
   return `${wholeWords(shillings)} Kenya shillings${cents ? ` and ${wholeWords(cents)} cents` : ""} only`;
 }
 
+function getQuotationShopName(shop: any): string {
+  const shopId = shop?.id ?? localStorage.getItem("greenlink_shopId");
+  if (shopId === "shop-sunrise") {
+    return getPdfShopLogoAssets(shopId).sealName;
+  }
+  return shop?.name ?? "Our Shop";
+}
+
 const STATUS_META = {
-  draft:    { label: "Draft",    color: "text-zinc-300 bg-zinc-400/[0.08] border-zinc-400/20", dot: "bg-zinc-400" },
-  sent:     { label: "Sent",     color: "text-sky-200 bg-sky-300/[0.08] border-sky-300/20", dot: "bg-sky-300" },
-  accepted: { label: "Accepted", color: "text-emerald-200 bg-emerald-300/[0.08] border-emerald-300/20", dot: "bg-emerald-300" },
-  rejected: { label: "Rejected", color: "text-rose-200 bg-rose-300/[0.08] border-rose-300/20", dot: "bg-rose-300" },
-  expired:  { label: "Expired",  color: "text-amber-200 bg-amber-300/[0.08] border-amber-300/20", dot: "bg-amber-300" },
+  draft: {
+    label: "Draft",
+    color: "text-zinc-300 bg-zinc-400/[0.08] border-zinc-400/20",
+    dot: "bg-zinc-400",
+  },
+  sent: {
+    label: "Sent",
+    color: "text-sky-200 bg-sky-300/[0.08] border-sky-300/20",
+    dot: "bg-sky-300",
+  },
+  accepted: {
+    label: "Accepted",
+    color: "text-emerald-200 bg-emerald-300/[0.08] border-emerald-300/20",
+    dot: "bg-emerald-300",
+  },
+  rejected: {
+    label: "Rejected",
+    color: "text-rose-200 bg-rose-300/[0.08] border-rose-300/20",
+    dot: "bg-rose-300",
+  },
+  expired: {
+    label: "Expired",
+    color: "text-amber-200 bg-amber-300/[0.08] border-amber-300/20",
+    dot: "bg-amber-300",
+  },
 } as const;
 
 function StatusBadge({ status }: { status: Quotation["status"] }) {
   const m = STATUS_META[status];
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide px-2 py-1 rounded-md border", m.color)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide px-2 py-1 rounded-md border",
+        m.color,
+      )}
+    >
       <span className={cn("h-1.5 w-1.5 rounded-full", m.dot)} />
       {m.label}
     </span>
@@ -97,41 +194,55 @@ function StatusBadge({ status }: { status: Quotation["status"] }) {
 
 // ─── PDF generation ────────────────────────────────────────────────────────────
 
-async function downloadPdf(quotation: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation") {
+async function downloadPdf(
+  quotation: Quotation,
+  shop: any,
+  documentType: "quotation" | "invoice" = "quotation",
+) {
   const isInvoice = documentType === "invoice";
   if (isInvoice && !quotation.invoiceNumber) {
     toast.error("Issue an invoice first");
     return;
   }
-  const documentNumber = isInvoice ? quotation.invoiceNumber! : quotation.quoteNumber;
-  toast.loading(`Generating ${isInvoice ? "invoice" : "quotation"} PDF…`, { id: "pdf" });
+  const documentNumber = isInvoice
+    ? quotation.invoiceNumber!
+    : quotation.quoteNumber;
+  toast.loading(`Generating ${isInvoice ? "invoice" : "quotation"} PDF…`, {
+    id: "pdf",
+  });
   try {
     const { jsPDF } = await import("jspdf");
     const autoTable = (await import("jspdf-autotable")).default;
 
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W   = doc.internal.pageSize.getWidth();
-    const H   = doc.internal.pageSize.getHeight();
-    const ML  = 12;
-    const MR  = 12;
-    const CW  = W - ML - MR;
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+    const ML = 12;
+    const MR = 12;
+    const CW = W - ML - MR;
 
     // ── Brand palette ─────────────────────────────────────────────────────────
     type RGB = [number, number, number];
     const EMERALD: RGB = isInvoice ? [18, 112, 68] : [25, 83, 163];
-    const DKEMER:  RGB = isInvoice ? [9, 83, 49] : [16, 58, 123];
-    const DARK:    RGB = DKEMER;
+    const DKEMER: RGB = isInvoice ? [9, 83, 49] : [16, 58, 123];
+    const DARK: RGB = DKEMER;
     const BRANDPALE: RGB = isInvoice ? [237, 247, 240] : [237, 243, 252];
-    const WHITE:   RGB = [255, 255, 255];
-    const LGRAY:   RGB = [248, 250, 252];  // very light gray — alternating rows
-    const MGRAY:   RGB = [91, 105, 119];
-    const DKTXT:   RGB = [28, 39, 34];
-    const BORD:    RGB = [216, 225, 219];
+    const WHITE: RGB = [255, 255, 255];
+    const LGRAY: RGB = [248, 250, 252]; // very light gray — alternating rows
+    const MGRAY: RGB = [91, 105, 119];
+    const DKTXT: RGB = [28, 39, 34];
+    const BORD: RGB = [216, 225, 219];
 
     // ── Load shop logo ─────────────────────────────────────────────────────────
-    const currentShopId = shop?.id ?? localStorage.getItem("greenlink_shopId") ?? undefined;
+    const currentShopId =
+      shop?.id ?? localStorage.getItem("greenlink_shopId") ?? undefined;
     const shopLogoAssets = getPdfShopLogoAssets(currentShopId);
-    const logoUrl = shopLogoAssets.printHeader;
+    const shopDisplayName = getQuotationShopName(shop);
+    const logoUrl = shopLogoAssets.printHeader ?? shopLogoAssets.header;
     let logoBase64 = "";
     let logoNatW = 0;
     let logoNatH = 0;
@@ -139,24 +250,36 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       const resp = await fetch(logoUrl);
       const blob = await resp.blob();
       const blobUrl = URL.createObjectURL(blob);
-      await new Promise<void>(resolve => {
+      await new Promise<void>((resolve) => {
         const img = new Image();
-        img.onload  = () => { logoNatW = img.naturalWidth; logoNatH = img.naturalHeight; resolve(); };
+        img.onload = () => {
+          logoNatW = img.naturalWidth;
+          logoNatH = img.naturalHeight;
+          resolve();
+        };
         img.onerror = () => resolve();
         img.src = blobUrl;
       });
       URL.revokeObjectURL(blobUrl);
-      logoBase64 = await new Promise<string>(resolve => {
+      logoBase64 = await new Promise<string>((resolve) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
         reader.readAsDataURL(blob);
       });
-    } catch { /* logo optional */ }
+    } catch {
+      /* logo optional */
+    }
     const stampLogoBase64 = await loadPdfStampLogo(shopLogoAssets.seal);
     const pdfLocation = "Nanyuki, Kenya";
 
     // ── Helper: softly tinted info box with a precise brand accent ────────────
-    function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
+    function infoBox(
+      bx: number,
+      by: number,
+      bw: number,
+      bh: number,
+      label: string,
+    ) {
       doc.setDrawColor(...BORD);
       doc.setLineWidth(0.25);
       doc.setFillColor(...WHITE);
@@ -175,7 +298,13 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     }
 
     // ── Helper: label : value row inside a box ────────────────────────────────
-    function fieldRow(bx: number, by: number, bw: number, label: string, value: string) {
+    function fieldRow(
+      bx: number,
+      by: number,
+      bw: number,
+      label: string,
+      value: string,
+    ) {
       const valX = bx + bw * 0.4;
       const maxValueWidth = Math.max(8, bx + bw - valX - 5);
       doc.setFont("helvetica", "normal");
@@ -198,7 +327,10 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       }
       let fittedText = text;
       if (doc.getTextWidth(fittedText) > maxWidth) {
-        while (fittedText.length > 1 && doc.getTextWidth(`${fittedText}...`) > maxWidth) {
+        while (
+          fittedText.length > 1 &&
+          doc.getTextWidth(`${fittedText}...`) > maxWidth
+        ) {
           fittedText = fittedText.slice(0, -1);
         }
         fittedText = `${fittedText.trimEnd()}...`;
@@ -226,7 +358,9 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       doc.setTextColor(...labelColor);
       doc.text("LOCATION", ML + 6, H - 9.4);
       doc.text("CONTACT", 68, H - 9.4);
-      doc.text(`PAGE ${page} OF ${totalPages}`, W - MR, H - 9.4, { align: "right" });
+      doc.text(`PAGE ${page} OF ${totalPages}`, W - MR, H - 9.4, {
+        align: "right",
+      });
 
       doc.setDrawColor(230, 241, 235);
       doc.setLineWidth(0.35);
@@ -241,7 +375,9 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       doc.setFontSize(location.fontSize);
       doc.text(location.text, ML + 6, H - 4.4);
 
-      const contactValues = [shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
+      const contactValues = [shop?.ownerWhatsapp, shop?.email].filter(
+        Boolean,
+      ) as string[];
       contactValues.slice(0, 2).forEach((value, index) => {
         const fitted = fitOneLine(value, 70, 5.8);
         doc.setFont("helvetica", "normal");
@@ -253,7 +389,11 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6.1);
       doc.setTextColor(...WHITE);
-      const business = fitOneLine(shop?.name ?? shopLogoAssets.sealName, 53, 6.1);
+      const business = fitOneLine(
+        shopDisplayName || shopLogoAssets.sealName,
+        53,
+        6.1,
+      );
       doc.setFontSize(business.fontSize);
       doc.text(business.text, W - MR, H - 4.4, { align: "right" });
     }
@@ -270,7 +410,11 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6);
       doc.setTextColor(180, 188, 200);
-      doc.text(`${shop?.name ?? ""}  ·  ${documentNumber}  ·  continued`, ML, 6.5);
+      doc.text(
+        `${shopDisplayName}  ·  ${documentNumber}  ·  continued`,
+        ML,
+        6.5,
+      );
       doc.text(`Page ${pg} of ${total}`, W - MR, 6.5, { align: "right" });
       // Reset graphics state so autotable inherits clean defaults after this hook
       doc.setFillColor(...WHITE);
@@ -294,7 +438,8 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.setFillColor(...EMERALD);
     doc.rect(0, 0, W, 2, "F");
 
-    const LOGO_BOX_W = 56, LOGO_BOX_H = 25;
+    const LOGO_BOX_W = 56,
+      LOGO_BOX_H = 25;
     if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
       const scale = Math.min(LOGO_BOX_W / logoNatW, LOGO_BOX_H / logoNatH);
       const dW = logoNatW * scale;
@@ -343,7 +488,11 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.setFont("helvetica", "bold");
     doc.setFontSize(5.8);
     doc.setTextColor(...EMERALD);
-    doc.text(isInvoice ? "INVOICE NUMBER" : "QUOTATION NUMBER", refBoxX + 4, 46);
+    doc.text(
+      isInvoice ? "INVOICE NUMBER" : "QUOTATION NUMBER",
+      refBoxX + 4,
+      46,
+    );
     doc.setFontSize(8.5);
     doc.setTextColor(...DKEMER);
     doc.text(documentNumber, refBoxX + 4, 52.2, { maxWidth: refBoxW - 8 });
@@ -361,23 +510,58 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     const RBX = ML + LBW + 5;
     const INFO_H = 35;
 
-    infoBox(LBX, y, LBW, INFO_H, isInvoice ? "INVOICE DETAILS" : "QUOTATION DETAILS");
+    infoBox(
+      LBX,
+      y,
+      LBW,
+      INFO_H,
+      isInvoice ? "INVOICE DETAILS" : "QUOTATION DETAILS",
+    );
     let fy = y + 14;
     const GAP = 6.5;
     if (isInvoice) {
-      fieldRow(LBX, fy, LBW, "Invoice No.", documentNumber); fy += GAP;
-      fieldRow(LBX, fy, LBW, "Date", format(new Date(quotation.invoiceIssuedAt ?? quotation.createdAt), "dd MMM yyyy")); fy += GAP;
+      fieldRow(LBX, fy, LBW, "Invoice No.", documentNumber);
+      fy += GAP;
+      fieldRow(
+        LBX,
+        fy,
+        LBW,
+        "Date",
+        format(
+          new Date(quotation.invoiceIssuedAt ?? quotation.createdAt),
+          "dd MMM yyyy",
+        ),
+      );
+      fy += GAP;
       fieldRow(LBX, fy, LBW, "Quote Ref.", quotation.quoteNumber);
     } else {
-      fieldRow(LBX, fy, LBW, "Quote No.", quotation.quoteNumber); fy += GAP;
-      fieldRow(LBX, fy, LBW, "Date", format(new Date(quotation.createdAt), "dd MMM yyyy")); fy += GAP;
-      fieldRow(LBX, fy, LBW, "Valid Until", quotation.validUntil ? format(new Date(quotation.validUntil), "dd MMM yyyy") : "—");
+      fieldRow(LBX, fy, LBW, "Quote No.", quotation.quoteNumber);
+      fy += GAP;
+      fieldRow(
+        LBX,
+        fy,
+        LBW,
+        "Date",
+        format(new Date(quotation.createdAt), "dd MMM yyyy"),
+      );
+      fy += GAP;
+      fieldRow(
+        LBX,
+        fy,
+        LBW,
+        "Valid Until",
+        quotation.validUntil
+          ? format(new Date(quotation.validUntil), "dd MMM yyyy")
+          : "—",
+      );
     }
 
     infoBox(RBX, y, RBW, INFO_H, "CUSTOMER DETAILS");
     let qy = y + 14;
-    fieldRow(RBX, qy, RBW, "Bill To", quotation.customerName); qy += GAP;
-    fieldRow(RBX, qy, RBW, "Phone", quotation.customerPhone ?? ""); qy += GAP;
+    fieldRow(RBX, qy, RBW, "Bill To", quotation.customerName);
+    qy += GAP;
+    fieldRow(RBX, qy, RBW, "Phone", quotation.customerPhone ?? "");
+    qy += GAP;
     fieldRow(RBX, qy, RBW, "Email", quotation.customerEmail ?? "");
     y += INFO_H + 5;
 
@@ -386,7 +570,16 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       startY: y,
       margin: { left: ML, right: MR, top: 13, bottom: 18 },
       showHead: "everyPage",
-      head: [["#", "PRODUCT / DESCRIPTION", "QTY", "UNIT", "UNIT PRICE (KES)", "TOTAL (KES)"]],
+      head: [
+        [
+          "#",
+          "PRODUCT / DESCRIPTION",
+          "QTY",
+          "UNIT",
+          "UNIT PRICE (KES)",
+          "TOTAL (KES)",
+        ],
+      ],
       body: quotation.items.map((item, i) => [
         String(i + 1),
         item.productName,
@@ -404,32 +597,48 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
         halign: "center",
       },
       bodyStyles: {
-        fontSize: 7.4,
-        cellPadding: { top: 2.4, bottom: 2.4, left: 3.2, right: 3.2 },
+        fillColor: false,
+        fontSize: 7.5,
+        cellPadding: { top: 2, bottom: 2, left: 3.5, right: 3.5 },
         textColor: DKTXT,
         lineColor: BORD,
         lineWidth: 0.15,
       },
-      alternateRowStyles: { fillColor: LGRAY },
+      alternateRowStyles: { fillColor: false },
       columnStyles: {
-        0: { cellWidth: 9,    halign: "center", fontStyle: "bold", textColor: MGRAY, fontSize: 6.5 },
+        0: {
+          cellWidth: 9,
+          halign: "center",
+          fontStyle: "bold",
+          textColor: MGRAY,
+          fontSize: 6.5,
+        },
         1: { cellWidth: "auto", halign: "left" },
-        2: { cellWidth: 14,   halign: "center" },
-        3: { cellWidth: 17,   halign: "center", textColor: MGRAY },
-        4: { cellWidth: 31,   halign: "right" },
-        5: { cellWidth: 32,   halign: "right", fontStyle: "bold" },
+        2: { cellWidth: 14, halign: "center" },
+        3: { cellWidth: 17, halign: "center", textColor: MGRAY },
+        4: { cellWidth: 31, halign: "right" },
+        5: { cellWidth: 32, halign: "right", fontStyle: "bold" },
       },
       tableLineColor: BORD,
       tableLineWidth: 0.2,
       didDrawCell: (data: any) => {
-        if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
+        if (
+          data.row.index === -1 &&
+          data.column.index === data.table.columns.length - 1
+        ) {
           doc.setDrawColor(...EMERALD);
           doc.setLineWidth(0.8);
-          doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
+          doc.line(
+            ML,
+            data.cell.y + data.cell.height,
+            W - MR,
+            data.cell.y + data.cell.height,
+          );
         }
       },
       didDrawPage: (_: any) => {
-        const pg: number    = (doc as any).internal.getCurrentPageInfo().pageNumber;
+        const pg: number = (doc as any).internal.getCurrentPageInfo()
+          .pageNumber;
         const total: number = (doc as any).internal.getNumberOfPages();
         if (pg > 1) drawContinuationHeader(pg, total);
       },
@@ -472,7 +681,10 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     };
     let bottomPositions = getBottomSectionPositions(ty);
     const estimatedRightBottom = ty + rightColumnHeight;
-    if (estimatedRightBottom > stampY - 5 || bottomPositions.signatureY + 8 > H - 17) {
+    if (
+      estimatedRightBottom > stampY - 5 ||
+      bottomPositions.signatureY + 8 > H - 17
+    ) {
       doc.addPage();
       doc.setFillColor(...WHITE);
       doc.rect(0, 0, W, H, "F");
@@ -487,8 +699,8 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     infoBox(LCX, PAY_Y, LCW, PAY_H, "PAYMENT OPTIONS");
     const PAY_CONTENT_Y = PAY_Y + 8;
     const payMethods = [
-      { label: "Cash",          sub: "On delivery" },
-      { label: "M-Pesa",        sub: "Paybill / Till" },
+      { label: "Cash", sub: "On delivery" },
+      { label: "M-Pesa", sub: "Paybill / Till" },
       { label: "Bank Transfer", sub: "Request details" },
     ];
     const slotW = LCW / payMethods.length;
@@ -497,7 +709,10 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       const iconY = PAY_CONTENT_Y;
 
       if (i === 0) {
-        const bx = cx - 7, by = iconY, bw = 14, bh = 8;
+        const bx = cx - 7,
+          by = iconY,
+          bw = 14,
+          bh = 8;
         doc.setFillColor(...DKEMER);
         doc.roundedRect(bx, by, bw, bh, 1.5, 1.5, "F");
         doc.setFillColor(...EMERALD);
@@ -507,25 +722,39 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
         doc.setTextColor(...WHITE);
         doc.text("KES", cx, by + bh / 2 + 1.8, { align: "center" });
       } else if (i === 1) {
-        const ph = 10, pw = 6.5;
-        const px2 = cx - pw / 2, py2 = iconY;
+        const ph = 10,
+          pw = 6.5;
+        const px2 = cx - pw / 2,
+          py2 = iconY;
         doc.setFillColor(...DKEMER);
         doc.roundedRect(px2, py2, pw, ph, 1.2, 1.2, "F");
         doc.setFillColor(...WHITE);
         doc.roundedRect(cx - 1.5, py2 + 1.2, 3, 0.9, 0.3, 0.3, "F");
         doc.setFillColor(...EMERALD);
-        doc.roundedRect(px2 + 0.8, py2 + 2.8, pw - 1.6, ph - 5.2, 0.5, 0.5, "F");
+        doc.roundedRect(
+          px2 + 0.8,
+          py2 + 2.8,
+          pw - 1.6,
+          ph - 5.2,
+          0.5,
+          0.5,
+          "F",
+        );
         doc.setFillColor(...WHITE);
         doc.circle(cx, py2 + ph - 1.5, 0.9, "F");
       } else {
-        const bw2 = 13, bx2 = cx - bw2 / 2, by2 = iconY;
+        const bw2 = 13,
+          bx2 = cx - bw2 / 2,
+          by2 = iconY;
         doc.setDrawColor(...DKEMER);
         doc.setLineWidth(0.8);
         doc.line(cx, by2, bx2, by2 + 3.5);
         doc.line(cx, by2, bx2 + bw2, by2 + 3.5);
         doc.line(bx2, by2 + 3.5, bx2 + bw2, by2 + 3.5);
         doc.setFillColor(...DKEMER);
-        const colW = 1.8, colH = 4.5, colY = by2 + 3.5;
+        const colW = 1.8,
+          colH = 4.5,
+          colY = by2 + 3.5;
         const colGap = (bw2 - colW * 4) / 5;
         for (let c = 0; c < 4; c++) {
           doc.rect(bx2 + colGap * (c + 1) + colW * c, colY, colW, colH, "F");
@@ -545,7 +774,12 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       if (i < payMethods.length - 1) {
         doc.setDrawColor(...BORD);
         doc.setLineWidth(0.2);
-        doc.line(LCX + slotW * (i + 1), PAY_CONTENT_Y + 2, LCX + slotW * (i + 1), PAY_Y + PAY_H - 3);
+        doc.line(
+          LCX + slotW * (i + 1),
+          PAY_CONTENT_Y + 2,
+          LCX + slotW * (i + 1),
+          PAY_Y + PAY_H - 3,
+        );
       }
     });
 
@@ -585,7 +819,11 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       totRow("SUBTOTAL", KES(quotation.subtotal));
       totRow("DISCOUNT", `− ${KES(quotation.discountAmount)}`);
     }
-    totRow(isInvoice ? "AMOUNT DUE" : "TOTAL AMOUNT", KES(quotation.total), true);
+    totRow(
+      isInvoice ? "AMOUNT DUE" : "TOTAL AMOUNT",
+      KES(quotation.total),
+      true,
+    );
 
     // Thank you box
     const TY_BOX_Y = ry + 4;
@@ -600,11 +838,18 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.8);
     doc.setTextColor(...DKEMER);
-    doc.text("Thank you for your business", RCX + RCW / 2 + 1, TY_BOX_Y + 7, { align: "center" });
+    doc.text("Thank you for your business", RCX + RCW / 2 + 1, TY_BOX_Y + 7, {
+      align: "center",
+    });
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.1);
     doc.setTextColor(...MGRAY);
-    doc.text("We appreciate your trust in us.", RCX + RCW / 2 + 1, TY_BOX_Y + 12, { align: "center" });
+    doc.text(
+      "We appreciate your trust in us.",
+      RCX + RCW / 2 + 1,
+      TY_BOX_Y + 12,
+      { align: "center" },
+    );
 
     // Amount in words, covering the quote total or invoice amount due.
     doc.setFont("helvetica", "bold");
@@ -613,12 +858,23 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
     doc.text("AMOUNT IN WORDS", ML, bottomPositions.amountWordsY + 4.5);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(...DKTXT);
-    doc.text(amountInWords(quotation.total), ML + 31, bottomPositions.amountWordsY + 4.5, {
-      maxWidth: CW - 31,
-    });
+    doc.text(
+      amountInWords(quotation.total),
+      ML + 31,
+      bottomPositions.amountWordsY + 4.5,
+      {
+        maxWidth: CW - 31,
+      },
+    );
 
     // Notes and conditions occupy the left column, leaving the seal clear.
-    infoBox(LCX, bottomPositions.termsY, LCW, TERMS_H, quotation.notes ? "NOTES & CONDITIONS" : "TERMS & CONDITIONS");
+    infoBox(
+      LCX,
+      bottomPositions.termsY,
+      LCW,
+      TERMS_H,
+      quotation.notes ? "NOTES & CONDITIONS" : "TERMS & CONDITIONS",
+    );
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.2);
     doc.setTextColor(...DKTXT);
@@ -649,26 +905,36 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
       if (p > 1) drawContinuationHeader(p, numPages);
       drawFooter(p, numPages);
     }
+    const stampOptions = {
+      shopName: shopLogoAssets.sealName,
+      logoData: stampLogoBase64,
+      status: isInvoice ? "ISSUED" : quotation.status,
+      dateLabel: format(
+        new Date(
+          isInvoice
+            ? (quotation.invoiceIssuedAt ?? quotation.createdAt)
+            : quotation.createdAt,
+        ),
+        "dd MMM yyyy",
+      ),
+      documentRef: documentNumber,
+    };
+    drawPdfWatermark(doc, stampOptions);
     doc.setPage(numPages);
     drawPdfStamp(doc, {
       x: stampX,
       y: stampY,
       size: stampSize,
-      shopName: shopLogoAssets.sealName,
-      logoData: stampLogoBase64,
-      status: isInvoice ? "ISSUED" : quotation.status,
-      dateLabel: format(
-        new Date(isInvoice ? quotation.invoiceIssuedAt ?? quotation.createdAt : quotation.createdAt),
-        "dd MMM yyyy",
-      ),
-      documentRef: documentNumber,
+      ...stampOptions,
     });
 
     const custSlug = (quotation.customerName?.trim() || "")
       .replace(/[^a-z0-9]/gi, "_")
       .replace(/_+/g, "_")
       .replace(/^_+|_+$/g, "");
-    doc.save(custSlug ? `${custSlug}_${documentNumber}.pdf` : `${documentNumber}.pdf`);
+    doc.save(
+      custSlug ? `${custSlug}_${documentNumber}.pdf` : `${documentNumber}.pdf`,
+    );
     toast.success("PDF downloaded!", { id: "pdf" });
   } catch (err) {
     console.error(err);
@@ -678,12 +944,16 @@ async function downloadPdf(quotation: Quotation, shop: any, documentType: "quota
 
 // ─── WhatsApp ─────────────────────────────────────────────────────────────────
 
-function buildWhatsAppText(q: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation"): string {
+function buildWhatsAppText(
+  q: Quotation,
+  shop: any,
+  documentType: "quotation" | "invoice" = "quotation",
+): string {
   const isInvoice = documentType === "invoice" && !!q.invoiceNumber;
   const documentNumber = isInvoice ? q.invoiceNumber! : q.quoteNumber;
   const lines: string[] = [
     `*${isInvoice ? "INVOICE" : "QUOTATION"} — ${documentNumber}*`,
-    `_${shop?.name ?? "Our Shop"}_`,
+    `_${getQuotationShopName(shop)}_`,
     "",
     `👤 *Customer:* ${q.customerName}`,
     ...(q.customerPhone ? [`📞 *Phone:* ${q.customerPhone}`] : []),
@@ -694,18 +964,22 @@ function buildWhatsAppText(q: Quotation, shop: any, documentType: "quotation" | 
         ]
       : [
           `📅 *Date:* ${format(new Date(q.createdAt), "dd MMM yyyy")}`,
-          ...(q.validUntil ? [`⏳ *Valid Until:* ${format(new Date(q.validUntil), "dd MMM yyyy")}`] : []),
+          ...(q.validUntil
+            ? [
+                `⏳ *Valid Until:* ${format(new Date(q.validUntil), "dd MMM yyyy")}`,
+              ]
+            : []),
         ]),
     "",
     "*─── ITEMS ───*",
-    ...q.items.map((item, i) =>
-      `${i + 1}. ${item.productName}\n   ${item.qty} ${item.unit} × ${KES(item.unitPrice)} = *${KES(item.total)}*`
+    ...q.items.map(
+      (item, i) =>
+        `${i + 1}. ${item.productName}\n   ${item.qty} ${item.unit} × ${KES(item.unitPrice)} = *${KES(item.total)}*`,
     ),
     "",
-    ...(q.discountAmount > 0 ? [
-      `Subtotal: ${KES(q.subtotal)}`,
-      `Discount: -${KES(q.discountAmount)}`,
-    ] : []),
+    ...(q.discountAmount > 0
+      ? [`Subtotal: ${KES(q.subtotal)}`, `Discount: -${KES(q.discountAmount)}`]
+      : []),
     `*${isInvoice ? "AMOUNT DUE" : "TOTAL"}: ${KES(q.total)}*`,
     ...(q.notes ? ["", `📝 _${q.notes}_`] : []),
     "",
@@ -719,7 +993,11 @@ function buildWhatsAppText(q: Quotation, shop: any, documentType: "quotation" | 
   return lines.join("\n");
 }
 
-function shareWhatsApp(q: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation") {
+function shareWhatsApp(
+  q: Quotation,
+  shop: any,
+  documentType: "quotation" | "invoice" = "quotation",
+) {
   const text = buildWhatsAppText(q, shop, documentType);
   const phone = q.customerPhone?.replace(/\D/g, "") ?? "";
   const url = phone
@@ -730,8 +1008,17 @@ function shareWhatsApp(q: Quotation, shop: any, documentType: "quotation" | "inv
 
 // ─── Print preview ────────────────────────────────────────────────────────────
 
-function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: any; onClose: () => void }) {
+function PrintView({
+  quotation,
+  shop,
+  onClose,
+}: {
+  quotation: Quotation;
+  shop: any;
+  onClose: () => void;
+}) {
   const [downloading, setDownloading] = useState(false);
+  const shopDisplayName = getQuotationShopName(shop);
 
   const handleDownload = async () => {
     setDownloading(true);
@@ -743,10 +1030,15 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col overflow-hidden">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 bg-[#0A0A0A] shrink-0 flex-wrap">
-        <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/70 text-xs font-semibold hover:bg-white/20 transition-colors">
+        <button
+          onClick={onClose}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/70 text-xs font-semibold hover:bg-white/20 transition-colors"
+        >
           <ChevronLeft className="h-3.5 w-3.5" /> Back
         </button>
-        <span className="text-xs font-black text-[#C8FF00] font-mono">{quotation.quoteNumber}</span>
+        <span className="text-xs font-black text-[#C8FF00] font-mono">
+          {quotation.quoteNumber}
+        </span>
         <div className="flex-1" />
         <button
           onClick={() => shareWhatsApp(quotation, shop, "quotation")}
@@ -760,10 +1052,17 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
           disabled={downloading}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#C8FF00] text-[#0A0A0A] text-xs font-black hover:bg-[#C8FF00]/90 disabled:opacity-60 transition-colors"
         >
-          {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          {downloading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
           {downloading ? "Generating…" : "Download PDF"}
         </button>
-        <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/70 text-xs font-semibold hover:bg-white/20 transition-colors">
+        <button
+          onClick={() => window.print()}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/70 text-xs font-semibold hover:bg-white/20 transition-colors"
+        >
           <Printer className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Print</span>
         </button>
@@ -774,34 +1073,149 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
         <div
           id="quote-doc"
           className="mx-auto bg-white text-gray-900 shadow-2xl overflow-hidden"
-          style={{ fontFamily: "'DM Sans', sans-serif", maxWidth: "760px", borderRadius: "16px" }}
+          style={{
+            fontFamily: "'DM Sans', sans-serif",
+            maxWidth: "760px",
+            borderRadius: "16px",
+          }}
         >
           {/* ── Premium header ── */}
           <div style={{ background: "#0A0A0A", padding: "0" }}>
             {/* Lime top stripe */}
             <div style={{ height: "4px", background: "#C8FF00" }} />
-            <div style={{ padding: "28px 36px 26px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "20px", flexWrap: "wrap" }}>
+            <div
+              style={{
+                padding: "28px 36px 26px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: "20px",
+                flexWrap: "wrap",
+              }}
+            >
               <div style={{ flex: 1, minWidth: "180px" }}>
-                <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.25em", color: "#C8FF00", textTransform: "uppercase", marginBottom: "8px", margin: "0 0 8px" }}>Official Quotation</p>
-                <h1 style={{ fontSize: "24px", fontWeight: 900, color: "#fff", margin: "0 0 8px", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{shop?.name ?? "Our Shop"}</h1>
-                <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-                  {shop?.address && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.address}</span>}
-                  {shop?.ownerWhatsapp && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.ownerWhatsapp}</span>}
-                  {shop?.email && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.email}</span>}
+                <p
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 900,
+                    letterSpacing: "0.25em",
+                    color: "#C8FF00",
+                    textTransform: "uppercase",
+                    marginBottom: "8px",
+                    margin: "0 0 8px",
+                  }}
+                >
+                  Official Quotation
+                </p>
+                <h1
+                  style={{
+                    fontSize: "24px",
+                    fontWeight: 900,
+                    color: "#fff",
+                    margin: "0 0 8px",
+                    letterSpacing: "-0.02em",
+                    lineHeight: 1.1,
+                  }}
+                >
+                  {shopDisplayName}
+                </h1>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "3px",
+                  }}
+                >
+                  {shop?.address && (
+                    <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+                      {shop.address}
+                    </span>
+                  )}
+                  {shop?.ownerWhatsapp && (
+                    <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+                      {shop.ownerWhatsapp}
+                    </span>
+                  )}
+                  {shop?.email && (
+                    <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+                      {shop.email}
+                    </span>
+                  )}
                 </div>
               </div>
               <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <p style={{ fontSize: "9px", fontWeight: 800, color: "#C8FF00", letterSpacing: "0.2em", textTransform: "uppercase", margin: "0 0 6px" }}>QUOTATION</p>
-                <p style={{ fontSize: "26px", fontWeight: 900, color: "#ffffff", fontFamily: "monospace", margin: "0 0 10px", letterSpacing: "-0.01em" }}>{quotation.quoteNumber}</p>
-                <p style={{ fontSize: "11px", color: "#9ca3af", margin: "2px 0" }}>Date: {format(new Date(quotation.createdAt), "dd MMM yyyy")}</p>
-                {quotation.validUntil && <p style={{ fontSize: "11px", color: "#9ca3af", margin: "2px 0" }}>Valid Until: {format(new Date(quotation.validUntil), "dd MMM yyyy")}</p>}
-                <span style={{
-                  display: "inline-block", marginTop: "10px", fontSize: "9px", fontWeight: 800,
-                  textTransform: "uppercase", letterSpacing: "0.12em", padding: "4px 12px", borderRadius: "20px",
-                  background: quotation.status === "accepted" ? "rgba(34,197,94,0.15)" : quotation.status === "rejected" ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.08)",
-                  color: quotation.status === "accepted" ? "#4ade80" : quotation.status === "rejected" ? "#f87171" : quotation.status === "sent" ? "#60a5fa" : "#9ca3af",
-                  border: `1px solid ${quotation.status === "accepted" ? "rgba(34,197,94,0.3)" : quotation.status === "rejected" ? "rgba(239,68,68,0.3)" : "rgba(255,255,255,0.1)"}`,
-                }}>
+                <p
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 800,
+                    color: "#C8FF00",
+                    letterSpacing: "0.2em",
+                    textTransform: "uppercase",
+                    margin: "0 0 6px",
+                  }}
+                >
+                  QUOTATION
+                </p>
+                <p
+                  style={{
+                    fontSize: "26px",
+                    fontWeight: 900,
+                    color: "#ffffff",
+                    fontFamily: "monospace",
+                    margin: "0 0 10px",
+                    letterSpacing: "-0.01em",
+                  }}
+                >
+                  {quotation.quoteNumber}
+                </p>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#9ca3af",
+                    margin: "2px 0",
+                  }}
+                >
+                  Date: {format(new Date(quotation.createdAt), "dd MMM yyyy")}
+                </p>
+                {quotation.validUntil && (
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: "#9ca3af",
+                      margin: "2px 0",
+                    }}
+                  >
+                    Valid Until:{" "}
+                    {format(new Date(quotation.validUntil), "dd MMM yyyy")}
+                  </p>
+                )}
+                <span
+                  style={{
+                    display: "inline-block",
+                    marginTop: "10px",
+                    fontSize: "9px",
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.12em",
+                    padding: "4px 12px",
+                    borderRadius: "20px",
+                    background:
+                      quotation.status === "accepted"
+                        ? "rgba(34,197,94,0.15)"
+                        : quotation.status === "rejected"
+                          ? "rgba(239,68,68,0.15)"
+                          : "rgba(255,255,255,0.08)",
+                    color:
+                      quotation.status === "accepted"
+                        ? "#4ade80"
+                        : quotation.status === "rejected"
+                          ? "#f87171"
+                          : quotation.status === "sent"
+                            ? "#60a5fa"
+                            : "#9ca3af",
+                    border: `1px solid ${quotation.status === "accepted" ? "rgba(34,197,94,0.3)" : quotation.status === "rejected" ? "rgba(239,68,68,0.3)" : "rgba(255,255,255,0.1)"}`,
+                  }}
+                >
                   {STATUS_META[quotation.status].label}
                 </span>
               </div>
@@ -810,80 +1224,404 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
 
           {/* ── Bill To ── */}
           <div style={{ padding: "24px 36px 0" }}>
-            <div style={{ display: "flex", alignItems: "stretch", gap: "0", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden", marginBottom: "24px" }}>
-              <div style={{ width: "4px", background: "#C8FF00", flexShrink: 0 }} />
+            <div
+              style={{
+                display: "flex",
+                alignItems: "stretch",
+                gap: "0",
+                border: "1px solid #e2e8f0",
+                borderRadius: "10px",
+                overflow: "hidden",
+                marginBottom: "24px",
+              }}
+            >
+              <div
+                style={{ width: "4px", background: "#C8FF00", flexShrink: 0 }}
+              />
               <div style={{ padding: "14px 18px", flex: 1 }}>
-                <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.2em", color: "#94a3b8", textTransform: "uppercase", margin: "0 0 8px" }}>Bill To</p>
-                <p style={{ fontSize: "17px", fontWeight: 800, color: "#0f172a", margin: "0 0 5px" }}>{quotation.customerName}</p>
+                <p
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 900,
+                    letterSpacing: "0.2em",
+                    color: "#94a3b8",
+                    textTransform: "uppercase",
+                    margin: "0 0 8px",
+                  }}
+                >
+                  Bill To
+                </p>
+                <p
+                  style={{
+                    fontSize: "17px",
+                    fontWeight: 800,
+                    color: "#0f172a",
+                    margin: "0 0 5px",
+                  }}
+                >
+                  {quotation.customerName}
+                </p>
                 <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
-                  {quotation.customerPhone && <span style={{ fontSize: "12px", color: "#64748b" }}>{quotation.customerPhone}</span>}
-                  {quotation.customerEmail && <span style={{ fontSize: "12px", color: "#64748b" }}>{quotation.customerEmail}</span>}
+                  {quotation.customerPhone && (
+                    <span style={{ fontSize: "12px", color: "#64748b" }}>
+                      {quotation.customerPhone}
+                    </span>
+                  )}
+                  {quotation.customerEmail && (
+                    <span style={{ fontSize: "12px", color: "#64748b" }}>
+                      {quotation.customerEmail}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* ── Items table ── */}
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", marginBottom: "20px" }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "13px",
+                marginBottom: "20px",
+              }}
+            >
               <thead>
                 <tr style={{ background: "#0A0A0A" }}>
-                  <th style={{ textAlign: "center", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "4%" }}>#</th>
-                  <th style={{ textAlign: "left", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00" }}>Product / Description</th>
-                  <th style={{ textAlign: "center", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "9%" }}>Unit</th>
-                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "8%" }}>Qty</th>
-                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "17%" }}>Unit Price</th>
-                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "18%" }}>Total (KES)</th>
+                  <th
+                    style={{
+                      textAlign: "center",
+                      padding: "10px 10px",
+                      fontSize: "8px",
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.15em",
+                      color: "#C8FF00",
+                      width: "4%",
+                    }}
+                  >
+                    #
+                  </th>
+                  <th
+                    style={{
+                      textAlign: "left",
+                      padding: "10px 10px",
+                      fontSize: "8px",
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.15em",
+                      color: "#C8FF00",
+                    }}
+                  >
+                    Product / Description
+                  </th>
+                  <th
+                    style={{
+                      textAlign: "center",
+                      padding: "10px 10px",
+                      fontSize: "8px",
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.15em",
+                      color: "#C8FF00",
+                      width: "9%",
+                    }}
+                  >
+                    Unit
+                  </th>
+                  <th
+                    style={{
+                      textAlign: "right",
+                      padding: "10px 10px",
+                      fontSize: "8px",
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.15em",
+                      color: "#C8FF00",
+                      width: "8%",
+                    }}
+                  >
+                    Qty
+                  </th>
+                  <th
+                    style={{
+                      textAlign: "right",
+                      padding: "10px 10px",
+                      fontSize: "8px",
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.15em",
+                      color: "#C8FF00",
+                      width: "17%",
+                    }}
+                  >
+                    Unit Price
+                  </th>
+                  <th
+                    style={{
+                      textAlign: "right",
+                      padding: "10px 10px",
+                      fontSize: "8px",
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.15em",
+                      color: "#C8FF00",
+                      width: "18%",
+                    }}
+                  >
+                    Total (KES)
+                  </th>
                 </tr>
-                <tr><td colSpan={6} style={{ height: "2px", background: "#C8FF00", padding: 0 }} /></tr>
+                <tr>
+                  <td
+                    colSpan={6}
+                    style={{ height: "2px", background: "#C8FF00", padding: 0 }}
+                  />
+                </tr>
               </thead>
               <tbody>
                 {quotation.items.map((item, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#f9fafb" }}>
-                    <td style={{ padding: "11px 10px", textAlign: "center", fontSize: "10px", fontWeight: 800, color: "#94a3b8", borderBottom: "1px solid #f1f5f9" }}>{i + 1}</td>
-                    <td style={{ padding: "11px 10px", fontWeight: 600, color: "#0f172a", borderBottom: "1px solid #f1f5f9" }}>{item.productName}</td>
-                    <td style={{ padding: "11px 10px", textAlign: "center", color: "#64748b", fontSize: "11px", borderBottom: "1px solid #f1f5f9" }}>{item.unit || "unit"}</td>
-                    <td style={{ padding: "11px 10px", textAlign: "right", color: "#374151", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{item.qty}</td>
-                    <td style={{ padding: "11px 10px", textAlign: "right", color: "#475569", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{KES(item.unitPrice)}</td>
-                    <td style={{ padding: "11px 10px", textAlign: "right", fontWeight: 800, color: "#0f172a", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{KES(item.total)}</td>
+                  <tr
+                    key={i}
+                    style={{ background: i % 2 === 0 ? "#fff" : "#f9fafb" }}
+                  >
+                    <td
+                      style={{
+                        padding: "11px 10px",
+                        textAlign: "center",
+                        fontSize: "10px",
+                        fontWeight: 800,
+                        color: "#94a3b8",
+                        borderBottom: "1px solid #f1f5f9",
+                      }}
+                    >
+                      {i + 1}
+                    </td>
+                    <td
+                      style={{
+                        padding: "11px 10px",
+                        fontWeight: 600,
+                        color: "#0f172a",
+                        borderBottom: "1px solid #f1f5f9",
+                      }}
+                    >
+                      {item.productName}
+                    </td>
+                    <td
+                      style={{
+                        padding: "11px 10px",
+                        textAlign: "center",
+                        color: "#64748b",
+                        fontSize: "11px",
+                        borderBottom: "1px solid #f1f5f9",
+                      }}
+                    >
+                      {item.unit || "unit"}
+                    </td>
+                    <td
+                      style={{
+                        padding: "11px 10px",
+                        textAlign: "right",
+                        color: "#374151",
+                        fontFamily: "monospace",
+                        borderBottom: "1px solid #f1f5f9",
+                      }}
+                    >
+                      {item.qty}
+                    </td>
+                    <td
+                      style={{
+                        padding: "11px 10px",
+                        textAlign: "right",
+                        color: "#475569",
+                        fontFamily: "monospace",
+                        borderBottom: "1px solid #f1f5f9",
+                      }}
+                    >
+                      {KES(item.unitPrice)}
+                    </td>
+                    <td
+                      style={{
+                        padding: "11px 10px",
+                        textAlign: "right",
+                        fontWeight: 800,
+                        color: "#0f172a",
+                        fontFamily: "monospace",
+                        borderBottom: "1px solid #f1f5f9",
+                      }}
+                    >
+                      {KES(item.total)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
             {/* ── Totals ── */}
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "24px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                marginBottom: "24px",
+              }}
+            >
               <div style={{ width: "260px" }}>
-                {quotation.discountAmount > 0 && <>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", fontSize: "13px", color: "#64748b", background: "#f8fafc", borderRadius: "6px 6px 0 0" }}>
-                    <span>Subtotal</span><span style={{ fontFamily: "monospace" }}>{KES(quotation.subtotal)}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", fontSize: "13px", color: "#dc2626", background: "#fef2f2" }}>
-                    <span>Discount</span><span style={{ fontFamily: "monospace" }}>− {KES(quotation.discountAmount)}</span>
-                  </div>
-                </>}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#0A0A0A", borderRadius: quotation.discountAmount > 0 ? "0 0 10px 10px" : "10px" }}>
-                  <span style={{ fontSize: "11px", fontWeight: 900, color: "#C8FF00", textTransform: "uppercase", letterSpacing: "0.1em" }}>Total Due</span>
-                  <span style={{ fontSize: "18px", fontWeight: 900, color: "#fff", fontFamily: "monospace" }}>{KES(quotation.total)}</span>
+                {quotation.discountAmount > 0 && (
+                  <>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "6px 12px",
+                        fontSize: "13px",
+                        color: "#64748b",
+                        background: "#f8fafc",
+                        borderRadius: "6px 6px 0 0",
+                      }}
+                    >
+                      <span>Subtotal</span>
+                      <span style={{ fontFamily: "monospace" }}>
+                        {KES(quotation.subtotal)}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "6px 12px",
+                        fontSize: "13px",
+                        color: "#dc2626",
+                        background: "#fef2f2",
+                      }}
+                    >
+                      <span>Discount</span>
+                      <span style={{ fontFamily: "monospace" }}>
+                        − {KES(quotation.discountAmount)}
+                      </span>
+                    </div>
+                  </>
+                )}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "12px 16px",
+                    background: "#0A0A0A",
+                    borderRadius:
+                      quotation.discountAmount > 0 ? "0 0 10px 10px" : "10px",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 900,
+                      color: "#C8FF00",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.1em",
+                    }}
+                  >
+                    Total Due
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "18px",
+                      fontWeight: 900,
+                      color: "#fff",
+                      fontFamily: "monospace",
+                    }}
+                  >
+                    {KES(quotation.total)}
+                  </span>
                 </div>
               </div>
             </div>
 
             {/* ── Notes ── */}
             {quotation.notes && (
-              <div style={{ display: "flex", gap: "0", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden", marginBottom: "20px" }}>
-                <div style={{ width: "4px", background: "#C8FF00", flexShrink: 0 }} />
-                <div style={{ padding: "12px 16px", flex: 1, background: "#f8fafc" }}>
-                  <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.2em", color: "#94a3b8", textTransform: "uppercase", margin: "0 0 7px" }}>Notes & Terms</p>
-                  <p style={{ fontSize: "12px", color: "#475569", whiteSpace: "pre-wrap", lineHeight: 1.7, margin: 0 }}>{quotation.notes}</p>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "0",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "10px",
+                  overflow: "hidden",
+                  marginBottom: "20px",
+                }}
+              >
+                <div
+                  style={{ width: "4px", background: "#C8FF00", flexShrink: 0 }}
+                />
+                <div
+                  style={{
+                    padding: "12px 16px",
+                    flex: 1,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "9px",
+                      fontWeight: 900,
+                      letterSpacing: "0.2em",
+                      color: "#94a3b8",
+                      textTransform: "uppercase",
+                      margin: "0 0 7px",
+                    }}
+                  >
+                    Notes & Terms
+                  </p>
+                  <p
+                    style={{
+                      fontSize: "12px",
+                      color: "#475569",
+                      whiteSpace: "pre-wrap",
+                      lineHeight: 1.7,
+                      margin: 0,
+                    }}
+                  >
+                    {quotation.notes}
+                  </p>
                 </div>
               </div>
             )}
 
             {/* ── Footer ── */}
-            <div style={{ borderTop: "2px solid #C8FF00", paddingTop: "14px", paddingBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
-              <p style={{ fontSize: "10px", color: "#94a3b8", lineHeight: 1.6, margin: 0 }}>
-                Valid {quotation.validUntil ? `until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}` : "for 30 days from issue"} · Prices subject to availability
+            <div
+              style={{
+                borderTop: "2px solid #C8FF00",
+                paddingTop: "14px",
+                paddingBottom: "24px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "8px",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "10px",
+                  color: "#94a3b8",
+                  lineHeight: 1.6,
+                  margin: 0,
+                }}
+              >
+                Valid{" "}
+                {quotation.validUntil
+                  ? `until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}`
+                  : "for 30 days from issue"}{" "}
+                · Prices subject to availability
               </p>
-              <p style={{ fontSize: "11px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{shop?.name ?? ""}</p>
+              <p
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 800,
+                  color: "#0f172a",
+                  margin: 0,
+                }}
+              >
+                {shopDisplayName}
+              </p>
             </div>
           </div>
         </div>
@@ -903,10 +1641,20 @@ function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: a
 
 // ─── Customer autocomplete ─────────────────────────────────────────────────────
 
-function CustomerAutocomplete({ value, onChange, shopId, placeholder }: {
-  value: string; onChange: (v: string, phone?: string) => void; shopId: string; placeholder?: string;
+function CustomerAutocomplete({
+  value,
+  onChange,
+  shopId,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string, phone?: string) => void;
+  shopId: string;
+  placeholder?: string;
 }) {
-  const [customers, setCustomers] = useState<Array<{ customer_name: string; customer_phone: string }>>([]);
+  const [customers, setCustomers] = useState<
+    Array<{ customer_name: string; customer_phone: string }>
+  >([]);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -917,7 +1665,10 @@ function CustomerAutocomplete({ value, onChange, shopId, placeholder }: {
   }, [shopId]);
 
   useEffect(() => {
-    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const fn = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
+    };
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
   }, []);
@@ -925,7 +1676,9 @@ function CustomerAutocomplete({ value, onChange, shopId, placeholder }: {
   const matches = useMemo(() => {
     const q = value.trim().toLowerCase();
     if (!q) return customers.slice(0, 8);
-    return customers.filter(c => c.customer_name.toLowerCase().includes(q)).slice(0, 8);
+    return customers
+      .filter((c) => c.customer_name.toLowerCase().includes(q))
+      .slice(0, 8);
   }, [customers, value]);
 
   return (
@@ -934,7 +1687,10 @@ function CustomerAutocomplete({ value, onChange, shopId, placeholder }: {
         <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40 pointer-events-none" />
         <input
           value={value}
-          onChange={e => { onChange(e.target.value); setOpen(true); }}
+          onChange={(e) => {
+            onChange(e.target.value);
+            setOpen(true);
+          }}
           onFocus={() => setOpen(true)}
           placeholder={placeholder ?? "Search or type customer name"}
           className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
@@ -946,12 +1702,21 @@ function CustomerAutocomplete({ value, onChange, shopId, placeholder }: {
             <button
               key={i}
               type="button"
-              onMouseDown={() => { onChange(c.customer_name, c.customer_phone); setOpen(false); }}
+              onMouseDown={() => {
+                onChange(c.customer_name, c.customer_phone);
+                setOpen(false);
+              }}
               className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/60 flex items-center gap-2 border-b border-border/30 last:border-0"
             >
               <User className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-              <span className="font-semibold text-foreground">{c.customer_name}</span>
-              {c.customer_phone && <span className="text-xs text-muted-foreground/50 ml-auto font-mono">{c.customer_phone}</span>}
+              <span className="font-semibold text-foreground">
+                {c.customer_name}
+              </span>
+              {c.customer_phone && (
+                <span className="text-xs text-muted-foreground/50 ml-auto font-mono">
+                  {c.customer_phone}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -962,19 +1727,39 @@ function CustomerAutocomplete({ value, onChange, shopId, placeholder }: {
 
 // ─── Quotation Builder ─────────────────────────────────────────────────────────
 
-function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
-  shopId: string; editQuotation: Quotation | null; onSave: (q: Quotation) => void; onCancel: () => void;
+function QuotationBuilder({
+  shopId,
+  editQuotation,
+  onSave,
+  onCancel,
+}: {
+  shopId: string;
+  editQuotation: Quotation | null;
+  onSave: (q: Quotation) => void;
+  onCancel: () => void;
 }) {
   const role = localStorage.getItem("greenlink_role") || "cashier";
   const userName = localStorage.getItem("greenlink_userName") || "";
 
-  const [customerName, setCustomerName] = useState(editQuotation?.customerName ?? "");
-  const [customerPhone, setCustomerPhone] = useState(editQuotation?.customerPhone ?? "");
-  const [customerEmail, setCustomerEmail] = useState(editQuotation?.customerEmail ?? "");
-  const [validUntil, setValidUntil] = useState(editQuotation?.validUntil?.split("T")[0] ?? "");
+  const [customerName, setCustomerName] = useState(
+    editQuotation?.customerName ?? "",
+  );
+  const [customerPhone, setCustomerPhone] = useState(
+    editQuotation?.customerPhone ?? "",
+  );
+  const [customerEmail, setCustomerEmail] = useState(
+    editQuotation?.customerEmail ?? "",
+  );
+  const [validUntil, setValidUntil] = useState(
+    editQuotation?.validUntil?.split("T")[0] ?? "",
+  );
   const [notes, setNotes] = useState(editQuotation?.notes ?? "");
-  const [items, setItems] = useState<QuotationItem[]>(editQuotation?.items ?? []);
-  const [discount, setDiscount] = useState(String(editQuotation?.discountAmount ?? 0));
+  const [items, setItems] = useState<QuotationItem[]>(
+    editQuotation?.items ?? [],
+  );
+  const [discount, setDiscount] = useState(
+    String(editQuotation?.discountAmount ?? 0),
+  );
   const [saving, setSaving] = useState(false);
 
   const [productSearch, setProductSearch] = useState("");
@@ -998,26 +1783,37 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
       refetchIntervalInBackground: false,
     },
   });
-  const allProducts = useMemo(() => (productsData as any)?.products ?? [], [productsData]);
+  const allProducts = useMemo(
+    () => (productsData as any)?.products ?? [],
+    [productsData],
+  );
 
-  const addedProductIds = useMemo(() => new Set(items.map(i => i.productId).filter(Boolean)), [items]);
+  const addedProductIds = useMemo(
+    () => new Set(items.map((i) => i.productId).filter(Boolean)),
+    [items],
+  );
 
   const productMatches = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
     if (!q) return [];
     return allProducts
-      .filter((p: any) => p.isActive !== false && (
-        p.canonicalName?.toLowerCase().includes(q) ||
-        p.normalizedName?.toLowerCase().includes(q) ||
-        p.sku?.toLowerCase().includes(q) ||
-        p.category?.toLowerCase().includes(q)
-      ))
+      .filter(
+        (p: any) =>
+          p.isActive !== false &&
+          (p.canonicalName?.toLowerCase().includes(q) ||
+            p.normalizedName?.toLowerCase().includes(q) ||
+            p.sku?.toLowerCase().includes(q) ||
+            p.category?.toLowerCase().includes(q)),
+      )
       .slice(0, 10);
   }, [allProducts, productSearch]);
 
   useEffect(() => {
     const fn = (e: MouseEvent) => {
-      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(e.target as Node)
+      ) {
         setSearchOpen(false);
       }
     };
@@ -1026,21 +1822,30 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
   }, []);
 
   const addProduct = useCallback((p: any) => {
-    setItems(prev => {
-      const existing = prev.findIndex(i => i.productId === p.id);
+    setItems((prev) => {
+      const existing = prev.findIndex((i) => i.productId === p.id);
       if (existing >= 0) {
         return prev.map((item, idx) =>
-          idx === existing ? { ...item, qty: item.qty + 1, total: (item.qty + 1) * item.unitPrice } : item
+          idx === existing
+            ? {
+                ...item,
+                qty: item.qty + 1,
+                total: (item.qty + 1) * item.unitPrice,
+              }
+            : item,
         );
       }
-      return [...prev, {
-        productId: p.id,
-        productName: p.canonicalName,
-        unit: p.unit ?? "unit",
-        qty: 1,
-        unitPrice: p.sellingPrice ?? 0,
-        total: p.sellingPrice ?? 0,
-      }];
+      return [
+        ...prev,
+        {
+          productId: p.id,
+          productName: p.canonicalName,
+          unit: p.unit ?? "unit",
+          qty: 1,
+          unitPrice: p.sellingPrice ?? 0,
+          total: p.sellingPrice ?? 0,
+        },
+      ];
     });
     setProductSearch("");
     // Keep search open & re-focus for adding more products
@@ -1049,26 +1854,39 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
     }, 0);
   }, []);
 
-  const updateItem = (idx: number, field: keyof QuotationItem, val: number | string) => {
-    setItems(prev => prev.map((item, i) => {
-      if (i !== idx) return item;
-      const updated = { ...item, [field]: val };
-      if (field === "qty" || field === "unitPrice") {
-        updated.total = Number(updated.qty) * Number(updated.unitPrice);
-      }
-      return updated;
-    }));
+  const updateItem = (
+    idx: number,
+    field: keyof QuotationItem,
+    val: number | string,
+  ) => {
+    setItems((prev) =>
+      prev.map((item, i) => {
+        if (i !== idx) return item;
+        const updated = { ...item, [field]: val };
+        if (field === "qty" || field === "unitPrice") {
+          updated.total = Number(updated.qty) * Number(updated.unitPrice);
+        }
+        return updated;
+      }),
+    );
   };
 
-  const removeItem = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
+  const removeItem = (idx: number) =>
+    setItems((prev) => prev.filter((_, i) => i !== idx));
 
   const subtotal = items.reduce((s, i) => s + i.total, 0);
   const discountAmount = Math.max(0, parseFloat(discount) || 0);
   const total = Math.max(0, subtotal - discountAmount);
 
   const handleSave = async () => {
-    if (!customerName.trim()) { toast.error("Customer name is required"); return; }
-    if (items.length === 0) { toast.error("Add at least one product"); return; }
+    if (!customerName.trim()) {
+      toast.error("Customer name is required");
+      return;
+    }
+    if (items.length === 0) {
+      toast.error("Add at least one product");
+      return;
+    }
     setSaving(true);
     try {
       const body = {
@@ -1084,15 +1902,15 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
       };
       let result: Quotation;
       if (editQuotation) {
-        result = await customFetch(`/api/quotations/${editQuotation.id}`, {
+        result = (await customFetch(`/api/quotations/${editQuotation.id}`, {
           method: "PATCH",
           body: JSON.stringify(body),
-        }) as Quotation;
+        })) as Quotation;
       } else {
-        result = await customFetch(`/api/quotations`, {
+        result = (await customFetch(`/api/quotations`, {
           method: "POST",
           body: JSON.stringify(body),
-        }) as Quotation;
+        })) as Quotation;
       }
       onSave(result);
     } catch (err: any) {
@@ -1106,15 +1924,22 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border/60 shrink-0 bg-card/50">
-        <button onClick={onCancel} className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
+        <button
+          onClick={onCancel}
+          className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+        >
           <ChevronLeft className="h-4 w-4" />
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-black text-foreground font-display">
-            {editQuotation ? `Edit ${editQuotation.quoteNumber}` : "New Quotation"}
+            {editQuotation
+              ? `Edit ${editQuotation.quoteNumber}`
+              : "New Quotation"}
           </h2>
           <p className="text-[10px] text-muted-foreground/50">
-            {editQuotation ? "Update the quote details" : "Build from stock · auto-numbered"}
+            {editQuotation
+              ? "Update the quote details"
+              : "Build from stock · auto-numbered"}
           </p>
         </div>
         <button
@@ -1122,23 +1947,30 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
           disabled={saving}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-black hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          {saving ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          )}
           {saving ? "Saving…" : "Save Quote"}
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-3 max-w-2xl mx-auto">
-
           {/* ── Customer ── */}
           <section className="bg-card border border-border rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
               <User className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">CUSTOMER</p>
+              <p className="text-xs font-black text-foreground tracking-wide">
+                CUSTOMER
+              </p>
             </div>
             <div className="p-4 space-y-3">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Name *</label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
+                  Name *
+                </label>
                 <CustomerAutocomplete
                   value={customerName}
                   onChange={(name, phone) => {
@@ -1151,24 +1983,31 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Phone</label>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
+                    Phone
+                  </label>
                   <div className="relative">
                     <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
                     <input
                       value={customerPhone}
-                      onChange={e => setCustomerPhone(e.target.value)}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
                       placeholder="+254 700 000 000"
                       className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Email <span className="normal-case font-normal opacity-60">(optional)</span></label>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
+                    Email{" "}
+                    <span className="normal-case font-normal opacity-60">
+                      (optional)
+                    </span>
+                  </label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
                     <input
                       value={customerEmail}
-                      onChange={e => setCustomerEmail(e.target.value)}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
                       placeholder="customer@email.com"
                       type="email"
                       className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
@@ -1183,7 +2022,9 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
           <section className="bg-card border border-border rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
               <Package className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">PRODUCTS</p>
+              <p className="text-xs font-black text-foreground tracking-wide">
+                PRODUCTS
+              </p>
               {items.length > 0 && (
                 <span className="ml-auto text-[10px] font-black bg-primary/15 text-primary px-1.5 py-0.5 rounded-full">
                   {items.length} item{items.length !== 1 ? "s" : ""}
@@ -1192,20 +2033,30 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
             </div>
 
             {/* Search */}
-            <div className="p-3 border-b border-border/30" ref={searchContainerRef}>
+            <div
+              className="p-3 border-b border-border/30"
+              ref={searchContainerRef}
+            >
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40 pointer-events-none" />
                 <input
                   ref={searchInputRef}
                   value={productSearch}
-                  onChange={e => { setProductSearch(e.target.value); setSearchOpen(true); }}
+                  onChange={(e) => {
+                    setProductSearch(e.target.value);
+                    setSearchOpen(true);
+                  }}
                   onFocus={() => setSearchOpen(true)}
                   placeholder="Search products by name, category, or SKU…"
                   className="w-full h-9 pl-9 pr-8 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
                 />
                 {productSearch && (
                   <button
-                    onMouseDown={e => { e.preventDefault(); setProductSearch(""); searchInputRef.current?.focus(); }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setProductSearch("");
+                      searchInputRef.current?.focus();
+                    }}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground hover:bg-muted-foreground/30 transition-colors"
                   >
                     <X className="h-2.5 w-2.5" />
@@ -1221,10 +2072,15 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
                       <button
                         key={p.id}
                         type="button"
-                        onMouseDown={e => { e.preventDefault(); addProduct(p); }}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          addProduct(p);
+                        }}
                         className={cn(
                           "w-full text-left px-3 py-2.5 flex items-center gap-3 border-b border-border/30 last:border-0 transition-colors",
-                          isAdded ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/50"
+                          isAdded
+                            ? "bg-primary/5 hover:bg-primary/10"
+                            : "hover:bg-muted/50",
                         )}
                       >
                         {isAdded ? (
@@ -1237,12 +2093,27 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
-                          <p className={cn("text-xs font-semibold truncate", isAdded ? "text-primary" : "text-foreground")}>{p.canonicalName}</p>
-                          <p className="text-[10px] text-muted-foreground/50">{p.category} · {p.stockQty} {p.unit} in stock</p>
+                          <p
+                            className={cn(
+                              "text-xs font-semibold truncate",
+                              isAdded ? "text-primary" : "text-foreground",
+                            )}
+                          >
+                            {p.canonicalName}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground/50">
+                            {p.category} · {p.stockQty} {p.unit} in stock
+                          </p>
                         </div>
                         <div className="text-right shrink-0">
-                          <p className="text-xs font-black text-primary font-mono">{KES(p.sellingPrice ?? 0)}</p>
-                          {isAdded && <p className="text-[9px] text-primary/60">tap to +1</p>}
+                          <p className="text-xs font-black text-primary font-mono">
+                            {KES(p.sellingPrice ?? 0)}
+                          </p>
+                          {isAdded && (
+                            <p className="text-[9px] text-primary/60">
+                              tap to +1
+                            </p>
+                          )}
                         </div>
                       </button>
                     );
@@ -1250,11 +2121,16 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
                 </div>
               )}
 
-              {searchOpen && productSearch.trim() && productMatches.length === 0 && (
-                <div className="mt-1.5 rounded-xl px-3 py-3 text-center bg-muted/20 border border-border">
-                  <p className="text-xs text-muted-foreground/60">No products found for "<span className="text-foreground">{productSearch}</span>"</p>
-                </div>
-              )}
+              {searchOpen &&
+                productSearch.trim() &&
+                productMatches.length === 0 && (
+                  <div className="mt-1.5 rounded-xl px-3 py-3 text-center bg-muted/20 border border-border">
+                    <p className="text-xs text-muted-foreground/60">
+                      No products found for "
+                      <span className="text-foreground">{productSearch}</span>"
+                    </p>
+                  </div>
+                )}
             </div>
 
             {/* Items list */}
@@ -1262,16 +2138,24 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
               {items.length === 0 ? (
                 <div className="py-10 text-center">
                   <Package className="h-7 w-7 text-muted-foreground/15 mx-auto mb-2" />
-                  <p className="text-xs text-muted-foreground/40">Search above and tap products to add them</p>
+                  <p className="text-xs text-muted-foreground/40">
+                    Search above and tap products to add them
+                  </p>
                 </div>
               ) : (
                 <div className="divide-y divide-border/30">
                   {items.map((item, idx) => (
                     <div key={idx} className="px-4 py-3">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[10px] font-black text-muted-foreground/30 w-4 shrink-0">{idx + 1}</span>
-                        <p className="flex-1 text-sm font-semibold text-foreground truncate">{item.productName}</p>
-                        <p className="text-sm font-black text-primary font-mono shrink-0">{KES(item.total)}</p>
+                        <span className="text-[10px] font-black text-muted-foreground/30 w-4 shrink-0">
+                          {idx + 1}
+                        </span>
+                        <p className="flex-1 text-sm font-semibold text-foreground truncate">
+                          {item.productName}
+                        </p>
+                        <p className="text-sm font-black text-primary font-mono shrink-0">
+                          {KES(item.total)}
+                        </p>
                         <button
                           onClick={() => removeItem(idx)}
                           className="h-6 w-6 flex items-center justify-center rounded-lg text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
@@ -1283,29 +2167,72 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
                         {/* Qty stepper */}
                         <div className="flex items-center bg-muted/40 border border-border rounded-lg overflow-hidden h-8">
                           <button
-                            onClick={() => updateItem(idx, "qty", Math.max(0.25, item.qty - (item.unit === "kg" || item.unit === "litre" ? 0.25 : 1)))}
+                            onClick={() =>
+                              updateItem(
+                                idx,
+                                "qty",
+                                Math.max(
+                                  0.25,
+                                  item.qty -
+                                    (item.unit === "kg" || item.unit === "litre"
+                                      ? 0.25
+                                      : 1),
+                                ),
+                              )
+                            }
                             className="w-8 h-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 text-base transition-colors"
-                          >−</button>
+                          >
+                            −
+                          </button>
                           <input
                             type="number"
                             value={item.qty}
-                            onChange={e => updateItem(idx, "qty", Math.max(0, parseFloat(e.target.value) || 0))}
+                            onChange={(e) =>
+                              updateItem(
+                                idx,
+                                "qty",
+                                Math.max(0, parseFloat(e.target.value) || 0),
+                              )
+                            }
                             className="w-12 text-center text-xs font-bold bg-transparent text-foreground focus:outline-none border-x border-border"
                             min={0}
                           />
                           <button
-                            onClick={() => updateItem(idx, "qty", item.qty + (item.unit === "kg" || item.unit === "litre" ? 0.25 : 1))}
+                            onClick={() =>
+                              updateItem(
+                                idx,
+                                "qty",
+                                item.qty +
+                                  (item.unit === "kg" || item.unit === "litre"
+                                    ? 0.25
+                                    : 1),
+                              )
+                            }
                             className="w-8 h-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 text-base transition-colors"
-                          >+</button>
+                          >
+                            +
+                          </button>
                         </div>
-                        <span className="text-xs text-muted-foreground/50">{item.unit}</span>
-                        <span className="text-muted-foreground/25 text-sm">×</span>
+                        <span className="text-xs text-muted-foreground/50">
+                          {item.unit}
+                        </span>
+                        <span className="text-muted-foreground/25 text-sm">
+                          ×
+                        </span>
                         <div className="relative flex-1 min-w-[100px]">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground/40 pointer-events-none">KES</span>
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground/40 pointer-events-none">
+                            KES
+                          </span>
                           <input
                             type="number"
                             value={item.unitPrice}
-                            onChange={e => updateItem(idx, "unitPrice", Math.max(0, parseFloat(e.target.value) || 0))}
+                            onChange={(e) =>
+                              updateItem(
+                                idx,
+                                "unitPrice",
+                                Math.max(0, parseFloat(e.target.value) || 0),
+                              )
+                            }
                             className="w-full h-8 pl-9 pr-2 bg-muted/40 border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
                             min={0}
                           />
@@ -1321,21 +2248,29 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
                 <div className="border-t border-border/40 px-4 py-3 space-y-2.5 bg-muted/10">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>Subtotal</span>
-                    <span className="font-mono font-semibold text-foreground">{KES(subtotal)}</span>
+                    <span className="font-mono font-semibold text-foreground">
+                      {KES(subtotal)}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground shrink-0">Discount (KES)</span>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      Discount (KES)
+                    </span>
                     <input
                       type="number"
                       value={discount}
-                      onChange={e => setDiscount(e.target.value)}
+                      onChange={(e) => setDiscount(e.target.value)}
                       min={0}
                       className="flex-1 h-7 px-2 bg-muted/40 border border-border rounded-lg text-xs font-mono text-foreground text-right focus:outline-none focus:ring-1 focus:ring-primary/30"
                     />
                   </div>
                   <div className="flex items-center justify-between border-t border-border/40 pt-2">
-                    <span className="text-sm font-black text-foreground">TOTAL</span>
-                    <span className="text-lg font-black text-primary font-mono">{KES(total)}</span>
+                    <span className="text-sm font-black text-foreground">
+                      TOTAL
+                    </span>
+                    <span className="text-lg font-black text-primary font-mono">
+                      {KES(total)}
+                    </span>
                   </div>
                 </div>
               )}
@@ -1346,28 +2281,40 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
           <section className="bg-card border border-border rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
               <FileText className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">QUOTE DETAILS</p>
+              <p className="text-xs font-black text-foreground tracking-wide">
+                QUOTE DETAILS
+              </p>
             </div>
             <div className="p-4 space-y-3">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Valid Until <span className="normal-case font-normal opacity-60">(optional)</span></label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
+                  Valid Until{" "}
+                  <span className="normal-case font-normal opacity-60">
+                    (optional)
+                  </span>
+                </label>
                 <div className="relative">
                   <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
                   <input
                     type="date"
                     value={validUntil}
-                    onChange={e => setValidUntil(e.target.value)}
+                    onChange={(e) => setValidUntil(e.target.value)}
                     className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
                   />
                 </div>
               </div>
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Notes / Terms <span className="normal-case font-normal opacity-60">(optional)</span></label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
+                  Notes / Terms{" "}
+                  <span className="normal-case font-normal opacity-60">
+                    (optional)
+                  </span>
+                </label>
                 <div className="relative">
                   <StickyNote className="absolute left-3 top-3 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
                   <textarea
                     value={notes}
-                    onChange={e => setNotes(e.target.value)}
+                    onChange={(e) => setNotes(e.target.value)}
                     placeholder="Payment terms, delivery conditions, special instructions…"
                     rows={3}
                     className="w-full pl-9 pr-3 py-2.5 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 resize-none focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
@@ -1383,8 +2330,16 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
             disabled={saving}
             className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-primary text-primary-foreground font-black text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            {saving ? "Saving…" : editQuotation ? "Update Quotation" : "Create Quotation"}
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {saving
+              ? "Saving…"
+              : editQuotation
+                ? "Update Quotation"
+                : "Create Quotation"}
           </button>
         </div>
       </div>
@@ -1394,7 +2349,18 @@ function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
 
 // ─── Quotation Card ────────────────────────────────────────────────────────────
 
-function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onDownloadPdf, onConvertToSale, onInvoice, invoiceBusy }: {
+function QuotationCard({
+  q,
+  shop,
+  onEdit,
+  onPrint,
+  onStatusChange,
+  onDelete,
+  onDownloadPdf,
+  onConvertToSale,
+  onInvoice,
+  invoiceBusy,
+}: {
   q: Quotation;
   shop: any;
   onEdit: () => void;
@@ -1414,29 +2380,52 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
       <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(138px,.9fr)_minmax(240px,1.15fr)] gap-x-5 gap-y-3 px-4 py-3.5 max-xl:grid-cols-[minmax(0,1fr)_auto] max-xl:gap-x-3">
         <div className="min-w-0">
           <div className="mb-1.5 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[11px] font-semibold tracking-tight text-primary">{q.quoteNumber}</span>
+            <span className="font-mono text-[11px] font-semibold tracking-tight text-primary">
+              {q.quoteNumber}
+            </span>
             <StatusBadge status={q.status} />
             {q.invoiceNumber && (
-              <span data-testid={`text-invoice-number-${q.id}`} className="rounded-md border border-emerald-400/20 bg-emerald-400/[0.07] px-2 py-1 font-mono text-[9px] font-medium text-emerald-400">
+              <span
+                data-testid={`text-invoice-number-${q.id}`}
+                className="rounded-md border border-emerald-400/20 bg-emerald-400/[0.07] px-2 py-1 font-mono text-[9px] font-medium text-emerald-400"
+              >
                 {q.invoiceNumber}
               </span>
             )}
-            {q.validUntil && new Date(q.validUntil) < new Date() && q.status !== "expired" && q.status !== "rejected" && q.status !== "accepted" && (
-              <span className="rounded-md border border-amber-400/20 bg-amber-400/[0.08] px-2 py-1 text-[9px] font-bold text-amber-400">Overdue</span>
-            )}
+            {q.validUntil &&
+              new Date(q.validUntil) < new Date() &&
+              q.status !== "expired" &&
+              q.status !== "rejected" &&
+              q.status !== "accepted" && (
+                <span className="rounded-md border border-amber-400/20 bg-amber-400/[0.08] px-2 py-1 text-[9px] font-bold text-amber-400">
+                  Overdue
+                </span>
+              )}
           </div>
-          <p className="truncate text-sm font-semibold tracking-tight text-foreground">{q.customerName}</p>
+          <p className="truncate text-sm font-semibold tracking-tight text-foreground">
+            {q.customerName}
+          </p>
           <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground">
-            {q.customerPhone && <span className="font-mono">{q.customerPhone}</span>}
+            {q.customerPhone && (
+              <span className="font-mono">{q.customerPhone}</span>
+            )}
             <span className="text-muted-foreground/50">/</span>
             <span>{format(new Date(q.createdAt), "dd MMM yyyy")}</span>
-            {q.validUntil && <span className="text-muted-foreground/70">Due {format(new Date(q.validUntil), "dd MMM")}</span>}
+            {q.validUntil && (
+              <span className="text-muted-foreground/70">
+                Due {format(new Date(q.validUntil), "dd MMM")}
+              </span>
+            )}
           </div>
         </div>
 
         <div className="flex flex-col justify-center border-l border-border/70 pl-5 max-xl:col-start-2 max-xl:row-start-1 max-xl:border-0 max-xl:pl-0 max-xl:text-right">
-          <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Quote total</span>
-          <span className="mt-1 font-mono text-base font-bold tracking-tight text-foreground">{KES(q.total)}</span>
+          <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Quote total
+          </span>
+          <span className="mt-1 font-mono text-base font-bold tracking-tight text-foreground">
+            {KES(q.total)}
+          </span>
           <span className="mt-1 text-[10px] text-muted-foreground">
             {q.items.length} item{q.items.length !== 1 ? "s" : ""}
             {q.discountAmount > 0 && ` · −${KES(q.discountAmount)}`}
@@ -1457,47 +2446,101 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
             data-testid={`button-invoice-${q.id}`}
             onClick={onInvoice}
             disabled={invoiceBusy}
-            title={q.invoiceNumber ? "Download issued invoice" : q.status === "accepted" ? "Issue an invoice from this accepted quotation" : "Accept this quotation and issue its invoice"}
+            title={
+              q.invoiceNumber
+                ? "Download issued invoice"
+                : q.status === "accepted"
+                  ? "Issue an invoice from this accepted quotation"
+                  : "Accept this quotation and issue its invoice"
+            }
             className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 text-[10px] font-bold text-emerald-400 transition-colors hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {invoiceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-            {invoiceBusy ? "Issuing…" : q.invoiceNumber ? "Invoice PDF" : q.status === "accepted" ? "Make invoice" : "Accept & invoice"}
+            {invoiceBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileText className="h-3.5 w-3.5" />
+            )}
+            {invoiceBusy
+              ? "Issuing…"
+              : q.invoiceNumber
+                ? "Invoice PDF"
+                : q.status === "accepted"
+                  ? "Make invoice"
+                  : "Accept & invoice"}
           </button>
           <button
             type="button"
-            onClick={() => setExpanded(value => !value)}
+            onClick={() => setExpanded((value) => !value)}
             aria-expanded={expanded}
             className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[10px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {expanded ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
             {expanded ? "Hide" : "Items"}
           </button>
           <span className="mx-0.5 h-4 w-px bg-border max-xl:hidden" />
           <button
             type="button"
-            onClick={() => shareWhatsApp(q, shop, q.invoiceNumber ? "invoice" : "quotation")}
+            onClick={() =>
+              shareWhatsApp(q, shop, q.invoiceNumber ? "invoice" : "quotation")
+            }
             className="flex h-8 w-8 items-center justify-center rounded-lg text-[#25D366] transition-colors hover:bg-[#25D366]/10"
-            title={q.invoiceNumber ? "Share invoice via WhatsApp" : "Share quotation via WhatsApp"}
-            aria-label={q.invoiceNumber ? "Share invoice via WhatsApp" : "Share quotation via WhatsApp"}
+            title={
+              q.invoiceNumber
+                ? "Share invoice via WhatsApp"
+                : "Share quotation via WhatsApp"
+            }
+            aria-label={
+              q.invoiceNumber
+                ? "Share invoice via WhatsApp"
+                : "Share quotation via WhatsApp"
+            }
           >
             <MessageCircle className="h-4 w-4" />
           </button>
-          <button type="button" onClick={onDownloadPdf} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-primary" title="Download PDF" aria-label="Download PDF">
+          <button
+            type="button"
+            onClick={onDownloadPdf}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
+            title="Download PDF"
+            aria-label="Download PDF"
+          >
             <Download className="h-4 w-4" />
           </button>
-          <button type="button" onClick={onPrint} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" title="Preview" aria-label="Preview quotation">
+          <button
+            type="button"
+            onClick={onPrint}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            title="Preview"
+            aria-label="Preview quotation"
+          >
             <Eye className="h-4 w-4" />
           </button>
           {!q.invoiceNumber && (
             <>
-              <button type="button" onClick={onEdit} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary" title="Edit" aria-label="Edit quotation" data-testid={`button-edit-quotation-${q.id}`}>
+              <button
+                type="button"
+                onClick={onEdit}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                title="Edit"
+                aria-label="Edit quotation"
+                data-testid={`button-edit-quotation-${q.id}`}
+              >
                 <Edit2 className="h-4 w-4" />
               </button>
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setMenuOpen(value => !value)}
-                  className={cn("flex h-8 w-8 items-center justify-center rounded-lg transition-colors", menuOpen ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
+                  onClick={() => setMenuOpen((value) => !value)}
+                  className={cn(
+                    "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+                    menuOpen
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
                   title="Change status"
                   aria-label="Change quotation status"
                   aria-expanded={menuOpen}
@@ -1506,20 +2549,63 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
                 </button>
                 {menuOpen && (
                   <>
-                    <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+                    <div
+                      className="fixed inset-0 z-30"
+                      onClick={() => setMenuOpen(false)}
+                    />
                     <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-2xl">
-                      <p className="border-b border-border/60 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Change status</p>
-                      {(["draft", "sent", "accepted", "rejected", "expired"] as const).filter(status => status !== q.status).map(status => (
-                        <button key={status} type="button" onClick={() => { onStatusChange(status); setMenuOpen(false); }} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[11px] font-medium text-foreground transition-colors hover:bg-muted">
-                          <span className={cn("h-1.5 w-1.5 rounded-full", status === "accepted" ? "bg-emerald-400" : status === "sent" ? "bg-sky-400" : status === "rejected" ? "bg-rose-400" : status === "expired" ? "bg-amber-400" : "bg-zinc-400")} />
-                          Mark as {STATUS_META[status].label}
-                        </button>
-                      ))}
+                      <p className="border-b border-border/60 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+                        Change status
+                      </p>
+                      {(
+                        [
+                          "draft",
+                          "sent",
+                          "accepted",
+                          "rejected",
+                          "expired",
+                        ] as const
+                      )
+                        .filter((status) => status !== q.status)
+                        .map((status) => (
+                          <button
+                            key={status}
+                            type="button"
+                            onClick={() => {
+                              onStatusChange(status);
+                              setMenuOpen(false);
+                            }}
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[11px] font-medium text-foreground transition-colors hover:bg-muted"
+                          >
+                            <span
+                              className={cn(
+                                "h-1.5 w-1.5 rounded-full",
+                                status === "accepted"
+                                  ? "bg-emerald-400"
+                                  : status === "sent"
+                                    ? "bg-sky-400"
+                                    : status === "rejected"
+                                      ? "bg-rose-400"
+                                      : status === "expired"
+                                        ? "bg-amber-400"
+                                        : "bg-zinc-400",
+                              )}
+                            />
+                            Mark as {STATUS_META[status].label}
+                          </button>
+                        ))}
                     </div>
                   </>
                 )}
               </div>
-              <button type="button" onClick={onDelete} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" title="Delete quotation" aria-label="Delete quotation" data-testid={`button-delete-quotation-${q.id}`}>
+              <button
+                type="button"
+                onClick={onDelete}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                title="Delete quotation"
+                aria-label="Delete quotation"
+                data-testid={`button-delete-quotation-${q.id}`}
+              >
                 <Trash2 className="h-4 w-4" />
               </button>
             </>
@@ -1530,28 +2616,50 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
       {expanded && (
         <div className="border-t border-border/70 bg-muted/20">
           <div className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] gap-3 border-b border-border/50 px-4 py-2 text-[9px] font-semibold uppercase tracking-widest text-muted-foreground max-sm:grid-cols-[minmax(0,1fr)_40px_86px]">
-            <span>Product</span><span className="text-right">Qty</span><span className="text-right max-sm:hidden">Unit price</span><span className="text-right">Line total</span>
+            <span>Product</span>
+            <span className="text-right">Qty</span>
+            <span className="text-right max-sm:hidden">Unit price</span>
+            <span className="text-right">Line total</span>
           </div>
           {q.items.map((item, index) => (
-            <div key={`${q.id}-${index}`} className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] items-center gap-3 border-b border-border/40 px-4 py-2.5 last:border-0 max-sm:grid-cols-[minmax(0,1fr)_40px_86px]">
+            <div
+              key={`${q.id}-${index}`}
+              className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] items-center gap-3 border-b border-border/40 px-4 py-2.5 last:border-0 max-sm:grid-cols-[minmax(0,1fr)_40px_86px]"
+            >
               <div className="min-w-0">
-                <p className="truncate text-[11px] font-medium text-foreground">{item.productName}</p>
-                <p className="mt-0.5 text-[9px] text-muted-foreground">{item.unit}</p>
+                <p className="truncate text-[11px] font-medium text-foreground">
+                  {item.productName}
+                </p>
+                <p className="mt-0.5 text-[9px] text-muted-foreground">
+                  {item.unit}
+                </p>
               </div>
-              <span className="text-right font-mono text-[10px] text-muted-foreground">{item.qty}</span>
-              <span className="text-right font-mono text-[10px] text-muted-foreground max-sm:hidden">{KES(item.unitPrice)}</span>
-              <span className="text-right font-mono text-[10px] font-semibold text-foreground">{KES(item.total)}</span>
+              <span className="text-right font-mono text-[10px] text-muted-foreground">
+                {item.qty}
+              </span>
+              <span className="text-right font-mono text-[10px] text-muted-foreground max-sm:hidden">
+                {KES(item.unitPrice)}
+              </span>
+              <span className="text-right font-mono text-[10px] font-semibold text-foreground">
+                {KES(item.total)}
+              </span>
             </div>
           ))}
           {q.discountAmount > 0 && (
             <div className="flex justify-between border-t border-border/50 px-4 py-2 text-[10px]">
               <span className="text-muted-foreground">Discount applied</span>
-              <span className="font-mono font-semibold text-rose-400">−{KES(q.discountAmount)}</span>
+              <span className="font-mono font-semibold text-rose-400">
+                −{KES(q.discountAmount)}
+              </span>
             </div>
           )}
           <div className="flex items-center justify-between border-t border-primary/15 bg-primary/5 px-4 py-2.5">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-primary/70">Total</span>
-            <span className="font-mono text-xs font-bold text-primary">{KES(q.total)}</span>
+            <span className="text-[9px] font-bold uppercase tracking-widest text-primary/70">
+              Total
+            </span>
+            <span className="font-mono text-xs font-bold text-primary">
+              {KES(q.total)}
+            </span>
           </div>
         </div>
       )}
@@ -1561,7 +2669,13 @@ function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onD
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-type StatusFilter = "all" | "draft" | "sent" | "accepted" | "rejected" | "expired";
+type StatusFilter =
+  | "all"
+  | "draft"
+  | "sent"
+  | "accepted"
+  | "rejected"
+  | "expired";
 type PageView = "list" | "builder" | "print";
 
 export default function Quotations() {
@@ -1586,7 +2700,9 @@ export default function Quotations() {
     if (!shopId) return;
     setLoading(true);
     try {
-      const data = await customFetch(`/api/quotations?shopId=${shopId}&limit=200`) as Quotation[];
+      const data = (await customFetch(
+        `/api/quotations?shopId=${shopId}&limit=200`,
+      )) as Quotation[];
       setQuoteList(Array.isArray(data) ? data : []);
     } catch {
       toast.error("Failed to load quotations");
@@ -1595,40 +2711,60 @@ export default function Quotations() {
     }
   }, [shopId]);
 
-  useEffect(() => { loadQuotations(); }, [loadQuotations]);
+  useEffect(() => {
+    loadQuotations();
+  }, [loadQuotations]);
 
   const filtered = useMemo(() => {
     let list = quoteList;
-    if (filter !== "all") list = list.filter(q => q.status === filter);
+    if (filter !== "all") list = list.filter((q) => q.status === filter);
     const q = search.trim().toLowerCase();
-    if (q) list = list.filter(x => x.customerName.toLowerCase().includes(q) || x.quoteNumber.toLowerCase().includes(q));
+    if (q)
+      list = list.filter(
+        (x) =>
+          x.customerName.toLowerCase().includes(q) ||
+          x.quoteNumber.toLowerCase().includes(q),
+      );
     return list;
   }, [quoteList, filter, search]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: quoteList.length };
-    quoteList.forEach(q => { c[q.status] = (c[q.status] ?? 0) + 1; });
+    quoteList.forEach((q) => {
+      c[q.status] = (c[q.status] ?? 0) + 1;
+    });
     return c;
   }, [quoteList]);
 
   const handleSave = (q: Quotation) => {
-    setQuoteList(prev => {
-      const idx = prev.findIndex(x => x.id === q.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = q; return next; }
+    setQuoteList((prev) => {
+      const idx = prev.findIndex((x) => x.id === q.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = q;
+        return next;
+      }
       return [q, ...prev];
     });
-    toast.success(editTarget ? "Quotation updated" : `${q.quoteNumber} created!`);
+    toast.success(
+      editTarget ? "Quotation updated" : `${q.quoteNumber} created!`,
+    );
     setView("list");
     setEditTarget(null);
   };
 
-  const handleStatusChange = async (q: Quotation, status: Quotation["status"]) => {
+  const handleStatusChange = async (
+    q: Quotation,
+    status: Quotation["status"],
+  ) => {
     try {
-      const updated = await customFetch(`/api/quotations/${q.id}`, {
+      const updated = (await customFetch(`/api/quotations/${q.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
-      }) as Quotation;
-      setQuoteList(prev => prev.map(x => x.id === updated.id ? updated : x));
+      })) as Quotation;
+      setQuoteList((prev) =>
+        prev.map((x) => (x.id === updated.id ? updated : x)),
+      );
       toast.success(`Marked as ${STATUS_META[status].label}`);
     } catch {
       toast.error("Failed to update status");
@@ -1639,7 +2775,7 @@ export default function Quotations() {
     if (!confirm(`Delete ${q.quoteNumber}? This cannot be undone.`)) return;
     try {
       await customFetch(`/api/quotations/${q.id}`, { method: "DELETE" });
-      setQuoteList(prev => prev.filter(x => x.id !== q.id));
+      setQuoteList((prev) => prev.filter((x) => x.id !== q.id));
       toast.success("Quotation deleted");
     } catch {
       toast.error("Failed to delete");
@@ -1647,32 +2783,46 @@ export default function Quotations() {
   };
 
   const handleClearDrafts = async () => {
-    const drafts = quoteList.filter(q => q.status === "draft");
-    if (drafts.length === 0) { toast.info("No drafts to clear"); return; }
-    if (!confirm(`Delete all ${drafts.length} draft quotation${drafts.length !== 1 ? "s" : ""}?`)) return;
+    const drafts = quoteList.filter((q) => q.status === "draft");
+    if (drafts.length === 0) {
+      toast.info("No drafts to clear");
+      return;
+    }
+    if (
+      !confirm(
+        `Delete all ${drafts.length} draft quotation${drafts.length !== 1 ? "s" : ""}?`,
+      )
+    )
+      return;
     setClearingDrafts(true);
     let deleted = 0;
     for (const q of drafts) {
-      try { await customFetch(`/api/quotations/${q.id}`, { method: "DELETE" }); deleted++; } catch {}
+      try {
+        await customFetch(`/api/quotations/${q.id}`, { method: "DELETE" });
+        deleted++;
+      } catch {}
     }
-    setQuoteList(prev => prev.filter(q => q.status !== "draft"));
+    setQuoteList((prev) => prev.filter((q) => q.status !== "draft"));
     toast.success(`Cleared ${deleted} draft${deleted !== 1 ? "s" : ""}`);
     setClearingDrafts(false);
   };
 
   const handleConvertToSale = (q: Quotation) => {
-    sessionStorage.setItem("greenlink_pending_cart", JSON.stringify({
-      items: q.items.map(item => ({
-        productId: item.productId,
-        productName: item.productName,
-        qty: item.qty,
-        unitPrice: item.unitPrice,
-        unit: item.unit,
-      })),
-      customerName: q.customerName,
-      discount: q.discountAmount,
-      fromQuote: q.quoteNumber,
-    }));
+    sessionStorage.setItem(
+      "greenlink_pending_cart",
+      JSON.stringify({
+        items: q.items.map((item) => ({
+          productId: item.productId,
+          productName: item.productName,
+          qty: item.qty,
+          unitPrice: item.unitPrice,
+          unit: item.unit,
+        })),
+        customerName: q.customerName,
+        discount: q.discountAmount,
+        fromQuote: q.quoteNumber,
+      }),
+    );
     toast.success(`Loading ${q.quoteNumber} into POS…`);
     setLocation("/pos");
   };
@@ -1686,16 +2836,20 @@ export default function Quotations() {
     setInvoiceBusyId(q.id);
     try {
       if (q.status !== "accepted") {
-        const accepted = await customFetch(`/api/quotations/${q.id}`, {
+        const accepted = (await customFetch(`/api/quotations/${q.id}`, {
           method: "PATCH",
           body: JSON.stringify({ status: "accepted" }),
-        }) as Quotation;
-        setQuoteList(prev => prev.map(item => item.id === accepted.id ? accepted : item));
+        })) as Quotation;
+        setQuoteList((prev) =>
+          prev.map((item) => (item.id === accepted.id ? accepted : item)),
+        );
       }
-      const issued = await customFetch(`/api/quotations/${q.id}/invoice`, {
+      const issued = (await customFetch(`/api/quotations/${q.id}/invoice`, {
         method: "POST",
-      }) as Quotation;
-      setQuoteList(prev => prev.map(item => item.id === issued.id ? issued : item));
+      })) as Quotation;
+      setQuoteList((prev) =>
+        prev.map((item) => (item.id === issued.id ? issued : item)),
+      );
       toast.success(`${issued.invoiceNumber} issued`);
       await downloadPdf(issued, shop, "invoice");
     } catch (err: any) {
@@ -1707,7 +2861,16 @@ export default function Quotations() {
 
   // Print view
   if (view === "print" && printTarget) {
-    return <PrintView quotation={printTarget} shop={shop} onClose={() => { setView("list"); setPrintTarget(null); }} />;
+    return (
+      <PrintView
+        quotation={printTarget}
+        shop={shop}
+        onClose={() => {
+          setView("list");
+          setPrintTarget(null);
+        }}
+      />
+    );
   }
 
   // Builder view
@@ -1718,7 +2881,10 @@ export default function Quotations() {
           shopId={shopId}
           editQuotation={editTarget}
           onSave={handleSave}
-          onCancel={() => { setView("list"); setEditTarget(null); }}
+          onCancel={() => {
+            setView("list");
+            setEditTarget(null);
+          }}
         />
       </div>
     );
@@ -1736,7 +2902,9 @@ export default function Quotations() {
 
   const draftCount = counts["draft"] ?? 0;
   const totalValue = filtered.reduce((s, q) => s + q.total, 0);
-  const acceptedValue = quoteList.filter(q => q.status === "accepted").reduce((s, q) => s + q.total, 0);
+  const acceptedValue = quoteList
+    .filter((q) => q.status === "accepted")
+    .reduce((s, q) => s + q.total, 0);
   const openCount = (counts["draft"] ?? 0) + (counts["sent"] ?? 0);
 
   return (
@@ -1746,12 +2914,18 @@ export default function Quotations() {
           <div className="min-w-0">
             <div className="mb-1.5 flex items-center gap-2">
               <span className="h-px w-5 bg-primary/70" />
-              <span className="text-[9px] font-bold uppercase tracking-[.18em] text-primary/80">Sales desk</span>
+              <span className="text-[9px] font-bold uppercase tracking-[.18em] text-primary/80">
+                Sales desk
+              </span>
             </div>
-            <h1 className="font-display text-2xl font-semibold leading-none tracking-tight text-foreground">Quotations</h1>
+            <h1 className="font-display text-2xl font-semibold leading-none tracking-tight text-foreground">
+              Quotations
+            </h1>
             <p className="mt-2 text-[11px] text-muted-foreground">
-              {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""} on file
-              {filtered.length !== quoteList.length && ` · ${filtered.length} shown`}
+              {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""} on
+              file
+              {filtered.length !== quoteList.length &&
+                ` · ${filtered.length} shown`}
               <span className="mx-2 text-muted-foreground/50">/</span>
               <span>Prepared for a busy counter.</span>
             </p>
@@ -1764,13 +2938,20 @@ export default function Quotations() {
                 disabled={clearingDrafts}
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/[0.06] px-3 text-[11px] font-semibold text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {clearingDrafts ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                {clearingDrafts ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3 w-3" />
+                )}
                 Clear {draftCount} draft{draftCount !== 1 ? "s" : ""}
               </button>
             )}
             <button
               type="button"
-              onClick={() => { setEditTarget(null); setView("builder"); }}
+              onClick={() => {
+                setEditTarget(null);
+                setView("builder");
+              }}
               className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-[11px] font-bold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
             >
               <Plus className="h-3.5 w-3.5" /> New quote
@@ -1781,17 +2962,30 @@ export default function Quotations() {
         {quoteList.length > 0 && (
           <div className="mt-5 grid grid-cols-3 overflow-hidden rounded-xl border border-border/70 bg-card">
             <div className="px-3 py-3 sm:px-4">
-              <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Value in view</p>
-              <p className="mt-1.5 truncate font-mono text-xs font-semibold tracking-tight text-foreground sm:text-base">{KES(totalValue)}</p>
+              <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Value in view
+              </p>
+              <p className="mt-1.5 truncate font-mono text-xs font-semibold tracking-tight text-foreground sm:text-base">
+                {KES(totalValue)}
+              </p>
             </div>
             <div className="border-l border-border/70 px-3 py-3 sm:px-4">
-              <p className="text-[9px] font-semibold uppercase tracking-widest text-emerald-500/80">Accepted value</p>
-              <p className="mt-1.5 truncate font-mono text-xs font-semibold tracking-tight text-emerald-500 sm:text-base">{KES(acceptedValue)}</p>
+              <p className="text-[9px] font-semibold uppercase tracking-widest text-emerald-500/80">
+                Accepted value
+              </p>
+              <p className="mt-1.5 truncate font-mono text-xs font-semibold tracking-tight text-emerald-500 sm:text-base">
+                {KES(acceptedValue)}
+              </p>
             </div>
             <div className="border-l border-border/70 px-3 py-3 sm:px-4">
-              <p className="text-[9px] font-semibold uppercase tracking-widest text-primary/80">Open quotes</p>
+              <p className="text-[9px] font-semibold uppercase tracking-widest text-primary/80">
+                Open quotes
+              </p>
               <p className="mt-1.5 font-mono text-xs font-semibold tracking-tight text-primary sm:text-base">
-                {openCount}<span className="ml-1.5 font-sans text-[10px] font-normal text-muted-foreground">to follow up</span>
+                {openCount}
+                <span className="ml-1.5 font-sans text-[10px] font-normal text-muted-foreground">
+                  to follow up
+                </span>
               </p>
             </div>
           </div>
@@ -1803,7 +2997,7 @@ export default function Quotations() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               value={search}
-              onChange={event => setSearch(event.target.value)}
+              onChange={(event) => setSearch(event.target.value)}
               placeholder="Find a customer or quote number"
               className="h-10 w-full rounded-lg border border-border bg-card pl-9 pr-10 text-xs text-foreground outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10 placeholder:text-muted-foreground/70"
             />
@@ -1818,8 +3012,12 @@ export default function Quotations() {
               </button>
             )}
           </label>
-          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 no-scrollbar max-lg:w-full" role="group" aria-label="Filter quotations by status">
-            {TABS.map(tab => (
+          <div
+            className="flex items-center gap-1 overflow-x-auto pb-0.5 no-scrollbar max-lg:w-full"
+            role="group"
+            aria-label="Filter quotations by status"
+          >
+            {TABS.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
@@ -1829,12 +3027,19 @@ export default function Quotations() {
                   "flex h-9 shrink-0 items-center gap-2 rounded-lg border px-2.5 text-[10px] font-semibold whitespace-nowrap transition-colors",
                   filter === tab.id
                     ? "border-primary/25 bg-primary/10 text-primary"
-                    : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                 )}
               >
                 {tab.label}
                 {(counts[tab.id] ?? 0) > 0 && (
-                  <span className={cn("font-mono text-[9px]", filter === tab.id ? "text-primary/80" : "text-muted-foreground/70")}>
+                  <span
+                    className={cn(
+                      "font-mono text-[9px]",
+                      filter === tab.id
+                        ? "text-primary/80"
+                        : "text-muted-foreground/70",
+                    )}
+                  >
                     {String(counts[tab.id]).padStart(2, "0")}
                   </span>
                 )}
@@ -1856,21 +3061,33 @@ export default function Quotations() {
               <FileText className="h-5 w-5" />
             </div>
             <p className="text-sm font-semibold text-foreground">
-              {search || filter !== "all" ? "No matching quotations" : "No quotations yet"}
+              {search || filter !== "all"
+                ? "No matching quotations"
+                : "No quotations yet"}
             </p>
             <p className="mt-1 max-w-[300px] text-xs leading-relaxed text-muted-foreground">
               {search || filter !== "all"
                 ? "Try another customer name, quote number, or status."
                 : "Create a quote to start a customer conversation."}
             </p>
-            {(search || filter !== "all") ? (
-              <button type="button" onClick={() => { setSearch(""); setFilter("all"); }} className="mt-3 text-xs font-semibold text-primary transition-colors hover:text-primary/80">
+            {search || filter !== "all" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setFilter("all");
+                }}
+                className="mt-3 text-xs font-semibold text-primary transition-colors hover:text-primary/80"
+              >
                 Clear search and filters
               </button>
             ) : (
               <button
                 type="button"
-                onClick={() => { setEditTarget(null); setView("builder"); }}
+                onClick={() => {
+                  setEditTarget(null);
+                  setView("builder");
+                }}
                 className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90"
               >
                 <Plus className="h-4 w-4" /> Create first quote
@@ -1878,27 +3095,46 @@ export default function Quotations() {
             )}
           </div>
         ) : (
-          <section className="mx-auto w-full max-w-[1480px] px-4 py-4 sm:px-5" aria-label="Quotation list">
+          <section
+            className="mx-auto w-full max-w-[1480px] px-4 py-4 sm:px-5"
+            aria-label="Quotation list"
+          >
             <div className="mb-2 flex items-center justify-between px-1">
               <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-                {filter === "all" ? "Recent quotations" : `${STATUS_META[filter].label} quotations`}
-                <span className="ml-2 font-mono font-medium tracking-normal text-muted-foreground/70">{String(filtered.length).padStart(2, "0")}</span>
+                {filter === "all"
+                  ? "Recent quotations"
+                  : `${STATUS_META[filter].label} quotations`}
+                <span className="ml-2 font-mono font-medium tracking-normal text-muted-foreground/70">
+                  {String(filtered.length).padStart(2, "0")}
+                </span>
               </p>
-              {search && <p className="max-w-[55%] truncate text-[10px] text-muted-foreground">Matching “{search}”</p>}
+              {search && (
+                <p className="max-w-[55%] truncate text-[10px] text-muted-foreground">
+                  Matching “{search}”
+                </p>
+              )}
             </div>
             <div className="space-y-2">
-              {filtered.map(q => (
+              {filtered.map((q) => (
                 <QuotationCard
                   key={q.id}
                   q={q}
                   shop={shop}
-                  onEdit={() => { setEditTarget(q); setView("builder"); }}
-                  onPrint={() => { setPrintTarget(q); setView("print"); }}
+                  onEdit={() => {
+                    setEditTarget(q);
+                    setView("builder");
+                  }}
+                  onPrint={() => {
+                    setPrintTarget(q);
+                    setView("print");
+                  }}
                   onStatusChange={(s) => handleStatusChange(q, s)}
                   onDelete={() => handleDelete(q)}
                   onDownloadPdf={() => downloadPdf(q, shop)}
                   onConvertToSale={() => handleConvertToSale(q)}
-                  onInvoice={() => { void handleInvoice(q); }}
+                  onInvoice={() => {
+                    void handleInvoice(q);
+                  }}
                   invoiceBusy={invoiceBusyId === q.id}
                 />
               ))}
