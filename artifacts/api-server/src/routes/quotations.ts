@@ -217,17 +217,22 @@ quotationsRouter.patch("/quotations/:id", requireAuth, async (c) => {
     // save won first, this batch fails its revision insert and the quotation is
     // left untouched by this request rather than getting out of sync with history.
     try {
-      await c.env.DB.batch([
+      const results = await c.env.DB.batch([
         c.env.DB.prepare(`UPDATE quotations SET ${updateSql}invoice_snapshot_json = ? WHERE id = ? AND shop_id = ? AND invoice_snapshot_json IS ?`)
           .bind(...updateValues, JSON.stringify(nextSnapshot), quotationId, session.shopId, (existing as any).invoiceSnapshotJson ?? null),
         c.env.DB.prepare(`
           INSERT INTO invoice_revisions (id, quotation_id, invoice_number, revision_number, snapshot_json, revised_at)
-          VALUES (?, ?, ?, ?, ?, ?)
+          SELECT ?, ?, ?, ?, ?, ?
+          WHERE changes() = 1
         `).bind(crypto.randomUUID(), existing.id, existing.invoiceNumber, revisionNumber, JSON.stringify(nextSnapshot), revisedAt),
       ]);
+      if (Number((results as any[])[0]?.meta?.changes ?? 0) !== 1 ||
+          Number((results as any[])[1]?.meta?.changes ?? 0) !== 1) {
+        return c.json({ error: "This quotation was changed by another save. Reload the latest version and try again." }, 409);
+      }
     } catch (error) {
-      // A concurrent write may have taken this revision number; ask the client
-      // to reload and retry instead of returning a misleading partially-saved result.
+      // Unique revision constraint and compare-and-swap guard prevent competing saves
+      // from assigning the same revision or leaving an orphaned history entry.
       const latest = await db.select().from(quotations)
         .where(and(eq(quotations.id, quotationId), eq(quotations.shopId, session.shopId))).get();
       if (latest && (latest as any).invoiceSnapshotJson !== (existing as any).invoiceSnapshotJson) {
