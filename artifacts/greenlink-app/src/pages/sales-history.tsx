@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
-  Receipt, ChevronDown, ChevronUp, Trash2, Calendar,
+  Receipt, ChevronDown, ChevronUp, Trash2, Calendar, FileDown,
   ChevronLeft, ChevronRight, CreditCard,
   TrendingUp, ShoppingBag, Banknote, Clock, User, Package,
   RotateCcw, Minus, Plus, CheckCircle2, Search, X, Printer,
@@ -21,6 +21,7 @@ import {
 import { toast } from "sonner";
 import { format, addDays, subDays, isToday } from "date-fns";
 import { printSaleReceipt } from "@/lib/print-receipt";
+import { downloadSalesHistoryPdf } from "@/lib/sales-pdf";
 import { cn } from "@/lib/utils";
 
 
@@ -726,6 +727,19 @@ export default function SalesHistory() {
   }, [list, typeFilter, search]);
 
   const isFiltering = search.trim() !== "" || typeFilter !== "all";
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  async function handleDownloadPdf() {
+    if (filtered.length === 0 || isExportingPdf) return;
+    setIsExportingPdf(true);
+    try {
+      const filterLabel = [typeFilter === "all" ? "" : typeFilter === "bank" ? "M-Pesa" : typeFilter, search.trim() ? "Search: " + search.trim() : ""].filter(Boolean).join(" · ");
+      await downloadSalesHistoryPdf(filtered, { dateLabel: format(date, "dd MMMM yyyy"), filterLabel, includeProfit: isOwner });
+      toast.success("Sales history PDF downloaded");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not generate the sales history PDF");
+    } finally { setIsExportingPdf(false); }
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -746,8 +760,13 @@ export default function SalesHistory() {
             </p>
           </div>
 
-          {/* Date navigation */}
-          <div className="flex items-center gap-1 border border-border rounded-xl p-1">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleDownloadPdf} disabled={isLoading || filtered.length === 0 || isExportingPdf} className="h-9 shrink-0">
+              <FileDown className="h-3.5 w-3.5 mr-1.5" />
+              {isExportingPdf ? "Preparing…" : "Download PDF"}
+            </Button>
+            {/* Date navigation */}
+            <div className="flex items-center gap-1 border border-border rounded-xl p-1">
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setDate(d => subDays(d, 1))}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
