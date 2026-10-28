@@ -321,6 +321,12 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
     "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
     "ALTER TABLE quotations ADD COLUMN invoice_snapshot_json TEXT",
+    `CREATE TABLE IF NOT EXISTS invoice_revisions (
+      id TEXT PRIMARY KEY, quotation_id TEXT NOT NULL, invoice_number TEXT NOT NULL,
+      revision_number INTEGER NOT NULL, snapshot_json TEXT NOT NULL, revised_at TEXT NOT NULL,
+      UNIQUE(quotation_id, revision_number)
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_invoice_revisions_quotation ON invoice_revisions(quotation_id, revision_number)",
     `UPDATE quotations SET invoice_snapshot_json = json_object(
       'customerName', customer_name, 'customerPhone', customer_phone,
       'customerEmail', customer_email, 'notes', notes, 'validUntil', valid_until,
