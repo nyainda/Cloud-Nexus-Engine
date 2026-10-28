@@ -7,7 +7,7 @@ import { quotations, shops } from "@workspace/db/schema";
 
 const quotationsRouter = new Hono<AppEnv>();
 
-function parseInvoiceSnapshot(value: string | null | undefined) {
+function parseInvoiceSnapshot(value: string | null | undefined): any | null {
   if (!value) return null;
   try { return JSON.parse(value); } catch { return null; }
 }
@@ -142,24 +142,25 @@ quotationsRouter.patch("/quotations/:id", requireAuth, async (c) => {
     }>;
   }>();
 
+  const session = c.get("session");
+  const quotationId = c.req.param("id");
   const db = createDb(c.env.DB);
-  const existing = await db.select().from(quotations).where(eq(quotations.id, c.req.param("id"))).get();
+  const existing = await db.select().from(quotations)
+    .where(and(eq(quotations.id, quotationId), eq(quotations.shopId, session.shopId))).get();
   if (!existing) return c.json({ error: "Not found" }, 404);
-  // Editing the quotation after invoice issuance is allowed. The invoice snapshot is immutable.
 
   const patch: Partial<typeof quotations.$inferInsert> = {};
   if (body.status) patch.status = body.status;
-  if (body.customerName) patch.customerName = body.customerName;
+  if (body.customerName !== undefined) patch.customerName = body.customerName;
   if (body.customerPhone !== undefined) patch.customerPhone = body.customerPhone;
   if (body.customerEmail !== undefined) patch.customerEmail = body.customerEmail;
   if (body.notes !== undefined) patch.notes = body.notes;
   if (body.validUntil !== undefined) patch.validUntil = body.validUntil;
 
   if (body.items !== undefined) {
-    const items = body.items;
-    const subtotal = items.reduce((s, i) => s + i.total, 0);
+    const subtotal = body.items.reduce((sum, item) => sum + item.total, 0);
     const discountAmount = body.discountAmount ?? existing.discountAmount;
-    patch.itemsJson = JSON.stringify(items);
+    patch.itemsJson = JSON.stringify(body.items);
     patch.subtotal = subtotal;
     patch.discountAmount = discountAmount;
     patch.total = Math.max(0, subtotal - discountAmount);
@@ -168,11 +169,88 @@ quotationsRouter.patch("/quotations/:id", requireAuth, async (c) => {
     patch.total = Math.max(0, existing.subtotal - body.discountAmount);
   }
 
-  await db.update(quotations).set(patch).where(eq(quotations.id, c.req.param("id")));
-  const q = await db.select().from(quotations).where(eq(quotations.id, c.req.param("id"))).get();
+  // Batch the quotation update, latest invoice snapshot, and revision history together.
+  // Read the revision number from the existing persisted snapshot and use a conditional
+  // write so overlapping saves cannot silently overwrite one another's revision.
+  if (existing.invoiceNumber) {
+    const previous = parseInvoiceSnapshot((existing as any).invoiceSnapshotJson);
+    const revisionNumber = Math.max(1, Number(previous?.revisionNumber ?? 1) + 1);
+    const revisedAt = new Date().toISOString();
+    const nextItems = patch.itemsJson ?? existing.itemsJson;
+    const nextSubtotal = patch.subtotal ?? existing.subtotal;
+    const nextDiscountAmount = patch.discountAmount ?? existing.discountAmount;
+    const nextSnapshot = {
+      customerName: patch.customerName ?? existing.customerName,
+      customerPhone: patch.customerPhone ?? existing.customerPhone,
+      customerEmail: patch.customerEmail === undefined ? existing.customerEmail : patch.customerEmail,
+      notes: patch.notes === undefined ? existing.notes : patch.notes,
+      validUntil: patch.validUntil === undefined ? existing.validUntil : patch.validUntil,
+      subtotal: nextSubtotal,
+      discountAmount: nextDiscountAmount,
+      total: patch.total ?? existing.total,
+      items: (() => { try { return JSON.parse(nextItems); } catch { return []; } })(),
+      createdAt: existing.createdAt,
+      revisionNumber,
+      revisedAt,
+    };
+
+    const updateFields = Object.entries(patch).filter(([key]) => key !== "id");
+    const setSql = updateFields.map(([key]) => {
+      const columnMap: Record<string, string> = {
+        status: "status",
+        customerName: "customer_name",
+        customerPhone: "customer_phone",
+        customerEmail: "customer_email",
+        notes: "notes",
+        validUntil: "valid_until",
+        itemsJson: "items_json",
+        subtotal: "subtotal",
+        discountAmount: "discount_amount",
+        total: "total",
+      };
+      return `${columnMap[key]} = ?`;
+    });
+    const updateValues = updateFields.map(([, value]) => value);
+    const updateSql = setSql.length ? `${setSql.join(", ")}, ` : "";
+
+    // The old snapshot comparison is a compare-and-swap guard. If a concurrent
+    // save won first, this batch fails its revision insert and the quotation is
+    // left untouched by this request rather than getting out of sync with history.
+    try {
+      const results = await c.env.DB.batch([
+        c.env.DB.prepare(`UPDATE quotations SET ${updateSql}invoice_snapshot_json = ? WHERE id = ? AND shop_id = ? AND invoice_snapshot_json IS ?`)
+          .bind(...updateValues, JSON.stringify(nextSnapshot), quotationId, session.shopId, (existing as any).invoiceSnapshotJson ?? null),
+        c.env.DB.prepare(`
+          INSERT INTO invoice_revisions (id, quotation_id, invoice_number, revision_number, snapshot_json, revised_at)
+          SELECT ?, ?, ?, ?, ?, ?
+          WHERE changes() = 1
+        `).bind(crypto.randomUUID(), existing.id, existing.invoiceNumber, revisionNumber, JSON.stringify(nextSnapshot), revisedAt),
+      ]);
+      if (Number((results as any[])[0]?.meta?.changes ?? 0) !== 1 ||
+          Number((results as any[])[1]?.meta?.changes ?? 0) !== 1) {
+        return c.json({ error: "This quotation was changed by another save. Reload the latest version and try again." }, 409);
+      }
+    } catch (error) {
+      // Unique revision constraint and compare-and-swap guard prevent competing saves
+      // from assigning the same revision or leaving an orphaned history entry.
+      const latest = await db.select().from(quotations)
+        .where(and(eq(quotations.id, quotationId), eq(quotations.shopId, session.shopId))).get();
+      if (latest && (latest as any).invoiceSnapshotJson !== (existing as any).invoiceSnapshotJson) {
+        return c.json({ error: "This quotation was changed by another save. Reload the latest version and try again." }, 409);
+      }
+      throw error;
+    }
+  } else {
+    await db.update(quotations).set(patch)
+      .where(and(eq(quotations.id, quotationId), eq(quotations.shopId, session.shopId)));
+  }
+
+  const q = await db.select().from(quotations)
+    .where(and(eq(quotations.id, quotationId), eq(quotations.shopId, session.shopId))).get();
+  if (!q) return c.json({ error: "Not found" }, 404);
   return c.json({
-    ...q!,
-    items: (() => { try { return JSON.parse(q!.itemsJson); } catch { return []; } })(),
+    ...q,
+    items: (() => { try { return JSON.parse(q.itemsJson); } catch { return []; } })(),
     invoiceSnapshot: parseInvoiceSnapshot((q as any).invoiceSnapshotJson),
   });
 });
@@ -205,6 +283,8 @@ quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
   const invoiceNumber = `INV-${existing.quoteNumber.replace(/^Q-/i, "")}`;
   const invoiceIssuedAt = new Date().toISOString();
   const invoiceSnapshot = {
+    revisionNumber: 1,
+    revisedAt: null,
     customerName: existing.customerName,
     customerPhone: existing.customerPhone,
     customerEmail: existing.customerEmail,
@@ -230,6 +310,10 @@ quotationsRouter.post("/quotations/:id/invoice", requireAuth, async (c) => {
   if (!issued?.invoiceNumber) {
     return c.json({ error: "Could not issue invoice. Refresh and try again." }, 409);
   }
+  await c.env.DB.prepare(`
+    INSERT OR IGNORE INTO invoice_revisions (id, quotation_id, invoice_number, revision_number, snapshot_json, revised_at)
+    VALUES (?, ?, ?, 1, ?, ?)
+  `).bind(crypto.randomUUID(), issued.id, invoiceNumber, JSON.stringify(invoiceSnapshot), invoiceIssuedAt).run();
 
   return c.json({
     ...issued,

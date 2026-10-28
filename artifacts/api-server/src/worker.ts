@@ -38,6 +38,12 @@ async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   if (!columns.has("invoice_number") || !columns.has("invoice_issued_at")) {
     throw new Error("Could not add quotation invoice columns");
   }
+  await db.prepare(`CREATE TABLE IF NOT EXISTS invoice_revisions (
+    id TEXT PRIMARY KEY, quotation_id TEXT NOT NULL, invoice_number TEXT NOT NULL,
+    revision_number INTEGER NOT NULL, snapshot_json TEXT NOT NULL, revised_at TEXT NOT NULL,
+    UNIQUE(quotation_id, revision_number)
+  )`).run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_invoice_revisions_quotation ON invoice_revisions(quotation_id, revision_number)").run();
   await db
     .prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
     .bind(QUOTATION_INVOICE_MARKER, new Date().toISOString())

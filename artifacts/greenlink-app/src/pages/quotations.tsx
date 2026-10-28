@@ -88,6 +88,8 @@ interface Quotation {
     total: number;
     items: QuotationItem[];
     createdAt: string;
+    revisionNumber?: number;
+    revisedAt?: string | null;
   } | null;
   createdBy: string | null;
   createdAt: string;
@@ -516,6 +518,12 @@ async function downloadPdf(
     doc.setFontSize(8.5);
     doc.setTextColor(...DKEMER);
     doc.text(documentNumber, refBoxX + 4, 52.2, { maxWidth: refBoxW - 8 });
+    if (isInvoice && Number(pdfData.invoiceSnapshot?.revisionNumber ?? 1) > 1) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(180, 70, 35);
+      doc.text(`REVISED INVOICE · REVISION ${pdfData.invoiceSnapshot?.revisionNumber}`, W - MR, 25, { align: "right" });
+    }
 
     doc.setDrawColor(...EMERALD);
     doc.setLineWidth(1);
