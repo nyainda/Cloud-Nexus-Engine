@@ -1,7 +1,7 @@
 import { format } from "date-fns";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { getPdfShopLogoAssets } from "@/lib/pdf-stamp";
+import { drawPdfStamp, drawPdfWatermark, getPdfShopLogoAssets, loadPdfStampLogo } from "@/lib/pdf-stamp";
 
 type PdfColor = [number, number, number];
 
@@ -71,6 +71,7 @@ export async function downloadSalePdf(sale: any, returns: any[] = []): Promise<v
   const shopLogoAssets = getPdfShopLogoAssets(shopId);
   const shopName = localStorage.getItem("greenlink_shopName") || shopLogoAssets.sealName;
   const logo = await loadHeaderLogo(shopLogoAssets.printHeader);
+  const stampLogo = await loadPdfStampLogo(shopLogoAssets.seal);
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -228,7 +229,7 @@ export async function downloadSalePdf(sale: any, returns: any[] = []): Promise<v
     head: [["#", "PRODUCT / DESCRIPTION", "QTY", "UNIT", "UNIT PRICE", "TOTAL"]],
     body: tableBody,
     theme: "grid",
-    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: 16, bottom: 20 },
+    margin: { left: PAGE_MARGIN, right: PAGE_MARGIN, top: 16, bottom: 66 },
     styles: {
       font: "helvetica",
       fontSize: 7.5,
@@ -307,11 +308,33 @@ export async function downloadSalePdf(sale: any, returns: any[] = []): Promise<v
     doc.text("Sale total shown before processed returns.", PAGE_MARGIN, summaryY + 7);
   }
 
+  const stampOptions = {
+    shopName: shopLogoAssets.sealName || shopName,
+    logoData: stampLogo,
+    status: isVoided ? "VOIDED" : isDebt ? "ON CREDIT" : "PAID",
+    dateLabel: sale.createdAt ? format(new Date(sale.createdAt), "dd MMM yyyy") : format(new Date(), "dd MMM yyyy"),
+    documentRef: ref,
+  };
+
+  // Apply the same official seal styling used on quotations and invoices.
+  drawPdfWatermark(doc, stampOptions);
+
   const pageCount = doc.internal.getNumberOfPages();
   for (let page = 1; page <= pageCount; page++) {
     doc.setPage(page);
     drawFooter(page, pageCount);
   }
+
+  const stampSize = 40;
+  const stampX = PAGE_MARGIN + 2;
+  const stampY = pageHeight - 61;
+  doc.setPage(pageCount);
+  drawPdfStamp(doc, {
+    ...stampOptions,
+    x: stampX,
+    y: stampY,
+    size: stampSize,
+  });
 
   doc.save(`sales-receipt-${safeFilePart(ref)}.pdf`);
 }
