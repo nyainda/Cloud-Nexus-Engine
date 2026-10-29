@@ -21,7 +21,7 @@ import {
 import { toast } from "sonner";
 import { format, addDays, subDays, isToday } from "date-fns";
 import { printSaleReceipt } from "@/lib/print-receipt";
-import { downloadSalesHistoryPdf } from "@/lib/sales-pdf";
+import { downloadSalePdf, downloadSalesHistoryPdf } from "@/lib/sales-pdf";
 import { cn } from "@/lib/utils";
 
 
@@ -442,6 +442,21 @@ function SaleDetail({
             className="text-xs h-8 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
           >
             <Printer className="h-3 w-3 mr-1" />Receipt
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              try {
+                await downloadSalePdf(sale, returns);
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "Could not generate the sale PDF.";
+                toast.error(message);
+              }
+            }}
+            className="text-xs h-8"
+          >
+            <FileDown className="h-3 w-3 mr-1" />Download PDF
           </Button>
           {!sale.isDeleted && items.length > 0 && (
             <Button
