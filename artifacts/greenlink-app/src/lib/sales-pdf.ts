@@ -300,12 +300,12 @@ export async function downloadSalePdf(sale: any, returns: any[] = []): Promise<v
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7);
     doc.setTextColor(174, 49, 57);
-    doc.text("VOIDED SALE — not valid for payment", PAGE_MARGIN, summaryY + 7);
+    doc.text("VOIDED SALE — not valid for payment", PAGE_MARGIN + 44, summaryY + 7);
   } else if (returns.length > 0) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.3);
     doc.setTextColor(...MUTED);
-    doc.text("Sale total shown before processed returns.", PAGE_MARGIN, summaryY + 7);
+    doc.text("Sale total shown before processed returns.", PAGE_MARGIN + 44, summaryY + 7);
   }
 
   const stampOptions = {
