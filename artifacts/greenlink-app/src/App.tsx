@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions, getListProductsQueryKey } from "@workspace/api-client-react";
 import { mergeWithMutationResults } from "@/lib/product-version-guard";
 import { loadCachedProducts, saveProductsToCache } from "@/lib/product-db";
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useRef, useState, lazy, Suspense, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { useGetSession } from "@workspace/api-client-react";
@@ -42,6 +43,7 @@ const InvoiceHistory = lazy(() => import("@/pages/invoice-history"));
 const SupplierDetail = lazy(() => import("@/pages/supplier-detail"));
 const Quotations = lazy(() => import("@/pages/quotations"));
 const Customers = lazy(() => import("@/pages/customers"));
+const NurseryRegister = lazy(() => import("@/pages/nursery-register"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
 const queryClient = new QueryClient({
@@ -63,10 +65,10 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      refetchOnWindowFocus: false,  // POS: tab switches must never fire background requests
-      refetchOnReconnect: false,    // reconnect refetch disabled — mutations invalidate cache explicitly
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
       refetchOnMount: true,
-      staleTime: 5 * 60_000,        // 5 min — matches KV cache TTL; mutations invalidate immediately
+      staleTime: 60_000,
       gcTime: 30 * 60_000,          // 30 min in memory
     },
   },
@@ -115,7 +117,6 @@ queryClient.getQueryCache().subscribe((event) => {
   }
 });
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? null;
 setBaseUrl(API_BASE);
 setAuthTokenGetter(() => localStorage.getItem("greenlink_token"));
 
@@ -233,7 +234,8 @@ function AuthGuard({ children }: { children: ReactNode }) {
   // ── Session validation — online only ───────────────────────────────────────
   // When the device is offline there is no point hitting the network:
   //  • We can't reach the CF Worker anyway → guaranteed TypeError
-  //  • The 5-second NetworkFirst SW timeout causes a visible hang
+  //  • API requests fail while offline; the service worker no longer serves
+  //    stale API responses as a substitute for current server data
   //  • The retry/error path can incorrectly land in the "no session" branch
   //    if the error object shape is unexpected, logging the user out.
   // Solution: disable the query while offline and re-enable when back online.
@@ -344,6 +346,7 @@ function AppRoutes() {
                 <Route path="/suppliers/:supplierId" component={SupplierDetail} />
                 <Route path="/quotations" component={Quotations} />
                 <Route path="/customers" component={Customers} />
+                <Route path="/nursery" component={NurseryRegister} />
                 <Route component={NotFound} />
               </Switch>
             </Suspense>

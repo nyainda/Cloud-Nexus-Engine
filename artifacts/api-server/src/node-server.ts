@@ -34,7 +34,7 @@ const DB_PATH = path.join(DATA_DIR, "greenlink.db");
 // ── SQLite → D1Database shim ────────────────────────────────────────────────
 function makeD1(sqliteDb: Database.Database): D1Database {
   function runStatement(sql: string, params: unknown[]): D1PreparedStatement {
-    return {
+    const statement = {
       bind(...args: unknown[]) {
         return runStatement(sql, args);
       },
@@ -68,6 +68,8 @@ function makeD1(sqliteDb: Database.Database): D1Database {
         return rows as T[];
       },
     } as D1PreparedStatement;
+    Object.assign(statement, { __sqliteSql: sql, __sqliteParams: params });
+    return statement;
   }
 
   const d1: D1Database = {
@@ -75,15 +77,21 @@ function makeD1(sqliteDb: Database.Database): D1Database {
       return runStatement(sql, []);
     },
     async batch(statements: D1PreparedStatement[]) {
-      const results: any[] = [];
-      for (const stmt of statements) {
-        try {
-          results.push(await (stmt as any).run());
-        } catch {
-          results.push({ success: false, results: [], meta: {} });
-        }
-      }
-      return results;
+      // Match D1's all-or-nothing batch semantics in local development. Running
+      // each statement independently and swallowing errors can leave a debt
+      // without its sale (or vice versa), making local behavior differ from CF.
+      const transaction = sqliteDb.transaction(() =>
+        statements.map((statement) => {
+          const { __sqliteSql, __sqliteParams } = statement as any;
+          const info = sqliteDb.prepare(__sqliteSql).run(...__sqliteParams);
+          return {
+            success: true as const,
+            meta: { changes: info.changes, last_row_id: Number(info.lastInsertRowid) },
+            results: [],
+          };
+        }),
+      );
+      return transaction() as any;
     },
     async dump() {
       return new ArrayBuffer(0);
@@ -208,6 +216,7 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
         items_json TEXT NOT NULL DEFAULT '[]',
         invoice_number TEXT,
         invoice_issued_at TEXT,
+        invoice_snapshot_json TEXT,
         created_by TEXT,
         created_at TEXT NOT NULL
       )`).run();
@@ -311,6 +320,19 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     "ALTER TABLE quotations ADD COLUMN items_json TEXT DEFAULT '[]'",
     "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
     "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
+    "ALTER TABLE quotations ADD COLUMN invoice_snapshot_json TEXT",
+    `CREATE TABLE IF NOT EXISTS invoice_revisions (
+      id TEXT PRIMARY KEY, quotation_id TEXT NOT NULL, invoice_number TEXT NOT NULL,
+      revision_number INTEGER NOT NULL, snapshot_json TEXT NOT NULL, revised_at TEXT NOT NULL,
+      UNIQUE(quotation_id, revision_number)
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_invoice_revisions_quotation ON invoice_revisions(quotation_id, revision_number)",
+    `UPDATE quotations SET invoice_snapshot_json = json_object(
+      'customerName', customer_name, 'customerPhone', customer_phone,
+      'customerEmail', customer_email, 'notes', notes, 'validUntil', valid_until,
+      'subtotal', subtotal, 'discountAmount', discount_amount, 'total', total,
+      'items', json(items_json), 'createdAt', COALESCE(invoice_issued_at, created_at)
+    ) WHERE invoice_number IS NOT NULL AND invoice_snapshot_json IS NULL`,
   ];
   for (const m of MIGRATIONS) {
     try {
@@ -371,10 +393,21 @@ async function createApp() {
     }),
   );
 
-  // Inject local env bindings into every request context
+  // Inject local bindings and mirror the Worker cache policy so local
+  // development doesn't accidentally hide cross-device mutations either.
   app.use("*", async (c, next) => {
     Object.assign(c.env, env);
     await next();
+    if (c.req.method === "GET") {
+      const urlPath = new URL(c.req.url).pathname;
+      const isPublic = urlPath === "/api/shops" || urlPath.startsWith("/api/healthz");
+      c.res.headers.set(
+        "Cache-Control",
+        isPublic ? "public, max-age=120, stale-while-revalidate=300" : "private, no-store",
+      );
+    } else {
+      c.res.headers.set("Cache-Control", "no-store");
+    }
   });
 
   app.onError((err, c) => {

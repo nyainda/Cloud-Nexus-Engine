@@ -11,11 +11,24 @@ const SHOP_B_ID = "shop-sunrise";
 let bootstrapped = false;
 const BOOTSTRAP_MARKER = "schema-bootstrap-v2";
 const QUOTATION_INVOICE_MARKER = "quotation-invoice-v1";
+const NURSERY_REGISTER_MARKER = "nursery-register-v1";
+const NURSERY_CUSTOMER_MARKER = "nursery-customer-credit-v1";
+const NURSERY_ENTRIES_MARKER = "nursery-individual-entries-v1";
+const NURSERY_CATEGORY_MARKER = "nursery-categories-v1";
+const NOTIFICATION_COUNTER_MARKER = "notification-unread-counter-v1";
+const CUSTOMER_SCHEMA_MARKER = "customer-credit-columns-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   for (const statement of [
     "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
     "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
+    "ALTER TABLE quotations ADD COLUMN invoice_snapshot_json TEXT",
+    `UPDATE quotations SET invoice_snapshot_json = json_object(
+      'customerName', customer_name, 'customerPhone', customer_phone,
+      'customerEmail', customer_email, 'notes', notes, 'validUntil', valid_until,
+      'subtotal', subtotal, 'discountAmount', discount_amount, 'total', total,
+      'items', json(items_json), 'createdAt', COALESCE(invoice_issued_at, created_at)
+    ) WHERE invoice_number IS NOT NULL AND invoice_snapshot_json IS NULL`,
   ]) {
     try { await db.prepare(statement).run(); } catch { /* column already exists */ }
   }
@@ -25,10 +38,247 @@ async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
   if (!columns.has("invoice_number") || !columns.has("invoice_issued_at")) {
     throw new Error("Could not add quotation invoice columns");
   }
+  await db.prepare(`CREATE TABLE IF NOT EXISTS invoice_revisions (
+    id TEXT PRIMARY KEY, quotation_id TEXT NOT NULL, invoice_number TEXT NOT NULL,
+    revision_number INTEGER NOT NULL, snapshot_json TEXT NOT NULL, revised_at TEXT NOT NULL,
+    UNIQUE(quotation_id, revision_number)
+  )`).run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_invoice_revisions_quotation ON invoice_revisions(quotation_id, revision_number)").run();
   await db
     .prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
     .bind(QUOTATION_INVOICE_MARKER, new Date().toISOString())
     .run();
+}
+
+/** One-time nursery register schema. The durable marker prevents DDL on cold starts. */
+async function ensureNurseryRegister(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_REGISTER_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS nursery_varieties (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Uncategorized',
+      default_price INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, name)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_daily_sales (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      business_date TEXT NOT NULL,
+      variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL,
+      payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0),
+      total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, variety_id, unit_price_cents, payment_method)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_entry_requests (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_nursery_sales_shop_date ON nursery_daily_sales(shop_id, business_date)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_varieties_shop_active ON nursery_varieties(shop_id, is_active, name)",
+  ];
+  await db.batch(statements.map(statement => db.prepare(statement)));
+  await db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+    .bind(NURSERY_REGISTER_MARKER, new Date().toISOString()).run();
+}
+
+/** Extend nursery reporting with optional customer summaries and credit sales. */
+async function ensureNurseryCustomerCredit(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_CUSTOMER_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  // Rebuild the compact aggregate table to add the credit payment category.
+  // The previous table contains aggregates only, so copying it preserves every
+  // historical quantity and amount without expanding old records.
+  await db.batch([
+    db.prepare("ALTER TABLE nursery_daily_sales RENAME TO nursery_daily_sales_v1"),
+    db.prepare(`CREATE TABLE nursery_daily_sales (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      business_date TEXT NOT NULL,
+      variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL,
+      payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0),
+      total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, variety_id, unit_price_cents, payment_method)
+    )`),
+    db.prepare(`INSERT INTO nursery_daily_sales
+      (id, shop_id, business_date, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at)
+      SELECT id, shop_id, business_date, variety_id, unit_price_cents, payment_method, quantity, total_amount_cents, created_at, updated_at
+      FROM nursery_daily_sales_v1`),
+    db.prepare("DROP TABLE nursery_daily_sales_v1"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_sales_shop_date ON nursery_daily_sales(shop_id, business_date)"),
+    db.prepare("ALTER TABLE nursery_entry_requests ADD COLUMN debt_id TEXT"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS nursery_customer_daily_sales (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      business_date TEXT NOT NULL,
+      customer_key TEXT NOT NULL,
+      customer_name TEXT NOT NULL,
+      customer_phone TEXT NOT NULL DEFAULT '',
+      variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL,
+      payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0),
+      total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, customer_key, variety_id, unit_price_cents, payment_method)
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_customer_sales_shop_date ON nursery_customer_daily_sales(shop_id, business_date)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_customer_sales_shop_customer ON nursery_customer_daily_sales(shop_id, customer_key, business_date)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(NURSERY_CUSTOMER_MARKER, new Date().toISOString()),
+  ]);
+}
+
+
+async function ensureNurseryIndividualEntries(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_ENTRIES_MARKER).first<{ key: string }>();
+  if (marker) return;
+  await db.batch([
+    db.prepare("CREATE TABLE IF NOT EXISTS nursery_sale_entries (id TEXT PRIMARY KEY, request_id TEXT NOT NULL, shop_id TEXT NOT NULL, business_date TEXT NOT NULL, variety_id TEXT NOT NULL, variety_name TEXT NOT NULL, customer_name TEXT NOT NULL DEFAULT '', customer_phone TEXT NOT NULL DEFAULT '', quantity INTEGER NOT NULL CHECK(quantity > 0), unit_price_cents INTEGER NOT NULL, total_amount_cents INTEGER NOT NULL, payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')), debt_id TEXT, created_at TEXT NOT NULL, UNIQUE(shop_id, request_id))"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_entries_shop_date ON nursery_sale_entries(shop_id, business_date, created_at DESC)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)").bind(NURSERY_ENTRIES_MARKER, new Date().toISOString()),
+  ]);
+}
+
+/** Add transaction grouping for multi-variety nursery receipts. */
+async function ensureNurseryTransactions(db: D1Database): Promise<void> {
+  const markerKey = "nursery_transaction_grouping_v1";
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(markerKey).first<{ key: string }>();
+  if (marker) return;
+  const columns = await db.prepare("PRAGMA table_info(nursery_sale_entries)").all<{ name: string }>();
+  if (!(columns.results ?? []).some(column => column.name === "transaction_id")) {
+    try {
+      await db.prepare("ALTER TABLE nursery_sale_entries ADD COLUMN transaction_id TEXT").run();
+    } catch (error) {
+      const refreshed = await db.prepare("PRAGMA table_info(nursery_sale_entries)").all<{ name: string }>();
+      if (!(refreshed.results ?? []).some(column => column.name === "transaction_id")) throw error;
+    }
+  }
+  await db.batch([
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_entries_shop_transaction ON nursery_sale_entries(shop_id, transaction_id)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(markerKey, new Date().toISOString()),
+  ]);
+}
+
+/** Add shop-defined categories without rewriting historical sales aggregates. */
+async function ensureNurseryCategories(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_CATEGORY_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  try {
+    await db.prepare("ALTER TABLE nursery_varieties ADD COLUMN category TEXT NOT NULL DEFAULT 'Uncategorized'").run();
+  } catch {
+    // Newer installs create the column with the base table; older installs add it here.
+  }
+  const columns = await db.prepare("PRAGMA table_info(nursery_varieties)").all<{ name: string }>();
+  if (!(columns.results ?? []).some(column => column.name === "category")) {
+    throw new Error("Could not add nursery variety category column");
+  }
+  await db.batch([
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_varieties_shop_category ON nursery_varieties(shop_id, category COLLATE NOCASE)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_varieties_shop_name ON nursery_varieties(shop_id, name COLLATE NOCASE)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(NURSERY_CATEGORY_MARKER, new Date().toISOString()),
+  ]);
+}
+
+/** Keep unread notification totals current without rescanning the full list. */
+async function ensureNotificationReadModel(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NOTIFICATION_COUNTER_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS notification_unread_counts (
+      shop_id TEXT PRIMARY KEY,
+      unread_count INTEGER NOT NULL DEFAULT 0 CHECK(unread_count >= 0)
+    )`),
+    db.prepare(`INSERT OR REPLACE INTO notification_unread_counts (shop_id, unread_count)
+      SELECT shop_id, COUNT(*) FROM notifications WHERE is_read = 0 GROUP BY shop_id`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_notifications_product_type_read ON notifications(product_id, type, is_read)"),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS notifications_unread_count_insert
+      AFTER INSERT ON notifications
+      WHEN NEW.is_read = 0
+      BEGIN
+        INSERT OR IGNORE INTO notification_unread_counts (shop_id, unread_count) VALUES (NEW.shop_id, 0);
+        UPDATE notification_unread_counts SET unread_count = unread_count + 1 WHERE shop_id = NEW.shop_id;
+      END`),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS notifications_unread_count_update
+      AFTER UPDATE OF shop_id, is_read ON notifications
+      WHEN OLD.shop_id != NEW.shop_id OR OLD.is_read != NEW.is_read
+      BEGIN
+        UPDATE notification_unread_counts
+          SET unread_count = MAX(0, unread_count - CASE WHEN OLD.is_read = 0 THEN 1 ELSE 0 END)
+          WHERE shop_id = OLD.shop_id;
+        INSERT OR IGNORE INTO notification_unread_counts (shop_id, unread_count) VALUES (NEW.shop_id, 0);
+        UPDATE notification_unread_counts
+          SET unread_count = unread_count + CASE WHEN NEW.is_read = 0 THEN 1 ELSE 0 END
+          WHERE shop_id = NEW.shop_id;
+      END`),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS notifications_unread_count_delete
+      AFTER DELETE ON notifications
+      WHEN OLD.is_read = 0
+      BEGIN
+        UPDATE notification_unread_counts
+          SET unread_count = MAX(0, unread_count - 1)
+          WHERE shop_id = OLD.shop_id;
+      END`),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(NOTIFICATION_COUNTER_MARKER, new Date().toISOString()),
+  ]);
+}
+
+/** Keep the shared customer table compatible with nursery and CRM writes. */
+async function ensureCustomerSchema(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(CUSTOMER_SCHEMA_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  const hasColumn = async (columnName: string): Promise<boolean> => {
+    const columns = await db.prepare("PRAGMA table_info(customers)").all<{ name: string }>();
+    return (columns.results ?? []).some(column => column.name === columnName);
+  };
+
+  const ensureColumn = async (columnName: string, statement: string): Promise<void> => {
+    if (await hasColumn(columnName)) return;
+    try {
+      await db.prepare(statement).run();
+    } catch (error) {
+      // Another cold Worker isolate may have added the column concurrently.
+      if (!(await hasColumn(columnName))) throw error;
+    }
+  };
+
+  await ensureColumn("credit_limit", "ALTER TABLE customers ADD COLUMN credit_limit REAL");
+  await ensureColumn(
+    "updated_at",
+    "ALTER TABLE customers ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+  );
+  await db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+    .bind(CUSTOMER_SCHEMA_MARKER, new Date().toISOString()).run();
 }
 
 async function bootstrapD1(db: D1Database): Promise<void> {
@@ -51,11 +301,15 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   }
 
   if (marker) {
-    const invoiceMarker = await db
-      .prepare("SELECT key FROM app_migrations WHERE key = ?")
-      .bind(QUOTATION_INVOICE_MARKER)
-      .first<{ key: string }>();
-    if (!invoiceMarker) await ensureQuotationInvoiceColumns(db);
+    // Idempotently ensure the invoice snapshot column exists and backfill legacy invoices.
+    await ensureQuotationInvoiceColumns(db);
+    await ensureNurseryRegister(db);
+    await ensureNurseryCustomerCredit(db);
+    await ensureNurseryIndividualEntries(db);
+    await ensureNurseryTransactions(db);
+    await ensureNurseryCategories(db);
+    await ensureNotificationReadModel(db);
+    await ensureCustomerSchema(db);
     bootstrapped = true;
     return;
   }
@@ -155,6 +409,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       items_json TEXT NOT NULL DEFAULT '[]',
       invoice_number TEXT,
       invoice_issued_at TEXT,
+      invoice_snapshot_json TEXT,
       created_by TEXT,
       created_at TEXT NOT NULL
     )`,
@@ -169,7 +424,8 @@ async function bootstrapD1(db: D1Database): Promise<void> {
       email TEXT,
       notes TEXT,
       credit_limit REAL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )`,
     "CREATE INDEX IF NOT EXISTS idx_customers_shop ON customers(shop_id)",
     "CREATE INDEX IF NOT EXISTS idx_customers_shop_name ON customers(shop_id, name)",
@@ -209,6 +465,9 @@ async function bootstrapD1(db: D1Database): Promise<void> {
         discount_amount REAL NOT NULL DEFAULT 0,
         total REAL NOT NULL DEFAULT 0,
         items_json TEXT NOT NULL DEFAULT '[]',
+        invoice_number TEXT,
+        invoice_issued_at TEXT,
+        invoice_snapshot_json TEXT,
         created_by TEXT,
         created_at TEXT NOT NULL
       )`).run();
@@ -236,6 +495,13 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   // Invoice issuance is an additive migration; keep this after the legacy
   // quotation-table repair above, which may recreate the table.
   await ensureQuotationInvoiceColumns(db);
+  await ensureNurseryRegister(db);
+  await ensureNurseryCustomerCredit(db);
+  await ensureNurseryIndividualEntries(db);
+  await ensureNurseryTransactions(db);
+  await ensureNurseryCategories(db);
+  await ensureNotificationReadModel(db);
+  await ensureCustomerSchema(db);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one indexed marker lookup
@@ -291,6 +557,11 @@ async function pruneOldData(db: D1Database): Promise<Record<string, number>> {
   const results: Record<string, number> = {};
 
   const steps: Array<{ name: string; sql: string; params: string[] }> = [
+    {
+      name: "nursery_entry_requests",
+      sql: "DELETE FROM nursery_entry_requests WHERE created_at < ?",
+      params: [ago(30)],
+    },
     {
       name: "audit_log",
       sql: "DELETE FROM audit_log WHERE created_at < ?",
@@ -365,8 +636,11 @@ app.use("*", async (c, next) => {
     const isPublic = urlPath === "/api/shops" || urlPath.startsWith("/api/healthz");
     if (isPublic) {
       c.res.headers.set("Cache-Control", "public, max-age=120, stale-while-revalidate=300");
-    } else if (c.res.status < 400) {
-      c.res.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+    } else {
+      // Authenticated data is mutable and shared across devices. Letting a
+      // browser/PWA reuse a cached GET here can conceal a completed write even
+      // when the next request reaches the Worker.
+      c.res.headers.set("Cache-Control", "private, no-store");
     }
   } else {
     c.res.headers.set("Cache-Control", "no-store");

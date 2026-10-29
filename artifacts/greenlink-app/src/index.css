@@ -253,3 +253,34 @@
     pointer-events: none;
   }
 }
+
+/* Nursery register uses the same shared theme surfaces as the rest of the app. */
+.nursery-page {
+  color: hsl(var(--foreground));
+}
+
+.light .nursery-page input,
+.light .nursery-page select,
+.light .nursery-page textarea {
+  color-scheme: light;
+}
+
+.dark .nursery-page input,
+.dark .nursery-page select,
+.dark .nursery-page textarea {
+  color-scheme: dark;
+}
+
+.nursery-page input[type="date"],
+.nursery-page input[type="month"] {
+  min-height: 2.8rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  letter-spacing: .015em;
+}
+
+.nursery-date-field {
+  display: grid;
+  gap: .4rem;
+  min-width: 0;
+}

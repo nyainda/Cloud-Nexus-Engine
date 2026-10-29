@@ -79,6 +79,11 @@ async function processMutation(
         method: "POST",
         body: JSON.stringify(payload),
       });
+    } else if (m.type === "customer_credit_topup") {
+      await customFetch("/api/debts/customer-credit", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
     }
     await deleteMutation(m.id);
     return { ok: true };
@@ -166,6 +171,7 @@ export function useOfflineSync(shopId: string) {
       qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
       // Offline sales can create debts; refresh the Customers/CRM views too.
       qc.invalidateQueries({ queryKey: ["/api/crm"] });
+      qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
       qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
 
       // ── Conflict detection ──────────────────────────────────────────────────

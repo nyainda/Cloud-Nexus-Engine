@@ -33,7 +33,9 @@ interface CustomerEntry {
   creditLimit: number | null;
   registered: boolean;
   totalBalance: number;
+  totalCredit: number;
   totalOwed: number;
+  totalPaid: number;
   debtCount: number;
   activeCount: number;
   lastActivity: string | null;
@@ -47,7 +49,7 @@ interface CustomerProfile {
   registered: boolean;
   customer: { id: string; name: string; phone: string; email: string | null; notes: string | null; creditLimit: number | null; createdAt: string } | null;
   debts: any[];
-  stats: { totalBalance: number; totalOwed: number; totalPaid: number; debtCount: number; activeCount: number };
+  stats: { totalBalance: number; totalCredit: number; totalOwed: number; totalPaid: number; debtCount: number; activeCount: number };
 }
 
 // ─── Avatar helper ────────────────────────────────────────────────────────────
@@ -538,6 +540,7 @@ function CustomerDetailPanel({
   // the panel so its avatar/actions do not keep showing the old balance while
   // the profile and customer directory have already refreshed.
   const displayedBalance = stats?.totalBalance ?? customer.totalBalance;
+  const displayedCredit = stats?.totalCredit ?? customer.totalCredit ?? 0;
 
   const handleRegister = async () => {
     setRegistering(true);
@@ -557,7 +560,11 @@ function CustomerDetailPanel({
   };
 
   const waMsg = customer.phone
-    ? `Hi ${customer.name}, you have an outstanding balance of ${formatKES(displayedBalance)} at our shop. Please settle at your earliest convenience. Thank you!`
+    ? displayedBalance > 0
+      ? `Hi ${customer.name}, you have an outstanding balance of ${formatKES(displayedBalance)} at our shop.${displayedCredit > 0 ? ` You also have ${formatKES(displayedCredit)} customer credit available.` : ""} Please settle at your earliest convenience. Thank you!`
+      : displayedCredit > 0
+        ? `Hi ${customer.name}, you have ${formatKES(displayedCredit)} customer credit available at our shop. Thank you!`
+        : `Hi ${customer.name}, your account has no outstanding balance at our shop. Thank you!`
     : "";
   const waUrl = customer.phone
     ? `https://wa.me/${customer.phone.replace(/\D/g, "")}?text=${encodeURIComponent(waMsg)}`
@@ -638,11 +645,11 @@ function CustomerDetailPanel({
           <div className="p-4 space-y-4">
             {/* Stats */}
             {isLoading ? (
-              <div className="grid grid-cols-3 gap-2">
-                {[1, 2, 3].map(i => <div key={i} className="h-16 rounded-2xl bg-muted/40 animate-pulse" />)}
+              <div className="grid grid-cols-2 gap-2">
+                {[1, 2, 3, 4].map(i => <div key={i} className="h-16 rounded-2xl bg-muted/40 animate-pulse" />)}
               </div>
             ) : stats ? (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-2xl bg-destructive/10 border border-destructive/20 p-3 text-center">
                   <p className="text-sm font-bold font-mono text-destructive leading-none truncate">{formatKES(stats.totalBalance)}</p>
                   <p className="text-[10px] text-muted-foreground/60 mt-1.5">Outstanding</p>
@@ -650,6 +657,10 @@ function CustomerDetailPanel({
                 <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-center">
                   <p className="text-sm font-bold font-mono text-emerald-400 leading-none truncate">{formatKES(stats.totalPaid)}</p>
                   <p className="text-[10px] text-muted-foreground/60 mt-1.5">Paid</p>
+                </div>
+                <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-center">
+                  <p className="text-sm font-bold font-mono text-emerald-400 leading-none truncate">{formatKES(stats.totalCredit)}</p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-1.5">Available credit</p>
                 </div>
                 <div className="rounded-2xl bg-muted/40 border border-border/50 p-3 text-center">
                   <p className="text-sm font-bold font-mono text-foreground leading-none">{stats.debtCount}</p>
@@ -840,16 +851,15 @@ export default function Customers() {
 
   const qc = useQueryClient();
 
-  // Every action that changes customer data (sales, debt payments, edits) already
-  // invalidates crmKey — see pos.tsx, debts.tsx, sales-history.tsx. No timed poll
-  // needed; refetch on focus/mount keeps this fresh when you switch back to the tab.
+  // Local writes invalidate this query; polling also picks up debt/customer
+  // changes made by a different device while this page remains open.
   const { data: allCustomers = [], isLoading } = useQuery<CustomerEntry[]>({
     queryKey: crmKey(shopId),
     queryFn: () => customFetch<CustomerEntry[]>(`/api/crm?shopId=${encodeURIComponent(shopId)}`),
     enabled: !!shopId,
     staleTime: 15_000,
     refetchOnWindowFocus: true,
-    refetchInterval: false,
+    refetchInterval: 60_000,
   });
 
   const stats = useMemo(() => {
@@ -1081,9 +1091,14 @@ export default function Customers() {
                     )}>
                       {customer.totalBalance > 0 ? formatKES(customer.totalBalance) : "—"}
                     </p>
-                    {customer.totalBalance > 0 && (
+                    {customer.totalCredit > 0 && (
+                      <p className="text-[10px] text-emerald-500 dark:text-emerald-400">
+                        Credit: {formatKES(customer.totalCredit)}
+                      </p>
+                    )}
+                    {(customer.totalPaid ?? 0) > 0 && (
                       <p className="text-[10px] text-muted-foreground/40">
-                        Paid: {formatKES(customer.totalOwed - customer.totalBalance)}
+                        Paid: {formatKES(customer.totalPaid)}
                       </p>
                     )}
                   </div>

@@ -5,6 +5,7 @@ import {
   useListAuditLog, getListSuppliersQueryKey
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { API_BASE } from "@/lib/api-base";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter
 } from "@/components/ui/dialog";
@@ -45,6 +46,7 @@ function mutationTypeLabel(type: QueuedMutation["type"]) {
   if (type === "restock") return "Restock";
   if (type === "debt_payment") return "Debt Payment";
   if (type === "customer_debt_payment") return "Debt Payment (all debts)";
+  if (type === "customer_credit_topup") return "Credit Top-up";
   return type;
 }
 function mutationTypeIcon(type: QueuedMutation["type"]) {
@@ -52,6 +54,7 @@ function mutationTypeIcon(type: QueuedMutation["type"]) {
   if (type === "restock") return Package;
   if (type === "debt_payment") return Banknote;
   if (type === "customer_debt_payment") return Banknote;
+  if (type === "customer_credit_topup") return Banknote;
   return CloudUpload;
 }
 
@@ -978,7 +981,7 @@ function BackupSection({ shopId }: { shopId: string }) {
     setDownloading(true);
     try {
       const token = localStorage.getItem("greenlink_token") || "";
-      const baseUrl = (window as any).__API_BASE_URL__ || "";
+      const baseUrl = API_BASE ?? "";
       const res = await fetch(`${baseUrl}/api/admin/export?shopId=${encodeURIComponent(shopId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -1122,7 +1125,7 @@ export default function Settings() {
 
   const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } });
   const { data: suppliers } = useListSuppliers({ shopId }, { query: { enabled: !!shopId && isOwner, refetchInterval: 60_000, refetchIntervalInBackground: false } });
-  const { data: auditLog } = useListAuditLog({ shopId, limit: 20 }, { query: { enabled: !!shopId && isOwner, refetchInterval: 30_000, refetchIntervalInBackground: false } });
+  const { data: auditLog } = useListAuditLog({ shopId, limit: 20 }, { query: { enabled: !!shopId && isOwner, refetchInterval: 60_000, refetchIntervalInBackground: false } });
 
   const updateShop = useUpdateShop();
 

@@ -135,7 +135,7 @@ export default function ReturnsPage() {
     queryFn: () =>
       customFetch<any[]>(`/api/returns?shopId=${shopId}&date=${date}`),
     enabled: !!shopId,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   const returns: any[] = returnHistory ?? [];

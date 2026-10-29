@@ -3,12 +3,12 @@ import { useState, useEffect } from "react";
 import { OfflineBanner } from "@/components/offline-banner";
 import { OfflineSyncProvider } from "@/lib/offline-context";
 import {
-  ShoppingCart, Package, Users, Bell, BarChart3,
+  ShoppingCart, Package, Users, Bell, BarChart3, Store, MapPin,
   ScanLine, Settings, LogOut, LayoutDashboard, Receipt,
   Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
-  MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser,
+  MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser, Sprout,
 } from "lucide-react";
-import { useListNotifications, useLogout } from "@workspace/api-client-react";
+import { useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { setCachedSession } from "@/lib/session-cache";
 import { getTheme, setTheme, type Theme } from "@/lib/theme";
@@ -118,7 +118,7 @@ function ThemeToggle({ collapsed, className }: { collapsed?: boolean; className?
   );
 }
 
-function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCount: number }) {
+function MobileBottomNav({ isOwner }: { isOwner: boolean }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [location] = useLocation();
 
@@ -135,7 +135,7 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
         <BottomNavItem href="/pos" icon={ShoppingCart} label="POS" />
         <BottomNavItem href="/stock" icon={Package} label="Stock" />
         <BottomNavItem href="/debts" icon={Users} label="Debts" />
-        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} />
+        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" />
         <BottomNavItem href="/sales-history" icon={Receipt} label="History" />
         {/* "More" button — opens a sheet with the rest of the navigation */}
         <button
@@ -173,6 +173,7 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
             </div>
             <div className="p-3 grid grid-cols-2 gap-2">
               <MoreSheetItem href="/customers" icon={BookUser} label="Customers" />
+              <MoreSheetItem href="/nursery" icon={Sprout} label="Nursery Register" />
               <MoreSheetItem href="/returns" icon={RotateCcw} label="Process Return" />
               <MoreSheetItem href="/transfers" icon={ArrowLeftRight} label="Transfers" />
               <MoreSheetItem href="/quotations" icon={FileText} label="Quotations" />
@@ -237,14 +238,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const { data: notifications } = useListNotifications(
-    { shopId },
-    { query: { enabled: !!shopId } as any }
-  );
-  const unreadCount = (notifications || []).filter((n: any) => !n.isRead).length;
-
   const logout = useLogout();
-  const [, setLocation] = useLocation();
+  const [currentPath, setLocation] = useLocation();
 
   const handleLogout = () => {
     logout.mutate(undefined, {
@@ -308,7 +303,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <SidebarNavItem href="/stock" icon={Package} label="Inventory" collapsed={collapsed} />
           <SidebarNavItem href="/customers" icon={BookUser} label="Customers" collapsed={collapsed} />
           <SidebarNavItem href="/debts" icon={Users} label="Customer Debts" collapsed={collapsed} />
-          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} collapsed={collapsed} />
+          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" collapsed={collapsed} />
 
           {!collapsed && (
             <div className="pt-3 pb-1 px-3">
@@ -327,6 +322,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           )}
           {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
           <SidebarNavItem href="/quotations" icon={FileText} label="Quotations" collapsed={collapsed} />
+          <SidebarNavItem href="/nursery" icon={Sprout} label="Nursery Register" collapsed={collapsed} />
 
           {isOwner && (
             <>
@@ -416,6 +412,29 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {/* Offline banner — shows when device loses connectivity */}
           <OfflineBanner />
 
+          {/* Persistent shop identity bar: visible on every page, including checkout */}
+          <div className="z-30 flex shrink-0 items-center gap-3 border-b border-emerald-500/20 bg-emerald-500/[0.07] px-3 py-2.5 sm:px-5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300">
+              <Store className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300/80">Current shop</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold capitalize text-emerald-700 dark:text-emerald-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  {role}
+                </span>
+              </div>
+              <p className="truncate text-sm font-bold text-foreground" title={shopName}>{shopName}</p>
+            </div>
+            {currentPath === "/pos" && (
+              <div className="hidden shrink-0 items-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/[0.08] px-2.5 py-2 text-[10px] font-semibold text-amber-700 dark:text-amber-200 sm:flex">
+                <MapPin className="h-3.5 w-3.5" />
+                Check shop before checkout
+              </div>
+            )}
+          </div>
+
           {/* Page content */}
           <main className="flex-1 overflow-y-auto min-h-0" style={{ WebkitTransform: 'translateZ(0)', transform: 'translateZ(0)' }}>
             {children}
@@ -423,7 +442,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </OfflineSyncProvider>
 
         {/* Mobile Bottom Nav */}
-        <MobileBottomNav isOwner={isOwner} unreadCount={unreadCount} />
+        <MobileBottomNav isOwner={isOwner} />
       </div>
     </div>
   );
