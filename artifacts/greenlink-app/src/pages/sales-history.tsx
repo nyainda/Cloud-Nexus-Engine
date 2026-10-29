@@ -779,6 +779,7 @@ export default function SalesHistory() {
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { if (!todayFlag) setDate(d => addDays(d, 1)); }} disabled={todayFlag}>
               <ChevronRight className="h-4 w-4" />
             </Button>
+            </div>
           </div>
         </div>
 
