@@ -30,10 +30,16 @@ type ReportData = {
 type EntriesData = { rows: IndividualSaleEntry[]; total: number; page: number; pageSize: number; summary: { quantity: number; totalCents: number; creditCents: number } };
 type MonthlyCategory = { category: string; seedlingsSold: number; totalRevenueCents: number; varietyCount: number; cashCents: number; mpesaCents: number; creditCents: number };
 type MonthlySummaryData = { month: string; from: string; to: string; categories: MonthlyCategory[]; summary: { seedlingsSold: number; totalRevenueCents: number } };
-type NurseryTab = "overview" | "record" | "catalogue" | "insights" | "sales" | "reports";
+type SupplierRow = { id: string; name: string; phone?: string | null; notes?: string | null; customerId?: string | null; customerName?: string | null; customerPhone?: string | null; receivedPlants: number; onHandPlants: number; supplierCreditCents: number; customerDebtCents: number };
+type SupplierCustomer = { id: string; name: string; phone?: string | null; outstandingDebtCents: number };
+type SupplierRecord = { id: string; recordType: string; recordedAt: string; varietyName: string; quantity: number; amountCents: number; note: string };
+type SaleSource = { varietyId: string; supplierId: string; supplierName: string; availableQuantity: number };
+type NurseryTab = "overview" | "record" | "catalogue" | "insights" | "sales" | "reports" | "suppliers";
 const nurseryQueryOptions = {
-  staleTime: 60_000,
-  refetchInterval: false,
+  staleTime: 10_000,
+  refetchInterval: 30_000,
+  refetchIntervalInBackground: false,
+  refetchOnWindowFocus: true,
 } as const;
 
 function localDate(date = new Date()) {
@@ -57,7 +63,7 @@ function cents(value: unknown) {
   return Number.isFinite(amount) ? amount / 100 : 0;
 }
 type CustomerInsightRow = { customerKey: string; customerName: string; customerPhone: string; varietyName: string; quantity: number; totalAmountCents: number; lastPurchase: string };
-type IndividualSaleEntry = { id: string; requestId: string; transactionId?: string | null; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; createdAt: string };
+type IndividualSaleEntry = { id: string; requestId: string; transactionId?: string | null; businessDate: string; varietyId: string; varietyName: string; customerName: string; customerPhone: string; quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: "cash" | "mpesa" | "credit"; debtId: string | null; sourceSupplierId?: string | null; sourceSupplierName?: string | null; createdAt: string };
 
 function useDebouncedValue<T>(value: T, delayMs = 250) {
   const [debounced, setDebounced] = useState(value);
@@ -109,7 +115,7 @@ export default function NurseryRegister() {
   const [cataloguePage, setCataloguePage] = useState(1);
   const [productSearch, setProductSearch] = useState("");
   const [productCategory, setProductCategory] = useState("");
-  const [cart, setCart] = useState<Array<{ requestId: string; varietyId: string; name: string; quantity: string; unitPrice: string }>>([]);
+  const [cart, setCart] = useState<Array<{ requestId: string; varietyId: string; name: string; quantity: string; unitPrice: string; sourceSupplierId: string }>>([]);
   const [saleSearch, setSaleSearch] = useState("");
   const [salePaymentFilter, setSalePaymentFilter] = useState<"all" | "cash" | "mpesa" | "credit">("all");
   const [salesPage, setSalesPage] = useState(1);
@@ -118,6 +124,21 @@ export default function NurseryRegister() {
   const [statementPhone, setStatementPhone] = useState("");
   const [statementBusy, setStatementBusy] = useState(false);
   const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
+  const [supplierName, setSupplierName] = useState("");
+  const [supplierPhone, setSupplierPhone] = useState("");
+  const [supplierNotes, setSupplierNotes] = useState("");
+  const [supplierCustomerSearch, setSupplierCustomerSearch] = useState("");
+  const [supplierCustomerId, setSupplierCustomerId] = useState("");
+  const [selectedSupplierId, setSelectedSupplierId] = useState("");
+  const [receiveSupplierId, setReceiveSupplierId] = useState("");
+  const [receiveVarietySearch, setReceiveVarietySearch] = useState("");
+  const [receiveVarietyId, setReceiveVarietyId] = useState("");
+  const [receiveQuantity, setReceiveQuantity] = useState("1");
+  const [receiveDate, setReceiveDate] = useState(localDate());
+  const [receiveNotes, setReceiveNotes] = useState("");
+  const [receiptRequestId, setReceiptRequestId] = useState(() => crypto.randomUUID());
+  const [savingSupplier, setSavingSupplier] = useState(false);
+  const [savingReceipt, setSavingReceipt] = useState(false);
   const [reportPage, setReportPage] = useState(1);
   const salesPageSize = 25;
   const reportPageSize = 20;
@@ -125,6 +146,8 @@ export default function NurseryRegister() {
   const debouncedProductSearch = useDebouncedValue(productSearch);
   const debouncedSaleSearch = useDebouncedValue(saleSearch);
   const debouncedSaleEditSearch = useDebouncedValue(saleEditSearch);
+  const debouncedSupplierCustomerSearch = useDebouncedValue(supplierCustomerSearch);
+  const debouncedReceiveVarietySearch = useDebouncedValue(receiveVarietySearch);
 
   useEffect(() => {
     const updateOnlineStatus = () => setIsOnline(navigator.onLine);
@@ -183,7 +206,48 @@ export default function NurseryRegister() {
     enabled: !!shopId && activeTab === "overview" && /^\d{4}-\d{2}$/.test(selectedMonth),
     ...nurseryQueryOptions,
   });
+  const suppliersQuery = useQuery({
+    queryKey: ["/api/nursery/suppliers", shopId],
+    queryFn: () => customFetch("/api/nursery/suppliers") as Promise<{ rows: SupplierRow[] }>,
+    enabled: !!shopId && activeTab === "suppliers",
+    ...nurseryQueryOptions,
+  });
+  const supplierCustomersQuery = useQuery({
+    queryKey: ["/api/nursery/supplier-customers", shopId, debouncedSupplierCustomerSearch],
+    queryFn: () => customFetch(`/api/nursery/supplier-customers?q=${encodeURIComponent(debouncedSupplierCustomerSearch)}`) as Promise<{ rows: SupplierCustomer[] }>,
+    enabled: !!shopId && activeTab === "suppliers" && debouncedSupplierCustomerSearch.trim().length >= 2,
+    ...nurseryQueryOptions,
+  });
+  const receiveVarietiesQuery = useQuery({
+    queryKey: ["/api/nursery/varieties", shopId, "supplier-receive", debouncedReceiveVarietySearch],
+    queryFn: () => customFetch(varietyListUrl({ status: "active", search: debouncedReceiveVarietySearch, page: 1, pageSize: 20 })) as Promise<VarietyListData>,
+    enabled: !!shopId && activeTab === "suppliers" && debouncedReceiveVarietySearch.trim().length >= 2,
+    ...nurseryQueryOptions,
+  });
+  const supplierRecordsQuery = useQuery({
+    queryKey: ["/api/nursery/suppliers", shopId, selectedSupplierId, "records"],
+    queryFn: () => customFetch(`/api/nursery/suppliers/${encodeURIComponent(selectedSupplierId)}/records?limit=100`) as Promise<{ rows: SupplierRecord[] }>,
+    enabled: !!shopId && activeTab === "suppliers" && !!selectedSupplierId,
+    ...nurseryQueryOptions,
+  });
+  const sourceVarietyIds = [...new Set(cart.map(item => item.varietyId))].sort();
+  const sourceVarietyKey = sourceVarietyIds.join(",");
+  const saleSourcesQuery = useQuery({
+    queryKey: ["/api/nursery/sale-sources", shopId, sourceVarietyKey],
+    queryFn: () => customFetch(`/api/nursery/sale-sources?varietyIds=${encodeURIComponent(sourceVarietyKey)}`) as Promise<{ rows: SaleSource[] }>,
+    enabled: !!shopId && activeTab === "record" && sourceVarietyIds.length > 0,
+    staleTime: 5_000,
+    refetchInterval: 20_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
 
+  const supplierRows = suppliersQuery.data?.rows ?? [];
+  const supplierCustomers = supplierCustomersQuery.data?.rows ?? [];
+  const receiveVarieties = receiveVarietiesQuery.data?.rows ?? [];
+  const supplierRecords = supplierRecordsQuery.data?.rows ?? [];
+  const selectedSupplier = supplierRows.find(supplier => supplier.id === selectedSupplierId) ?? null;
+  const saleSources = saleSourcesQuery.data?.rows ?? [];
   const varieties = saleVarietiesQuery.data?.rows ?? [];
   const matchingSaleVarieties = varieties;
   const catalogueRows = catalogueQuery.data?.rows ?? [];
@@ -203,7 +267,7 @@ export default function NurseryRegister() {
     setCart(current => {
       const existing = current.find(item => item.varietyId === variety.id);
       if (existing) return current.map(item => item.varietyId === variety.id ? { ...item, quantity: String((Number(item.quantity) || 0) + 1) } : item);
-      return [...current, { requestId: crypto.randomUUID(), varietyId: variety.id, name: variety.name, quantity: "1", unitPrice: String(variety.defaultPrice) }];
+      return [...current, { requestId: crypto.randomUUID(), varietyId: variety.id, name: variety.name, quantity: "1", unitPrice: String(variety.defaultPrice), sourceSupplierId: "" }];
     });
     setProductSearch("");
   }
@@ -364,6 +428,15 @@ export default function NurseryRegister() {
     if (prepared.some(item => !Number.isSafeInteger(item.qty) || item.qty <= 0 || !Number.isFinite(item.price) || item.price < 0 || (paymentMethod === "credit" && item.price <= 0))) {
       toast.error("Check every cart line: quantity must be a positive whole number and each price must be valid."); return;
     }
+    const sourceOverage = prepared.find(item => {
+      if (!item.sourceSupplierId) return false;
+      const available = saleSources.find(source => source.varietyId === item.varietyId && source.supplierId === item.sourceSupplierId)?.availableQuantity ?? 0;
+      return item.qty > Number(available);
+    });
+    if (sourceOverage) {
+      toast.error(`Recorded source stock is too low for ${sourceOverage.name}. Refresh stock or lower the quantity.`);
+      return;
+    }
     setSaving(true);
     const savedRequestIds = new Set<string>();
     const transactionId = pendingTransactionId || crypto.randomUUID();
@@ -377,7 +450,7 @@ export default function NurseryRegister() {
           paymentMethod,
           customerName: customerName.trim() || undefined,
           customerPhone: customerPhone.trim() || undefined,
-          items: batch.map(item => ({ requestId: item.requestId, varietyId: item.varietyId, quantity: item.qty, unitPrice: item.price })),
+          items: batch.map(item => ({ requestId: item.requestId, varietyId: item.varietyId, quantity: item.qty, unitPrice: item.price, sourceSupplierId: item.sourceSupplierId || null })),
         }) });
         const completed = new Set(batch.map(item => item.requestId));
         completed.forEach(id => savedRequestIds.add(id));
@@ -390,6 +463,8 @@ export default function NurseryRegister() {
         qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/suppliers", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/sale-sources", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
       ]);
@@ -401,10 +476,89 @@ export default function NurseryRegister() {
           qc.invalidateQueries({ queryKey: ["/api/nursery/customer-insights", shopId] }),
           qc.invalidateQueries({ queryKey: ["/api/nursery/entries", shopId] }),
           qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
+          qc.invalidateQueries({ queryKey: ["/api/nursery/suppliers", shopId] }),
+          qc.invalidateQueries({ queryKey: ["/api/nursery/sale-sources", shopId] }),
           qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         ]);
       } else toast.error(error?.message || "Could not save the sale. Your cart is unchanged.");
     } finally { setSaving(false); }
+  }
+
+  async function createNurserySupplier(event: FormEvent) {
+    event.preventDefault();
+    const name = supplierName.trim().replace(/\s+/g, " ");
+    if (!name || name.length > 120 || supplierPhone.trim().length > 40 || supplierNotes.trim().length > 500) {
+      toast.error("Check the supplier name, phone and notes.");
+      return;
+    }
+    setSavingSupplier(true);
+    try {
+      const supplier = await customFetch("/api/nursery/suppliers", {
+        method: "POST",
+        body: JSON.stringify({
+          name, phone: supplierPhone.trim() || undefined, notes: supplierNotes.trim() || undefined,
+          customerId: supplierCustomerId || null,
+        }),
+      }) as { id: string };
+      setSupplierName("");
+      setSupplierPhone("");
+      setSupplierNotes("");
+      setSupplierCustomerId("");
+      setSelectedSupplierId(supplier.id);
+      if (!receiveSupplierId) setReceiveSupplierId(supplier.id);
+      await qc.invalidateQueries({ queryKey: ["/api/nursery/suppliers", shopId] });
+      toast.success("Nursery supplier added.");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not add this supplier.");
+    } finally { setSavingSupplier(false); }
+  }
+
+  async function saveNurseryReceipt(event: FormEvent) {
+    event.preventDefault();
+    const quantity = Number(receiveQuantity);
+    if (!receiveSupplierId || !receiveVarietyId || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 10000000 || !receiveDate) {
+      toast.error("Choose a supplier, variety, quantity and received date.");
+      return;
+    }
+    setSavingReceipt(true);
+    try {
+      await customFetch("/api/nursery/receipts", {
+        method: "POST",
+        body: JSON.stringify({
+          requestId: receiptRequestId, supplierId: receiveSupplierId, varietyId: receiveVarietyId,
+          quantity, receivedAt: receiveDate, notes: receiveNotes.trim(),
+        }),
+      });
+      setReceiveQuantity("1");
+      setReceiveNotes("");
+      setReceiptRequestId(crypto.randomUUID());
+      await Promise.allSettled([
+        qc.invalidateQueries({ queryKey: ["/api/nursery/suppliers", shopId] }),
+        qc.invalidateQueries({ queryKey: ["/api/nursery/sale-sources", shopId] }),
+      ]);
+      toast.success("Plant receipt recorded against this supplier.");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not record the plant receipt. Your details are still available to retry.");
+    } finally { setSavingReceipt(false); }
+  }
+
+  async function linkSupplierCustomer() {
+    if (!selectedSupplierId || !supplierCustomerId) {
+      toast.error("Search for and choose the existing customer to link.");
+      return;
+    }
+    try {
+      await customFetch(`/api/nursery/suppliers/${encodeURIComponent(selectedSupplierId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ customerId: supplierCustomerId }),
+      });
+      setSupplierCustomerId("");
+      setSupplierCustomerSearch("");
+      await qc.invalidateQueries({ queryKey: ["/api/nursery/suppliers", shopId] });
+      toast.success("Supplier linked to the existing customer. Future source sales will reduce their debt first.");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not link this customer.");
+    }
   }
 
   async function createVariety(event: FormEvent) {
@@ -593,6 +747,7 @@ export default function NurseryRegister() {
         <TabsTrigger value="insights" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><Users className="h-4 w-4" />Customers</TabsTrigger>
         <TabsTrigger value="sales" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><ReceiptText className="h-4 w-4" />Sales history</TabsTrigger>
         <TabsTrigger value="reports" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><BarChart3 className="h-4 w-4" />Reports</TabsTrigger>
+        <TabsTrigger value="suppliers" className="gap-2 rounded-xl px-3 py-2.5 data-[state=active]:shadow-sm"><Boxes className="h-4 w-4" />Sources & stock</TabsTrigger>
       </TabsList>
 
       <section aria-label="Date controls" className="grid gap-3 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:grid-cols-2 sm:p-5 lg:grid-cols-[minmax(170px,.7fr)_minmax(170px,.7fr)_minmax(180px,.8fr)_auto] lg:items-end">
@@ -767,6 +922,22 @@ export default function NurseryRegister() {
                           <div className="space-y-1"><Label htmlFor={`cart-${item.varietyId}-quantity`} className="text-xs">Quantity</Label><Input id={`cart-${item.varietyId}-quantity`} data-testid={`input-nursery-sale-quantity-${item.varietyId}`} aria-label={`${item.name} quantity`} type="number" min="1" max="10000000" step="1" inputMode="numeric" value={item.quantity} onChange={e => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, quantity: e.target.value } : line))} className="h-10" required /></div>
                           <div className="space-y-1"><Label htmlFor={`cart-${item.varietyId}-price`} className="text-xs">Price per seedling (KES)</Label><Input id={`cart-${item.varietyId}-price`} data-testid={`input-nursery-sale-price-${item.varietyId}`} aria-label={`${item.name} price per seedling`} type="number" min="0" max="1000000" step="0.01" inputMode="decimal" value={item.unitPrice} onChange={e => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, unitPrice: e.target.value } : line))} className="h-10" required /></div>
                         </div>
+                         <div className="mt-2 space-y-1">
+                           <Label htmlFor={`cart-${item.varietyId}-source`} className="text-xs">Plant source <span className="font-normal text-muted-foreground">(optional)</span></Label>
+                           <select
+                             id={`cart-${item.varietyId}-source`}
+                             aria-label={`${item.name} supplier source`}
+                             value={item.sourceSupplierId}
+                             onChange={event => setCart(current => current.map(line => line.varietyId === item.varietyId ? { ...line, sourceSupplierId: event.target.value } : line))}
+                             className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                           >
+                             <option value="">No source tracked</option>
+                             {saleSources.filter(source => source.varietyId === item.varietyId).map(source => (
+                               <option key={source.supplierId} value={source.supplierId}>{source.supplierName} · {Number(source.availableQuantity).toLocaleString()} available</option>
+                             ))}
+                           </select>
+                           {item.sourceSupplierId && (Number(item.quantity) > Number(saleSources.find(source => source.varietyId === item.varietyId && source.supplierId === item.sourceSupplierId)?.availableQuantity ?? 0)) && <p role="alert" className="text-xs font-medium text-destructive">The selected source has fewer plants than this sale quantity.</p>}
+                         </div>
                         <p data-testid={`text-nursery-sale-line-total-${item.varietyId}`} className="mt-2 text-right text-sm font-semibold tabular-nums">Line total · {formatKES(lineTotal)}</p>
                       </div>;
                     })}
@@ -1037,8 +1208,8 @@ export default function NurseryRegister() {
                     <span className={"shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span>
                   </div>
                   <div className="mt-4 rounded-xl bg-muted/40 p-3"><p className="text-xs text-muted-foreground">Sale total</p><p className="mt-0.5 text-2xl font-bold tracking-tight tabular-nums">{formatKES(cents(entry.totalAmountCents))}</p><div className="mt-2 flex items-center justify-between gap-2 border-t border-border/70 pt-2 text-sm"><span className="text-muted-foreground">Quantity</span><span className="font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()} seedlings</span></div><div className="mt-1 flex items-center justify-between gap-2 text-sm"><span className="text-muted-foreground">Unit price</span><span className="font-medium tabular-nums">{formatKES(cents(entry.unitPriceCents))}</span></div></div>
-                  <div className="mt-3 min-w-0"><p className="truncate text-sm font-medium">{entry.customerName || "Walk-in customer"}</p><p className="truncate text-xs text-muted-foreground">{entry.customerPhone || "No phone recorded"}</p></div>
-                  <div className="mt-4 flex flex-wrap gap-2 border-t border-border/70 pt-3"><Button type="button" variant="outline" size="sm" onClick={() => downloadReceipt(entry)} className="gap-1.5"><ReceiptText className="h-3.5 w-3.5" /> PDF receipt</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="flex-1 gap-1.5"><Pencil className="h-3.5 w-3.5" /> Edit sale</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Delete</span></Button></div>
+                  <div className="mt-3 min-w-0"><p className="truncate text-sm font-medium">{entry.customerName || "Walk-in customer"}</p><p className="truncate text-xs text-muted-foreground">{entry.customerPhone || "No phone recorded"}{entry.sourceSupplierName ? ` · Source: ${entry.sourceSupplierName}` : ""}</p></div>
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-border/70 pt-3"><Button type="button" variant="outline" size="sm" onClick={() => downloadReceipt(entry)} className="gap-1.5"><ReceiptText className="h-3.5 w-3.5" /> PDF receipt</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id || !!entry.sourceSupplierId} title={entry.sourceSupplierId ? "Supplier-linked sales are locked to preserve stock and debt records." : undefined} onClick={() => beginEditSale(entry)} className="flex-1 gap-1.5"><Pencil className="h-3.5 w-3.5" /> Edit sale</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id || !!entry.sourceSupplierId} title={entry.sourceSupplierId ? "Supplier-linked sales are locked to preserve stock and debt records." : undefined} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Delete</span></Button></div>
                 </div>)}
               </div>
               <div className="hidden overflow-x-auto rounded-xl border border-border/70 xl:block">
@@ -1046,12 +1217,12 @@ export default function NurseryRegister() {
                   <thead className="bg-muted/40"><tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground"><th className="w-10 px-3 py-3" aria-label="Select sale"></th><th className="px-4 py-3">Date / time</th><th className="px-4 py-3">Seedlings / customer</th><th className="px-4 py-3 text-right">Quantity</th><th className="px-4 py-3 text-right">Unit price</th><th className="px-4 py-3">Payment</th><th className="px-4 py-3 text-right">Sale total</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
                   <tbody>{filteredIndividualEntries.map(entry => <tr key={entry.id} className={"border-b border-border/60 last:border-0 transition-colors hover:bg-muted/30 " + (selectedSaleIds.includes(entry.id) ? "bg-primary/5" : "")}>
                      <td className="w-10 px-3 py-3.5"><input type="checkbox" aria-label={`Select ${entry.varietyName} sale`} checked={selectedSaleIds.includes(entry.id)} onChange={() => toggleSaleSelection(entry.id)} className="h-4 w-4 rounded border-border accent-primary" /></td><td className="whitespace-nowrap px-4 py-3.5"><p className="font-semibold">{formatBusinessDate(entry.businessDate)}</p><p className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></td>
-                    <td className="px-4 py-3.5"><p className="font-semibold">{entry.varietyName}</p><p className="text-xs text-muted-foreground">{entry.customerName || "Walk-in customer"}{entry.customerPhone ? " · " + entry.customerPhone : ""}</p></td>
+                    <td className="px-4 py-3.5"><p className="font-semibold">{entry.varietyName}</p><p className="text-xs text-muted-foreground">{entry.customerName || "Walk-in customer"}{entry.customerPhone ? " · " + entry.customerPhone : ""}{entry.sourceSupplierName ? ` · Source: ${entry.sourceSupplierName}` : ""}</p></td>
                     <td className="px-4 py-3.5 text-right font-semibold tabular-nums">{Number(entry.quantity).toLocaleString()}</td>
                     <td className="px-4 py-3.5 text-right tabular-nums">{formatKES(cents(entry.unitPriceCents))}</td>
                     <td className="px-4 py-3.5"><span className={"inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " + (entry.paymentMethod === "cash" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : entry.paymentMethod === "mpesa" ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-violet-500/10 text-violet-700 dark:text-violet-300")}>{entry.paymentMethod === "mpesa" ? "M-Pesa" : entry.paymentMethod === "credit" ? "Credit" : "Cash"}</span></td>
                     <td className="px-4 py-3.5 text-right font-bold tabular-nums">{formatKES(cents(entry.totalAmountCents))}</td>
-                    <td className="px-4 py-3.5"><div className="flex justify-end gap-1.5"><Button type="button" variant="outline" size="sm" onClick={() => downloadReceipt(entry)} className="gap-1"><ReceiptText className="h-3.5 w-3.5" /> PDF</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id} onClick={() => beginEditSale(entry)} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</Button><Button type="button" variant="ghost" size="sm" disabled={busySaleId === entry.id} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /> Delete</Button></div></td>
+                    <td className="px-4 py-3.5"><div className="flex justify-end gap-1.5"><Button type="button" variant="outline" size="sm" onClick={() => downloadReceipt(entry)} className="gap-1"><ReceiptText className="h-3.5 w-3.5" /> PDF</Button><Button type="button" variant="outline" size="sm" disabled={busySaleId === entry.id || !!entry.sourceSupplierId} title={entry.sourceSupplierId ? "Supplier-linked sales are locked to preserve stock and debt records." : undefined} onClick={() => beginEditSale(entry)} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</Button><Button type="button" variant="ghost" size="sm" disabled={busySaleId === entry.id || !!entry.sourceSupplierId} title={entry.sourceSupplierId ? "Supplier-linked sales are locked to preserve stock and debt records." : undefined} onClick={() => { if (window.confirm("Delete this " + entry.varietyName + " sale for " + formatKES(cents(entry.totalAmountCents)) + "? The linked totals will be adjusted.")) void deleteSale(entry); }} className="gap-1 text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /> Delete</Button></div></td>
                   </tr>)}</tbody>
                 </table>
               </div>
@@ -1141,6 +1312,180 @@ export default function NurseryRegister() {
           <p className="mt-3 border-t border-border/70 pt-3 text-xs leading-relaxed text-muted-foreground">The selected sale date summary is for {formatBusinessDate(businessDate)}; period figures and variety totals cover {formatBusinessDate(from)} to {formatBusinessDate(to)}. Each variety is totaled once across that range. Individual sale dates remain available in Sales history. Credit sales create a linked customer debt.</p>
         </CardContent>
       </Card>
+      </TabsContent>
+
+      <TabsContent value="suppliers" className="mt-5 space-y-4 focus-visible:outline-none">
+        <section className="rounded-2xl border border-primary/20 bg-primary/[.04] p-4 sm:p-5">
+          <p className="text-xs font-bold uppercase tracking-[.12em] text-primary">Nursery supply tracking</p>
+          <h2 className="mt-1 text-xl font-bold">Sources, stock and supplier debt</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+            Record each plant delivery against its supplier. Choose that source when the plants sell; the recorded sale value reduces the linked customer’s shop debt first, and any extra stays as supplier credit. Stock updates on this page and on other devices every 30 seconds while open.
+          </p>
+        </section>
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b border-border/70">
+              <CardTitle className="text-lg">Add a plant supplier</CardTitle>
+              <p className="text-sm text-muted-foreground">Link an existing shop customer if this supplier also has a debt.</p>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <form onSubmit={createNurserySupplier} className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nursery-supplier-name">Supplier name</Label>
+                    <Input id="nursery-supplier-name" value={supplierName} onChange={event => setSupplierName(event.target.value)} maxLength={120} placeholder="e.g. Greenhouse supplier" required />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nursery-supplier-phone">Supplier phone</Label>
+                    <Input id="nursery-supplier-phone" type="tel" value={supplierPhone} onChange={event => setSupplierPhone(event.target.value)} maxLength={40} placeholder="Optional phone number" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="nursery-supplier-customer-search">Link an existing customer <span className="font-normal text-muted-foreground">(optional)</span></Label>
+                  <Input id="nursery-supplier-customer-search" value={supplierCustomerSearch} onChange={event => { setSupplierCustomerSearch(event.target.value); setSupplierCustomerId(""); }} placeholder="Search customer name or phone" autoComplete="off" />
+                  {debouncedSupplierCustomerSearch.trim().length >= 2 && supplierCustomersQuery.isLoading && <p role="status" className="text-xs text-muted-foreground">Searching shop customers…</p>}
+                  {debouncedSupplierCustomerSearch.trim().length >= 2 && supplierCustomersQuery.isError && <p role="alert" className="text-xs text-destructive">Could not find customers. Try again.</p>}
+                  {!!supplierCustomers.length && !supplierCustomerId && <div className="max-h-40 overflow-y-auto rounded-lg border border-border bg-background">
+                    {supplierCustomers.map(customer => <button key={customer.id} type="button" onClick={() => { setSupplierCustomerId(customer.id); if (!supplierName.trim()) setSupplierName(customer.name); if (!supplierPhone.trim()) setSupplierPhone(customer.phone ?? ""); }} className="flex w-full items-center justify-between gap-3 border-b border-border/60 px-3 py-2.5 text-left text-sm last:border-0 hover:bg-muted/50">
+                      <span className="min-w-0"><span className="block truncate font-medium">{customer.name}</span><span className="text-xs text-muted-foreground">{customer.phone || "No phone recorded"}</span></span>
+                      <span className="shrink-0 text-xs font-semibold tabular-nums">{formatKES(cents(customer.outstandingDebtCents))} owed</span>
+                    </button>)}
+                  </div>}
+                  {supplierCustomerId && <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">
+                    Linked to {supplierCustomers.find(customer => customer.id === supplierCustomerId)?.name ?? "selected customer"}. Sales from this supplier source will reduce their outstanding shop debt.
+                  </p>}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="nursery-supplier-notes">Notes</Label>
+                  <Input id="nursery-supplier-notes" value={supplierNotes} onChange={event => setSupplierNotes(event.target.value)} maxLength={500} placeholder="Optional delivery or supplier notes" />
+                </div>
+                <Button type="submit" disabled={savingSupplier} className="w-full gap-2 sm:w-auto"><Plus className="h-4 w-4" />{savingSupplier ? "Adding supplier…" : "Add supplier"}</Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b border-border/70">
+              <CardTitle className="text-lg">Record plants received</CardTitle>
+              <p className="text-sm text-muted-foreground">Each delivery is saved as a separate supplier record.</p>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <form onSubmit={saveNurseryReceipt} className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nursery-receipt-supplier">Supplier</Label>
+                    <select id="nursery-receipt-supplier" value={receiveSupplierId} onChange={event => setReceiveSupplierId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" required>
+                      <option value="">Choose a supplier</option>
+                      {supplierRows.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nursery-receipt-date">Date received</Label>
+                    <Input id="nursery-receipt-date" type="date" value={receiveDate} onChange={event => setReceiveDate(event.target.value)} required />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="nursery-receipt-variety-search">Find a plant variety</Label>
+                  <Input id="nursery-receipt-variety-search" value={receiveVarietySearch} onChange={event => { setReceiveVarietySearch(event.target.value); setReceiveVarietyId(""); }} placeholder="Type at least two letters to search" autoComplete="off" />
+                  {receiveVarietySearch.trim().length < 2 && <p className="text-xs text-muted-foreground">Search the catalogue to choose from any active variety.</p>}
+                  {receiveVarietySearch.trim().length >= 2 && receiveVarietiesQuery.isLoading && <p role="status" className="text-xs text-muted-foreground">Searching varieties…</p>}
+                  {receiveVarietySearch.trim().length >= 2 && receiveVarietiesQuery.isError && <p role="alert" className="text-xs text-destructive">Could not load varieties. Try again.</p>}
+                  {!!receiveVarieties.length && <select id="nursery-receipt-variety" value={receiveVarietyId} onChange={event => setReceiveVarietyId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" required>
+                    <option value="">Choose a variety</option>
+                    {receiveVarieties.map(variety => <option key={variety.id} value={variety.id}>{variety.name} · {variety.category}</option>)}
+                  </select>}
+                  {receiveVarietySearch.trim().length >= 2 && !receiveVarietiesQuery.isFetching && receiveVarieties.length === 0 && <p className="text-xs text-muted-foreground">No active variety matched. Add it in the Varieties tab first.</p>}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nursery-receipt-quantity">Plants received</Label>
+                    <Input id="nursery-receipt-quantity" type="number" min="1" max="10000000" step="1" inputMode="numeric" value={receiveQuantity} onChange={event => setReceiveQuantity(event.target.value)} required />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nursery-receipt-notes">Delivery notes</Label>
+                    <Input id="nursery-receipt-notes" value={receiveNotes} onChange={event => setReceiveNotes(event.target.value)} maxLength={500} placeholder="Optional" />
+                  </div>
+                </div>
+                <Button type="submit" disabled={savingReceipt || !supplierRows.length || !receiveVarietyId} className="w-full gap-2 sm:w-auto"><PackagePlus className="h-4 w-4" />{savingReceipt ? "Saving receipt…" : "Record delivery"}</Button>
+                {!supplierRows.length && <p className="text-xs text-muted-foreground">Add a supplier before recording a delivery.</p>}
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b border-border/70">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div><CardTitle className="text-lg">Supplier balances and source stock</CardTitle><p className="mt-1 text-sm text-muted-foreground">Select a supplier to review its receipts and the sales applied to its debt.</p></div>
+              <Button type="button" variant="outline" size="sm" disabled={suppliersQuery.isFetching} onClick={() => void suppliersQuery.refetch()} className="gap-2"><RefreshCw className={`h-3.5 w-3.5 ${suppliersQuery.isFetching ? "animate-spin" : ""}`} />Refresh</Button>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4">
+            {suppliersQuery.isLoading ? <p className="py-6 text-center text-sm text-muted-foreground">Loading suppliers…</p>
+              : suppliersQuery.isError ? <div role="alert" className="py-6 text-center"><p className="font-medium text-destructive">Could not load suppliers.</p><Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => void suppliersQuery.refetch()}>Try again</Button></div>
+              : !supplierRows.length ? <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">No nursery suppliers yet. Add one above, then record each plant delivery.</p>
+              : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {supplierRows.map(supplier => <button key={supplier.id} type="button" onClick={() => setSelectedSupplierId(supplier.id)} aria-pressed={selectedSupplierId === supplier.id} className={`rounded-xl border p-4 text-left transition-colors ${selectedSupplierId === supplier.id ? "border-primary bg-primary/[.04] shadow-sm" : "border-border hover:border-primary/30 hover:bg-muted/20"}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0"><p className="truncate font-semibold">{supplier.name}</p><p className="truncate text-xs text-muted-foreground">{supplier.customerId ? `Linked customer · ${supplier.customerName || "Customer"}` : "No customer debt link"}{supplier.phone ? ` · ${supplier.phone}` : ""}</p></div>
+                    <span className="rounded-full bg-muted px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{selectedSupplierId === supplier.id ? "Selected" : "Manage"}</span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-3 gap-2 border-t border-border/70 pt-3">
+                    <div><p className="text-[10px] uppercase text-muted-foreground">Plants left</p><p className="mt-1 text-sm font-bold tabular-nums">{Number(supplier.onHandPlants).toLocaleString()}</p></div>
+                    <div><p className="text-[10px] uppercase text-muted-foreground">Debt remaining</p><p className="mt-1 text-sm font-bold tabular-nums">{formatKES(cents(supplier.customerDebtCents))}</p></div>
+                    <div><p className="text-[10px] uppercase text-muted-foreground">Supplier credit</p><p className="mt-1 text-sm font-bold tabular-nums">{formatKES(cents(supplier.supplierCreditCents))}</p></div>
+                  </div>
+                </button>)}
+              </div>}
+          </CardContent>
+        </Card>
+
+        {selectedSupplier && <Card className="overflow-hidden">
+          <CardHeader className="border-b border-border/70">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div><CardTitle className="text-lg">{selectedSupplier.name} · activity</CardTitle><p className="mt-1 text-sm text-muted-foreground">{selectedSupplier.customerId ? `Linked to ${selectedSupplier.customerName || "a shop customer"}. Recorded nursery sale value reduces this customer's debt.` : "Link this supplier to an existing customer to automatically apply future sale proceeds to their debt."}</p></div>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedSupplierId("")}>Close</Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4 p-4">
+            <section className="rounded-xl border border-border/70 bg-muted/20 p-3">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="nursery-link-customer-search">Link existing shop customer</Label>
+                  <Input id="nursery-link-customer-search" value={supplierCustomerSearch} onChange={event => { setSupplierCustomerSearch(event.target.value); setSupplierCustomerId(""); }} placeholder="Search by customer name or phone" autoComplete="off" />
+                </div>
+                <Button type="button" onClick={() => void linkSupplierCustomer()} disabled={!supplierCustomerId} className="gap-2"><Users className="h-4 w-4" />{selectedSupplier.customerId ? "Update link" : "Link customer"}</Button>
+              </div>
+              {!!supplierCustomers.length && <div className="mt-2 flex flex-wrap gap-2">
+                {supplierCustomers.map(customer => <button key={customer.id} type="button" onClick={() => setSupplierCustomerId(customer.id)} className={`rounded-full border px-3 py-1.5 text-xs ${supplierCustomerId === customer.id ? "border-primary bg-primary/10 text-primary" : "border-border bg-background hover:bg-muted"}`}>
+                  {customer.name}{customer.phone ? ` · ${customer.phone}` : ""} · owes {formatKES(cents(customer.outstandingDebtCents))}
+                </button>)}
+              </div>}
+            </section>
+
+            {supplierRecordsQuery.isLoading ? <p className="py-6 text-center text-sm text-muted-foreground">Loading supplier activity…</p>
+              : supplierRecordsQuery.isError ? <div role="alert" className="py-6 text-center"><p className="font-medium text-destructive">Could not load supplier activity.</p><Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => void supplierRecordsQuery.refetch()}>Try again</Button></div>
+              : !supplierRecords.length ? <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">No deliveries or source sales have been recorded for this supplier yet.</p>
+              : <div className="overflow-x-auto rounded-xl border border-border/70">
+                <table className="w-full min-w-[650px] text-left text-sm">
+                  <thead><tr className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Date</th><th className="px-3 py-3">Record</th><th className="px-3 py-3">Variety</th><th className="px-3 py-3 text-right">Plants</th><th className="px-3 py-3 text-right">Amount</th><th className="px-3 py-3">Details</th></tr></thead>
+                  <tbody>{supplierRecords.map(record => {
+                    const label = record.recordType === "receipt" ? "Plants received" : record.recordType === "sale_proceeds" ? "Sale proceeds" : record.recordType === "debt_offset" ? "Applied to debt" : record.recordType;
+                    return <tr key={record.id} className="border-b border-border/60 last:border-0">
+                      <td className="whitespace-nowrap px-3 py-3">{formatBusinessDate(record.recordedAt.slice(0, 10))}</td>
+                      <td className="px-3 py-3 font-medium">{label}</td>
+                      <td className="px-3 py-3">{record.varietyName || "—"}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{Number(record.quantity || 0).toLocaleString()}</td>
+                      <td className="px-3 py-3 text-right font-semibold tabular-nums">{record.amountCents ? formatKES(cents(Math.abs(Number(record.amountCents)))) : "—"}</td>
+                      <td className="max-w-[260px] truncate px-3 py-3 text-xs text-muted-foreground" title={record.note}>{record.note || "—"}</td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div>}
+            <p className="text-xs text-muted-foreground">Supplier credit is the part of recorded plant-sale value left after reducing the linked shop debt. It is a tracked balance, not a cash payout.</p>
+          </CardContent>
+        </Card>}
       </TabsContent>
     </div>
     </Tabs>

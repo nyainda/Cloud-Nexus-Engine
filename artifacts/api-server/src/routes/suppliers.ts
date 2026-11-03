@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
@@ -69,9 +69,28 @@ suppliersRouter.patch("/suppliers/:supplierId", requireAuth, async (c) => {
 
 suppliersRouter.delete("/suppliers/:supplierId", requireAuth, async (c) => {
   const db = createDb(c.env.DB);
+  const shopId = c.get("session").shopId;
+  const supplierId = c.req.param("supplierId");
+  const supplier = await db.select({ id: suppliers.id })
+    .from(suppliers)
+    .where(and(eq(suppliers.id, supplierId), eq(suppliers.shopId, shopId)))
+    .get();
+  if (!supplier) return c.json({ error: "Supplier not found." }, 404);
+
+  const hasNurseryHistory = await c.env.DB.prepare(
+    `SELECT 1 AS found FROM nursery_supplier_receipts WHERE shop_id = ? AND supplier_id = ?
+     UNION ALL
+     SELECT 1 AS found FROM nursery_supplier_ledger WHERE shop_id = ? AND supplier_id = ?
+     UNION ALL
+     SELECT 1 AS found FROM nursery_sale_entries WHERE shop_id = ? AND source_supplier_id = ?
+     LIMIT 1`
+  ).bind(shopId, supplierId, shopId, supplierId, shopId, supplierId).first();
+  if (hasNurseryHistory) {
+    return c.json({ error: "This supplier has nursery stock or financial history and cannot be removed. Keep it for reporting." }, 409);
+  }
   await db
     .delete(suppliers)
-    .where(eq(suppliers.id, c.req.param("supplierId")));
+    .where(and(eq(suppliers.id, supplierId), eq(suppliers.shopId, shopId)));
   return c.body(null, 204);
 });
 

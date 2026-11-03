@@ -15,6 +15,7 @@ const NURSERY_REGISTER_MARKER = "nursery-register-v1";
 const NURSERY_CUSTOMER_MARKER = "nursery-customer-credit-v1";
 const NURSERY_ENTRIES_MARKER = "nursery-individual-entries-v1";
 const NURSERY_CATEGORY_MARKER = "nursery-categories-v1";
+const NURSERY_SUPPLIER_MARKER = "nursery-supplier-tracking-v1";
 const NOTIFICATION_COUNTER_MARKER = "notification-unread-counter-v1";
 const CUSTOMER_SCHEMA_MARKER = "customer-credit-columns-v1";
 
@@ -205,6 +206,87 @@ async function ensureNurseryCategories(db: D1Database): Promise<void> {
   ]);
 }
 
+/** Track nursery stock by supplier and preserve a ledger for sale proceeds/debt offsets. */
+async function ensureNurserySupplierTracking(db: D1Database): Promise<void> {
+  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
+    .bind(NURSERY_SUPPLIER_MARKER).first<{ key: string }>();
+  if (marker) return;
+
+  const ensureColumn = async (table: string, name: string, statement: string) => {
+    const columns = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+    if ((columns.results ?? []).some(column => column.name === name)) return;
+    try {
+      await db.prepare(statement).run();
+    } catch (error) {
+      const refreshed = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+      if (!(refreshed.results ?? []).some(column => column.name === name)) throw error;
+    }
+  };
+
+  await ensureColumn("suppliers", "customer_id", "ALTER TABLE suppliers ADD COLUMN customer_id TEXT");
+  await ensureColumn("nursery_sale_entries", "source_supplier_id", "ALTER TABLE nursery_sale_entries ADD COLUMN source_supplier_id TEXT");
+  await ensureColumn("nursery_sale_entries", "source_supplier_name", "ALTER TABLE nursery_sale_entries ADD COLUMN source_supplier_name TEXT");
+
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS nursery_supplier_receipts (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      supplier_id TEXT NOT NULL,
+      variety_id TEXT NOT NULL,
+      variety_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL CHECK(quantity > 0),
+      received_at TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(shop_id, request_id)
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS nursery_supplier_ledger (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      supplier_id TEXT NOT NULL,
+      sale_entry_id TEXT,
+      entry_type TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 0,
+      variety_name TEXT NOT NULL DEFAULT '',
+      debt_id TEXT,
+      debt_payment_id TEXT,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_supplier_receipts_stock ON nursery_supplier_receipts(shop_id, supplier_id, variety_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_supplier_receipts_history ON nursery_supplier_receipts(shop_id, supplier_id, received_at DESC)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_supplier_ledger_history ON nursery_supplier_ledger(shop_id, supplier_id, created_at DESC)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_supplier_ledger_sale ON nursery_supplier_ledger(shop_id, sale_entry_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_entries_source_stock ON nursery_sale_entries(shop_id, source_supplier_id, variety_id)"),
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_nursery_supplier_sale_proceeds_once
+      ON nursery_supplier_ledger(sale_entry_id, entry_type)
+      WHERE sale_entry_id IS NOT NULL AND entry_type = 'sale_proceeds'`),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS nursery_source_stock_guard
+      BEFORE INSERT ON nursery_sale_entries
+      WHEN NEW.source_supplier_id IS NOT NULL
+      BEGIN
+        SELECT CASE WHEN NOT EXISTS (
+          SELECT 1 FROM suppliers
+          WHERE id = NEW.source_supplier_id AND shop_id = NEW.shop_id
+        ) THEN RAISE(ABORT, 'Invalid nursery supplier source') END;
+        SELECT CASE WHEN
+          COALESCE((
+            SELECT SUM(quantity) FROM nursery_supplier_receipts
+            WHERE shop_id = NEW.shop_id AND supplier_id = NEW.source_supplier_id AND variety_id = NEW.variety_id
+          ), 0) - COALESCE((
+            SELECT SUM(quantity) FROM nursery_sale_entries
+            WHERE shop_id = NEW.shop_id AND source_supplier_id = NEW.source_supplier_id AND variety_id = NEW.variety_id
+          ), 0) < NEW.quantity
+        THEN RAISE(ABORT, 'Insufficient nursery supplier stock') END;
+      END`),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(NURSERY_SUPPLIER_MARKER, new Date().toISOString()),
+  ]);
+}
+
 /** Keep unread notification totals current without rescanning the full list. */
 async function ensureNotificationReadModel(db: D1Database): Promise<void> {
   const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
@@ -308,6 +390,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
     await ensureNurseryIndividualEntries(db);
     await ensureNurseryTransactions(db);
     await ensureNurseryCategories(db);
+    await ensureNurserySupplierTracking(db);
     await ensureNotificationReadModel(db);
     await ensureCustomerSchema(db);
     bootstrapped = true;
@@ -500,6 +583,7 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   await ensureNurseryIndividualEntries(db);
   await ensureNurseryTransactions(db);
   await ensureNurseryCategories(db);
+  await ensureNurserySupplierTracking(db);
   await ensureNotificationReadModel(db);
   await ensureCustomerSchema(db);
 

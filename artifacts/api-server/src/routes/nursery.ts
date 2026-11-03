@@ -1,15 +1,387 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { requireAuth } from "../middleware/auth";
+import { CK, kvDel } from "../lib/cache";
 
 const nurseryRouter = new Hono<AppEnv>();
 const paymentMethods = new Set(["cash", "mpesa", "credit"]);
+
+function normalizedPhone(value: string | null | undefined): string {
+  const digits = (value ?? "").replace(/\D/g, "");
+  return digits.startsWith("254") ? `0${digits.slice(3)}` : digits;
+}
+
+function normalizedName(value: string | null | undefined): string {
+  return (value ?? "").trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+const normalizedPhoneSql = (column: string) =>
+  `CASE WHEN substr(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(${column}, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', ''), 1, 3) = '254'
+    THEN '0' || substr(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(${column}, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', ''), 4)
+    ELSE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(${column}, '')), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '') END`;
+
+async function ensureSupplierCustomer(
+  db: AppEnv["Bindings"]["DB"],
+  shopId: string,
+  customerId: string | null | undefined,
+  rawName: string | null | undefined,
+  rawPhone: string | null | undefined,
+  now: string,
+): Promise<string | null> {
+  if (customerId) {
+    const existing = await db.prepare("SELECT id FROM customers WHERE id = ? AND shop_id = ?")
+      .bind(customerId, shopId).first<{ id: string }>();
+    if (!existing) throw new Error("Choose a customer belonging to this shop.");
+    return existing.id;
+  }
+  const name = rawName?.trim().replace(/\s+/g, " ") ?? "";
+  const phone = rawPhone?.trim() ?? "";
+  if (!name) return null;
+  const phoneKey = normalizedPhone(phone);
+  const existing = phoneKey
+    ? await db.prepare(
+      `SELECT id FROM customers WHERE shop_id = ? AND ${normalizedPhoneSql("phone")} = ? LIMIT 1`
+    ).bind(shopId, phoneKey).first<{ id: string }>()
+    : await db.prepare("SELECT id FROM customers WHERE shop_id = ? AND lower(trim(name)) = lower(trim(?)) LIMIT 1")
+      .bind(shopId, name).first<{ id: string }>();
+  if (existing) return existing.id;
+  const id = crypto.randomUUID();
+  await db.prepare(
+    "INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)"
+  ).bind(id, shopId, name, phone, now, now).run();
+  return id;
+}
+
+type SupplierSaleForPosting = {
+  entryId: string;
+  supplierId: string;
+  varietyName: string;
+  quantity: number;
+  totalAmountCents: number;
+};
+
+async function buildSupplierProceedsStatements(
+  db: AppEnv["Bindings"]["DB"],
+  shopId: string,
+  sales: SupplierSaleForPosting[],
+  now: string,
+): Promise<D1PreparedStatement[]> {
+  const supplierIds = [...new Set(sales.map(sale => sale.supplierId))];
+  if (!supplierIds.length) return [];
+  const marks = supplierIds.map(() => "?").join(", ");
+  const suppliers = await db.prepare(
+    `SELECT s.id, s.name, c.name AS customerName, c.phone AS customerPhone
+     FROM suppliers s
+     LEFT JOIN customers c ON c.id = s.customer_id AND c.shop_id = s.shop_id
+     WHERE s.shop_id = ? AND s.id IN (${marks})`
+  ).bind(shopId, ...supplierIds).all<{
+    id: string; name: string; customerName: string | null; customerPhone: string | null;
+  }>();
+  const supplierById = new Map((suppliers.results ?? []).map(row => [row.id, row]));
+  if (supplierById.size !== supplierIds.length) throw new Error("A selected nursery supplier is no longer available.");
+
+  const debtRows = await db.prepare(
+    `SELECT id, customer_name AS customerName, customer_phone AS customerPhone,
+       balance, amount_paid AS amountPaid, total_amount AS totalAmount, created_at AS createdAt
+     FROM debts
+     WHERE shop_id = ? AND status IN ('unpaid', 'partial') AND balance > 0
+     ORDER BY created_at ASC, id ASC`
+  ).bind(shopId).all<{
+    id: string; customerName: string; customerPhone: string; balance: number;
+    amountPaid: number; totalAmount: number; createdAt: string;
+  }>();
+  const openDebts = debtRows.results ?? [];
+  const availableCents = new Map(openDebts.map(debt => [debt.id, Math.max(0, Math.round(Number(debt.balance || 0) * 100))]));
+  const statements: D1PreparedStatement[] = [];
+
+  for (const sale of sales) {
+    const supplier = supplierById.get(sale.supplierId)!;
+    const saleNote = `Nursery sale — ${sale.varietyName} × ${sale.quantity} from ${supplier.name}`;
+    statements.push(db.prepare(
+      `INSERT INTO nursery_supplier_ledger
+        (id, shop_id, supplier_id, sale_entry_id, entry_type, amount_cents, quantity, variety_name, note, created_at)
+       VALUES (?, ?, ?, ?, 'sale_proceeds', ?, ?, ?, ?, ?)`
+    ).bind(crypto.randomUUID(), shopId, supplier.id, sale.entryId, sale.totalAmountCents, sale.quantity, sale.varietyName, saleNote, now));
+
+    const customerName = supplier.customerName ?? "";
+    const customerPhone = supplier.customerPhone ?? "";
+    const phoneKey = normalizedPhone(customerPhone);
+    const nameKey = normalizedName(customerName);
+    if (!nameKey && !phoneKey) continue;
+
+    const supplierDebts = openDebts.filter(debt => {
+      const debtPhone = normalizedPhone(debt.customerPhone);
+      if (phoneKey) return debtPhone === phoneKey || (!debtPhone && normalizedName(debt.customerName) === nameKey);
+      return normalizedName(debt.customerName) === nameKey;
+    });
+    let remaining = Math.max(0, sale.totalAmountCents);
+    for (const debt of supplierDebts) {
+      if (remaining <= 0) break;
+      const balanceCents = availableCents.get(debt.id) ?? 0;
+      const appliedCents = Math.min(remaining, balanceCents);
+      if (appliedCents <= 0) continue;
+      const amount = appliedCents / 100;
+      const paymentId = crypto.randomUUID();
+      const offsetNote = `Nursery sale proceeds applied to supplier debt — ${supplier.name}`;
+
+      statements.push(db.prepare(
+        `UPDATE debts
+         SET amount_paid = MIN(total_amount, amount_paid + ?),
+             balance = MAX(0, balance - ?),
+             status = CASE WHEN MAX(0, balance - ?) <= 0.005 THEN 'paid'
+               WHEN MIN(total_amount, amount_paid + ?) <= 0.005 THEN 'unpaid' ELSE 'partial' END,
+             paid_at = CASE WHEN MAX(0, balance - ?) <= 0.005 THEN ? ELSE NULL END
+         WHERE id = ? AND shop_id = ? AND balance > 0 AND balance + 0.005 >= ?`
+      ).bind(amount, amount, amount, amount, amount, now, debt.id, shopId, amount));
+      statements.push(db.prepare(
+        `INSERT INTO debt_payments (id, debt_id, amount, recorded_by, paid_at, payment_type, note)
+         SELECT ?, ?, ?, 'Nursery', ?, 'payment', ? WHERE changes() > 0`
+      ).bind(paymentId, debt.id, amount, now, offsetNote));
+      statements.push(db.prepare(
+        `INSERT INTO nursery_supplier_ledger
+          (id, shop_id, supplier_id, sale_entry_id, entry_type, amount_cents, quantity, variety_name, debt_id, debt_payment_id, note, created_at)
+         SELECT ?, ?, ?, ?, 'debt_offset', ?, ?, ?, ?, ?, ?, ? WHERE changes() > 0`
+      ).bind(crypto.randomUUID(), shopId, supplier.id, sale.entryId, -appliedCents, sale.quantity, sale.varietyName, debt.id, paymentId, offsetNote, now));
+
+      availableCents.set(debt.id, balanceCents - appliedCents);
+      remaining -= appliedCents;
+    }
+  }
+  return statements;
+}
+
+async function invalidateDebtViews(bindings: AppEnv["Bindings"], shopId: string) {
+  await kvDel(bindings.SESSIONS, CK.debts(shopId), CK.dashboard(shopId, new Date().toISOString().slice(0, 10)));
+}
 
 function validDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(value + "T00:00:00Z");
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
+
+nurseryRouter.get("/nursery/supplier-customers", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const search = (c.req.query("q") ?? "").trim().slice(0, 80);
+  if (search.length < 2) return c.json({ rows: [] });
+  const like = `%${search}%`;
+  const [customerRows, debtRows] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT c.id, c.name, c.phone,
+         CAST(ROUND(COALESCE((
+           SELECT SUM(d.balance) FROM debts d
+           WHERE d.shop_id = c.shop_id AND d.status IN ('unpaid', 'partial') AND d.balance > 0
+             AND ((TRIM(COALESCE(c.phone, '')) != '' AND ${normalizedPhoneSql("d.customer_phone")} = ${normalizedPhoneSql("c.phone")}) OR
+               (TRIM(COALESCE(d.customer_phone, '')) = '' AND lower(trim(d.customer_name)) = lower(trim(c.name))))
+         ), 0) * 100) AS INTEGER) AS outstandingDebtCents
+       FROM customers c
+       WHERE c.shop_id = ? AND (lower(c.name) LIKE lower(?) OR c.phone LIKE ?)
+       ORDER BY outstandingDebtCents DESC, c.name COLLATE NOCASE
+       LIMIT 50`
+    ).bind(shopId, like, like).all<SupplierCustomer>(),
+    c.env.DB.prepare(
+      `SELECT customer_name AS name, customer_phone AS phone,
+         CAST(ROUND(SUM(balance) * 100) AS INTEGER) AS outstandingDebtCents
+       FROM debts
+       WHERE shop_id = ? AND status IN ('unpaid', 'partial') AND balance > 0
+         AND (lower(customer_name) LIKE lower(?) OR customer_phone LIKE ?)
+       GROUP BY lower(trim(customer_name)), ${normalizedPhoneSql("customer_phone")}
+       ORDER BY outstandingDebtCents DESC, name COLLATE NOCASE
+       LIMIT 50`
+    ).bind(shopId, like, like).all<Omit<SupplierCustomer, "id"> & { name: string; phone: string }>(),
+  ]);
+  const merged = new Map<string, SupplierCustomer>();
+  for (const row of customerRows.results ?? []) {
+    const key = normalizedPhone(row.phone) ? `phone:${normalizedPhone(row.phone)}` : `name:${normalizedName(row.name)}`;
+    merged.set(key, { ...row, id: row.id, outstandingDebtCents: Number(row.outstandingDebtCents ?? 0) });
+  }
+  for (const row of debtRows.results ?? []) {
+    const key = normalizedPhone(row.phone) ? `phone:${normalizedPhone(row.phone)}` : `name:${normalizedName(row.name)}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.outstandingDebtCents = Math.max(existing.outstandingDebtCents, Number(row.outstandingDebtCents ?? 0));
+    } else {
+      merged.set(key, { id: null, name: row.name, phone: row.phone, outstandingDebtCents: Number(row.outstandingDebtCents ?? 0) });
+    }
+  }
+  return c.json({ rows: [...merged.values()].sort((a, b) => Number(b.outstandingDebtCents) - Number(a.outstandingDebtCents) || a.name.localeCompare(b.name)).slice(0, 20) });
+});
+
+nurseryRouter.get("/nursery/suppliers", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const rows = await c.env.DB.prepare(
+    `SELECT s.id, s.name, s.phone, s.notes, s.customer_id AS customerId,
+       c.name AS customerName, c.phone AS customerPhone,
+       COALESCE((SELECT SUM(r.quantity) FROM nursery_supplier_receipts r
+         WHERE r.shop_id = s.shop_id AND r.supplier_id = s.id), 0) AS receivedPlants,
+       COALESCE((SELECT SUM(r.quantity) FROM nursery_supplier_receipts r
+         WHERE r.shop_id = s.shop_id AND r.supplier_id = s.id), 0) -
+       COALESCE((SELECT SUM(e.quantity) FROM nursery_sale_entries e
+         WHERE e.shop_id = s.shop_id AND e.source_supplier_id = s.id), 0) AS onHandPlants,
+       CAST(ROUND(COALESCE((SELECT SUM(l.amount_cents) FROM nursery_supplier_ledger l
+         WHERE l.shop_id = s.shop_id AND l.supplier_id = s.id), 0)) AS INTEGER) AS supplierCreditCents,
+       CAST(ROUND(COALESCE((SELECT SUM(d.balance) FROM debts d
+         WHERE d.shop_id = s.shop_id AND d.status IN ('unpaid', 'partial') AND d.balance > 0
+           AND ((TRIM(COALESCE(c.phone, '')) != '' AND ${normalizedPhoneSql("d.customer_phone")} = ${normalizedPhoneSql("c.phone")}) OR
+             (TRIM(COALESCE(d.customer_phone, '')) = '' AND lower(trim(d.customer_name)) = lower(trim(c.name))))
+       ), 0) * 100) AS INTEGER) AS customerDebtCents
+     FROM suppliers s
+     LEFT JOIN customers c ON c.id = s.customer_id AND c.shop_id = s.shop_id
+     WHERE s.shop_id = ?
+     ORDER BY s.name COLLATE NOCASE`
+  ).bind(shopId).all();
+  return c.json({ rows: rows.results ?? [] });
+});
+
+nurseryRouter.post("/nursery/suppliers", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const body = await c.req.json<{ name?: string; phone?: string; notes?: string; customerId?: string | null; customerName?: string; customerPhone?: string }>();
+  const name = body.name?.trim().replace(/\s+/g, " ") ?? "";
+  const phone = body.phone?.trim() ?? "";
+  const notes = body.notes?.trim() ?? "";
+  if (!name || name.length > 120 || phone.length > 40 || notes.length > 500 ||
+      (body.customerName?.trim().length ?? 0) > 120 || (body.customerPhone?.trim().length ?? 0) > 40) {
+    return c.json({ error: "Enter a supplier name up to 120 characters, a phone up to 40 characters, and notes up to 500 characters." }, 400);
+  }
+  const now = new Date().toISOString();
+  let customerId: string | null;
+  try {
+    customerId = await ensureSupplierCustomer(c.env.DB, shopId, body.customerId, body.customerName, body.customerPhone, now);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Choose a customer belonging to this shop." }, 400);
+  }
+  const id = crypto.randomUUID();
+  await c.env.DB.prepare(
+    "INSERT INTO suppliers (id, shop_id, name, phone, notes, created_at, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, shopId, name, phone || null, notes || null, now, customerId).run();
+  return c.json({ id, name, phone, notes, customerId, createdAt: now }, 201);
+});
+
+nurseryRouter.patch("/nursery/suppliers/:id", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const id = c.req.param("id");
+  const body = await c.req.json<{ name?: string; phone?: string | null; notes?: string | null; customerId?: string | null; customerName?: string; customerPhone?: string }>();
+  const old = await c.env.DB.prepare("SELECT id FROM suppliers WHERE id = ? AND shop_id = ?").bind(id, shopId).first();
+  if (!old) return c.json({ error: "Supplier not found." }, 404);
+  const updates: string[] = [];
+  const values: Array<string | null> = [];
+  if (body.name !== undefined) {
+    const name = body.name.trim().replace(/\s+/g, " ");
+    if (!name || name.length > 120) return c.json({ error: "Supplier names must be 1–120 characters." }, 400);
+    updates.push("name = ?"); values.push(name);
+  }
+  if (body.phone !== undefined) {
+    const phone = body.phone?.trim() ?? "";
+    if (phone.length > 40) return c.json({ error: "Supplier phone numbers must be 40 characters or fewer." }, 400);
+    updates.push("phone = ?"); values.push(phone || null);
+  }
+  if (body.notes !== undefined) {
+    const notes = body.notes?.trim() ?? "";
+    if (notes.length > 500) return c.json({ error: "Supplier notes must be 500 characters or fewer." }, 400);
+    updates.push("notes = ?"); values.push(notes || null);
+  }
+  if (body.customerName !== undefined && body.customerName.trim().length > 120) {
+    return c.json({ error: "Customer names must be 120 characters or fewer." }, 400);
+  }
+  if (body.customerPhone !== undefined && body.customerPhone.trim().length > 40) {
+    return c.json({ error: "Customer phone numbers must be 40 characters or fewer." }, 400);
+  }
+  if (body.customerId !== undefined || body.customerName !== undefined || body.customerPhone !== undefined) {
+    let customerId: string | null;
+    try {
+      customerId = await ensureSupplierCustomer(
+        c.env.DB, shopId, body.customerId, body.customerName, body.customerPhone, new Date().toISOString(),
+      );
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "Choose a customer belonging to this shop." }, 400);
+    }
+    updates.push("customer_id = ?"); values.push(customerId);
+  }
+  if (!updates.length) return c.json({ error: "Choose a supplier field to update." }, 400);
+  await c.env.DB.prepare(`UPDATE suppliers SET ${updates.join(", ")} WHERE id = ? AND shop_id = ?`)
+    .bind(...values, id, shopId).run();
+  return c.json({ ok: true });
+});
+
+nurseryRouter.post("/nursery/receipts", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const userName = c.get("session").userName ?? "User";
+  const body = await c.req.json<{
+    requestId?: string; supplierId?: string; varietyId?: string; quantity?: number;
+    receivedAt?: string; notes?: string;
+  }>();
+  const requestId = body.requestId ?? "";
+  const quantity = Number(body.quantity);
+  const receivedAt = body.receivedAt ?? "";
+  const notes = body.notes?.trim() ?? "";
+  if (!/^[\w-]{8,80}$/.test(requestId) || !body.supplierId || !body.varietyId ||
+      !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 10000000 ||
+      !validDate(receivedAt) || notes.length > 500) {
+    return c.json({ error: "Check the supplier, variety, quantity, received date and notes." }, 400);
+  }
+  const prior = await c.env.DB.prepare(
+    "SELECT id FROM nursery_supplier_receipts WHERE shop_id = ? AND request_id = ?"
+  ).bind(shopId, requestId).first<{ id: string }>();
+  if (prior) return c.json({ ok: true, id: prior.id, duplicate: true });
+  const [supplier, variety] = await Promise.all([
+    c.env.DB.prepare("SELECT id FROM suppliers WHERE id = ? AND shop_id = ?").bind(body.supplierId, shopId).first(),
+    c.env.DB.prepare("SELECT id, name FROM nursery_varieties WHERE id = ? AND shop_id = ? AND is_active = 1")
+      .bind(body.varietyId, shopId).first<{ id: string; name: string }>(),
+  ]);
+  if (!supplier || !variety) return c.json({ error: "Choose a supplier and active variety belonging to this shop." }, 400);
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await c.env.DB.prepare(
+    `INSERT INTO nursery_supplier_receipts
+      (id, request_id, shop_id, supplier_id, variety_id, variety_name, quantity, received_at, notes, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, requestId, shopId, body.supplierId, body.varietyId, variety.name, quantity, receivedAt, notes, userName, now).run();
+  return c.json({ ok: true, id, supplierId: body.supplierId, varietyId: body.varietyId, quantity, receivedAt }, 201);
+});
+
+nurseryRouter.get("/nursery/sale-sources", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const varietyIds = [...new Set((c.req.query("varietyIds") ?? "").split(",").map(value => value.trim()).filter(Boolean))];
+  if (!varietyIds.length) return c.json({ rows: [] });
+  if (varietyIds.length > 18 || varietyIds.some(id => id.length > 80)) {
+    return c.json({ error: "Choose up to 18 valid varieties." }, 400);
+  }
+  const marks = varietyIds.map(() => "?").join(", ");
+  const rows = await c.env.DB.prepare(
+    `SELECT r.variety_id AS varietyId, r.supplier_id AS supplierId, s.name AS supplierName,
+       SUM(r.quantity) - COALESCE((
+         SELECT SUM(e.quantity) FROM nursery_sale_entries e
+         WHERE e.shop_id = r.shop_id AND e.source_supplier_id = r.supplier_id AND e.variety_id = r.variety_id
+       ), 0) AS availableQuantity
+     FROM nursery_supplier_receipts r
+     JOIN suppliers s ON s.id = r.supplier_id AND s.shop_id = r.shop_id
+     WHERE r.shop_id = ? AND r.variety_id IN (${marks})
+     GROUP BY r.variety_id, r.supplier_id, s.name
+     HAVING availableQuantity > 0
+     ORDER BY r.variety_id, s.name COLLATE NOCASE`
+  ).bind(shopId, ...varietyIds).all();
+  return c.json({ rows: rows.results ?? [] });
+});
+
+nurseryRouter.get("/nursery/suppliers/:id/records", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const supplierId = c.req.param("id");
+  const supplier = await c.env.DB.prepare("SELECT id FROM suppliers WHERE id = ? AND shop_id = ?")
+    .bind(supplierId, shopId).first();
+  if (!supplier) return c.json({ error: "Supplier not found." }, 404);
+  const limit = Math.min(100, Math.max(1, Math.floor(Number(c.req.query("limit") ?? 50) || 50)));
+  const rows = await c.env.DB.prepare(
+    `SELECT 'receipt' AS recordType, id, received_at AS recordedAt, variety_name AS varietyName,
+       quantity, 0 AS amountCents, notes AS note
+     FROM nursery_supplier_receipts WHERE shop_id = ? AND supplier_id = ?
+     UNION ALL
+     SELECT entry_type AS recordType, id, created_at AS recordedAt, variety_name AS varietyName,
+       quantity, amount_cents AS amountCents, note
+     FROM nursery_supplier_ledger WHERE shop_id = ? AND supplier_id = ?
+     ORDER BY recordedAt DESC LIMIT ?`
+  ).bind(shopId, supplierId, shopId, supplierId, limit).all();
+  return c.json({ rows: rows.results ?? [] });
+});
 
 nurseryRouter.get("/nursery/varieties", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
@@ -210,13 +582,14 @@ nurseryRouter.delete("/nursery/varieties/:id", requireAuth, async (c) => {
 
 nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
+  const userName = c.get("session").userName ?? "User";
   const body = await c.req.json<{
     businessDate?: string;
     paymentMethod?: string;
     customerName?: string;
     customerPhone?: string;
     transactionId?: string;
-    items?: Array<{ requestId?: string; varietyId?: string; quantity?: number; unitPrice?: number }>;
+    items?: Array<{ requestId?: string; varietyId?: string; quantity?: number; unitPrice?: number; sourceSupplierId?: string | null }>;
   }>();
   const businessDate = body.businessDate ?? "";
   const paymentMethod = body.paymentMethod ?? "";
@@ -239,6 +612,7 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
     if (!/^[\w-]{8,80}$/.test(item.requestId ?? "") || requestIds.has(item.requestId ?? "") ||
         !item.varietyId || !Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 10000000 ||
         !Number.isFinite(unitPrice) || unitPrice < 0 || unitPrice > 1000000 ||
+        (item.sourceSupplierId != null && (typeof item.sourceSupplierId !== "string" || item.sourceSupplierId.length < 1 || item.sourceSupplierId.length > 120)) ||
         (paymentMethod === "credit" && unitPrice <= 0)) {
       return c.json({ error: "Check every variety, request ID, quantity and unit price. Credit entries require a price above zero." }, 400);
     }
@@ -266,9 +640,55 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
     return c.json({ error: "Choose active seedling varieties belonging to this shop." }, 400);
   }
 
+  const sourceSupplierIds = [...new Set(newItems.map(item => item.sourceSupplierId?.trim()).filter((id): id is string => !!id))];
+  const suppliersById = new Map<string, string>();
+  if (sourceSupplierIds.length) {
+    const supplierMarks = sourceSupplierIds.map(() => "?").join(", ");
+    const sourceSuppliers = await c.env.DB.prepare(
+      `SELECT id, name FROM suppliers WHERE shop_id = ? AND id IN (${supplierMarks})`
+    ).bind(shopId, ...sourceSupplierIds).all<{ id: string; name: string }>();
+    for (const supplier of sourceSuppliers.results ?? []) suppliersById.set(supplier.id, supplier.name);
+    if (suppliersById.size !== sourceSupplierIds.length) {
+      return c.json({ error: "Choose a nursery source belonging to this shop." }, 400);
+    }
+
+    const sourcePairs = new Map<string, { supplierId: string; varietyId: string; quantity: number }>();
+    for (const item of newItems) {
+      const supplierId = item.sourceSupplierId?.trim();
+      if (!supplierId) continue;
+      const key = `${supplierId}\u0000${item.varietyId}`;
+      const existing = sourcePairs.get(key);
+      if (existing) existing.quantity += Number(item.quantity);
+      else sourcePairs.set(key, { supplierId, varietyId: item.varietyId!, quantity: Number(item.quantity) });
+    }
+    const pairs = [...sourcePairs.values()];
+    const pairFilters = pairs.map(() => "(r.supplier_id = ? AND r.variety_id = ?)").join(" OR ");
+    const stockRows = await c.env.DB.prepare(
+      `SELECT r.supplier_id AS supplierId, r.variety_id AS varietyId,
+        SUM(r.quantity) - COALESCE((
+          SELECT SUM(e.quantity) FROM nursery_sale_entries e
+          WHERE e.shop_id = r.shop_id AND e.source_supplier_id = r.supplier_id AND e.variety_id = r.variety_id
+        ), 0) AS availableQuantity
+       FROM nursery_supplier_receipts r
+       WHERE r.shop_id = ? AND (${pairFilters})
+       GROUP BY r.shop_id, r.supplier_id, r.variety_id`
+    ).bind(shopId, ...pairs.flatMap(pair => [pair.supplierId, pair.varietyId])).all<{
+      supplierId: string; varietyId: string; availableQuantity: number;
+    }>();
+    const availableByPair = new Map((stockRows.results ?? []).map(row => [
+      `${row.supplierId}\u0000${row.varietyId}`, Number(row.availableQuantity),
+    ]));
+    const insufficient = pairs.find(pair => (availableByPair.get(`${pair.supplierId}\u0000${pair.varietyId}`) ?? 0) < pair.quantity);
+    if (insufficient) {
+      const name = varietiesById.get(insufficient.varietyId)?.name ?? "this variety";
+      return c.json({ error: `Not enough recorded stock from ${suppliersById.get(insufficient.supplierId)} for ${name}. Refresh the source stock and adjust the quantity.` }, 409);
+    }
+  }
+
   const now = new Date().toISOString();
   const customerKey = customerName.toLocaleLowerCase().replace(/\s+/g, " ");
   const statements = [] as D1PreparedStatement[];
+  const supplierSales: SupplierSaleForPosting[] = [];
   if (customerName) {
     statements.push(c.env.DB.prepare(
       `INSERT INTO customers (id, shop_id, name, phone, email, notes, credit_limit, created_at, updated_at)
@@ -300,6 +720,7 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
       debtId,
       createdAt: now,
     };
+    const sourceSupplierId = item.sourceSupplierId?.trim() || null;
 
     statements.push(c.env.DB.prepare(
       `INSERT INTO nursery_daily_sales
@@ -349,19 +770,32 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
 
     statements.push(c.env.DB.prepare(
       `INSERT INTO nursery_sale_entries
-        (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, transaction_id, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        (id, request_id, shop_id, business_date, variety_id, variety_name, customer_name, customer_phone, quantity, unit_price_cents, total_amount_cents, payment_method, debt_id, transaction_id, source_supplier_id, source_supplier_name, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM nursery_entry_requests WHERE id = ? AND shop_id = ?)`
     ).bind(sale.id, requestId, shopId, businessDate, variety.id, variety.name,
       customerName, customerPhone, quantity, unitPriceCents, totalAmountCents,
-      paymentMethod, debtId, transactionId || requestId, now, requestId, shopId));
+      paymentMethod, debtId, transactionId || requestId, sourceSupplierId,
+      sourceSupplierId ? suppliersById.get(sourceSupplierId) ?? "" : null, now, requestId, shopId));
+    if (sourceSupplierId) {
+      supplierSales.push({ entryId: sale.id, supplierId: sourceSupplierId, varietyName: variety.name, quantity, totalAmountCents });
+    }
 
     statements.push(c.env.DB.prepare(
       "INSERT OR IGNORE INTO nursery_entry_requests (id, shop_id, created_at, debt_id) VALUES (?, ?, ?, ?)"
     ).bind(requestId, shopId, now, debtId));
   }
 
-  await c.env.DB.batch(statements);
+  statements.push(...await buildSupplierProceedsStatements(c.env.DB, shopId, supplierSales, now));
+  try {
+    await c.env.DB.batch(statements);
+  } catch (error) {
+    if (String(error).includes("Insufficient nursery supplier stock")) {
+      return c.json({ error: "Supplier stock changed while the sale was being saved. Refresh the source stock and try again." }, 409);
+    }
+    throw error;
+  }
+  if (supplierSales.length) await invalidateDebtViews(c.env, shopId);
   return c.json({ ok: true, processedItems: items.length, duplicateItems: priorIds.size });
 });
 
@@ -540,13 +974,17 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
   }
 
   const old = await c.env.DB.prepare(
-    "SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId, variety_name AS varietyName, customer_name AS customerName, customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents, payment_method AS paymentMethod, debt_id AS debtId, transaction_id AS transactionId, created_at AS createdAt FROM nursery_sale_entries WHERE id = ? AND shop_id = ?"
+    "SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId, variety_name AS varietyName, customer_name AS customerName, customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents, payment_method AS paymentMethod, debt_id AS debtId, transaction_id AS transactionId, source_supplier_id AS sourceSupplierId, source_supplier_name AS sourceSupplierName, created_at AS createdAt FROM nursery_sale_entries WHERE id = ? AND shop_id = ?"
   ).bind(id, shopId).first<{
     id: string; requestId: string; businessDate: string; varietyId: string; varietyName: string;
     customerName: string; customerPhone: string; quantity: number; unitPriceCents: number;
     totalAmountCents: number; paymentMethod: string; debtId: string | null; transactionId: string | null; createdAt: string;
+    sourceSupplierId: string | null; sourceSupplierName: string | null;
   }>();
   if (!old) return c.json({ error: "Sale entry not found." }, 404);
+  if (old.sourceSupplierId) {
+    return c.json({ error: "This sale is linked to supplier stock and a debt-credit ledger. It cannot be edited after posting." }, 409);
+  }
 
   const variety = await c.env.DB.prepare(
     "SELECT id, name FROM nursery_varieties WHERE id = ? AND shop_id = ?"
@@ -620,12 +1058,15 @@ nurseryRouter.delete("/nursery/entries/:id", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
   const id = c.req.param("id");
   const old = await c.env.DB.prepare(
-    "SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId, customer_name AS customerName, customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents, payment_method AS paymentMethod, debt_id AS debtId FROM nursery_sale_entries WHERE id = ? AND shop_id = ?"
+    "SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId, customer_name AS customerName, customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents, payment_method AS paymentMethod, debt_id AS debtId, source_supplier_id AS sourceSupplierId FROM nursery_sale_entries WHERE id = ? AND shop_id = ?"
   ).bind(id, shopId).first<{
     id: string; requestId: string; businessDate: string; varietyId: string; customerName: string; customerPhone: string;
-    quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: string; debtId: string | null;
+    quantity: number; unitPriceCents: number; totalAmountCents: number; paymentMethod: string; debtId: string | null; sourceSupplierId: string | null;
   }>();
   if (!old) return c.json({ error: "Sale entry not found." }, 404);
+  if (old.sourceSupplierId) {
+    return c.json({ error: "This sale is linked to supplier stock and a debt-credit ledger. It cannot be deleted after posting." }, 409);
+  }
   if (old.debtId) {
     const debt = await c.env.DB.prepare("SELECT amount_paid FROM debts WHERE id = ? AND shop_id = ?")
       .bind(old.debtId, shopId).first<{ amount_paid: number }>();
@@ -734,7 +1175,8 @@ nurseryRouter.get("/nursery/transactions/:transactionId", requireAuth, async (c)
     `SELECT id, request_id AS requestId, business_date AS businessDate, variety_id AS varietyId,
       variety_name AS varietyName, customer_name AS customerName, customer_phone AS customerPhone,
       quantity, unit_price_cents AS unitPriceCents, total_amount_cents AS totalAmountCents,
-      payment_method AS paymentMethod, debt_id AS debtId, transaction_id AS transactionId, created_at AS createdAt
+      payment_method AS paymentMethod, debt_id AS debtId, transaction_id AS transactionId,
+      source_supplier_id AS sourceSupplierId, source_supplier_name AS sourceSupplierName, created_at AS createdAt
      FROM nursery_sale_entries
      WHERE shop_id = ? AND transaction_id = ?
      ORDER BY created_at ASC, id ASC`
@@ -768,7 +1210,8 @@ nurseryRouter.get("/nursery/entries", requireAuth, async (c) => {
       variety_name AS varietyName, customer_name AS customerName,
       customer_phone AS customerPhone, quantity, unit_price_cents AS unitPriceCents,
       total_amount_cents AS totalAmountCents, payment_method AS paymentMethod,
-      debt_id AS debtId, transaction_id AS transactionId, created_at AS createdAt
+      debt_id AS debtId, transaction_id AS transactionId,
+      source_supplier_id AS sourceSupplierId, source_supplier_name AS sourceSupplierName, created_at AS createdAt
      FROM nursery_sale_entries
      WHERE shop_id = ? AND business_date >= ? AND business_date <= ?
        AND (? = '' OR lower(variety_name) LIKE ? OR lower(customer_name) LIKE ? OR lower(customer_phone) LIKE ? OR business_date LIKE ?)

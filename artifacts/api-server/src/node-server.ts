@@ -333,6 +333,77 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
       'subtotal', subtotal, 'discountAmount', discount_amount, 'total', total,
       'items', json(items_json), 'createdAt', COALESCE(invoice_issued_at, created_at)
     ) WHERE invoice_number IS NOT NULL AND invoice_snapshot_json IS NULL`,
+    `CREATE TABLE IF NOT EXISTS nursery_varieties (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Uncategorized', default_price INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, name)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_daily_sales (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, business_date TEXT NOT NULL, variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL, payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0), total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, variety_id, unit_price_cents, payment_method)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_customer_daily_sales (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, business_date TEXT NOT NULL, customer_key TEXT NOT NULL,
+      customer_name TEXT NOT NULL, customer_phone TEXT NOT NULL DEFAULT '', variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL, payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0), total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, customer_key, variety_id, unit_price_cents, payment_method)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_entry_requests (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, created_at TEXT NOT NULL, debt_id TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_sale_entries (
+      id TEXT PRIMARY KEY, request_id TEXT NOT NULL, shop_id TEXT NOT NULL, business_date TEXT NOT NULL,
+      variety_id TEXT NOT NULL, variety_name TEXT NOT NULL, customer_name TEXT NOT NULL DEFAULT '',
+      customer_phone TEXT NOT NULL DEFAULT '', quantity INTEGER NOT NULL CHECK(quantity > 0),
+      unit_price_cents INTEGER NOT NULL, total_amount_cents INTEGER NOT NULL,
+      payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      debt_id TEXT, transaction_id TEXT, source_supplier_id TEXT, source_supplier_name TEXT, created_at TEXT NOT NULL,
+      UNIQUE(shop_id, request_id)
+    )`,
+    "ALTER TABLE suppliers ADD COLUMN customer_id TEXT",
+    "ALTER TABLE nursery_sale_entries ADD COLUMN source_supplier_id TEXT",
+    "ALTER TABLE nursery_sale_entries ADD COLUMN source_supplier_name TEXT",
+    `CREATE TABLE IF NOT EXISTS nursery_supplier_receipts (
+      id TEXT PRIMARY KEY, request_id TEXT NOT NULL, shop_id TEXT NOT NULL, supplier_id TEXT NOT NULL,
+      variety_id TEXT NOT NULL, variety_name TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity > 0),
+      received_at TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', created_by TEXT, created_at TEXT NOT NULL,
+      UNIQUE(shop_id, request_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_supplier_ledger (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, supplier_id TEXT NOT NULL, sale_entry_id TEXT,
+      entry_type TEXT NOT NULL, amount_cents INTEGER NOT NULL, quantity INTEGER NOT NULL DEFAULT 0,
+      variety_name TEXT NOT NULL DEFAULT '', debt_id TEXT, debt_payment_id TEXT,
+      note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_nursery_supplier_receipts_stock ON nursery_supplier_receipts(shop_id, supplier_id, variety_id)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_supplier_receipts_history ON nursery_supplier_receipts(shop_id, supplier_id, received_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_supplier_ledger_history ON nursery_supplier_ledger(shop_id, supplier_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_supplier_ledger_sale ON nursery_supplier_ledger(shop_id, sale_entry_id)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_entries_source_stock ON nursery_sale_entries(shop_id, source_supplier_id, variety_id)",
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_nursery_supplier_sale_proceeds_once
+      ON nursery_supplier_ledger(sale_entry_id, entry_type)
+      WHERE sale_entry_id IS NOT NULL AND entry_type = 'sale_proceeds'`,
+    `CREATE TRIGGER IF NOT EXISTS nursery_source_stock_guard
+      BEFORE INSERT ON nursery_sale_entries
+      WHEN NEW.source_supplier_id IS NOT NULL
+      BEGIN
+        SELECT CASE WHEN NOT EXISTS (
+          SELECT 1 FROM suppliers WHERE id = NEW.source_supplier_id AND shop_id = NEW.shop_id
+        ) THEN RAISE(ABORT, 'Invalid nursery supplier source') END;
+        SELECT CASE WHEN
+          COALESCE((SELECT SUM(quantity) FROM nursery_supplier_receipts
+            WHERE shop_id = NEW.shop_id AND supplier_id = NEW.source_supplier_id AND variety_id = NEW.variety_id), 0) -
+          COALESCE((SELECT SUM(quantity) FROM nursery_sale_entries
+            WHERE shop_id = NEW.shop_id AND source_supplier_id = NEW.source_supplier_id AND variety_id = NEW.variety_id), 0)
+          < NEW.quantity
+        THEN RAISE(ABORT, 'Insufficient nursery supplier stock') END;
+      END`,
   ];
   for (const m of MIGRATIONS) {
     try {
