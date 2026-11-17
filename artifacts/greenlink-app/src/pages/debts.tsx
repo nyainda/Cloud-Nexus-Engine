@@ -11,12 +11,12 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { formatKES } from "@/lib/format";
+import { formatKES, formatQty } from "@/lib/format";
 import {
   Search, Users, Phone, CalendarClock, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
   ChevronDown, ChevronUp, ChevronRight, Banknote, User2, Trash2, Send, BadgeCheck,
-  ShoppingBasket, Package, Download, UserPlus, Save, X,
+  ShoppingBasket, Package, Download, UserPlus, Save, X, ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -42,7 +42,7 @@ function debtProductSummary(items: any[] | undefined): string {
       const name = item?.productName ?? item?.name;
       if (!name) return "";
       const qty = item?.qty ?? item?.quantity;
-      return qty !== undefined && qty !== null ? `${name} × ${qty}` : String(name);
+      return qty !== undefined && qty !== null ? `${name} × ${formatQty(Number(qty))}` : String(name);
     })
     .filter(Boolean);
   return labels.length > 0 ? labels.join(", ") : "Unlinked debt";
@@ -54,7 +54,7 @@ function compactDebtProductSummary(items: any[] | undefined, maxItems = 2): stri
       const name = item?.productName ?? item?.name;
       if (!name) return "";
       const qty = item?.qty ?? item?.quantity;
-      return qty !== undefined && qty !== null ? `${name} × ${qty}` : String(name);
+      return qty !== undefined && qty !== null ? `${name} × ${formatQty(Number(qty))}` : String(name);
     })
     .filter(Boolean);
   if (labels.length === 0) return "Unlinked debt";
@@ -1572,14 +1572,14 @@ function CustomerGroupRow({
   const isVoided = !hasActive && allCancelled;
   const statusLabel = isVoided ? "Voided" : isPaid ? "Paid" : group.isOverdue ? "Overdue" : isPartial ? "Partial" : "Unpaid";
   const statusCss = isPaid
-    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
+    ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
     : isVoided
     ? "bg-muted text-muted-foreground border-border"
     : group.isOverdue
-    ? "bg-red-500/15 text-red-400 border-red-500/25"
+    ? "bg-rose-500/12 text-rose-600 dark:text-rose-400 border-rose-500/25"
     : isPartial
-    ? "bg-orange-500/15 text-orange-400 border-orange-500/25"
-    : "bg-destructive/15 text-destructive border-destructive/25";
+    ? "bg-amber-500/12 text-amber-600 dark:text-amber-400 border-amber-500/25"
+    : "bg-destructive/12 text-destructive border-destructive/25";
   const initials = group.customerName.split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
 
   // Split records so outstanding balances are never visually mixed with
@@ -1589,50 +1589,95 @@ function CustomerGroupRow({
   const settledDebts = group.debts.filter((d: any) => d.status === "paid" || d.status === "cancelled");
   const [showSettled, setShowSettled] = useState(false);
 
+  const paidAcrossGroup = Math.max(0, group.totalAmount - group.totalBalance);
+  const groupPaidPct = group.totalAmount > 0 ? Math.min(100, Math.round((paidAcrossGroup / group.totalAmount) * 100)) : 0;
+
   return (
-    <div className="border-b border-border/40">
+    <div className="border-b border-border/50 last:border-b-0">
       <div
-        className="group flex items-center gap-3 px-4 py-3.5 hover:bg-muted/30 transition-colors cursor-pointer"
+        className="group relative flex items-center gap-3 px-4 py-3.5 hover:bg-muted/25 transition-colors cursor-pointer sm:grid sm:grid-cols-[minmax(190px,1.5fr)_minmax(110px,0.8fr)_minmax(115px,0.9fr)_92px_auto]"
         onClick={() => setExpanded(v => !v)}
       >
-        <div className={cn(
-          "w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold shrink-0",
-          isPaid ? "bg-emerald-500/15 text-emerald-400" : group.isOverdue ? "bg-red-500/15 text-red-400" : "bg-primary/15 text-primary",
-        )}>
-          {initials}
+        <span
+          className={cn(
+            "absolute left-0 top-2.5 bottom-2.5 w-1 rounded-r-full",
+            isPaid ? "bg-emerald-500" : isVoided ? "bg-muted-foreground/40" : group.isOverdue ? "bg-rose-500" : isPartial ? "bg-amber-500" : "bg-destructive"
+          )}
+        />
+
+        <div className="flex min-w-0 flex-1 items-center gap-3 pl-1">
+          <div className={cn(
+            "w-10 h-10 rounded-xl border flex items-center justify-center text-xs font-bold shrink-0",
+            isPaid
+              ? "bg-emerald-500/12 border-emerald-500/25 text-emerald-600 dark:text-emerald-400"
+              : group.isOverdue
+              ? "bg-rose-500/12 border-rose-500/25 text-rose-600 dark:text-rose-400"
+              : isPartial
+              ? "bg-amber-500/12 border-amber-500/25 text-amber-600 dark:text-amber-400"
+              : "bg-primary/12 border-primary/25 text-primary",
+          )}>
+            {initials || "?"}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground truncate">{toTitleCase(group.customerName)}</p>
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5 truncate">
+              {group.customerPhone && (
+                <span className="inline-flex items-center gap-1 font-mono">
+                  <Phone className="h-2.5 w-2.5 shrink-0" />
+                  {group.customerPhone}
+                </span>
+              )}
+              {group.customerPhone && <span>·</span>}
+              <span>{group.debts.length} record{group.debts.length === 1 ? "" : "s"}</span>
+            </p>
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-foreground truncate">{toTitleCase(group.customerName)}</p>
-          <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-0.5">
-            {group.customerPhone ? <><Phone className="h-2.5 w-2.5" />{group.customerPhone}<span>·</span></> : null}
-            {group.debts.length} debt record{group.debts.length === 1 ? "" : "s"}
+
+        <div className="hidden sm:block text-right">
+          <p className="text-sm font-semibold font-mono tabular-nums text-foreground">{formatKES(group.totalAmount)}</p>
+          <div className="ml-auto mt-1 h-1 w-16 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-emerald-500" style={{ width: `${groupPaidPct}%` }} />
+          </div>
+        </div>
+
+        <div className="text-right shrink-0">
+          <p className={cn(
+            "text-sm font-bold font-mono tabular-nums",
+            isPaid ? "text-emerald-600 dark:text-emerald-400" : group.isOverdue ? "text-rose-600 dark:text-rose-400" : isPartial ? "text-amber-600 dark:text-amber-400" : "text-destructive"
+          )}>
+            {formatKES(group.totalBalance)}
           </p>
+          <p className="text-[10px] text-muted-foreground">Balance due</p>
+          {group.totalCredit > 0 && (
+            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">
+              +{formatKES(group.totalCredit)} credit
+            </p>
+          )}
         </div>
-        <div className="hidden sm:block text-right pr-2">
-          <p className="text-sm font-semibold font-mono">{formatKES(group.totalAmount)}</p>
-          <p className="text-[10px] text-muted-foreground/50">Total across records</p>
-        </div>
-        <div className="text-right pr-2 shrink-0">
-          <p className={cn("text-sm font-bold font-mono", isPaid ? "text-emerald-400" : group.isOverdue ? "text-red-400" : isPartial ? "text-orange-400" : "text-destructive")}>{formatKES(group.totalBalance)}</p>
-          <p className="text-[10px] text-muted-foreground/50">Balance due</p>
-          {group.totalCredit > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(group.totalCredit)} credit</p>}
-        </div>
-        <span className={cn("hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusCss)}>{statusLabel}</span>
-        {group.totalCredit > 0 && (
-          <span onClick={(e) => e.stopPropagation()} className="shrink-0">
-            <AddCreditDialog customerName={group.customerName} currentCredit={group.totalCredit} />
+
+        <div className="hidden sm:flex justify-center">
+          <span className={cn("inline-flex text-[10px] font-bold px-2.5 py-0.5 rounded-full border uppercase tracking-wider", statusCss)}>
+            {statusLabel}
           </span>
-        )}
-        <CustomerDownloadButton group={group} />
-        <ChevronDown className={cn("h-4 w-4 text-muted-foreground/40 transition-transform shrink-0", expanded && "rotate-180 text-primary")} />
+        </div>
+
+        <div className="flex items-center justify-end gap-1.5 shrink-0">
+          {group.totalCredit > 0 && (
+            <span onClick={(e) => e.stopPropagation()} className="shrink-0">
+              <AddCreditDialog customerName={group.customerName} currentCredit={group.totalCredit} />
+            </span>
+          )}
+          <CustomerDownloadButton group={group} />
+          <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform shrink-0", expanded && "rotate-180 text-primary")} />
+        </div>
       </div>
       {expanded && (
-        <div className="bg-muted/15 border-t border-border/40 px-4 py-2 space-y-1">
+        <div className="bg-muted/20 border-t border-border/60 px-4 sm:px-5 py-3 space-y-1.5">
           {outstandingDebts.length > 0 && (
             <>
-              <div className="flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground/50">
+              <div className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-wider font-bold text-muted-foreground">
                 <span>Outstanding ({outstandingDebts.length})</span>
-                <span>Click a row to view history</span>
+                <span>Select a record to inspect</span>
               </div>
               {outstandingDebts.map((debt: any) => (
                 <DebtRecordRow key={debt.id} debt={debt} onSelectDebt={onSelectDebt} />
@@ -1641,16 +1686,16 @@ function CustomerGroupRow({
           )}
 
           {settledDebts.length > 0 && (
-            <div className={cn(outstandingDebts.length > 0 && "mt-2 pt-2 border-t border-border/30")}>
+            <div className={cn(outstandingDebts.length > 0 && "mt-2 pt-2 border-t border-border/50")}>
               <button
                 onClick={() => setShowSettled(v => !v)}
-                className="w-full flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                className="w-full flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground hover:text-foreground transition-colors"
               >
                 <span>Settled / Paid ({settledDebts.length})</span>
-                <ChevronDown className={cn("h-3 w-3 transition-transform", showSettled && "rotate-180")} />
+                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showSettled && "rotate-180")} />
               </button>
               {showSettled && (
-                <div className="opacity-70 space-y-1">
+                <div className="opacity-85 space-y-1.5 pt-1">
                   {settledDebts.map((debt: any) => (
                     <DebtRecordRow key={debt.id} debt={debt} onSelectDebt={onSelectDebt} />
                   ))}
@@ -1671,22 +1716,22 @@ function DebtRecordRow({ debt, onSelectDebt }: { debt: any; onSelectDebt: (debt:
   return (
     <button
       onClick={() => onSelectDebt(debt)}
-      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-card border border-transparent hover:border-border/60 transition-colors"
+      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left bg-card/70 hover:bg-card border border-border/60 hover:border-primary/40 transition-all"
     >
-      <div className="w-7 h-7 rounded-lg bg-card border border-border/60 flex items-center justify-center shrink-0">
+      <div className="w-8 h-8 rounded-lg bg-muted/50 border border-border/60 flex items-center justify-center shrink-0">
         <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-semibold truncate">{format(new Date(debt.createdAt), "d MMM yyyy, HH:mm")}</p>
-        <p className="text-[10px] text-muted-foreground/60 truncate">{debt.notes || `${days} days old`} · Ref {debt.id.slice(0, 8).toUpperCase()}</p>
+        <p className="text-[11px] text-muted-foreground truncate">{debt.notes || `${days}d ago`} · Ref #{debt.id.slice(0, 8).toUpperCase()}</p>
       </div>
-      <div className="text-right">
-        <p className="text-xs font-bold font-mono">{formatKES(debt.totalAmount)}</p>
-        <p className={cn("text-[10px] font-mono", debtVoided ? "text-muted-foreground" : debtPaid ? "text-emerald-400" : "text-destructive")}>
+      <div className="text-right shrink-0">
+        <p className="text-xs font-bold font-mono tabular-nums">{formatKES(debt.totalAmount)}</p>
+        <p className={cn("text-[11px] font-mono font-semibold tabular-nums", debtVoided ? "text-muted-foreground" : debtPaid ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
           {debtVoided ? "Voided" : debtPaid ? (debtCredit(debt) > 0 ? `Paid · +${formatKES(debtCredit(debt))} credit` : "Paid") : `${formatKES(debtBalanceDue(debt))} due`}
         </p>
       </div>
-      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30" />
+      <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
     </button>
   );
 }
@@ -2190,7 +2235,7 @@ function DebtDetailPanel({
                   {items.map((item: any, i: number) => (
                     <div key={i} className={cn("grid grid-cols-[1fr_32px_minmax(90px,auto)_minmax(90px,auto)] items-center", i > 0 && "border-t border-border/50")}>
                       <div className="px-3 py-2.5 text-xs font-medium truncate">{item.productName}</div>
-                      <div className="px-1 py-2.5 text-xs text-right text-muted-foreground">{item.qty ?? item.quantity}</div>
+                      <div className="px-1 py-2.5 text-xs text-right text-muted-foreground font-mono tabular-nums">{formatQty(Number(item.qty ?? item.quantity ?? 0))}</div>
                       <div className="px-2 py-2.5 text-xs text-right text-muted-foreground font-mono whitespace-nowrap">{formatKES(item.unitPrice)}</div>
                       <div className="px-3 py-2.5 text-xs text-right font-bold font-mono text-primary whitespace-nowrap">{formatKES(item.totalPrice ?? item.total)}</div>
                     </div>
@@ -2460,7 +2505,7 @@ function AddDebtDialog({ shopId, onAdded }: { shopId: string; onAdded: () => voi
       <button
         onClick={() => setOpen(true)}
         disabled={saving}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
+        className="inline-flex h-9 items-center gap-1.5 px-3.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 shadow-sm transition-colors"
       >
         <UserPlus className="h-3.5 w-3.5" />
         New Debt
@@ -2565,8 +2610,14 @@ export default function Debts() {
   const debouncedSearch                 = useDebounce(search, 100);
   const [tab, setTab]                   = useState<DebtTab>("all");
   const [viewMode, setViewMode]         = useState<"customers" | "records">("customers");
+  const [sortBy, setSortBy]             = useState<"balance_desc" | "oldest" | "newest" | "name_asc">("balance_desc");
+  const [visibleCount, setVisibleCount] = useState(10);
   const [selectedDebt, setSelectedDebt] = useState<any>(null);
   const [bulkRemindOpen, setBulkRemindOpen] = useState(false);
+
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [debouncedSearch, tab, viewMode, sortBy]);
 
   const qc = useQueryClient();
 
@@ -2633,18 +2684,27 @@ export default function Debts() {
         (d.customerPhone || "").includes(q)
       );
     }
-    return [...list].sort((a: any, b: any) => b.balance - a.balance);
-  }, [allDebts, tab, debouncedSearch]);
+    return [...list].sort((a: any, b: any) => {
+      switch (sortBy) {
+        case "oldest":
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        case "newest":
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        case "name_asc":
+          return (a.customerName || "").localeCompare(b.customerName || "");
+        default:
+          return (b.balance || 0) - (a.balance || 0);
+      }
+    });
+  }, [allDebts, tab, debouncedSearch, sortBy]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, CustomerGroup>();
 
     // Track which debt is the newest per group so the group's display name
-    // reflects the latest rename, not whichever debt happened to sort first
-    // (this list is sorted by balance, so "first seen" was effectively random
-    // relative to name history — that's what made a rename look like it
-    // "reverted" on some screens but not others).
+    // reflects the latest rename, not whichever debt happened to sort first.
     const newestSeenAt = new Map<string, string>();
+    const oldestSeenAt = new Map<string, string>();
 
     for (const debt of filtered) {
       const key = debt.customerName?.trim().replace(/\s+/g, " ").toLowerCase() || "unknown";
@@ -2662,6 +2722,7 @@ export default function Debts() {
           isOverdue: false,
         });
         newestSeenAt.set(key, debt.createdAt);
+        oldestSeenAt.set(key, debt.createdAt);
       }
       const g = map.get(key)!;
       g.debts.push(debt);
@@ -2675,20 +2736,38 @@ export default function Debts() {
         const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
         if (daysAgo > 30) g.isOverdue = true;
       }
-       const statusRank = { unpaid: 3, partial: 2, paid: 1, cancelled: 0 } as Record<string, number>;
+      const statusRank = { unpaid: 3, partial: 2, paid: 1, cancelled: 0 } as Record<string, number>;
       if ((statusRank[debt.status] ?? 0) > (statusRank[g.worstStatus] ?? 0)) {
-         g.worstStatus = debt.status as "unpaid" | "partial" | "paid" | "cancelled";
+        g.worstStatus = debt.status as "unpaid" | "partial" | "paid" | "cancelled";
       }
-      // Use the spelling/phone from whichever debt was created most recently.
       if (debt.createdAt >= (newestSeenAt.get(key) ?? debt.createdAt)) {
         newestSeenAt.set(key, debt.createdAt);
         if (debt.customerName) g.customerName = debt.customerName;
         if (debt.customerPhone) g.customerPhone = debt.customerPhone;
       }
+      if (debt.createdAt < (oldestSeenAt.get(key) ?? debt.createdAt)) {
+        oldestSeenAt.set(key, debt.createdAt);
+      }
     }
 
-    return Array.from(map.values());
-  }, [filtered]);
+    const list = Array.from(map.values());
+    return list.sort((a, b) => {
+      switch (sortBy) {
+        case "oldest":
+          return new Date(oldestSeenAt.get(a.key) ?? 0).getTime() - new Date(oldestSeenAt.get(b.key) ?? 0).getTime();
+        case "newest":
+          return new Date(newestSeenAt.get(b.key) ?? 0).getTime() - new Date(newestSeenAt.get(a.key) ?? 0).getTime();
+        case "name_asc":
+          return a.customerName.localeCompare(b.customerName);
+        default:
+          return b.totalBalance - a.totalBalance;
+      }
+    });
+  }, [filtered, sortBy]);
+
+  const activeListTotal = viewMode === "customers" ? grouped.length : filtered.length;
+  const visibleGroups = useMemo(() => grouped.slice(0, visibleCount), [grouped, visibleCount]);
+  const visibleDebts = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
   const TABS: { value: DebtTab; label: string; count: number }[] = [
     { value: "unpaid",  label: "Unpaid",       count: stats.unpaidCount  },
@@ -2698,275 +2777,457 @@ export default function Debts() {
     { value: "all",     label: "All",          count: stats.totalCount   },
   ];
 
-  const STAT_CARDS = [
-    { label: "Total Debt", value: formatKES(stats.totalBalance), sub: `Across ${stats.activeCount} records`,  Icon: TrendingDown,  iconBg: "bg-destructive/15",                                                iconColor: "text-destructive",                                                valueCss: "text-destructive"      },
-    { label: "Overdue",    value: formatKES(stats.overdueBalance), sub: `${stats.overdueCount} records`,      Icon: Clock,         iconBg: stats.overdueCount > 0 ? "bg-orange-500/15"  : "bg-muted/30",    iconColor: stats.overdueCount > 0 ? "text-orange-400"  : "text-muted-foreground/30", valueCss: stats.overdueCount > 0 ? "text-orange-400"  : "text-muted-foreground/30" },
-    { label: "Partial",    value: formatKES(stats.partialBalance), sub: `${stats.partialCount} records`,      Icon: AlertTriangle, iconBg: stats.partialCount > 0 ? "bg-yellow-500/15"  : "bg-muted/30",    iconColor: stats.partialCount > 0 ? "text-yellow-400" : "text-muted-foreground/30", valueCss: stats.partialCount > 0 ? "text-yellow-400" : "text-muted-foreground/30" },
-    { label: "Paid",       value: formatKES(stats.paidTotal),     sub: `${stats.paidCount} records`,          Icon: CheckCircle2,  iconBg: "bg-emerald-500/15",                                               iconColor: "text-emerald-400",                                                valueCss: "text-emerald-400"      },
+  const STAT_CARDS: {
+    label: string;
+    tabKey: DebtTab;
+    value: string;
+    sub: string;
+    Icon: any;
+    iconBg: string;
+    iconColor: string;
+    valueCss: string;
+    ringCss: string;
+  }[] = [
+    {
+      label: "Total Debt",
+      tabKey: "all",
+      value: formatKES(stats.totalBalance),
+      sub: `Across ${stats.activeCount} active records`,
+      Icon: TrendingDown,
+      iconBg: "bg-destructive/12 border-destructive/25",
+      iconColor: "text-destructive",
+      valueCss: "text-destructive",
+      ringCss: "border-destructive/45 bg-destructive/[0.06]",
+    },
+    {
+      label: "Overdue 30d+",
+      tabKey: "overdue",
+      value: formatKES(stats.overdueBalance),
+      sub: `${stats.overdueCount} record${stats.overdueCount !== 1 ? "s" : ""}`,
+      Icon: Clock,
+      iconBg: stats.overdueCount > 0 ? "bg-rose-500/12 border-rose-500/25" : "bg-muted/40 border-border/60",
+      iconColor: stats.overdueCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground",
+      valueCss: stats.overdueCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground",
+      ringCss: "border-rose-500/45 bg-rose-500/[0.06]",
+    },
+    {
+      label: "Partial Paid",
+      tabKey: "partial",
+      value: formatKES(stats.partialBalance),
+      sub: `${stats.partialCount} record${stats.partialCount !== 1 ? "s" : ""}`,
+      Icon: AlertTriangle,
+      iconBg: stats.partialCount > 0 ? "bg-amber-500/12 border-amber-500/25" : "bg-muted/40 border-border/60",
+      iconColor: stats.partialCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+      valueCss: stats.partialCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+      ringCss: "border-amber-500/45 bg-amber-500/[0.06]",
+    },
+    {
+      label: "Settled / Paid",
+      tabKey: "paid",
+      value: formatKES(stats.paidTotal),
+      sub: `${stats.paidCount} record${stats.paidCount !== 1 ? "s" : ""}`,
+      Icon: CheckCircle2,
+      iconBg: "bg-emerald-500/12 border-emerald-500/25",
+      iconColor: "text-emerald-600 dark:text-emerald-400",
+      valueCss: "text-emerald-600 dark:text-emerald-400",
+      ringCss: "border-emerald-500/45 bg-emerald-500/[0.06]",
+    },
   ];
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden bg-background text-foreground">
 
-      {/* ── Left panel ──────────────────────────────────────────────── */}
+      {/* ── Left Workspace Panel (Full width up to 2xl, side-by-side 2xl+) ─ */}
       <div className={cn(
-        "flex flex-col min-w-0 overflow-hidden transition-all duration-200",
-        selectedDebt ? "hidden lg:flex lg:flex-1" : "flex-1"
+        "flex flex-col min-w-0 flex-1 overflow-hidden transition-all duration-200",
+        selectedDebt && "hidden sm:flex"
       )}>
-
-      {/* Sticky header */}
-      <div className="shrink-0 border-b border-border bg-card/98 backdrop-blur-sm">
-        {/* Title + actions */}
-        <div className="flex items-center justify-between px-4 pt-4 pb-3 gap-3">
-          <div>
-            <h1 className="text-lg font-bold font-display tracking-tight">Manage Debts</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Track customer debts and payments</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {stats.overdueWithPhone.length > 0 && (
-              <button
-                onClick={() => setBulkRemindOpen(true)}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#25D366]/10 border border-[#25D366]/25 text-[#25D366] text-xs font-semibold hover:bg-[#25D366]/20 transition-colors"
-              >
-                <Send className="h-3.5 w-3.5" />
-                Remind
-                <span className="bg-[#25D366]/20 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                  {stats.overdueWithPhone.length}
-                </span>
-              </button>
-            )}
-            <div className="hidden sm:flex items-center rounded-xl bg-muted/60 p-0.5">
-              <button
-                onClick={() => setViewMode("customers")}
-                className={cn("px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors", viewMode === "customers" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground")}
-              >
-                Customers
-              </button>
-              <button
-                onClick={() => setViewMode("records")}
-                className={cn("px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors", viewMode === "records" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground")}
-              >
-                Records
-              </button>
-            </div>
-            <AddDebtDialog shopId={shopId} onAdded={() => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() })} />
-          </div>
-        </div>
-
-        {/* Search + filter row */}
-        <div className="px-4 pb-2 flex gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              placeholder="Search by customer name or phone…"
-              className="pl-9 h-9 text-sm bg-muted/40 border-border/60 rounded-xl"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Status tabs */}
-        <div className="flex gap-1.5 px-4 pb-3 overflow-x-auto scrollbar-hide">
-          {TABS.map(t => (
-            <button
-              key={t.value}
-              onClick={() => { setTab(t.value); setSelectedDebt(null); }}
-              className={cn(
-                "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap",
-                tab === t.value
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-muted/60 text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.label}
-              {t.count > 0 && (
-                <span className={cn(
-                  "text-[10px] font-bold tabular-nums",
-                  tab === t.value ? "text-primary-foreground/70" : "text-muted-foreground/60"
-                )}>
-                  {t.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>{/* end sticky header */}
-
-      {/* ── Stats cards ──────────────────────────────────────────────── */}
-      <div className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-2.5 px-4 py-3 border-b border-border/60">
-        {STAT_CARDS.map(({ label, value, sub, Icon, iconBg, iconColor, valueCss }) => (
-          <div key={label} className="flex items-center gap-3 rounded-xl bg-card border border-border/50 px-3 py-2.5">
-            <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", iconBg)}>
-              <Icon className={cn("h-4 w-4", iconColor)} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground truncate">{label}</p>
-              <p className={cn("text-sm font-bold font-mono leading-tight truncate", valueCss)}>{value}</p>
-              <p className="text-[10px] text-muted-foreground/50 truncate">{sub}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Table area ───────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
-
-        {/* Column headers — hidden on mobile */}
-        {!isLoading && filtered.length > 0 && viewMode === "records" && (
-          <div className="hidden sm:grid grid-cols-[auto_1fr_110px_100px_110px_32px] items-center px-4 py-2 border-b border-border/50 bg-muted/20 sticky top-0 z-10">
-            <div className="w-9 mr-3" />
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Customer</div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-right pr-4">Total Amount</div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-right pr-4">Balance</div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</div>
-            <div />
-          </div>
-        )}
-
-        {/* Loading skeletons */}
-        {isLoading ? (
-          <div className="divide-y divide-border/40">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-3.5 animate-pulse">
-                <div className="w-9 h-9 rounded-xl bg-muted/60 shrink-0" />
-                <div className="flex-1 space-y-1.5">
-                  <div className="h-3.5 w-32 bg-muted/60 rounded-full" />
-                  <div className="h-2.5 w-24 bg-muted/40 rounded-full" />
+        <div className="flex-1 overflow-y-auto">
+          {/* Executive Header */}
+          <header className="border-b border-border/70 bg-background/90 px-4 sm:px-6 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3.5">
+              <div className="flex items-center gap-3.5 min-w-[230px] flex-1">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/12 border border-primary/25 text-primary">
+                  <Wallet className="h-5 w-5" />
                 </div>
-                <div className="hidden sm:block h-3.5 w-20 bg-muted/40 rounded-full" />
-                <div className="h-3.5 w-16 bg-muted/50 rounded-full" />
-                <div className="hidden sm:block h-6 w-16 bg-muted/30 rounded-full" />
-              </div>
-            ))}
-          </div>
-
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
-            <CheckCircle2 className="h-12 w-12 text-emerald-500/20" />
-            <p className="text-sm font-semibold">
-              {tab === "paid" ? "No paid debts yet" : "All clear!"}
-            </p>
-            <p className="text-xs opacity-50 text-center px-8">
-              {search ? `No results for "${search}"` : `No ${tab !== "all" ? tab + " " : ""}debts found.`}
-            </p>
-          </div>
-
-        ) : (
-          <div className="divide-y divide-border/40">
-            {viewMode === "customers" ? (
-              grouped.map((group) => (
-                <CustomerGroupRow key={group.key} group={group} onSelectDebt={setSelectedDebt} />
-              ))
-            ) : filtered.map((debt: any) => {
-              const isPaid    = debt.status === "paid";
-              const isPartial = debt.status === "partial";
-              const daysAgo   = differenceInDays(new Date(), new Date(debt.createdAt));
-              const isOverdue = !isPaid && daysAgo > 30;
-              const isSelected = selectedDebt?.id === debt.id;
-
-              const avatarBg =
-                isPaid    ? "bg-emerald-500/15 text-emerald-400" :
-                isOverdue ? "bg-red-500/15 text-red-400" :
-                isPartial ? "bg-orange-500/15 text-orange-400" :
-                            "bg-destructive/15 text-destructive";
-
-              const balanceCss =
-                isPaid    ? "text-emerald-400" :
-                isOverdue ? "text-red-400" :
-                isPartial ? "text-orange-400" :
-                            "text-destructive";
-
-              const statusBadge =
-                isPaid    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" :
-                isOverdue ? "bg-red-500/15 text-red-400 border-red-500/25" :
-                isPartial ? "bg-orange-500/15 text-orange-400 border-orange-500/25" :
-                            "bg-destructive/15 text-destructive border-destructive/25";
-
-               const balanceDue = debtBalanceDue(debt);
-               const customerCredit = debtCredit(debt);
-               const statusLabel =
-                isOverdue ? "Overdue" :
-                 isPaid    ? (customerCredit > 0 ? "Paid + Credit" : "Paid") :
-                isPartial ? "Partial" :
-                            "Unpaid";
-
-              const initials = debt.customerName
-                .split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
-
-              const totalPaid = debtAmountPaid(debt);
-
-              return (
-                <div
-                  key={debt.id}
-                  onClick={() => setSelectedDebt(isSelected ? null : debt)}
-                  className={cn(
-                    "group cursor-pointer transition-colors",
-                    "flex sm:grid sm:grid-cols-[auto_1fr_110px_100px_110px_32px] items-center gap-3 px-4 py-3",
-                    isSelected
-                      ? "bg-primary/8 border-l-2 border-l-primary"
-                      : "hover:bg-muted/30 border-l-2 border-l-transparent"
-                  )}
-                >
-                  {/* Avatar */}
-                  <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0", avatarBg)}>
-                    {initials}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-primary">
+                    <span>Credit Ledger</span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   </div>
+                  <h1 className="font-display text-2xl sm:text-[26px] font-bold tracking-normal leading-tight text-foreground">
+                    Customer Debts
+                  </h1>
+                  <p className="text-xs sm:text-sm text-muted-foreground truncate">
+                    Track credit balances, partial settlements, statements & WhatsApp reminders.
+                  </p>
+                </div>
+              </div>
 
-                  {/* Name + phone */}
-                  <div className="flex-1 sm:flex-none min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate leading-snug">{toTitleCase(debt.customerName)}</p>
-                    {debt.customerPhone ? (
-                      <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-0.5">
-                        <Phone className="h-2.5 w-2.5 shrink-0" />{debt.customerPhone}
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-muted-foreground/30 mt-0.5 italic">No phone</p>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {stats.overdueWithPhone.length > 0 && (
+                  <button
+                    onClick={() => setBulkRemindOpen(true)}
+                    className="inline-flex h-9 items-center gap-1.5 px-3 rounded-xl bg-[#25D366]/12 border border-[#25D366]/30 text-[#25D366] text-xs font-bold hover:bg-[#25D366]/20 transition-colors"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Remind
+                    <span className="bg-[#25D366]/20 text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums">
+                      {stats.overdueWithPhone.length}
+                    </span>
+                  </button>
+                )}
+
+                <div className="inline-flex items-center rounded-xl border border-border/70 bg-muted/45 p-0.5">
+                  <button
+                    onClick={() => setViewMode("customers")}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                      viewMode === "customers" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    Customers
+                  </button>
+                  <button
+                    onClick={() => setViewMode("records")}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                      viewMode === "records" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    Records
+                  </button>
+                </div>
+
+                <AddDebtDialog shopId={shopId} onAdded={() => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() })} />
+              </div>
+            </div>
+
+            {/* Interactive 4-Card KPI Strip */}
+            <div className="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+              {STAT_CARDS.map(({ label, tabKey, value, sub, Icon, iconBg, iconColor, valueCss, ringCss }) => {
+                const isActive = tab === tabKey;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => { setTab(tabKey); setSelectedDebt(null); }}
+                    className={cn(
+                      "text-left rounded-2xl border p-3.5 transition-all hover:border-primary/40",
+                      isActive ? ringCss : "border-border/80 bg-card/95"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground truncate">{label}</p>
+                        <p className={cn("font-display mt-1 text-lg sm:text-xl font-bold tabular-nums leading-tight truncate", valueCss)}>
+                          {value}
+                        </p>
+                      </div>
+                      <div className={cn("w-9 h-9 rounded-xl border flex items-center justify-center shrink-0", iconBg)}>
+                        <Icon className={cn("h-4 w-4", iconColor)} />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1.5 truncate">{sub}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </header>
+
+          {/* Main Workspace Container */}
+          <div className="p-4 sm:p-6 space-y-4">
+            {/* Search + Sort + Status Pills Card */}
+            <div className="rounded-2xl border border-border/80 bg-card/95 p-3.5 sm:p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder={`Search across ${stats.totalCount.toLocaleString()} debts by customer name or phone…`}
+                    className="pl-10 pr-9 h-10 text-sm bg-background/70 border-border/80 rounded-xl focus-visible:border-primary"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      aria-label="Clear customer search"
+                      onClick={() => setSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="relative inline-flex items-center shrink-0">
+                  <select
+                    aria-label="Sort customer debts"
+                    value={sortBy}
+                    onChange={e => setSortBy(e.target.value as typeof sortBy)}
+                    style={{ WebkitAppearance: "none", MozAppearance: "none", appearance: "none" }}
+                    className="h-10 appearance-none rounded-xl border border-border/80 bg-background/70 pl-3.5 pr-9 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer w-full sm:w-auto"
+                  >
+                    <option value="balance_desc">Highest balance first</option>
+                    <option value="oldest">Oldest / most overdue</option>
+                    <option value="newest">Most recent first</option>
+                    <option value="name_asc">Name: A to Z</option>
+                  </select>
+                  <ArrowUpDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                </div>
+              </div>
+
+              <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
+                {TABS.map(t => (
+                  <button
+                    key={t.value}
+                    onClick={() => { setTab(t.value); setSelectedDebt(null); }}
+                    className={cn(
+                      "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all whitespace-nowrap",
+                      tab === t.value
+                        ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                        : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+                    )}
+                  >
+                    <span>{t.label}</span>
+                    {t.count > 0 && (
+                      <span className={cn(
+                        "text-[10px] font-bold px-1.5 py-0.5 rounded-md tabular-nums",
+                        tab === t.value ? "bg-black/15 text-primary-foreground" : "bg-background/80 text-foreground"
+                      )}>
+                        {t.count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Accounts / Records Ledger Card */}
+            <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/95">
+              {/* Header row */}
+              {!isLoading && filtered.length > 0 && (
+                viewMode === "customers" ? (
+                  <div className="hidden sm:grid grid-cols-[minmax(190px,1.5fr)_minmax(110px,0.8fr)_minmax(115px,0.9fr)_92px_auto] items-center gap-3 px-4 py-2.5 border-b border-border/70 bg-muted/25 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <span>Customer Account</span>
+                    <span className="text-right">Total Issued</span>
+                    <span className="text-right">Balance Due</span>
+                    <span className="text-center">Status</span>
+                    <span className="text-right">Actions</span>
+                  </div>
+                ) : (
+                  <div className="hidden sm:grid grid-cols-[auto_1fr_120px_115px_100px_32px] items-center gap-3 px-4 py-2.5 border-b border-border/70 bg-muted/25 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <div className="w-9" />
+                    <span>Customer</span>
+                    <span className="text-right">Total Issued</span>
+                    <span className="text-right">Balance Due</span>
+                    <span className="text-center">Status</span>
+                    <div />
+                  </div>
+                )
+              )}
+
+              {/* Loading skeletons */}
+              {isLoading ? (
+                <div className="divide-y divide-border/50">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-4 animate-pulse">
+                      <div className="w-10 h-10 rounded-xl bg-muted/60 shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3.5 w-36 bg-muted/60 rounded-full" />
+                        <div className="h-2.5 w-24 bg-muted/40 rounded-full" />
+                      </div>
+                      <div className="hidden sm:block h-3.5 w-20 bg-muted/40 rounded-full" />
+                      <div className="h-4 w-20 bg-muted/50 rounded-full" />
+                      <div className="hidden sm:block h-6 w-16 bg-muted/35 rounded-full" />
+                    </div>
+                  ))}
+                </div>
+
+              ) : filtered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-2.5 text-muted-foreground">
+                  <CheckCircle2 className="h-11 w-11 text-emerald-500/25" />
+                  <p className="text-sm font-semibold text-foreground">
+                    {tab === "paid" ? "No paid debts yet" : "All clear!"}
+                  </p>
+                  <p className="text-xs text-center px-8">
+                    {search ? `No customer or phone matching "${search}"` : `No ${tab !== "all" ? tab + " " : ""}debt accounts found.`}
+                  </p>
+                </div>
+
+              ) : (
+                <div>
+                  {viewMode === "customers" ? (
+                    visibleGroups.map((group) => (
+                      <CustomerGroupRow key={group.key} group={group} onSelectDebt={setSelectedDebt} />
+                    ))
+                  ) : (
+                    <div className="divide-y divide-border/50">
+                      {visibleDebts.map((debt: any) => {
+                        const isPaid    = debt.status === "paid";
+                        const isPartial = debt.status === "partial";
+                        const daysAgo   = differenceInDays(new Date(), new Date(debt.createdAt));
+                        const isOverdue = !isPaid && daysAgo > 30;
+                        const isSelected = selectedDebt?.id === debt.id;
+
+                        const avatarBg =
+                          isPaid    ? "bg-emerald-500/12 border-emerald-500/25 text-emerald-600 dark:text-emerald-400" :
+                          isOverdue ? "bg-rose-500/12 border-rose-500/25 text-rose-600 dark:text-rose-400" :
+                          isPartial ? "bg-amber-500/12 border-amber-500/25 text-amber-600 dark:text-amber-400" :
+                                      "bg-destructive/12 border-destructive/25 text-destructive";
+
+                        const balanceCss =
+                          isPaid    ? "text-emerald-600 dark:text-emerald-400" :
+                          isOverdue ? "text-rose-600 dark:text-rose-400" :
+                          isPartial ? "text-amber-600 dark:text-amber-400" :
+                                      "text-destructive";
+
+                        const statusBadge =
+                          isPaid    ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 border-emerald-500/25" :
+                          isOverdue ? "bg-rose-500/12 text-rose-600 dark:text-rose-400 border-rose-500/25" :
+                          isPartial ? "bg-amber-500/12 text-amber-600 dark:text-amber-400 border-amber-500/25" :
+                                      "bg-destructive/12 text-destructive border-destructive/25";
+
+                        const balanceDue = debtBalanceDue(debt);
+                        const customerCredit = debtCredit(debt);
+                        const statusLabel =
+                          isOverdue ? "Overdue" :
+                          isPaid    ? (customerCredit > 0 ? "Paid + Credit" : "Paid") :
+                          isPartial ? "Partial" :
+                                      "Unpaid";
+
+                        const initials = debt.customerName
+                          .split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
+
+                        const totalPaid = debtAmountPaid(debt);
+
+                        return (
+                          <div
+                            key={debt.id}
+                            onClick={() => setSelectedDebt(isSelected ? null : debt)}
+                            className={cn(
+                              "group cursor-pointer transition-colors",
+                              "flex sm:grid sm:grid-cols-[auto_1fr_120px_115px_100px_32px] items-center gap-3 px-4 py-3.5",
+                              isSelected
+                                ? "bg-primary/10 border-l-2 border-l-primary"
+                                : "hover:bg-muted/25 border-l-2 border-l-transparent"
+                            )}
+                          >
+                            <div className={cn("w-9 h-9 rounded-xl border flex items-center justify-center text-xs font-bold shrink-0", avatarBg)}>
+                              {initials || "?"}
+                            </div>
+
+                            <div className="flex-1 sm:flex-none min-w-0">
+                              <p className="text-sm font-semibold text-foreground truncate leading-snug">{toTitleCase(debt.customerName)}</p>
+                              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5 truncate">
+                                {debt.customerPhone ? (
+                                  <span className="inline-flex items-center gap-1 font-mono">
+                                    <Phone className="h-2.5 w-2.5 shrink-0" />{debt.customerPhone}
+                                  </span>
+                                ) : (
+                                  <span className="italic">No phone</span>
+                                )}
+                                <span>·</span>
+                                <span>{daysAgo === 0 ? "Today" : `${daysAgo}d ago`}</span>
+                              </p>
+                            </div>
+
+                            <div className="hidden sm:block text-right">
+                              <p className="text-sm font-semibold font-mono tabular-nums text-foreground">{formatKES(debt.totalAmount)}</p>
+                              <p className="text-[10px] text-muted-foreground tabular-nums">Paid: {formatKES(totalPaid)}</p>
+                            </div>
+
+                            <div className="text-right shrink-0">
+                              <p className={cn("text-sm font-bold font-mono tabular-nums", balanceCss)}>{formatKES(balanceDue)}</p>
+                              {customerCredit > 0 && (
+                                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">
+                                  +{formatKES(customerCredit)} credit
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="hidden sm:flex justify-center">
+                              <span className={cn("text-[10px] font-bold px-2.5 py-0.5 rounded-full border uppercase tracking-wider", statusBadge)}>
+                                {statusLabel}
+                              </span>
+                            </div>
+
+                            <div className="hidden sm:flex items-center justify-center">
+                              <ChevronRight className={cn("h-4 w-4 transition-colors", isSelected ? "text-primary" : "text-muted-foreground group-hover:text-foreground")} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!isLoading && filtered.length > 0 && (
+                <div className="border-t border-border/70 bg-muted/20 px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground tabular-nums">
+                  <span>
+                    Showing{" "}
+                    <strong className="text-foreground">
+                      {Math.min(visibleCount, activeListTotal).toLocaleString()}
+                    </strong>{" "}
+                    of{" "}
+                    <strong className="text-foreground">{activeListTotal.toLocaleString()}</strong>{" "}
+                    {viewMode === "customers" ? `customer${activeListTotal !== 1 ? "s" : ""}` : `record${activeListTotal !== 1 ? "s" : ""}`}
+                    {activeListTotal > visibleCount && " — use Search above for instant lookup"}
+                  </span>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {selectedDebt && (
+                      <span className="text-[11px] font-semibold text-primary hidden lg:inline mr-2">
+                        Inspecting #{selectedDebt.id.slice(0, 8).toUpperCase()}
+                      </span>
+                    )}
+                    {visibleCount > 10 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 rounded-lg px-2.5 text-xs"
+                        onClick={() => setVisibleCount(10)}
+                      >
+                        Show 10
+                      </Button>
+                    )}
+                    {activeListTotal > visibleCount && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 rounded-lg px-2.5 text-xs font-semibold"
+                          onClick={() => setVisibleCount(n => Math.min(n + 10, activeListTotal))}
+                        >
+                          Load 10 more
+                        </Button>
+                        {activeListTotal - visibleCount > 10 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 rounded-lg px-2.5 text-xs"
+                            onClick={() => setVisibleCount(n => Math.min(n + 25, activeListTotal))}
+                          >
+                            +25
+                          </Button>
+                        )}
+                      </>
                     )}
                   </div>
-
-                  {/* Total amount — hidden on mobile */}
-                  <div className="hidden sm:block text-right pr-4">
-                    <p className="text-sm font-semibold font-mono text-foreground">{formatKES(debt.totalAmount)}</p>
-                    <p className="text-[10px] text-muted-foreground/50">Paid: {formatKES(totalPaid)}</p>
-                  </div>
-
-                  {/* Balance */}
-                  <div className="text-right pr-4 shrink-0">
-                    <p className={cn("text-sm font-bold font-mono", balanceCss)}>{formatKES(balanceDue)}</p>
-                    {customerCredit > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(customerCredit)} credit</p>}
-                  </div>
-
-                  {/* Status badge */}
-                  <div className="hidden sm:flex items-center">
-                    <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusBadge)}>
-                      {statusLabel}
-                    </span>
-                  </div>
-
-                  {/* Arrow */}
-                  <div className="hidden sm:flex items-center justify-center">
-                    <ChevronRight className={cn("h-4 w-4 transition-colors", isSelected ? "text-primary" : "text-muted-foreground/30 group-hover:text-muted-foreground")} />
-                  </div>
                 </div>
-              );
-            })}
+              )}
+            </div>
           </div>
-        )}
-
-        {/* Row count */}
-        {!isLoading && filtered.length > 0 && (
-          <p className="text-[11px] text-muted-foreground/40 text-center py-4">
-            Showing {viewMode === "customers" ? grouped.length : filtered.length} {viewMode === "customers" ? `customer${grouped.length !== 1 ? "s" : ""}` : `record${filtered.length !== 1 ? "s" : ""}`}
-          </p>
-        )}
-      </div>
-
+        </div>
       </div>{/* end left panel */}
 
-      {/* ── Right: detail panel (desktop) ────────────────────────────── */}
+      {/* ── Detail panel: docked on 2xl+, slide-over drawer on <= xl ───── */}
       {selectedDebt && (
-        <div className="hidden lg:flex flex-col w-[420px] xl:w-[460px] shrink-0 border-l border-border">
+        <div className="hidden 2xl:flex flex-col w-[460px] shrink-0 border-l border-border/80 bg-card/95">
           <DebtDetailPanel
             debt={selectedDebt}
             isOwner={isOwner}
@@ -2975,12 +3236,14 @@ export default function Debts() {
         </div>
       )}
 
-      {/* ── Mobile: full-screen overlay panel ────────────────────────── */}
+      {/* ── Slide-over drawer (mobile bottom sheet / tablet+desktop slide-over) ── */}
       {selectedDebt && (
-        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedDebt(null)} />
-          <div className="relative bg-card rounded-t-2xl flex flex-col shadow-2xl" style={{ maxHeight: "92dvh" }}>
-            <div className="w-10 h-1 bg-muted-foreground/20 rounded-full mx-auto mt-2.5 mb-1 shrink-0" />
+        <div className="2xl:hidden fixed inset-0 z-50 flex flex-col justify-end sm:flex-row sm:justify-end">
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-xs" onClick={() => setSelectedDebt(null)} />
+          <div
+            className="relative bg-card rounded-t-2xl sm:rounded-none sm:border-l sm:border-border/80 flex flex-col shadow-2xl w-full sm:w-[450px] sm:h-full max-h-[92dvh] sm:max-h-full overflow-hidden animate-in fade-in-0 duration-150"
+          >
+            <div className="sm:hidden w-10 h-1 bg-muted-foreground/25 rounded-full mx-auto mt-2.5 mb-1 shrink-0" />
             <DebtDetailPanel
               debt={selectedDebt}
               isOwner={isOwner}
