@@ -1,22 +1,29 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useGetDashboard, useGetReportRange, useGetTopProducts,
   useGetCategoryBreakdown, useGetHourlySales,
-  useListProducts, customFetch,
+  useListProducts, useListDebts, getListDebtsQueryKey, customFetch,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { formatKES } from "@/lib/format";
+import { toTitleCase } from "@/components/customer-autocomplete";
+import { NurseryDebtSettlementDialog } from "@/components/NurseryDebtSettlementDialog";
+import {
+  computeNurseryProjection,
+  loadNurserySettlementState,
+  type NurserySettlementMetrics,
+} from "@/lib/nursery-settlement";
 import {
   TrendingUp, ShoppingBag, CreditCard, AlertTriangle,
   Package, TrendingDown, Percent, BarChart2, Trophy, Flame,
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
   ClipboardCheck, X, Share2, Check, CheckCheck, Wallet, ReceiptText, Ban,
   Download, Calendar, ChevronDown, ChevronUp, FileText, Search, SearchX,
-  RefreshCw, Sprout, Activity, ArrowUpRight,
+  RefreshCw, Sprout, Activity, ArrowUpRight, History,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
 import { Link } from "wouter";
@@ -1127,6 +1134,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
 }
 
 export default function Reports() {
+  const qc = useQueryClient();
   const shopId = localStorage.getItem("greenlink_shopId") || "";
 
   const [quickRange, setQuickRange] = useState<QuickRange>("month");
@@ -1145,9 +1153,51 @@ export default function Reports() {
   const [nurseryScope, setNurseryScope] = useState<"period" | "year" | "all">("period");
   const [nurserySearch, setNurserySearch] = useState("");
   const [nurseryEntriesLimit, setNurseryEntriesLimit] = useState(100);
+  const [plantSettleOpen, setPlantSettleOpen] = useState(false);
+  const [plantSettleTab, setPlantSettleTab] = useState<"settle" | "history">("settle");
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [lastManualRefreshAt, setLastManualRefreshAt] = useState<number | null>(null);
   const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
+
+  const { data: shopDebtsData, isLoading: shopDebtsLoading } = useListDebts(
+    { shopId },
+    {
+      query: {
+        queryKey: getListDebtsQueryKey({ shopId }),
+        enabled: !!shopId,
+        staleTime: 30_000,
+      },
+    },
+  );
+  const shopDebts = (shopDebtsData as any[]) || [];
+
+  const { data: nurserySettlementMetrics } = useQuery<NurserySettlementMetrics>({
+    queryKey: [
+      "nursery-settlement-state",
+      shopId,
+      "analytics-summary",
+      shopDebts.length,
+      shopDebts.reduce((s, d) => s + Number(d?.balance || 0), 0),
+    ],
+    queryFn: () =>
+      loadNurserySettlementState({
+        qc,
+        shopId,
+        shopName,
+        allDebts: shopDebts,
+      }),
+    enabled: !!shopId && !shopDebtsLoading,
+    staleTime: 30_000,
+  });
+
+  const nurserySettlementProjection = useMemo(() => {
+    if (!nurserySettlementMetrics) return null;
+    return computeNurseryProjection({
+      metrics: nurserySettlementMetrics,
+      poolMode: nurserySettlementMetrics.shopConfig.poolMode,
+      shopCommissionPct: nurserySettlementMetrics.shopConfig.commissionPct,
+    });
+  }, [nurserySettlementMetrics]);
 
   const today = format(new Date(), "yyyy-MM-dd");
   const currentYear = new Date().getFullYear();
@@ -2011,6 +2061,22 @@ export default function Reports() {
                   </button>
                 ))}
               </div>
+              <button
+                type="button"
+                onClick={() => { setPlantSettleTab("settle"); setPlantSettleOpen(true); }}
+                className="inline-flex items-center gap-1 rounded-xl border border-emerald-500/35 bg-emerald-500/12 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+              >
+                <Sprout className="h-3 w-3" />
+                Settle Debts
+              </button>
+              <button
+                type="button"
+                onClick={() => { setPlantSettleTab("history"); setPlantSettleOpen(true); }}
+                className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-muted/35 px-2.5 py-1.5 text-[11px] font-semibold text-foreground hover:border-primary/40 hover:text-primary transition-colors cursor-pointer"
+              >
+                <History className="h-3 w-3" />
+                Debt Ledger
+              </button>
               <Link
                 href="/nursery"
                 className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-muted/35 px-2.5 py-1.5 text-[11px] font-semibold text-foreground hover:border-primary/40 hover:text-primary transition-colors"
@@ -2075,6 +2141,77 @@ export default function Reports() {
                     <p className="mt-0.5 text-[10px] text-muted-foreground tabular-nums">Cash+M-Pesa vs Credit</p>
                   </div>
                 </div>
+
+                {nurserySettlementMetrics && nurserySettlementProjection && (
+                  <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-3.5 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Sprout className="h-4 w-4 text-emerald-500 shrink-0" />
+                        <p className="text-xs font-bold text-foreground">
+                          Plant Money Used for Debts &amp; Remaining Balance ({shopName})
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setPlantSettleTab("history"); setPlantSettleOpen(true); }}
+                        className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                      >
+                        View Ledger ({nurserySettlementMetrics.settledPayments.length + nurserySettlementMetrics.payouts.length})
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                      <div className="rounded-lg border border-border/60 bg-background/75 p-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Used to Pay Debts</p>
+                        <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
+                          {formatKES(nurserySettlementMetrics.d1SettledNetTotal)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {nurserySettlementMetrics.settledPayments.length} settlement{nurserySettlementMetrics.settledPayments.length === 1 ? "" : "s"} in D1
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border/60 bg-background/75 p-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Shop Profit Kept</p>
+                        <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-foreground">
+                          {formatKES(nurserySettlementProjection.totalShopProfit)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {nurserySettlementMetrics.shopConfig.commissionPct}% shop share
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-border/60 bg-background/75 p-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Cash/M-Pesa Paid Out</p>
+                        <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-primary">
+                          {formatKES(nurserySettlementMetrics.payoutNetTotal)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {nurserySettlementMetrics.payouts.length} payout{nurserySettlementMetrics.payouts.length === 1 ? "" : "s"} recorded
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 p-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Remaining Balance</p>
+                        <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                          {formatKES(nurserySettlementProjection.availableNetProceeds)}
+                        </p>
+                        <p className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">
+                          From {nurserySettlementMetrics.shopConfig.poolMode === "collected" ? "Cash+M-Pesa" : "All Plant Sales"}
+                        </p>
+                      </div>
+                    </div>
+                    {nurserySettlementMetrics.settledPayments.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px] text-muted-foreground">
+                        <span className="font-semibold text-foreground">Recent cleared:</span>
+                        {nurserySettlementMetrics.settledPayments.slice(0, 3).map((entry) => (
+                          <span
+                            key={`${entry.debtId}-${entry.paymentId}`}
+                            className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/80 px-2 py-0.5 font-mono text-[10px]"
+                          >
+                            {toTitleCase(entry.customerName)} · #{entry.debtId.slice(0, 6).toUpperCase()} · {formatKES(entry.amount)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {nurseryView === "chart" && (
                   nurserySalesChartData.length === 0 ? (
@@ -3031,6 +3168,16 @@ export default function Reports() {
           </Card>
         )}
       </div>
+
+      <NurseryDebtSettlementDialog
+        open={plantSettleOpen}
+        onOpenChange={setPlantSettleOpen}
+        shopId={shopId}
+        shopName={shopName}
+        initialTab={plantSettleTab}
+        externalDebts={shopDebts}
+        suppliers={nurserySettlementMetrics?.suppliers}
+      />
     </div>
   );
 }

@@ -10,11 +10,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatKES } from "@/lib/format";
 import { downloadNurseryReceipt, downloadNurseryStatement } from "@/lib/nursery-pdf";
 import { CustomerAutocomplete, type SelectedCustomer } from "@/components/customer-autocomplete";
+import { NurseryDebtSettlementDialog } from "@/components/NurseryDebtSettlementDialog";
 import {
   Sprout, Plus, Minus, CalendarDays, Banknote, Smartphone, Leaf, RefreshCw, Archive,
   CheckCircle2, CreditCard, Users, TrendingUp, ClipboardList, PackagePlus, ArrowUpRight,
   Pencil, Save, X, Trash2, Search, SlidersHorizontal, ReceiptText, CircleDollarSign,
-  ChevronDown, ShoppingCart, BarChart3, Boxes, LayoutDashboard, Truck, Sparkles, User2, Phone,
+  ChevronDown, ShoppingCart, BarChart3, Boxes, LayoutDashboard, Truck, Sparkles, User2, Phone, History,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -147,6 +148,9 @@ export default function NurseryRegister() {
   const [receiptRequestId, setReceiptRequestId] = useState(() => crypto.randomUUID());
   const [savingSupplier, setSavingSupplier] = useState(false);
   const [savingReceipt, setSavingReceipt] = useState(false);
+  const [plantSettleOpen, setPlantSettleOpen] = useState(false);
+  const [plantSettleTab, setPlantSettleTab] = useState<"settle" | "history">("settle");
+  const [plantSettleCustomer, setPlantSettleCustomer] = useState<{ customerName: string; customerPhone?: string }>({ customerName: "" });
   const [reportPage, setReportPage] = useState(1);
   const salesPageSize = 25;
   const reportPageSize = 20;
@@ -2318,9 +2322,46 @@ export default function NurseryRegister() {
                   <CardTitle className="text-base">Supplier Balances & Source Stock</CardTitle>
                   <p className="mt-0.5 text-xs text-muted-foreground">Select a supplier card to inspect deliveries and debt offsets.</p>
                 </div>
-                <Button type="button" variant="outline" size="sm" disabled={suppliersQuery.isFetching} onClick={() => void suppliersQuery.refetch()} className="gap-2 rounded-xl cursor-pointer">
-                  <RefreshCw className={`h-3.5 w-3.5 ${suppliersQuery.isFetching ? "animate-spin" : ""}`} />Refresh
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      const target = selectedSupplier ?? supplierRows.find(s => !!s.customerId) ?? supplierRows[0];
+                      setPlantSettleCustomer({
+                        customerName: target?.customerName || target?.name || "",
+                        customerPhone: target?.customerPhone || target?.phone || "",
+                      });
+                      setPlantSettleTab("settle");
+                      setPlantSettleOpen(true);
+                    }}
+                    className="gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
+                  >
+                    <Sprout className="h-3.5 w-3.5" />
+                    Settle Debt w/ Plants
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const target = selectedSupplier ?? supplierRows.find(s => !!s.customerId) ?? supplierRows[0];
+                      setPlantSettleCustomer({
+                        customerName: target?.customerName || target?.name || "",
+                        customerPhone: target?.customerPhone || target?.phone || "",
+                      });
+                      setPlantSettleTab("history");
+                      setPlantSettleOpen(true);
+                    }}
+                    className="gap-1.5 rounded-xl cursor-pointer"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    Debt Usage Ledger
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" disabled={suppliersQuery.isFetching} onClick={() => void suppliersQuery.refetch()} className="gap-2 rounded-xl cursor-pointer">
+                    <RefreshCw className={`h-3.5 w-3.5 ${suppliersQuery.isFetching ? "animate-spin" : ""}`} />Refresh
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="p-4 sm:p-5">
@@ -2379,7 +2420,25 @@ export default function NurseryRegister() {
                       {selectedSupplier.customerId ? `Linked to ${selectedSupplier.customerName || "shop customer"}. Sales reduce this customer's debt first.` : "Link this supplier to an existing customer to apply future sale proceeds to their debt."}
                     </p>
                   </div>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedSupplierId("")}>Close</Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        setPlantSettleCustomer({
+                          customerName: selectedSupplier.customerName || selectedSupplier.name,
+                          customerPhone: selectedSupplier.customerPhone || selectedSupplier.phone || "",
+                        });
+                        setPlantSettleTab("settle");
+                        setPlantSettleOpen(true);
+                      }}
+                      className="gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
+                    >
+                      <Sprout className="h-3.5 w-3.5" />
+                      Clear Debt & Shop Profit
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedSupplierId("")}>Close</Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4 p-4 sm:p-5">
@@ -2451,6 +2510,20 @@ export default function NurseryRegister() {
           )}
         </TabsContent>
       </div>
+
+      <NurseryDebtSettlementDialog
+        open={plantSettleOpen}
+        onOpenChange={setPlantSettleOpen}
+        shopId={shopId}
+        customerName={plantSettleCustomer.customerName}
+        customerPhone={plantSettleCustomer.customerPhone}
+        initialTab={plantSettleTab}
+        suppliers={supplierRows}
+        onSettled={() => {
+          void suppliersQuery.refetch();
+          if (selectedSupplierId) void supplierRecordsQuery.refetch();
+        }}
+      />
     </Tabs>
   );
 }

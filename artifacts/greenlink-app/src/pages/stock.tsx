@@ -23,9 +23,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatKES, formatQty } from "@/lib/format";
+import { StockProductCardDialog } from "@/components/StockProductCardDialog";
+import { formatKES, formatQty, roundQty } from "@/lib/format";
 import {
-  Search, Plus, Minus, Package, Edit2, AlertTriangle, ArrowUpRight,
+  Search, Plus, Minus, Package, Edit2, AlertTriangle, ArrowUpRight, ArrowRight,
   PackageX, Copy, TrendingUp, Scale, Wheat,
   Calendar, Trash2, ArrowLeftRight, Truck, Zap, CheckCircle2, X, ChevronDown, ArrowUpDown, Square, CheckSquare2
 } from "lucide-react";
@@ -249,17 +250,15 @@ function WeightPresets({ unit, onSelect }: { unit: string; onSelect: (v: number)
   );
 }
 
-function RestockDialog({ product }: { product: any }) {
+function RestockDialog({ product, trigger }: { product: any; trigger?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const weighed = isWeighedUnit(product.unit || "");
+  const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");
   const [qty, setQty] = useState<number | "">(0);
   const [purchasePrice, setPurchasePrice] = useState(product.purchasePrice?.toString() || "");
   const [sellingPrice, setSellingPrice] = useState(product.sellingPrice?.toString() || "");
   const [submitting, setSubmitting] = useState(false);
 
   // Sync prices from the latest product data every time the dialog opens.
-  // Without this, editing a price via the Edit dialog and then opening Restock
-  // would show the stale price from the initial component mount.
   useEffect(() => {
     if (open) {
       setPurchasePrice(product.purchasePrice?.toString() || "");
@@ -270,198 +269,463 @@ function RestockDialog({ product }: { product: any }) {
   const restockMutation = useRestockProduct();
   const qc = useQueryClient();
 
+  const qtyNum = Number(qty || 0);
+  const nextStock = roundQty(Number(product.stockQty || 0) + qtyNum);
+  const buyNum = Number(purchasePrice || 0);
+  const sellNum = Number(sellingPrice || 0);
+  const marginPct = buyNum > 0 && sellNum > 0 ? ((sellNum - buyNum) / sellNum) * 100 : null;
+  const unitProfit = buyNum > 0 && sellNum > 0 ? sellNum - buyNum : null;
+  const restockCost = qtyNum > 0 && buyNum > 0 ? qtyNum * buyNum : 0;
+  const alertQty = Number(product.alertQty || 0);
+  const healthTarget = Math.max(alertQty * 2, 10);
+  const nextHealthPct = nextStock <= 0 ? 0 : Math.min(100, Math.max(8, (nextStock / healthTarget) * 100));
+  const stepUnit = weighed ? (Math.abs(qtyNum) < 1 ? 0.25 : 1) : 1;
+  const minRemoveAllowed = -Number(product.stockQty || 0);
+  const isInvalidNegative = qtyNum < 0 && nextStock < 0;
+
   const handleRestock = async () => {
-    const qtyNum = Number(qty);
-    if (qtyNum === 0 || submitting) return;
+    const cleanQty = roundQty(Number(qty));
+    if (cleanQty === 0 || submitting || isInvalidNegative) return;
 
-    // Guard against double-tap immediately — before any async work
     setSubmitting(true);
-
-    // Snapshot for rollback on error
     const snapshot = qc.getQueriesData({ queryKey: getListProductsQueryKey() });
 
-    // Optimistic update: immediately show new stock qty in the list
     qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
       if (!old?.products) return old;
-      return { ...old, products: old.products.map((p: any) => p.id !== product.id ? p : {
-        ...p, stockQty: p.stockQty + qtyNum,
-        ...(purchasePrice && { purchasePrice: Number(purchasePrice) }),
-        ...(sellingPrice && { sellingPrice: Number(sellingPrice) }),
-      }) };
+      return {
+        ...old,
+        products: old.products.map((p: any) =>
+          p.id !== product.id
+            ? p
+            : {
+                ...p,
+                stockQty: roundQty(p.stockQty + cleanQty),
+                ...(purchasePrice && { purchasePrice: Number(purchasePrice) }),
+                ...(sellingPrice && { sellingPrice: Number(sellingPrice) }),
+              }
+        ),
+      };
     });
 
-    // Close + confirm immediately — don't wait for the network
-    toast.success(qtyNum > 0
-      ? `Restocked ${qtyNum} ${product.unit || "units"} of ${product.canonicalName}`
-      : `Removed ${Math.abs(qtyNum)} ${product.unit || "units"} from ${product.canonicalName}`);
+    toast.success(
+      cleanQty > 0
+        ? `Restocked ${formatQty(cleanQty)} ${product.unit || "units"} of ${product.canonicalName}`
+        : `Removed ${formatQty(Math.abs(cleanQty))} ${product.unit || "units"} from ${product.canonicalName}`
+    );
     setOpen(false);
     setQty(0);
     setSubmitting(false);
 
-    // If offline, queue the restock and return — sync will fire on reconnect
     if (!navigator.onLine) {
       await enqueueMutation("restock", (product.shopId as string) || "", {
         productId: product.id,
-        qty: qtyNum,
+        qty: cleanQty,
         ...(purchasePrice ? { newPurchasePrice: Number(purchasePrice) } : {}),
         ...(sellingPrice ? { newSellingPrice: Number(sellingPrice) } : {}),
       });
-      toast.success(`Restock saved offline — will sync on reconnect`);
+      toast.success("Restock saved offline — will sync on reconnect");
       return;
     }
 
-    // Async IIFE: runs to completion even after the dialog component unmounts.
-    // Per-call .mutate() callbacks are NOT guaranteed to fire after unmount in TanStack Query v5,
-    // so we use mutateAsync + try/catch/finally to guarantee the cache is always synced.
     (async () => {
       try {
-        const updatedProduct = await restockMutation.mutateAsync(
-          { productId: product.id, data: { qty: qtyNum, newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined, newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined } as any },
-        );
-        // Register with version guard so any concurrent background refetch that returns
-        // a stale KV response for this product gets silently replaced with this version.
+        const updatedProduct = await restockMutation.mutateAsync({
+          productId: product.id,
+          data: {
+            qty: cleanQty,
+            newPurchasePrice: purchasePrice ? Number(purchasePrice) : undefined,
+            newSellingPrice: sellingPrice ? Number(sellingPrice) : undefined,
+          } as any,
+        });
         recordMutationResult(updatedProduct as any);
-        // Sync cache with server-confirmed values (authoritative values replace optimistic)
         qc.setQueriesData({ queryKey: getListProductsQueryKey() }, (old: any) => {
           if (!old?.products) return old;
-          return { ...old, products: old.products.map((p: any) =>
-            p.id === (updatedProduct as any).id
-              ? { ...p, stockQty: (updatedProduct as any).stockQty, purchasePrice: (updatedProduct as any).purchasePrice, sellingPrice: (updatedProduct as any).sellingPrice }
-              : p
-          )};
+          return {
+            ...old,
+            products: old.products.map((p: any) =>
+              p.id === (updatedProduct as any).id
+                ? {
+                    ...p,
+                    stockQty: (updatedProduct as any).stockQty,
+                    purchasePrice: (updatedProduct as any).purchasePrice,
+                    sellingPrice: (updatedProduct as any).sellingPrice,
+                  }
+                : p
+            ),
+          };
         });
       } catch {
-        // Rollback to snapshot, never leave UI in an inconsistent state
         snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
         toast.error("Restock failed — please retry");
       } finally {
-        // Always sync after mutation settles — guaranteed even if dialog unmounted
         qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
         qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
       }
     })();
   };
 
+  const catStyle = getCategoryStyle(product.category);
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 rounded-lg border-primary/35 bg-primary/12 px-2.5 text-xs font-semibold text-primary hover:bg-primary hover:text-primary-foreground transition-colors focus-visible:ring-2 focus-visible:ring-primary/30"
-        >
-          <ArrowUpRight className="mr-1 h-3.5 w-3.5" />Restock
-        </Button>
+        {trigger ?? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-lg border-primary/35 bg-primary/12 px-2.5 text-xs font-semibold text-primary hover:bg-primary hover:text-primary-foreground transition-colors focus-visible:ring-2 focus-visible:ring-primary/30 cursor-pointer"
+          >
+            <ArrowUpRight className="mr-1 h-3.5 w-3.5" />Restock
+          </Button>
+        )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Restock — {product.canonicalName}</DialogTitle>
+      <DialogContent className="w-[calc(100vw-1.5rem)] sm:max-w-[460px] max-h-[92dvh] flex flex-col p-0 gap-0 rounded-3xl border border-border/80 shadow-2xl overflow-hidden">
+        {/* Header */}
+        <DialogHeader className="border-b border-border/70 bg-muted/25 px-5 py-4 pr-11 text-left shrink-0">
+          <div className="flex items-start gap-3">
+            <div className={cn("w-10 h-10 rounded-2xl border flex items-center justify-center text-[11px] font-bold shrink-0", catStyle.bg, catStyle.text, catStyle.border)}>
+              {catStyle.abbr}
+            </div>
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="font-display text-base font-bold text-foreground leading-snug line-clamp-2">
+                {product.canonicalName}
+              </DialogTitle>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                <span className="font-bold uppercase tracking-wider text-primary">Restock &amp; Adjust</span>
+                {product.sku && <span className="font-mono text-muted-foreground">· #{product.sku}</span>}
+                <span className="rounded-full border border-border/70 bg-background px-2 py-0.5 font-mono font-semibold text-muted-foreground">
+                  {product.unit || "units"}
+                </span>
+              </div>
+            </div>
+          </div>
         </DialogHeader>
-        <div className="border border-border rounded-lg p-4 mb-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">Current Stock</p>
-              <p className="text-2xl font-bold font-mono">{formatQty(product.stockQty)}<span className="text-muted-foreground text-sm font-normal ml-1">{product.unit || "units"}</span></p>
-            </div>
-            {product.alertQty && (
+
+        {/* Scrollable Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Before -> After Live Stock Preview */}
+          <div className="rounded-2xl border border-border/80 bg-muted/25 p-3.5 space-y-2.5">
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Current</p>
+                <p className="mt-0.5 font-display text-xl font-bold font-mono tabular-nums text-foreground">
+                  {formatQty(product.stockQty)}
+                  <span className="ml-1 text-xs font-sans font-normal text-muted-foreground">{product.unit || "units"}</span>
+                </p>
+              </div>
+              <div className="flex flex-col items-center px-2">
+                <span
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[10px] font-bold font-mono tabular-nums",
+                    qtyNum > 0
+                      ? "border-emerald-500/35 bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
+                      : qtyNum < 0
+                      ? "border-amber-500/35 bg-amber-500/12 text-amber-600 dark:text-amber-400"
+                      : "border-border bg-background text-muted-foreground"
+                  )}
+                >
+                  {qtyNum > 0 ? `+${formatQty(qtyNum)}` : qtyNum < 0 ? formatQty(qtyNum) : "±0"}
+                </span>
+                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground mt-1" />
+              </div>
               <div className="text-right">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Alert at</p>
-                <p className="text-lg font-bold font-mono text-orange-500">{product.alertQty} {product.unit || "units"}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">New Stock</p>
+                <p
+                  className={cn(
+                    "mt-0.5 font-display text-xl font-bold font-mono tabular-nums",
+                    isInvalidNegative
+                      ? "text-destructive"
+                      : qtyNum > 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : qtyNum < 0
+                      ? "text-amber-600 dark:text-amber-400"
+                      : "text-foreground"
+                  )}
+                >
+                  {formatQty(nextStock)}
+                  <span className="ml-1 text-xs font-sans font-normal text-muted-foreground">{product.unit || "units"}</span>
+                </p>
               </div>
-            )}
-          </div>
-        </div>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
-                <span className="text-blue-400 font-mono">↓</span> Buy Price (KES)
-              </Label>
-              <Input
-                type="number"
-                value={purchasePrice}
-                onChange={e => setPurchasePrice(e.target.value)}
-                onFocus={e => e.target.select()}
-                placeholder={product.purchasePrice?.toString() || "0"}
-                className="h-10 font-mono text-center"
-              />
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
-                <span className="text-emerald-400 font-mono">↑</span> Sell Price (KES)
-              </Label>
-              <Input
-                type="number"
-                value={sellingPrice}
-                onChange={e => setSellingPrice(e.target.value)}
-                onFocus={e => e.target.select()}
-                placeholder={product.sellingPrice?.toString() || "0"}
-                className="h-10 font-mono text-center"
-              />
+            <div className="space-y-1">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-background/80 border border-border/50">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    nextStock <= 0 ? "bg-destructive" : nextStock <= alertQty ? "bg-amber-500" : "bg-emerald-500"
+                  )}
+                  style={{ width: `${nextHealthPct}%` }}
+                />
+              </div>
+              {alertQty > 0 && (
+                <p className="text-[10px] text-muted-foreground text-right">
+                  Alert threshold: <span className="font-mono font-semibold text-foreground">{formatQty(alertQty)} {product.unit || "units"}</span>
+                </p>
+              )}
             </div>
           </div>
+
+          {/* Quantity Stepper Card */}
           <div className="space-y-2">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Qty adjustment — <span className="text-emerald-400">+ adds stock</span> / <span className="text-orange-400">− removes stock</span>
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                Quantity Adjustment (<span className="text-emerald-600 dark:text-emerald-400">+ add</span> / <span className="text-amber-600 dark:text-amber-400">− remove</span>)
+              </Label>
+              {qtyNum !== 0 && (
+                <button
+                  type="button"
+                  onClick={() => setQty(0)}
+                  className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                >
+                  Reset 0
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-[52px_minmax(0,1fr)_52px] items-center gap-2 rounded-2xl border border-border/80 bg-muted/35 p-1.5">
+              <button
+                type="button"
+                aria-label="Decrease adjustment"
+                disabled={nextStock - stepUnit < 0}
+                onClick={() => setQty(q => roundQty(Math.max(minRemoveAllowed, Number(q || 0) - stepUnit)))}
+                className="h-11 w-[52px] shrink-0 rounded-xl bg-background border border-border/80 shadow-xs flex items-center justify-center text-foreground hover:bg-muted active:scale-95 disabled:opacity-35 transition-all cursor-pointer"
+              >
+                <Minus className="h-4 w-4" />
+              </button>
+              <Input
+                type="number"
+                size={4}
+                step={weighed ? "0.25" : "1"}
+                value={qty}
+                onFocus={e => e.target.select()}
+                onChange={e => setQty(e.target.value === "" ? "" : (weighed ? parseFloat(e.target.value) || 0 : parseInt(e.target.value, 10) || 0))}
+                className="h-11 w-full min-w-0 text-center text-2xl font-bold font-mono tabular-nums bg-background border-border/70 rounded-xl [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              <button
+                type="button"
+                aria-label="Increase adjustment"
+                onClick={() => setQty(q => roundQty(Number(q || 0) + stepUnit))}
+                className="h-11 w-[52px] shrink-0 rounded-xl bg-primary text-primary-foreground shadow-sm flex items-center justify-center hover:brightness-105 active:scale-95 transition-all cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+
             {weighed ? (
-              <>
-                <div className="flex items-center gap-2">
-                  <Button type="button" variant="outline" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) - (Math.abs(Number(q || 0)) <= 1 ? 0.25 : 1))}>
-                    <Minus className="h-4 w-4" />
-                  </Button>
-                  <Input type="number" step="0.25" className="flex-1 h-10 text-xl font-bold font-mono text-center" value={qty} onChange={e => setQty(e.target.value === "" ? "" : parseFloat(e.target.value) || 0)} />
-                  <Button type="button" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) + (Math.abs(Number(q || 0)) < 1 ? 0.25 : 1))}>
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </div>
-                <WeightPresets unit={product.unit || "kg"} onSelect={v => setQty(v)} />
-              </>
+              <WeightPresets unit={product.unit || "kg"} onSelect={v => setQty(roundQty(v))} />
             ) : (
-              <div className="flex items-center gap-2">
-                <Button type="button" variant="outline" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) - 1)}>
-                  <Minus className="h-4 w-4" />
-                </Button>
-                <Input type="number" step="1" className="flex-1 h-10 text-xl font-bold font-mono text-center" value={qty} onChange={e => setQty(e.target.value === "" ? "" : parseInt(e.target.value) || 0)} />
-                <Button type="button" size="icon" className="h-10 w-10 shrink-0" onClick={() => setQty(q => Number(q || 0) + 1)}>
-                  <Plus className="h-4 w-4" />
-                </Button>
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {[-5, -1, 1, 5, 10, 25, 50].map(delta => {
+                  const disabled = delta < 0 && Number(product.stockQty || 0) + delta < 0;
+                  return (
+                    <button
+                      key={delta}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => setQty(delta)}
+                      className={cn(
+                        "px-2.5 py-1 rounded-full border text-[11px] font-bold font-mono tabular-nums transition-all cursor-pointer disabled:opacity-35",
+                        qtyNum === delta
+                          ? delta < 0
+                            ? "bg-amber-500 text-white border-amber-500"
+                            : "bg-primary text-primary-foreground border-primary shadow-2xs"
+                          : "bg-muted/50 border-border/80 text-muted-foreground hover:text-foreground hover:border-primary/40"
+                      )}
+                    >
+                      {delta > 0 ? `+${delta}` : delta}
+                    </button>
+                  );
+                })}
               </div>
             )}
-            {Number(qty) < 0 && (
-              <p className={cn("text-xs font-medium", product.stockQty + Number(qty) < 0 ? "text-destructive" : "text-orange-400")}>
-                {product.stockQty + Number(qty) < 0
-                  ? `Cannot remove more than current stock (${formatQty(product.stockQty)} ${product.unit || "units"})`
-                  : `Stock will drop to ${formatQty(product.stockQty + Number(qty))} ${product.unit || "units"}`}
+
+            {isInvalidNegative && (
+              <p className="text-xs font-semibold text-destructive">
+                Cannot remove more than current stock ({formatQty(product.stockQty)} {product.unit || "units"}).
               </p>
             )}
           </div>
+
+          {/* Buy & Sell Prices + Live Margin */}
+          <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 space-y-3">
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="space-y-1">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Buy Cost (KES)
+                </Label>
+                <div className="flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 h-10 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                  <span className="text-[11px] font-mono font-bold text-muted-foreground">Ksh</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={purchasePrice}
+                    onChange={e => setPurchasePrice(e.target.value)}
+                    onFocus={e => e.target.select()}
+                    placeholder={product.purchasePrice?.toString() || "0"}
+                    className="w-full min-w-0 text-right text-sm font-bold font-mono tabular-nums bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Sell Price (KES)
+                </Label>
+                <div className="flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 h-10 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                  <span className="text-[11px] font-mono font-bold text-muted-foreground">Ksh</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={sellingPrice}
+                    onChange={e => setSellingPrice(e.target.value)}
+                    onFocus={e => e.target.select()}
+                    placeholder={product.sellingPrice?.toString() || "0"}
+                    className="w-full min-w-0 text-right text-sm font-bold font-mono tabular-nums bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {(marginPct !== null || restockCost > 0) && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5 text-xs">
+                {marginPct !== null && unitProfit !== null && (
+                  <span className={cn("font-semibold flex items-center gap-1.5", unitProfit < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400")}>
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    Margin {marginPct.toFixed(1)}% ({unitProfit < 0 ? "-" : "+"}{formatKES(Math.abs(unitProfit))}/{product.unit || "unit"})
+                  </span>
+                )}
+                {restockCost > 0 && (
+                  <span className="font-mono text-muted-foreground ml-auto">
+                    Stock cost: <strong className="text-foreground">{formatKES(restockCost)}</strong>
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-        <DialogFooter className="mt-4">
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+
+        {/* Footer */}
+        <div className="border-t border-border/70 bg-muted/15 px-5 py-3.5 flex items-center justify-end gap-2.5 shrink-0">
+          <Button variant="outline" className="h-10 rounded-xl px-4 cursor-pointer" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
           <Button
             onClick={handleRestock}
-            disabled={Number(qty) === 0 || submitting || (Number(qty) < 0 && product.stockQty + Number(qty) < 0)}
-            className="min-w-[140px]"
+            disabled={qtyNum === 0 || submitting || isInvalidNegative}
+            className={cn(
+              "h-10 rounded-xl px-5 font-bold cursor-pointer",
+              qtyNum < 0 ? "bg-amber-600 hover:bg-amber-500 text-white" : ""
+            )}
           >
             {submitting ? (
               <span className="flex items-center gap-2">
                 <span className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
                 Saving…
               </span>
-            ) : Number(qty) > 0 ? (
-              `Add ${qty} ${product.unit || "units"}`
+            ) : qtyNum > 0 ? (
+              `Add ${formatQty(qtyNum)} ${product.unit || "units"}`
+            ) : qtyNum < 0 ? (
+              `Remove ${formatQty(Math.abs(qtyNum))} ${product.unit || "units"}`
             ) : (
-              `Remove ${Math.abs(Number(qty))} ${product.unit || "units"}`
+              "Enter adjustment"
             )}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: () => void }) {
+const PRODUCT_UNIT_PRESETS = ["bag", "kg", "g", "litre", "ml", "sachet", "unit", "bottle", "pack", "box", "tin"];
+
+function ProductTypeAndUnitSection({
+  productType,
+  unit,
+  onTypeChange,
+  onUnitChange,
+}: {
+  productType: "normal" | "measured";
+  unit: string;
+  onTypeChange: (nextType: "normal" | "measured") => void;
+  onUnitChange: (nextUnit: string) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 space-y-3">
+      <div className="space-y-2">
+        <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground block">
+          Measurement &amp; Packaging
+        </Label>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onTypeChange("normal")}
+            className={cn(
+              "flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all cursor-pointer",
+              productType === "normal"
+                ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                : "bg-background border-border/80 text-muted-foreground hover:border-primary/45 hover:text-foreground"
+            )}
+          >
+            <Package className="h-4 w-4 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-bold leading-tight">Whole Units</p>
+              <p className="text-[10px] opacity-80 leading-tight mt-0.5">Pieces, bags, packs</p>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onTypeChange("measured");
+              if (!["kg", "g", "litre", "ml", "l"].includes(unit.toLowerCase())) onUnitChange("kg");
+            }}
+            className={cn(
+              "flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all cursor-pointer",
+              productType === "measured"
+                ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                : "bg-background border-border/80 text-muted-foreground hover:border-primary/45 hover:text-foreground"
+            )}
+          >
+            <Scale className="h-4 w-4 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-bold leading-tight">Measured</p>
+              <p className="text-[10px] opacity-80 leading-tight mt-0.5">Decimal qty (kg, L, g)</p>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Unit Label</Label>
+          <Input
+            value={unit}
+            onChange={e => onUnitChange(e.target.value)}
+            placeholder="bag, kg, litre…"
+            className="h-8 w-36 rounded-lg bg-background text-xs font-mono font-semibold text-right"
+          />
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {PRODUCT_UNIT_PRESETS.map(u => (
+            <button
+              key={u}
+              type="button"
+              onClick={() => onUnitChange(u)}
+              className={cn(
+                "text-[11px] font-semibold px-2.5 py-1 rounded-full border transition-colors cursor-pointer",
+                unit === u
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background text-muted-foreground border-border/80 hover:border-primary/45 hover:text-foreground"
+              )}
+            >
+              {u}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditProductDialog({ product, onSuccess, trigger }: { product: any; onSuccess: () => void; trigger?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(product.canonicalName || "");
   const [sku, setSku] = useState(product.sku || "");
@@ -476,6 +740,21 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
   const categoryManuallyEdited = useRef(!!product.category);
   const updateProduct = useUpdateProduct();
   const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!open) return;
+    setName(product.canonicalName || "");
+    setSku(product.sku || "");
+    setCategory(product.category || "");
+    setUnit(product.unit || "unit");
+    setProductType(product.productType === "measured" ? "measured" : "normal");
+    setBuyPrice(product.purchasePrice?.toString() || "");
+    setSellPrice(product.sellingPrice?.toString() || "");
+    setAlertQty(product.alertQty?.toString() || "5");
+    setExpiryDate(product.expiryDate || "");
+    skuManuallyEdited.current = !!product.sku;
+    categoryManuallyEdited.current = !!product.category;
+  }, [open, product]);
 
   useEffect(() => {
     if (!open) return;
@@ -568,126 +847,134 @@ function EditProductDialog({ product, onSuccess }: { product: any; onSuccess: ()
     })();
   };
 
-  const UNIT_PRESETS = ["bag", "kg", "g", "litre", "ml", "sachet", "unit", "bottle", "pack", "box", "tin"];
+  const editMarginPct = buyPrice && sellPrice && Number(sellPrice) > 0
+    ? ((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100
+    : null;
+  const editUnitProfit = buyPrice && sellPrice && Number(sellPrice) > 0
+    ? Number(sellPrice) - Number(buyPrice)
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 rounded-lg border-border/80 bg-background/70 px-2.5 text-xs font-medium hover:border-primary/40 hover:bg-muted/60 transition-colors focus-visible:ring-2 focus-visible:ring-primary/20"
-        >
-          <Edit2 className="mr-1 h-3.5 w-3.5" />Edit
-        </Button>
+        {trigger ?? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-lg border-border/80 bg-background/70 px-2.5 text-xs font-medium hover:border-primary/40 hover:bg-muted/60 transition-colors focus-visible:ring-2 focus-visible:ring-primary/20 cursor-pointer"
+          >
+            <Edit2 className="mr-1 h-3.5 w-3.5" />Edit
+          </Button>
+        )}
       </DialogTrigger>
-      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-lg max-h-[90svh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Edit — {product.canonicalName}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3 py-2">
-          <div className="col-span-full space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Product Name</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} className="h-10" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
-            <CategoryPicker
-              value={category}
-              onChange={v => { setCategory(v); categoryManuallyEdited.current = true; }}
-              autoDetected={!categoryManuallyEdited.current && !!category}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs uppercase tracking-wide text-muted-foreground">SKU</Label>
-              {sku && (
-                <button type="button" onClick={() => { setSku(generateSku(name)); skuManuallyEdited.current = false; }}
-                  className="text-[10px] text-primary font-semibold hover:underline flex items-center gap-1">
-                  <X className="h-2.5 w-2.5" />Regenerate
-                </button>
-              )}
+      <DialogContent className="w-[calc(100vw-1.5rem)] sm:max-w-xl max-h-[92dvh] flex flex-col p-0 gap-0 rounded-3xl border border-border/80 shadow-2xl overflow-hidden">
+        <DialogHeader className="border-b border-border/70 bg-muted/25 px-5 py-4 pr-11 text-left shrink-0">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-primary/12 border border-primary/25 text-primary flex items-center justify-center shrink-0">
+              <Edit2 className="h-4 w-4" />
             </div>
-            <Input value={sku} onChange={e => { setSku(e.target.value); skuManuallyEdited.current = true; }}
-              className={cn("h-9 font-mono text-sm", sku && !skuManuallyEdited.current && "text-primary")} />
-            {sku && !skuManuallyEdited.current && (
-              <p className="text-[10px] text-muted-foreground">Auto-generated — edit manually or click Regenerate</p>
+            <div className="min-w-0">
+              <DialogTitle className="font-display text-base font-bold leading-snug">Edit Product Details</DialogTitle>
+              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                {product.canonicalName} · Stock: {formatQty(product.stockQty)} {product.unit || "units"}
+              </p>
+            </div>
+          </div>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3.5">
+          <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Product Name *</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} className="h-10 rounded-xl bg-background font-semibold" />
+            </div>
+            <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Category</Label>
+                <CategoryPicker
+                  value={category}
+                  onChange={v => { setCategory(v); categoryManuallyEdited.current = true; }}
+                  autoDetected={!categoryManuallyEdited.current && !!category}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">SKU Code</Label>
+                  {sku && (
+                    <button type="button" onClick={() => { setSku(generateSku(name)); skuManuallyEdited.current = false; }}
+                      className="text-[10px] text-primary font-semibold hover:underline flex items-center gap-1 cursor-pointer">
+                      <X className="h-2.5 w-2.5" />Regenerate
+                    </button>
+                  )}
+                </div>
+                <Input value={sku} onChange={e => { setSku(e.target.value); skuManuallyEdited.current = true; }}
+                  className={cn("h-9 rounded-xl bg-background font-mono text-sm", sku && !skuManuallyEdited.current && "text-primary")} />
+              </div>
+            </div>
+          </div>
+
+          <ProductTypeAndUnitSection
+            productType={productType}
+            unit={unit}
+            onTypeChange={setProductType}
+            onUnitChange={setUnit}
+          />
+
+          <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 space-y-3">
+            <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground block">
+              Pricing &amp; Profit Margin {productType === "measured" ? `(KES / ${unit})` : "(KES)"}
+            </Label>
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="space-y-1">
+                <span className="text-[11px] font-medium text-muted-foreground">Buy Cost</span>
+                <div className="flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 h-10 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                  <span className="text-[11px] font-mono font-bold text-muted-foreground">Ksh</span>
+                  <input type="number" min={0} value={buyPrice} onChange={e => setBuyPrice(e.target.value)}
+                    className="w-full min-w-0 text-right text-sm font-bold font-mono tabular-nums bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    placeholder={productType === "measured" ? "136" : "0"} />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] font-medium text-muted-foreground">Sell Price</span>
+                <div className="flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 h-10 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                  <span className="text-[11px] font-mono font-bold text-muted-foreground">Ksh</span>
+                  <input type="number" min={0} value={sellPrice} onChange={e => setSellPrice(e.target.value)}
+                    className="w-full min-w-0 text-right text-sm font-bold font-mono tabular-nums bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    placeholder={productType === "measured" ? "144" : "0"} />
+                </div>
+              </div>
+            </div>
+            {editMarginPct !== null && editUnitProfit !== null && (
+              <div className={cn("rounded-xl border border-border/70 bg-background/80 px-3 py-2 text-xs flex items-center justify-between", editUnitProfit < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400")}>
+                <span className="flex items-center gap-1.5 font-semibold"><TrendingUp className="h-3.5 w-3.5" />Est. Profit ({editUnitProfit < 0 ? "-" : "+"}{formatKES(Math.abs(editUnitProfit))}/{unit})</span>
+                <span className="font-bold font-mono">{editMarginPct.toFixed(1)}%</span>
+              </div>
+            )}
+            {productType === "measured" && (
+              <BagCalculator unit={unit} setBuyPrice={setBuyPrice} setSellPrice={setSellPrice} />
             )}
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Buy Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
-            </Label>
-            <Input type="number" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} className="h-9" placeholder={productType === "measured" ? `e.g. 136 per ${unit}` : "0"} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Sell Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
-            </Label>
-            <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} className="h-9" placeholder={productType === "measured" ? `e.g. 144 per ${unit}` : "0"} />
-          </div>
-          {buyPrice && sellPrice && Number(sellPrice) > 0 && (
-            <div className="col-span-full border border-border rounded-lg px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
-              <span className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" />Profit Margin</span>
-              <span className="font-bold font-mono">{(((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100).toFixed(1)}%</span>
+
+          <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                Low Stock Alert {productType === "measured" ? `(${unit})` : ""}
+              </Label>
+              <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} step={productType === "measured" ? "0.5" : "1"} className="h-9 rounded-xl bg-background font-mono" />
             </div>
-          )}
-          {productType === "measured" && (
-            <BagCalculator unit={unit} setBuyPrice={setBuyPrice} setSellPrice={setSellPrice} />
-          )}
-          <div className="col-span-full">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">Product Type</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setProductType("normal")}
-                className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors",
-                  productType === "normal" ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border text-muted-foreground hover:border-primary/50")}>
-                <Package className="h-4 w-4 shrink-0" />
-                <div className="text-left">
-                  <p className="text-xs font-bold">Normal</p>
-                  <p className="text-[10px] opacity-70 font-normal">Whole units (pcs, bags)</p>
-                </div>
-              </button>
-              <button type="button" onClick={() => { setProductType("measured"); if (!["kg","g","litre","ml","l"].includes(unit)) setUnit("kg"); }}
-                className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors",
-                  productType === "measured" ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border text-muted-foreground hover:border-primary/50")}>
-                <Scale className="h-4 w-4 shrink-0" />
-                <div className="text-left">
-                  <p className="text-xs font-bold">Measured</p>
-                  <p className="text-[10px] opacity-70 font-normal">Decimal qty (kg, L, g)</p>
-                </div>
-              </button>
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground flex items-center gap-1">
+                <Calendar className="h-3 w-3" />Expiry Date
+              </Label>
+              <Input type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} className="h-9 rounded-xl bg-background" />
             </div>
-          </div>
-          <div className="col-span-full space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Unit</Label>
-            <Input value={unit} onChange={e => setUnit(e.target.value)} placeholder="e.g. kg, bag, litre..." />
-            <div className="flex gap-1.5 flex-wrap">
-              {UNIT_PRESETS.map(u => (
-                <button key={u} type="button" onClick={() => setUnit(u)}
-                  className={cn("text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors",
-                    unit === u ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border hover:border-primary/50")}>
-                  {u}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Low Stock Alert {productType === "measured" ? `(${unit})` : ""}
-            </Label>
-            <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} step={productType === "measured" ? "0.5" : "1"} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1">
-              <Calendar className="h-3 w-3" />Expiry Date
-            </Label>
-            <Input type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} className="h-9" />
           </div>
         </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={handleSubmit} disabled={updateProduct.isPending}>
+        <div className="border-t border-border/70 bg-muted/15 px-5 py-3.5 flex items-center justify-end gap-2.5 shrink-0">
+          <Button variant="outline" className="h-10 rounded-xl px-4 cursor-pointer" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!name.trim() || updateProduct.isPending} className="h-10 rounded-xl px-5 font-bold cursor-pointer">
             {updateProduct.isPending ? "Saving…" : "Save Changes"}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -811,150 +1098,196 @@ function AddProductDialog({ shopId, onSuccess, existingProducts, isOwner }: { sh
     );
   };
 
+  const addMarginPct = buyPrice && sellPrice && Number(sellPrice) > 0
+    ? ((Number(sellPrice) - Number(buyPrice)) / Number(sellPrice)) * 100
+    : null;
+  const addUnitProfit = buyPrice && sellPrice && Number(sellPrice) > 0
+    ? Number(sellPrice) - Number(buyPrice)
+    : null;
+  const openingStockVal = Number(qty || 0) > 0 && Number(sellPrice || 0) > 0
+    ? Number(qty) * Number(sellPrice)
+    : 0;
+
   return (
     <Dialog open={open} onOpenChange={o => { setOpen(o); if (!o) reset(); }}>
       <DialogTrigger asChild>
-        <Button size="sm" className="h-8 text-xs px-3">
+        <Button size="sm" className="h-8 rounded-lg text-xs font-bold px-3 cursor-pointer shadow-xs">
           <Plus className="h-3.5 w-3.5 mr-1" />Add Product
         </Button>
       </DialogTrigger>
-      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-lg max-h-[90svh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Add New Product</DialogTitle>
+      <DialogContent className="w-[calc(100vw-1.5rem)] sm:max-w-xl max-h-[92dvh] flex flex-col p-0 gap-0 rounded-3xl border border-border/80 shadow-2xl overflow-hidden">
+        <DialogHeader className="border-b border-border/70 bg-muted/25 px-5 py-4 pr-11 text-left shrink-0">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-primary/15 border border-primary/30 text-primary flex items-center justify-center shrink-0">
+              <Plus className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <DialogTitle className="font-display text-base font-bold leading-snug">Add New Product</DialogTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Configure identity, unit packaging, pricing &amp; opening stock
+              </p>
+            </div>
+          </div>
         </DialogHeader>
-        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3 py-2">
-          <div className="col-span-full space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Product Name *</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. DAP Fertilizer 50KG" className="h-10" autoFocus />
-            {duplicates.length > 0 && (
-              <div className="border border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950 rounded-lg px-3 py-2.5 space-y-1.5">
-                <div className="flex items-center gap-1.5 text-orange-600 dark:text-orange-400 text-xs font-bold">
-                  <Copy className="h-3.5 w-3.5" />Possible duplicates:
-                </div>
-                {duplicates.map(d => (
-                  <div key={d.id} className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-medium">{d.canonicalName}</span>
-                    <span className="font-mono">Stock: {d.stockQty} {d.unit || "units"}</span>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3.5">
+          {/* 1. Identity & Smart Duplicate Guard */}
+          <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Product Name *</Label>
+              <Input
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="e.g. DAP Fertilizer 50KG"
+                className="h-10 rounded-xl bg-background font-semibold"
+                autoFocus
+              />
+              {duplicates.length > 0 && (
+                <div className="border border-amber-500/35 bg-amber-500/10 rounded-xl px-3 py-2.5 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-xs font-bold">
+                    <Copy className="h-3.5 w-3.5 shrink-0" />Similar products already in inventory:
                   </div>
-                ))}
+                  {duplicates.map(d => (
+                    <div key={d.id} className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground truncate pr-2">{d.canonicalName}</span>
+                      <span className="font-mono shrink-0">{formatQty(d.stockQty)} {d.unit || "units"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Category</Label>
+                <CategoryPicker
+                  value={category}
+                  onChange={v => { setCategory(v); categoryManuallyEdited.current = true; }}
+                  autoDetected={!categoryManuallyEdited.current && !!category}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">SKU</Label>
+                  {sku && (
+                    <button type="button" onClick={() => { setSku(generateSku(name)); skuManuallyEdited.current = false; }}
+                      className="text-[10px] text-primary font-semibold hover:underline flex items-center gap-1 cursor-pointer">
+                      <X className="h-2.5 w-2.5" />Regenerate
+                    </button>
+                  )}
+                </div>
+                <Input value={sku}
+                  onChange={e => { setSku(e.target.value); skuManuallyEdited.current = true; }}
+                  placeholder="Auto-generated from name"
+                  className={cn("h-9 rounded-xl bg-background font-mono text-sm", sku && !skuManuallyEdited.current && "text-primary")} />
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Measurement & Packaging */}
+          <ProductTypeAndUnitSection
+            productType={productType}
+            unit={unit}
+            onTypeChange={setProductType}
+            onUnitChange={setUnit}
+          />
+
+          {/* 3. Pricing & Margin */}
+          <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 space-y-3">
+            <Label className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground block">
+              Pricing &amp; Profit {productType === "measured" ? `(KES / ${unit})` : "(KES)"}
+            </Label>
+            <div className="grid grid-cols-2 gap-2.5">
+              {isOwner && (
+                <div className="space-y-1">
+                  <span className="text-[11px] font-medium text-muted-foreground">Buy Cost</span>
+                  <div className="flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 h-10 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                    <span className="text-[11px] font-mono font-bold text-muted-foreground">Ksh</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={buyPrice}
+                      onChange={e => setBuyPrice(e.target.value)}
+                      placeholder={productType === "measured" ? "136" : "0"}
+                      className="w-full min-w-0 text-right text-sm font-bold font-mono tabular-nums bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                </div>
+              )}
+              <div className={cn("space-y-1", !isOwner && "col-span-full")}>
+                <span className="text-[11px] font-medium text-muted-foreground">Selling Price</span>
+                <div className="flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 h-10 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                  <span className="text-[11px] font-mono font-bold text-muted-foreground">Ksh</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={sellPrice}
+                    onChange={e => setSellPrice(e.target.value)}
+                    placeholder={productType === "measured" ? "144" : "0"}
+                    className="w-full min-w-0 text-right text-sm font-bold font-mono tabular-nums bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {isOwner && addMarginPct !== null && addUnitProfit !== null && (
+              <div className={cn("rounded-xl border border-border/70 bg-background/80 px-3 py-2 text-xs flex items-center justify-between", addUnitProfit < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400")}>
+                <span className="flex items-center gap-1.5 font-semibold"><TrendingUp className="h-3.5 w-3.5" />Est. Margin ({addUnitProfit < 0 ? "-" : "+"}{formatKES(Math.abs(addUnitProfit))}/{unit})</span>
+                <span className="font-bold font-mono">{addMarginPct.toFixed(1)}%</span>
+              </div>
+            )}
+            {productType === "measured" && (
+              <BagCalculator unit={unit} setBuyPrice={setBuyPrice} setSellPrice={setSellPrice} />
+            )}
+          </div>
+
+          {/* 4. Opening Stock, Alert & Expiry */}
+          <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 space-y-2.5">
+            {productType === "measured" && (
+              <p className="text-[11px] text-muted-foreground">
+                Measured mode: enter total <strong className="text-foreground">{unit}</strong> on hand (e.g. 1 × 50kg bag → enter <strong>50</strong>).
+              </p>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="space-y-1">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {productType === "measured" ? `Opening (${unit})` : "Opening Qty"}
+                </Label>
+                <Input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="0" step={productType === "measured" ? "0.5" : "1"} className="h-9 rounded-xl bg-background font-mono font-bold" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Low Alert {productType === "measured" ? `(${unit})` : ""}
+                </Label>
+                <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} placeholder="5" step={productType === "measured" ? "0.5" : "1"} className="h-9 rounded-xl bg-background font-mono" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expiry (Optional)</Label>
+                <Input type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} className="h-9 rounded-xl bg-background" />
+              </div>
+            </div>
+            {openingStockVal > 0 && (
+              <div className="flex items-center justify-between border-t border-border/60 pt-2 text-xs">
+                <span className="text-muted-foreground">Opening Stock Retail Value</span>
+                <span className="font-mono font-bold text-primary">{formatKES(openingStockVal)}</span>
               </div>
             )}
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Category</Label>
-            <CategoryPicker
-              value={category}
-              onChange={v => { setCategory(v); categoryManuallyEdited.current = true; }}
-              autoDetected={!categoryManuallyEdited.current && !!category}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs uppercase tracking-wide text-muted-foreground">SKU</Label>
-              {sku && (
-                <button type="button" onClick={() => { setSku(generateSku(name)); skuManuallyEdited.current = false; }}
-                  className="text-[10px] text-primary font-semibold hover:underline flex items-center gap-1">
-                  <X className="h-2.5 w-2.5" />Regenerate
-                </button>
-              )}
-            </div>
-            <Input value={sku}
-              onChange={e => { setSku(e.target.value); skuManuallyEdited.current = true; }}
-              placeholder="Type product name above to auto-generate"
-              className={cn("h-9 font-mono text-sm", sku && !skuManuallyEdited.current && "text-primary")} />
-            {sku && !skuManuallyEdited.current && (
-              <p className="text-[10px] text-muted-foreground">Auto-generated — edit manually or click Regenerate for a different code</p>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Buy Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
-            </Label>
-            <Input type="number" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} placeholder={productType === "measured" ? `e.g. 136 per ${unit}` : "0"} className="h-9" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Sell Price {productType === "measured" ? <span className="text-primary font-bold">(KES / {unit})</span> : "(KES)"}
-            </Label>
-            <Input type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)} placeholder={productType === "measured" ? `e.g. 144 per ${unit}` : "0"} className="h-9" />
-          </div>
-          {margin && (
-            <div className="col-span-full border border-border rounded-lg px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
-              <span className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" />Profit Margin</span>
-              <span className="font-bold font-mono">{margin}%</span>
-            </div>
-          )}
-          {productType === "measured" && (
-            <BagCalculator unit={unit} setBuyPrice={setBuyPrice} setSellPrice={setSellPrice} />
-          )}
-          <div className="col-span-full">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground mb-2 block">Product Type</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setProductType("normal")}
-                className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors",
-                  productType === "normal" ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border text-muted-foreground hover:border-primary/50")}>
-                <Package className="h-4 w-4 shrink-0" />
-                <div className="text-left">
-                  <p className="text-xs font-bold">Normal</p>
-                  <p className="text-[10px] opacity-70 font-normal">Whole units (pcs, bags)</p>
-                </div>
-              </button>
-              <button type="button" onClick={() => { setProductType("measured"); if (!["kg","g","litre","ml","l"].includes(unit)) setUnit("kg"); }}
-                className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors",
-                  productType === "measured" ? "bg-primary text-primary-foreground border-primary" : "bg-muted border-border text-muted-foreground hover:border-primary/50")}>
-                <Scale className="h-4 w-4 shrink-0" />
-                <div className="text-left">
-                  <p className="text-xs font-bold">Measured</p>
-                  <p className="text-[10px] opacity-70 font-normal">Decimal qty (kg, L, g)</p>
-                </div>
-              </button>
-            </div>
-          </div>
-          <div className="col-span-full space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Unit</Label>
-            <Input value={unit} onChange={e => setUnit(e.target.value)} placeholder="bag, kg, litre..." className="h-9" />
-            <div className="flex gap-1.5 flex-wrap">
-              {UNIT_PRESETS.map(u => (
-                <button key={u} type="button" onClick={() => setUnit(u)}
-                  className={cn("text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors",
-                    unit === u ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border hover:border-primary/50")}>
-                  {u}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              {productType === "measured" ? `Total ${unit} in stock` : "Opening Qty"}
-            </Label>
-            {productType === "measured" && (
-              <p className="text-[11px] text-muted-foreground">Enter total {unit} — e.g. 1 bag of 50kg → enter <strong>50</strong></p>
-            )}
-            <Input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="0" step={productType === "measured" ? "0.5" : "1"} className="h-9" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Alert Threshold {productType === "measured" ? `(${unit})` : ""}
-            </Label>
-            <Input type="number" value={alertQty} onChange={e => setAlertQty(e.target.value)} placeholder="5" step={productType === "measured" ? "0.5" : "1"} className="h-9" />
-          </div>
-          <div className="col-span-full space-y-1.5">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Expiry Date (optional)</Label>
-            <Input type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} className="h-9" />
-          </div>
         </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={handleSubmit} disabled={!name.trim() || createProduct.isPending}>
-            {createProduct.isPending ? "Adding…" : "Add Product"}
+
+        <div className="border-t border-border/70 bg-muted/15 px-5 py-3.5 flex items-center justify-end gap-2.5 shrink-0">
+          <Button variant="outline" className="h-10 rounded-xl px-4 cursor-pointer" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!name.trim() || createProduct.isPending} className="h-10 rounded-xl px-5 font-bold cursor-pointer">
+            <Plus className="h-4 w-4 mr-1.5" />
+            {createProduct.isPending ? "Adding…" : openingStockVal > 0 ? `Add Product · ${formatKES(openingStockVal)}` : "Add Product"}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-function TransferDialog({ product, shopId }: { product: any; shopId: string; onSuccess?: () => void }) {
+function TransferDialog({ product, shopId, trigger }: { product: any; shopId: string; onSuccess?: () => void; trigger?: React.ReactNode }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState<number>(1);
@@ -1074,51 +1407,56 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          aria-label="Transfer stock"
-          title="Transfer stock"
-          className="h-8 rounded-lg border-sky-500/25 bg-sky-500/[0.07] px-2.5 text-xs font-medium text-sky-700 hover:border-sky-500/45 hover:bg-sky-500/15 dark:text-sky-300 transition-colors focus-visible:ring-2 focus-visible:ring-sky-500/25"
-        >
-          <ArrowLeftRight className="mr-1 h-3.5 w-3.5" /><span>Transfer</span>
-        </Button>
+        {trigger ?? (
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label="Transfer stock"
+            title="Transfer stock"
+            className="h-8 rounded-lg border-sky-500/25 bg-sky-500/[0.07] px-2.5 text-xs font-medium text-sky-700 hover:border-sky-500/45 hover:bg-sky-500/15 dark:text-sky-300 transition-colors focus-visible:ring-2 focus-visible:ring-sky-500/25 cursor-pointer"
+          >
+            <ArrowLeftRight className="mr-1 h-3.5 w-3.5" /><span>Transfer</span>
+          </Button>
+        )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>Transfer Stock to {targetLabel}</DialogTitle></DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="border border-border rounded-lg p-3">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide">Product</p>
+      <DialogContent className="w-[calc(100vw-1.5rem)] sm:max-w-sm rounded-3xl border border-border/80 p-0 gap-0 overflow-hidden">
+        <DialogHeader className="border-b border-border/70 bg-muted/25 px-5 py-4 pr-11 text-left">
+          <DialogTitle className="font-display text-base font-bold">Transfer to {targetLabel}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 p-5">
+          <div className="border border-border/80 bg-muted/20 rounded-2xl p-3">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Product</p>
             <p className="font-semibold text-sm mt-0.5">{product.canonicalName}</p>
-            <p className="text-xs text-muted-foreground mt-0.5 font-mono">Available: {product.stockQty} {product.unit || "units"}</p>
+            <p className="text-xs text-muted-foreground mt-0.5 font-mono">Available: {formatQty(product.stockQty)} {product.unit || "units"}</p>
           </div>
           <div className="space-y-2">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Qty to Transfer</Label>
-            <div className="flex items-center gap-2">
-              <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0"
+            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Qty to Transfer</Label>
+            <div className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2 rounded-2xl border border-border/80 bg-muted/35 p-1.5">
+              <Button type="button" variant="outline" size="icon" className="h-10 w-[44px] shrink-0 rounded-xl bg-background"
                 disabled={isPending}
-                onClick={() => setQty(q => Math.max(weighed ? 0.25 : 1, q - (weighed && q <= 1 ? 0.25 : 1)))}>
+                onClick={() => setQty(q => roundQty(Math.max(weighed ? 0.25 : 1, q - (weighed && q <= 1 ? 0.25 : 1))))}>
                 <Minus className="h-4 w-4" />
               </Button>
-              <Input type="number" step={weighed ? "0.25" : "1"} min={weighed ? "0.25" : "1"} max={product.stockQty} value={qty}
+              <Input type="number" size={4} step={weighed ? "0.25" : "1"} min={weighed ? "0.25" : "1"} max={product.stockQty} value={qty}
                 disabled={isPending}
-                onChange={e => setQty(weighed ? parseFloat(e.target.value) || 0.25 : Math.max(1, parseInt(e.target.value) || 1))} className="flex-1 text-center font-bold font-mono" />
-              <Button type="button" size="icon" className="h-9 w-9 shrink-0"
+                onChange={e => setQty(weighed ? parseFloat(e.target.value) || 0.25 : Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className="h-10 w-full min-w-0 text-center font-bold font-mono bg-background border-border/70 rounded-xl [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+              <Button type="button" size="icon" className="h-10 w-[44px] shrink-0 rounded-xl"
                 disabled={isPending}
-                onClick={() => setQty(q => Math.min(product.stockQty, q + (weighed && q < 1 ? 0.25 : 1)))}>
+                onClick={() => setQty(q => roundQty(Math.min(product.stockQty, q + (weighed && q < 1 ? 0.25 : 1))))}>
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
           </div>
-          <div className="space-y-2">
-            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Notes (optional)</Label>
-            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Weekly restock" disabled={isPending} />
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Notes (optional)</Label>
+            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Weekly restock" disabled={isPending} className="rounded-xl" />
           </div>
         </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)} disabled={isPending}>Cancel</Button>
-          <Button onClick={handleTransfer} disabled={isPending || qty <= 0 || qty > product.stockQty}>
-            {isPending ? "Transferring…" : `Transfer ${qty} ${product.unit || "units"}`}
+        <DialogFooter className="border-t border-border/70 bg-muted/15 px-5 py-3.5">
+          <Button variant="outline" className="rounded-xl cursor-pointer" onClick={() => setOpen(false)} disabled={isPending}>Cancel</Button>
+          <Button className="rounded-xl font-bold cursor-pointer" onClick={handleTransfer} disabled={isPending || qty <= 0 || qty > product.stockQty}>
+            {isPending ? "Transferring…" : `Transfer ${formatQty(qty)} ${product.unit || "units"}`}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1126,7 +1464,7 @@ function TransferDialog({ product, shopId }: { product: any; shopId: string; onS
   );
 }
 
-function DeleteProductButton({ productId, productName, onSuccess }: { productId: string; productName: string; onSuccess: () => void }) {
+function DeleteProductButton({ productId, productName, onSuccess, onDeleted, trigger }: { productId: string; productName: string; onSuccess: () => void; onDeleted?: () => void; trigger?: React.ReactNode }) {
   const qc = useQueryClient();
   const delProduct = useDeleteProduct();
   const handleDelete = async () => {
@@ -1143,6 +1481,7 @@ function DeleteProductButton({ productId, productName, onSuccess }: { productId:
     // Calling invalidateQueries before the DELETE reaches the server hits the still-warm
     // KV cache which returns the old list (product still present), overwriting the optimistic remove.
     toast.success("Product removed");
+    onDeleted?.();
     delProduct.mutate({ productId }, {
       onError: () => {
         snapshot.forEach(([key, data]) => qc.setQueryData(key, data));
@@ -1158,15 +1497,17 @@ function DeleteProductButton({ productId, productName, onSuccess }: { productId:
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          aria-label={`Delete ${productName}`}
-          title="Delete product"
-          className="h-8 w-8 p-0 rounded-lg text-destructive border-destructive/30 bg-destructive/5 hover:bg-destructive/15 transition-colors"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        {trigger ?? (
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label={`Delete ${productName}`}
+            title="Delete product"
+            className="h-8 w-8 p-0 rounded-lg text-destructive border-destructive/30 bg-destructive/5 hover:bg-destructive/15 transition-colors cursor-pointer"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </AlertDialogTrigger>
       <AlertDialogContent className="max-w-sm">
         <AlertDialogHeader>
@@ -1744,6 +2085,7 @@ export default function Stock() {
   const qc = useQueryClient();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [detailProductId, setDetailProductId] = useState<string | null>(null);
 
   // Clear selection when switching away from cleanup views
   useEffect(() => {
@@ -1767,6 +2109,10 @@ export default function Stock() {
   );
 
   const allProducts = productsData?.products || [];
+  const detailProduct = useMemo(
+    () => (detailProductId ? allProducts.find((p: any) => p.id === detailProductId) ?? null : null),
+    [detailProductId, allProducts]
+  );
 
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -2128,7 +2474,11 @@ export default function Stock() {
                                   return (
                                     <div key={p.id} className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card p-4 transition-all hover:border-primary/40 sm:p-5">
                                       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                                        <div className="flex min-w-0 flex-1 items-center gap-3.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => { setSearchOpen(false); setDetailProductId(p.id); }}
+                                          className="flex min-w-0 flex-1 items-center gap-3.5 text-left cursor-pointer"
+                                        >
                                           <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border text-xs font-bold", cat.bg, cat.text, cat.border)}>
                                             {cat.abbr}
                                           </div>
@@ -2144,7 +2494,7 @@ export default function Stock() {
                                               {isOut ? "Out of stock" : isLow ? "Low stock · alert " + formatQty(p.alertQty) : "In stock"}
                                             </p>
                                           </div>
-                                        </div>
+                                        </button>
                                         <div className="flex w-full flex-wrap items-center gap-2 border-t border-border/60 pt-3 [&>button]:min-h-10 [&>button]:rounded-xl sm:w-auto sm:justify-end sm:border-0 sm:pt-0">
                                           <RestockDialog product={p} />
                                           {isOwner && (
@@ -2379,8 +2729,9 @@ export default function Stock() {
                               return (
                                 <tr
                                   key={p.id}
+                                  onClick={() => setDetailProductId(p.id)}
                                   className={cn(
-                                    "transition-colors hover:bg-muted/30",
+                                    "cursor-pointer transition-colors hover:bg-muted/35",
                                     isOut && "bg-destructive/[0.03]",
                                     isLow && "bg-amber-500/[0.03]",
                                     isBulkView && selectedIds.has(p.id) && "bg-primary/[0.07]"
@@ -2392,6 +2743,7 @@ export default function Stock() {
                                         <input
                                           type="checkbox"
                                           checked={selectedIds.has(p.id)}
+                                          onClick={e => e.stopPropagation()}
                                           onChange={e => setSelectedIds(prev => { const next = new Set(prev); e.target.checked ? next.add(p.id) : next.delete(p.id); return next; })}
                                           className="h-4 w-4 shrink-0 accent-primary"
                                         />
@@ -2447,7 +2799,10 @@ export default function Stock() {
                                     </>
                                   )}
 
-                                  <td className="w-px py-3 pl-3 pr-4 align-middle text-right whitespace-nowrap">
+                                  <td
+                                    onClick={e => e.stopPropagation()}
+                                    className="w-px py-3 pl-3 pr-4 align-middle text-right whitespace-nowrap"
+                                  >
                                     <div className="inline-flex items-center justify-end gap-1.5">
                                       <RestockDialog product={p} />
                                       {isOwner && (
@@ -2475,7 +2830,11 @@ export default function Stock() {
                           const healthTarget = Math.max(p.alertQty * 2, 10);
                           const healthPct = isOut ? 0 : Math.min(100, Math.max(8, (p.stockQty / healthTarget) * 100));
                           return (
-                            <div key={p.id} className={cn("p-4", isOut && "bg-destructive/[0.03]", isLow && "bg-amber-500/[0.03]")}>
+                            <div
+                              key={p.id}
+                              onClick={() => setDetailProductId(p.id)}
+                              className={cn("p-4 cursor-pointer transition-colors hover:bg-muted/25", isOut && "bg-destructive/[0.03]", isLow && "bg-amber-500/[0.03]")}
+                            >
                               <div className="flex items-start gap-3">
                                 <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold", cat.bg, cat.text, cat.border)}>
                                   {cat.abbr}
@@ -2487,6 +2846,7 @@ export default function Stock() {
                                       <input
                                         type="checkbox"
                                         checked={selectedIds.has(p.id)}
+                                        onClick={e => e.stopPropagation()}
                                         onChange={e => setSelectedIds(prev => { const next = new Set(prev); e.target.checked ? next.add(p.id) : next.delete(p.id); return next; })}
                                         className="h-4 w-4 accent-primary"
                                       />
@@ -2512,7 +2872,7 @@ export default function Stock() {
                                     )}
                                   </div>
 
-                                  <div className="mt-3 flex flex-wrap gap-1.5">
+                                  <div onClick={e => e.stopPropagation()} className="mt-3 flex flex-wrap gap-1.5">
                                     <RestockDialog product={p} />
                                     {isOwner && (
                                       <>
@@ -2680,6 +3040,71 @@ export default function Stock() {
             </div>
           </div>
         )}
+
+      <StockProductCardDialog
+        product={detailProduct}
+        open={!!detailProduct}
+        onOpenChange={(o) => { if (!o) setDetailProductId(null); }}
+        isOwner={isOwner}
+        categoryStyle={getCategoryStyle(detailProduct?.category)}
+        actions={
+          detailProduct ? (
+            <>
+              <RestockDialog
+                product={detailProduct}
+                trigger={
+                  <Button size="sm" className="flex-1 min-w-[110px] h-10 rounded-xl font-bold cursor-pointer">
+                    <ArrowUpRight className="mr-1.5 h-4 w-4" />
+                    Restock
+                  </Button>
+                }
+              />
+              {isOwner && (
+                <>
+                  <EditProductDialog
+                    product={detailProduct}
+                    onSuccess={refresh}
+                    trigger={
+                      <Button size="sm" variant="outline" className="flex-1 min-w-[96px] h-10 rounded-xl font-semibold bg-background cursor-pointer">
+                        <Edit2 className="mr-1.5 h-3.5 w-3.5" />
+                        Edit
+                      </Button>
+                    }
+                  />
+                  <TransferDialog
+                    product={detailProduct}
+                    shopId={shopId}
+                    onSuccess={refresh}
+                    trigger={
+                      <Button size="sm" variant="outline" className="flex-1 min-w-[100px] h-10 rounded-xl font-semibold border-sky-500/30 bg-sky-500/[0.08] text-sky-700 hover:bg-sky-500/15 dark:text-sky-300 cursor-pointer">
+                        <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" />
+                        Transfer
+                      </Button>
+                    }
+                  />
+                  <DeleteProductButton
+                    productId={detailProduct.id}
+                    productName={detailProduct.canonicalName}
+                    onSuccess={refresh}
+                    onDeleted={() => setDetailProductId(null)}
+                    trigger={
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Delete ${detailProduct.canonicalName}`}
+                        title="Delete product"
+                        className="h-10 w-10 p-0 rounded-xl text-destructive border-destructive/30 bg-destructive/5 hover:bg-destructive/15 shrink-0 cursor-pointer"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    }
+                  />
+                </>
+              )}
+            </>
+          ) : null
+        }
+      />
     </div>
   );
 }

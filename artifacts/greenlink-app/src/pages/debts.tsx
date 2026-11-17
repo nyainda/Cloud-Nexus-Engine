@@ -1,8 +1,18 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey, getListSalesQueryKey, getGetDebtQueryKey, customFetch } from "@workspace/api-client-react";
 import { enqueueMutation } from "@/lib/offline-queue";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CustomerAutocomplete, toTitleCase, type SelectedCustomer } from "@/components/customer-autocomplete";
+import { NurseryDebtSettlementDialog } from "@/components/NurseryDebtSettlementDialog";
+import {
+  computeNurseryProjection,
+  findMatchingSupplier,
+  formatPlantSettlementNoteDisplay,
+  loadNurserySettlementState,
+  parsePlantSettlementPayment,
+  type NurserySettlementMetrics,
+  type NurserySupplierSummary,
+} from "@/lib/nursery-settlement";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +26,7 @@ import {
   Search, Users, Phone, CalendarClock, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
   ChevronDown, ChevronUp, ChevronRight, Banknote, User2, Trash2, Send, BadgeCheck,
-  ShoppingBasket, Package, Download, UserPlus, Save, X, ArrowUpDown,
+  ShoppingBasket, Package, Download, UserPlus, Save, X, ArrowUpDown, Sprout,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -1553,9 +1563,15 @@ function CustomerDownloadButton({ group }: { group: CustomerGroup }) {
 function CustomerGroupRow({
   group,
   onSelectDebt,
+  matchedSupplier,
+  plantPaidAmount = 0,
+  onOpenPlantSettle,
 }: {
   group: CustomerGroup;
   onSelectDebt: (debt: any) => void;
+  matchedSupplier?: NurserySupplierSummary | null;
+  plantPaidAmount?: number;
+  onOpenPlantSettle?: (target: { customerName: string; customerPhone?: string }) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasActive = group.activeDebts.length > 0;
@@ -1619,7 +1635,20 @@ function CustomerGroupRow({
             {initials || "?"}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-foreground truncate">{toTitleCase(group.customerName)}</p>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <p className="text-sm font-semibold text-foreground truncate">{toTitleCase(group.customerName)}</p>
+              {matchedSupplier && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/12 border border-emerald-500/25 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 shrink-0">
+                  <Sprout className="h-2.5 w-2.5" />
+                  Nursery
+                </span>
+              )}
+              {plantPaidAmount > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/12 border border-amber-500/25 px-1.5 py-0.5 text-[9px] font-bold font-mono text-amber-600 dark:text-amber-400 shrink-0">
+                  Paid w/ Plants: {formatKES(plantPaidAmount)}
+                </span>
+              )}
+            </div>
             <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5 truncate">
               {group.customerPhone && (
                 <span className="inline-flex items-center gap-1 font-mono">
@@ -1662,6 +1691,20 @@ function CustomerGroupRow({
         </div>
 
         <div className="flex items-center justify-end gap-1.5 shrink-0">
+          {onOpenPlantSettle && matchedSupplier && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenPlantSettle({ customerName: group.customerName, customerPhone: group.customerPhone });
+              }}
+              className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-emerald-500/12 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold transition-colors cursor-pointer"
+              title="Settle debts or view profit using plant sales"
+            >
+              <Sprout className="h-3 w-3" />
+              Plants
+            </button>
+          )}
           {group.totalCredit > 0 && (
             <span onClick={(e) => e.stopPropagation()} className="shrink-0">
               <AddCreditDialog customerName={group.customerName} currentCredit={group.totalCredit} />
@@ -1673,6 +1716,26 @@ function CustomerGroupRow({
       </div>
       {expanded && (
         <div className="bg-muted/20 border-t border-border/60 px-4 sm:px-5 py-3 space-y-1.5">
+          {onOpenPlantSettle && (hasActive || matchedSupplier) && (
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-3 py-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Sprout className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                <span className="text-[11px] font-medium text-foreground truncate">
+                  {matchedSupplier
+                    ? "Linked nursery owner — clear debts from sold plants or view shop profits"
+                    : "Is this the nursery plant supplier? Clear debt using sold plants"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onOpenPlantSettle({ customerName: group.customerName, customerPhone: group.customerPhone })}
+                className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors shrink-0 cursor-pointer"
+              >
+                <Sprout className="h-3 w-3" />
+                {matchedSupplier ? "Settle w/ Plants" : "Link & Settle w/ Plants"}
+              </button>
+            </div>
+          )}
           {outstandingDebts.length > 0 && (
             <>
               <div className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-wider font-bold text-muted-foreground">
@@ -1949,10 +2012,12 @@ function DebtDetailPanel({
   debt,
   isOwner,
   onClose,
+  onOpenPlantSettle,
 }: {
   debt: any;
   isOwner: boolean;
   onClose: () => void;
+  onOpenPlantSettle?: (target: { customerName: string; customerPhone?: string }) => void;
 }) {
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
   const { data, isLoading } = useGetDebt(debt.id, { query: { queryKey: getGetDebtQueryKey(debt.id), staleTime: 30_000 } });
@@ -2154,6 +2219,8 @@ function DebtDetailPanel({
                 {payments.map((p: any, i: number) => {
                   const isReversal = p.paymentType === "reversal" || Number(p.amount) < 0;
                   const isReversed = !isReversal && reversedPaymentIds.has(p.id);
+                  const plantMeta = !isReversal ? parsePlantSettlementPayment(p) : { isPlantLinked: false };
+                  const cleanNote = formatPlantSettlementNoteDisplay(p.note);
                   return (
                   <div key={p.id ?? i} className={cn(
                     "flex items-center gap-3 p-3 rounded-xl border",
@@ -2172,6 +2239,12 @@ function DebtDetailPanel({
                         <p className="text-xs font-semibold">
                           {isReversal ? "Payment Reversed" : isReversed ? "Payment Received · Reversed" : "Payment Received"}
                         </p>
+                        {plantMeta.isPlantLinked && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-500">
+                            <Sprout className="h-2.5 w-2.5" />
+                            Plant Proceeds
+                          </span>
+                        )}
                         {p.recordedBy && (
                           <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                             <User2 className="h-2.5 w-2.5" />{p.recordedBy}
@@ -2180,7 +2253,7 @@ function DebtDetailPanel({
                       </div>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
                         {format(new Date(p.paidAt), "d MMM yyyy, HH:mm")}
-                        {p.note ? ` · ${p.note}` : ""}
+                        {cleanNote ? ` · ${cleanNote}` : ""}
                       </p>
                       <p className="text-[10px] text-primary/70 mt-1 flex items-start gap-1">
                         <Package className="h-2.5 w-2.5 mt-0.5 shrink-0" />
@@ -2255,6 +2328,22 @@ function DebtDetailPanel({
       <div className="border-t border-border p-3 shrink-0 space-y-2">
         <div className="flex gap-2 flex-wrap">
           {!isPaid && !isCancelled && debt.balance > 0 && <PaymentDialog debt={debt} />}
+          {onOpenPlantSettle && (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenPlantSettle({
+                  customerName: debt.customerName,
+                  customerPhone: debt.customerPhone,
+                })
+              }
+              className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-emerald-500/12 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold transition-colors cursor-pointer"
+              title="Settle using Nursery plant sales"
+            >
+              <Sprout className="h-3.5 w-3.5" />
+              Settle w/ Plants
+            </button>
+          )}
           <DebtDownloadButton debt={debt} />
           {isOwner && !isPaid && !isCancelled && debt.balance > 0 && <MarkPaidButton debt={debt} />}
           {isOwner && !isPaid && !isCancelled && debt.balance > 0 && (
@@ -2614,6 +2703,20 @@ export default function Debts() {
   const [visibleCount, setVisibleCount] = useState(10);
   const [selectedDebt, setSelectedDebt] = useState<any>(null);
   const [bulkRemindOpen, setBulkRemindOpen] = useState(false);
+  const shopName = localStorage.getItem("greenlink_shopName") || "Shop";
+  const [plantSettleTarget, setPlantSettleTarget] = useState<{
+    customerName: string;
+    customerPhone?: string;
+    initialTab?: "settle" | "history";
+  } | null>(null);
+
+  const suppliersQuery = useQuery<{ rows: NurserySupplierSummary[] }>({
+    queryKey: ["/api/nursery/suppliers", shopId],
+    queryFn: () => customFetch<{ rows: NurserySupplierSummary[] }>("/api/nursery/suppliers"),
+    enabled: !!shopId,
+    staleTime: 30_000,
+  });
+  const nurserySuppliers = suppliersQuery.data?.rows ?? [];
 
   useEffect(() => {
     setVisibleCount(10);
@@ -2637,6 +2740,36 @@ export default function Debts() {
       },
     }
   );
+
+  const nurserySettlementQuery = useQuery<NurserySettlementMetrics>({
+    queryKey: [
+      "nursery-settlement-state",
+      shopId,
+      "debts-page",
+      (allDebts as any[] | undefined)?.length ?? 0,
+      ((allDebts as any[]) || []).reduce((s, d) => s + Number(d?.balance || 0), 0),
+    ],
+    queryFn: () =>
+      loadNurserySettlementState({
+        qc,
+        shopId,
+        shopName,
+        allDebts: (allDebts as any[]) || [],
+        suppliers: nurserySuppliers,
+      }),
+    enabled: !!shopId && !isLoading,
+    staleTime: 15_000,
+  });
+  const nurseryMetrics = nurserySettlementQuery.data;
+  const nurseryProjection = useMemo(() => {
+    if (!nurseryMetrics) return null;
+    return computeNurseryProjection({
+      metrics: nurseryMetrics,
+      poolMode: nurseryMetrics.shopConfig.poolMode,
+      shopCommissionPct: nurseryMetrics.shopConfig.commissionPct,
+    });
+  }, [nurseryMetrics]);
+  const nurseryTotalGross = nurseryMetrics?.grossTotal ?? 0;
 
   // Keep selectedDebt in sync when data refreshes
   useEffect(() => {
@@ -2865,6 +2998,28 @@ export default function Debts() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {(nurseryTotalGross > 0 || nurserySuppliers.length > 0) && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPlantSettleTarget({
+                        customerName:
+                          nurserySuppliers.find((s) => !!s.customerName)?.customerName ??
+                          nurserySuppliers[0]?.name ??
+                          "",
+                        customerPhone:
+                          nurserySuppliers.find((s) => !!s.customerPhone)?.customerPhone ??
+                          nurserySuppliers[0]?.phone ??
+                          "",
+                      })
+                    }
+                    className="inline-flex h-9 items-center gap-1.5 px-3 rounded-xl bg-emerald-500/12 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-bold hover:bg-emerald-500/20 transition-colors cursor-pointer"
+                    title="Clear nursery owner debts using this shop's sold plants"
+                  >
+                    <Sprout className="h-3.5 w-3.5" />
+                    Plant Proceeds · {formatKES(nurseryTotalGross)}
+                  </button>
+                )}
                 {stats.overdueWithPhone.length > 0 && (
                   <button
                     onClick={() => setBulkRemindOpen(true)}
@@ -2937,6 +3092,105 @@ export default function Debts() {
 
           {/* Main Workspace Container */}
           <div className="p-4 sm:p-6 space-y-4">
+            {nurseryMetrics && nurseryProjection && (nurseryMetrics.grossTotal > 0 || nurseryMetrics.settledPayments.length > 0) && (
+              <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.05] p-3.5 sm:p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                      <Sprout className="h-4 w-4 text-emerald-500" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-foreground truncate">
+                        Nursery Plant Proceeds · {shopName}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground truncate">
+                        Collected Cash+M-Pesa vs amount already used to pay debts
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 rounded-xl text-xs gap-1.5 cursor-pointer"
+                      onClick={() =>
+                        setPlantSettleTarget({
+                          customerName:
+                            nurserySuppliers.find((s) => !!s.customerName)?.customerName ??
+                            nurserySuppliers[0]?.name ??
+                            "",
+                          customerPhone:
+                            nurserySuppliers.find((s) => !!s.customerPhone)?.customerPhone ??
+                            nurserySuppliers[0]?.phone ??
+                            "",
+                          initialTab: "history",
+                        })
+                      }
+                    >
+                      <History className="h-3.5 w-3.5" />
+                      Used Ledger ({nurseryMetrics.settledPayments.length + nurseryMetrics.payouts.length})
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8 rounded-xl text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
+                      onClick={() =>
+                        setPlantSettleTarget({
+                          customerName:
+                            nurserySuppliers.find((s) => !!s.customerName)?.customerName ??
+                            nurserySuppliers[0]?.name ??
+                            "",
+                          customerPhone:
+                            nurserySuppliers.find((s) => !!s.customerPhone)?.customerPhone ??
+                            nurserySuppliers[0]?.phone ??
+                            "",
+                          initialTab: "settle",
+                        })
+                      }
+                    >
+                      <Sprout className="h-3.5 w-3.5" />
+                      Settle w/ Plants
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  <div className="rounded-xl border border-border/60 bg-background/75 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Collected Cash+M-Pesa</p>
+                    <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-foreground">
+                      {formatKES(nurseryMetrics.collectedCashMpesa)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">of {formatKES(nurseryMetrics.grossTotal)} total</p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-background/75 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Used to Pay Debts</p>
+                    <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
+                      {formatKES(nurseryMetrics.d1SettledNetTotal)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {nurseryMetrics.settledPayments.length} settlement{nurseryMetrics.settledPayments.length === 1 ? "" : "s"} in D1
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-background/75 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Shop Profit Kept</p>
+                    <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-foreground">
+                      {formatKES(nurseryProjection.totalShopProfit)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">{nurseryMetrics.shopConfig.commissionPct}% split</p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Available Plant Balance</p>
+                    <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {formatKES(nurseryProjection.availableNetProceeds)}
+                    </p>
+                    <p className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">
+                      {nurseryMetrics.payoutNetTotal > 0 ? `After ${formatKES(nurseryMetrics.payoutNetTotal)} payouts` : "Ready to clear debts"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Search + Sort + Status Pills Card */}
             <div className="rounded-2xl border border-border/80 bg-card/95 p-3.5 sm:p-4 space-y-3">
               <div className="flex flex-col sm:flex-row gap-2.5">
@@ -3059,7 +3313,14 @@ export default function Debts() {
                 <div>
                   {viewMode === "customers" ? (
                     visibleGroups.map((group) => (
-                      <CustomerGroupRow key={group.key} group={group} onSelectDebt={setSelectedDebt} />
+                      <CustomerGroupRow
+                        key={group.key}
+                        group={group}
+                        onSelectDebt={setSelectedDebt}
+                        matchedSupplier={findMatchingSupplier(nurserySuppliers, group.customerName, group.customerPhone)}
+                        plantPaidAmount={nurseryMetrics?.settledByCustomerKey[group.key] ?? 0}
+                        onOpenPlantSettle={(target) => setPlantSettleTarget(target)}
+                      />
                     ))
                   ) : (
                     <div className="divide-y divide-border/50">
@@ -3232,6 +3493,7 @@ export default function Debts() {
             debt={selectedDebt}
             isOwner={isOwner}
             onClose={() => setSelectedDebt(null)}
+            onOpenPlantSettle={(target) => setPlantSettleTarget(target)}
           />
         </div>
       )}
@@ -3248,6 +3510,7 @@ export default function Debts() {
               debt={selectedDebt}
               isOwner={isOwner}
               onClose={() => setSelectedDebt(null)}
+              onOpenPlantSettle={(target) => setPlantSettleTarget(target)}
             />
           </div>
         </div>
@@ -3307,6 +3570,20 @@ export default function Debts() {
           </div>
         </div>
       )}
+
+      <NurseryDebtSettlementDialog
+        open={!!plantSettleTarget}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPlantSettleTarget(null);
+        }}
+        shopId={shopId}
+        shopName={shopName}
+        customerName={plantSettleTarget?.customerName}
+        customerPhone={plantSettleTarget?.customerPhone}
+        initialTab={plantSettleTarget?.initialTab}
+        externalDebts={allDebts || []}
+        suppliers={nurserySuppliers}
+      />
 
     </div>
   );

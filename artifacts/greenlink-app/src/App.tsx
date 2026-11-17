@@ -31,15 +31,12 @@ import POS from "@/pages/pos";
 import Layout from "@/components/layout";
 const Stock = lazy(() => import("@/pages/stock"));
 const Debts = lazy(() => import("@/pages/debts"));
-const Alerts = lazy(() => import("@/pages/alerts"));
 const Reports = lazy(() => import("@/pages/reports"));
-const OCR = lazy(() => import("@/pages/ocr"));
 const Settings = lazy(() => import("@/pages/settings"));
 const OwnerDashboard = lazy(() => import("@/pages/owner-dashboard"));
 const SalesHistory = lazy(() => import("@/pages/sales-history"));
 const Returns = lazy(() => import("@/pages/returns"));
 const Transfers = lazy(() => import("@/pages/transfers"));
-const InvoiceHistory = lazy(() => import("@/pages/invoice-history"));
 const SupplierDetail = lazy(() => import("@/pages/supplier-detail"));
 const Quotations = lazy(() => import("@/pages/quotations"));
 const Customers = lazy(() => import("@/pages/customers"));
@@ -334,15 +331,12 @@ function AppRoutes() {
                 <Route path="/pos" component={POS} />
                 <Route path="/stock" component={Stock} />
                 <Route path="/debts" component={Debts} />
-                <Route path="/alerts" component={Alerts} />
                 <Route path="/reports" component={Reports} />
-                <Route path="/ocr" component={OCR} />
                 <Route path="/settings" component={Settings} />
                 <Route path="/owner-dashboard" component={OwnerDashboard} />
                 <Route path="/sales-history" component={SalesHistory} />
                 <Route path="/returns" component={Returns} />
                 <Route path="/transfers" component={Transfers} />
-                <Route path="/invoices" component={InvoiceHistory} />
                 <Route path="/suppliers/:supplierId" component={SupplierDetail} />
                 <Route path="/quotations" component={Quotations} />
                 <Route path="/customers" component={Customers} />

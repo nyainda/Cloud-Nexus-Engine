@@ -123,6 +123,7 @@ function QtyTextInput({
     <input
       ref={inputRef}
       type="text"
+      size={4}
       inputMode={isDecimal ? "decimal" : "numeric"}
       value={focused ? draft : formatQty(value)}
       onFocus={e => {
@@ -137,7 +138,7 @@ function QtyTextInput({
           e.currentTarget.blur();
         }
       }}
-      className={className}
+      className={cn("min-w-0", className)}
     />
   );
 }
@@ -166,12 +167,14 @@ function QuickAddSheet({
   useEffect(() => {
     if (open && product) {
       const isMeasured = product.productType === "measured" || isWeighedUnit(product.unit || "");
-      setQty(roundQty(Math.min(isMeasured ? 0.5 : 1, product.stockQty || 1)));
+      const available = Math.max(0, roundQty((product.stockQty || 0) - cartQty));
+      const initialCap = available > 0 ? available : (product.stockQty || 1);
+      setQty(roundQty(Math.min(isMeasured ? 0.5 : 1, initialCap)));
       setPrice(product.sellingPrice || 0);
       setAmountInput("");
       setTimeout(() => qtyInputRef.current?.select(), 60);
     }
-  }, [open, product]);
+  }, [open, product, cartQty]);
 
   useEffect(() => {
     if (open) document.body.style.overflow = "hidden";
@@ -193,7 +196,9 @@ function QuickAddSheet({
   const weighed = product.productType === "measured" || isWeighedUnit(product.unit || "");
   const isLow = product.stockQty > 0 && product.stockQty <= product.alertQty;
   const isOut = product.stockQty === 0;
-  const remainingAvailable = Math.max(0, product.stockQty - cartQty);
+  const remainingAvailable = Math.max(0, roundQty(product.stockQty - cartQty));
+  const maxAddQty = remainingAvailable;
+  const isCartLimitReached = !isOut && remainingAvailable <= 0;
   const marginPct = product.purchasePrice && price > 0
     ? ((price - product.purchasePrice) / price) * 100
     : null;
@@ -203,40 +208,49 @@ function QuickAddSheet({
 
   const qtyStep = weighed ? 0.25 : 1;
   const qtyMin = weighed ? 0.01 : 1;
+  const effectiveMax = Math.max(qtyMin, maxAddQty);
 
   const submit = () => {
-    if (isOut) return;
-    onAdd(product, roundQty(qty), price);
+    if (isOut || isCartLimitReached) return;
+    const finalQty = roundQty(Math.min(Math.max(qtyMin, qty), maxAddQty));
+    onAdd(product, finalQty, price);
     onClose();
   };
 
+  const presetValues = (weighed
+    ? (product.unit?.toLowerCase() === "g" || product.unit?.toLowerCase() === "ml"
+        ? [50, 100, 250, 500, 1000]
+        : [0.1, 0.25, 0.5, 1, 2, 5, 10])
+    : [1, 2, 3, 5, 10, 20, 50]
+  ).filter(v => v <= maxAddQty);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={onClose} />
       <div
-        className="relative bg-card w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl border border-border shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className="relative bg-card w-full sm:max-w-[440px] max-h-[92dvh] flex flex-col rounded-t-3xl sm:rounded-3xl border border-border/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }}
       >
         {/* Header */}
-        <div className="px-5 pt-5 pb-4 border-b border-border/70 bg-muted/20">
+        <div className="px-5 pt-4 pb-3.5 border-b border-border/70 bg-muted/25 shrink-0">
           <div className="flex items-start gap-3">
             <div
               className={cn(
                 "w-11 h-11 rounded-2xl border flex items-center justify-center shrink-0",
                 weighed
                   ? "bg-primary/12 border-primary/25 text-primary"
-                  : "bg-muted/70 border-border text-muted-foreground"
+                  : "bg-background border-border text-muted-foreground shadow-2xs"
               )}
             >
               {weighed ? <Scale className="h-5 w-5" /> : <Package className="h-5 w-5" />}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-display font-bold text-base text-foreground leading-snug">
+              <p className="font-display font-bold text-base text-foreground leading-snug line-clamp-2">
                 {product.canonicalName}
               </p>
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 {product.category && (
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/60">
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-background text-muted-foreground border border-border/70">
                     {product.category}
                   </span>
                 )}
@@ -246,14 +260,14 @@ function QuickAddSheet({
                       "text-[10px] font-bold px-2 py-0.5 rounded-full border font-mono",
                       weighed
                         ? "text-primary border-primary/25 bg-primary/10"
-                        : "text-muted-foreground border-border/60 bg-muted/40"
+                        : "text-muted-foreground border-border/70 bg-background"
                     )}
                   >
                     {product.unit}
                   </span>
                 )}
                 {product.sku && (
-                  <span className="text-[10px] font-mono text-muted-foreground/70">
+                  <span className="text-[10px] font-mono text-muted-foreground">
                     #{product.sku}
                   </span>
                 )}
@@ -261,54 +275,87 @@ function QuickAddSheet({
             </div>
             <button
               type="button"
+              aria-label="Close product dialog"
               onClick={onClose}
-              className="w-8 h-8 rounded-xl bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center shrink-0 cursor-pointer"
+              className="w-8 h-8 rounded-xl bg-background border border-border/70 text-muted-foreground hover:text-foreground flex items-center justify-center shrink-0 cursor-pointer transition-colors"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full border",
-                isOut
-                  ? "bg-destructive/12 border-destructive/25 text-destructive"
-                  : isLow
-                  ? "bg-amber-500/12 border-amber-500/25 text-amber-400"
-                  : "bg-emerald-500/12 border-emerald-500/25 text-emerald-400"
-              )}
-            >
+          <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span
                 className={cn(
-                  "w-1.5 h-1.5 rounded-full",
-                  isOut ? "bg-destructive" : isLow ? "bg-amber-400" : "bg-emerald-400"
+                  "inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full border",
+                  isOut
+                    ? "bg-destructive/12 border-destructive/25 text-destructive"
+                    : isLow
+                    ? "bg-amber-500/12 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                    : "bg-emerald-500/12 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
                 )}
-              />
-              {isOut
-                ? "Out of Stock"
-                : `${formatQty(product.stockQty)} ${product.unit || "units"} in stock`}
-            </span>
-            {cartQty > 0 && (
-              <span className="inline-flex items-center gap-1 bg-primary/15 border border-primary/30 text-primary rounded-full px-2.5 py-1 text-[11px] font-bold">
-                <ShoppingCart className="h-3 w-3" />
-                {formatQty(cartQty)} in ticket ({formatQty(remainingAvailable)} left)
+              >
+                <span
+                  className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    isOut ? "bg-destructive" : isLow ? "bg-amber-500" : "bg-emerald-500"
+                  )}
+                />
+                {isOut
+                  ? "Out of Stock"
+                  : `${formatQty(product.stockQty)} ${product.unit || "units"} in stock`}
               </span>
-            )}
+              {cartQty > 0 && (
+                <span className="inline-flex items-center gap-1 bg-primary/12 border border-primary/30 text-primary rounded-full px-2.5 py-0.5 text-[11px] font-bold">
+                  <ShoppingCart className="h-3 w-3" />
+                  {formatQty(cartQty)} in ticket ({formatQty(remainingAvailable)} left)
+                </span>
+              )}
+            </div>
+            <span className="text-xs font-bold font-mono text-foreground bg-background border border-border/70 px-2.5 py-0.5 rounded-full">
+              {formatKES(product.sellingPrice || 0)}/{product.unit || "unit"}
+            </span>
           </div>
         </div>
 
         {/* Body */}
-        <div className="px-5 py-4 space-y-4">
-          <div>
-            <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground font-bold mb-2 block">
-              Quantity {weighed ? `(${product.unit || "kg"})` : `(${product.unit || "units"})`}
-            </Label>
-            <div className="flex items-center gap-2.5">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3.5">
+          {isCartLimitReached && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+              All {formatQty(product.stockQty)} {product.unit || "units"} of this product are already in the current ticket.
+            </div>
+          )}
+
+          {/* Unified Tactile Stepper */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground font-bold">
+                Quantity ({product.unit || (weighed ? "kg" : "unit")})
+              </Label>
+              {maxAddQty > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQty(roundQty(maxAddQty));
+                    setAmountInput("");
+                  }}
+                  className="text-[11px] font-semibold font-mono text-primary hover:underline cursor-pointer"
+                >
+                  Max {formatQty(maxAddQty)}
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-[52px_minmax(0,1fr)_52px] items-center gap-2 rounded-2xl border border-border/80 bg-muted/35 p-1.5">
               <button
                 type="button"
-                className="w-12 h-12 rounded-2xl bg-muted border border-border flex items-center justify-center text-foreground hover:bg-muted/70 active:scale-95 transition-all cursor-pointer"
-                onClick={() => setQty(q => Math.max(qtyMin, roundQty(q - qtyStep)))}
+                aria-label="Decrease quantity"
+                disabled={isOut || isCartLimitReached || qty <= qtyMin}
+                className="h-12 w-[52px] shrink-0 rounded-xl bg-background border border-border/80 shadow-xs flex items-center justify-center text-foreground hover:bg-muted active:scale-95 disabled:opacity-35 transition-all cursor-pointer"
+                onClick={() => {
+                  setQty(q => Math.max(qtyMin, roundQty(q - qtyStep)));
+                  setAmountInput("");
+                }}
               >
                 <Minus className="h-4 w-4" />
               </button>
@@ -316,33 +363,31 @@ function QuickAddSheet({
                 inputRef={qtyInputRef}
                 value={qty}
                 min={qtyMin}
-                max={product.stockQty}
+                max={effectiveMax}
                 isDecimal={weighed}
                 onChange={next => {
                   setQty(next);
                   setAmountInput("");
                 }}
-                className="flex-1 h-14 text-center text-3xl font-bold font-mono tabular-nums bg-muted/50 border border-border rounded-2xl focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="h-12 w-full min-w-0 text-center text-2xl sm:text-3xl font-bold font-mono tabular-nums bg-background border border-border/70 rounded-xl focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 text-foreground"
               />
               <button
                 type="button"
-                className="w-12 h-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center hover:brightness-105 active:scale-95 transition-all disabled:opacity-40 cursor-pointer"
-                onClick={() => setQty(q => roundQty(Math.min(product.stockQty, q + qtyStep)))}
-                disabled={qty >= product.stockQty}
+                aria-label="Increase quantity"
+                disabled={isOut || isCartLimitReached || qty >= maxAddQty}
+                className="h-12 w-[52px] shrink-0 rounded-xl bg-primary text-primary-foreground shadow-sm flex items-center justify-center hover:brightness-105 active:scale-95 disabled:opacity-35 transition-all cursor-pointer"
+                onClick={() => {
+                  setQty(q => roundQty(Math.min(maxAddQty, q + qtyStep)));
+                  setAmountInput("");
+                }}
               >
                 <Plus className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="flex gap-1.5 flex-wrap mt-2.5">
-              {(weighed
-                ? (product.unit?.toLowerCase() === "g" || product.unit?.toLowerCase() === "ml"
-                    ? [50, 100, 250, 500, 1000]
-                    : [0.1, 0.25, 0.5, 1, 2, 5, 10])
-                : [1, 2, 3, 5, 10, 20, 50]
-              )
-                .filter(v => v <= product.stockQty)
-                .map(v => (
+            {presetValues.length > 0 && (
+              <div className="flex gap-1.5 flex-wrap pt-0.5">
+                {presetValues.map(v => (
                   <button
                     key={v}
                     type="button"
@@ -353,17 +398,18 @@ function QuickAddSheet({
                     className={cn(
                       "text-[11px] font-bold font-mono px-2.5 py-1 rounded-full border transition-all cursor-pointer tabular-nums",
                       roundQty(qty) === v
-                        ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                        : "bg-muted/60 border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
+                        ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                        : "bg-muted/50 border-border/80 text-muted-foreground hover:text-foreground hover:border-primary/40"
                     )}
                   >
                     {weighed ? `${v}${product.unit}` : `×${v}`}
                   </button>
                 ))}
-            </div>
+              </div>
+            )}
 
             {weighed && price > 0 && (
-              <div className="mt-3 rounded-2xl border border-border/70 bg-muted/30 p-3 space-y-2">
+              <div className="rounded-2xl border border-border/70 bg-muted/25 p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     Quick Sell by Amount (KES)
@@ -375,7 +421,7 @@ function QuickAddSheet({
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {[50, 100, 200, 500, 1000].map(amt => {
                     const computed = roundQty(amt / price);
-                    if (computed < qtyMin || computed > product.stockQty) return null;
+                    if (computed < qtyMin || computed > maxAddQty) return null;
                     return (
                       <button
                         key={amt}
@@ -388,7 +434,7 @@ function QuickAddSheet({
                           "px-2 py-1 rounded-lg border text-[11px] font-mono font-semibold transition-colors cursor-pointer",
                           amountInput === String(amt)
                             ? "bg-primary/15 border-primary text-primary"
-                            : "bg-background/70 border-border text-muted-foreground hover:text-foreground"
+                            : "bg-background border-border text-muted-foreground hover:text-foreground"
                         )}
                       >
                         Ksh {amt}
@@ -405,49 +451,72 @@ function QuickAddSheet({
                       setAmountInput(raw);
                       const amt = parseFloat(raw);
                       if (!isNaN(amt) && amt > 0 && price > 0) {
-                        setQty(roundQty(Math.min(product.stockQty, Math.max(qtyMin, amt / price))));
+                        setQty(roundQty(Math.min(maxAddQty, Math.max(qtyMin, amt / price))));
                       }
                     }}
-                    className="h-7 w-24 rounded-lg border border-border bg-background/80 px-2 text-xs font-mono focus:outline-none focus:border-primary"
+                    className="h-7 w-24 rounded-lg border border-border bg-background px-2 text-xs font-mono focus:outline-none focus:border-primary"
                   />
                 </div>
               </div>
             )}
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground font-bold">
+          {/* Unit Price Pill Row */}
+          <div className="rounded-2xl border border-border/80 bg-muted/25 px-3.5 py-2.5 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <Label htmlFor="quick-add-unit-price" className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground font-bold block">
                 Unit Price (KES)
               </Label>
-              {price !== product.sellingPrice && (
+              {price !== product.sellingPrice ? (
                 <button
                   type="button"
                   onClick={() => setPrice(product.sellingPrice || 0)}
-                  className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                  className="text-[11px] font-semibold text-primary hover:underline cursor-pointer mt-0.5"
                 >
                   Reset to {formatKES(product.sellingPrice || 0)}
                 </button>
+              ) : (
+                <p className="text-[11px] text-muted-foreground mt-0.5">Standard rate</p>
               )}
             </div>
-            <input
-              type="number"
-              value={price}
-              onChange={e => setPrice(Number(e.target.value))}
-              className="w-full h-11 text-right text-xl font-bold font-mono bg-muted/40 border border-border rounded-2xl px-4 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            />
+            <div className="flex items-center gap-1.5 rounded-xl border border-border/80 bg-background px-2.5 h-10 shrink-0 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+              <span className="text-xs font-bold font-mono text-muted-foreground">Ksh</span>
+              <input
+                id="quick-add-unit-price"
+                type="number"
+                min={0}
+                value={price}
+                onChange={e => setPrice(Math.max(0, Number(e.target.value)))}
+                className="w-24 text-right text-base font-bold font-mono tabular-nums bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+            </div>
           </div>
 
-          <div className="bg-muted/35 rounded-2xl border border-border/80 p-3.5 space-y-2">
-            {isOwner && product.purchasePrice > 0 && (
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-muted-foreground">Cost price</span>
-                <span className="font-mono text-muted-foreground">{formatKES(product.purchasePrice)}</span>
+          {/* Financial Breakdown */}
+          <div className="bg-muted/25 rounded-2xl border border-border/80 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-3">
+              {isOwner && product.purchasePrice > 0 ? (
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                    Cost Price
+                  </span>
+                  <span className="text-xs font-mono font-semibold text-muted-foreground">
+                    {formatKES(product.purchasePrice)}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-xs font-medium text-muted-foreground">Line subtotal</span>
+              )}
+              <div className="text-right ml-auto">
+                {isOwner && product.purchasePrice > 0 && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                    Line Subtotal
+                  </span>
+                )}
+                <span className="text-xl font-display font-bold font-mono tabular-nums text-foreground">
+                  {formatKES(qty * price)}
+                </span>
               </div>
-            )}
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-medium text-muted-foreground">Line subtotal</span>
-              <span className="text-lg font-bold font-mono text-foreground">{formatKES(qty * price)}</span>
             </div>
 
             {isOwner && profit !== null && (
@@ -457,7 +526,11 @@ function QuickAddSheet({
                     <TrendingUp
                       className={cn(
                         "h-3.5 w-3.5",
-                        profit < 0 ? "text-destructive" : (marginPct ?? 0) < 10 ? "text-amber-400" : "text-emerald-400"
+                        profit < 0
+                          ? "text-destructive"
+                          : (marginPct ?? 0) < 10
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-emerald-600 dark:text-emerald-400"
                       )}
                     />
                     Est. Profit
@@ -468,8 +541,8 @@ function QuickAddSheet({
                           profit < 0
                             ? "bg-destructive/15 text-destructive"
                             : marginPct < 10
-                            ? "bg-amber-500/15 text-amber-400"
-                            : "bg-emerald-500/15 text-emerald-400"
+                            ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                            : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                         )}
                       >
                         {marginPct.toFixed(0)}%
@@ -478,8 +551,12 @@ function QuickAddSheet({
                   </span>
                   <span
                     className={cn(
-                      "font-bold font-mono text-sm",
-                      profit >= 0 ? ((marginPct ?? 0) < 10 ? "text-amber-400" : "text-emerald-400") : "text-destructive"
+                      "font-bold font-mono text-sm tabular-nums",
+                      profit >= 0
+                        ? ((marginPct ?? 0) < 10
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-emerald-600 dark:text-emerald-400")
+                        : "text-destructive"
                     )}
                   >
                     {profit < 0 ? "-" : "+"}{formatKES(Math.abs(profit))}
@@ -490,7 +567,7 @@ function QuickAddSheet({
                     <div
                       className={cn(
                         "h-full rounded-full transition-all",
-                        profit < 0 ? "bg-destructive" : marginPct < 10 ? "bg-amber-400" : "bg-emerald-400"
+                        profit < 0 ? "bg-destructive" : marginPct < 10 ? "bg-amber-500" : "bg-emerald-500"
                       )}
                       style={{ width: `${Math.max(4, Math.min(100, marginPct))}%` }}
                     />
@@ -513,9 +590,9 @@ function QuickAddSheet({
           )}
           {profit !== null && profit >= 0 && marginPct !== null && marginPct < 10 && (
             <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/25 rounded-2xl px-3.5 py-2.5">
-              <span className="text-amber-400 text-sm font-bold shrink-0">↓</span>
+              <span className="text-amber-600 dark:text-amber-400 text-sm font-bold shrink-0">↓</span>
               <div>
-                <p className="text-xs font-bold text-amber-400">Low margin ({marginPct.toFixed(0)}%)</p>
+                <p className="text-xs font-bold text-amber-600 dark:text-amber-400">Low margin ({marginPct.toFixed(0)}%)</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
                   Consider raising the price — typical target margin is above 10%.
                 </p>
@@ -524,17 +601,18 @@ function QuickAddSheet({
           )}
         </div>
 
-        <div className="px-5 pb-5 flex gap-2.5">
-          <Button variant="outline" className="h-12 px-5 rounded-2xl font-semibold" onClick={onClose}>
+        {/* Footer */}
+        <div className="border-t border-border/70 bg-muted/15 px-5 py-3.5 flex gap-2.5 shrink-0">
+          <Button variant="outline" className="h-11 px-5 rounded-xl font-semibold cursor-pointer" onClick={onClose}>
             Cancel
           </Button>
           <Button
-            className="flex-1 h-12 rounded-2xl font-bold text-sm bg-primary text-primary-foreground shadow-lg shadow-primary/20"
-            disabled={isOut}
+            className="flex-1 h-11 rounded-xl font-bold text-sm bg-primary text-primary-foreground shadow-md shadow-primary/20 cursor-pointer"
+            disabled={isOut || isCartLimitReached}
             onClick={submit}
           >
             <ShoppingCart className="h-4 w-4 mr-2" />
-            Add {formatKES(qty * price)}
+            Add {formatQty(qty)} · {formatKES(qty * price)}
           </Button>
         </div>
       </div>
