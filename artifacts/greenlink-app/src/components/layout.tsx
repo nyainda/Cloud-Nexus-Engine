@@ -3,10 +3,10 @@ import { useState, useEffect } from "react";
 import { OfflineBanner } from "@/components/offline-banner";
 import { OfflineSyncProvider, useOfflineSyncCtx } from "@/lib/offline-context";
 import {
-  ShoppingCart, Package, Users, Bell, BarChart3, Store, MapPin,
-  ScanLine, Settings, LogOut, LayoutDashboard, Receipt,
+  ShoppingCart, Package, Users, BarChart3, Store, MapPin,
+  Settings, LogOut, LayoutDashboard, Receipt,
   Sun, Moon, Download, RotateCcw, PanelLeftClose, PanelLeftOpen,
-  MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser, Sprout,
+  MoreHorizontal, X, ArrowLeftRight, FileText, BookUser, Sprout,
   WifiOff, RefreshCw,
 } from "lucide-react";
 import { useLogout } from "@workspace/api-client-react";
@@ -29,7 +29,6 @@ const PAGE_TITLES: Record<string, string> = {
   "/stock": "Inventory",
   "/customers": "Customers",
   "/debts": "Customer Debts",
-  "/alerts": "Alerts",
   "/sales-history": "Sales History",
   "/returns": "Process Return",
   "/transfers": "Stock Transfers",
@@ -37,8 +36,6 @@ const PAGE_TITLES: Record<string, string> = {
   "/nursery": "Nursery Register",
   "/owner-dashboard": "Owner Overview",
   "/reports": "Analytics",
-  "/invoices": "Purchase History",
-  "/ocr": "Smart Scanner",
   "/settings": "Settings",
 };
 
@@ -157,7 +154,6 @@ function MobileBottomNav({ isOwner }: { isOwner: boolean }) {
         <BottomNavItem href="/pos" icon={ShoppingCart} label="POS" />
         <BottomNavItem href="/stock" icon={Package} label="Stock" />
         <BottomNavItem href="/debts" icon={Users} label="Debts" />
-        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" />
         <BottomNavItem href="/sales-history" icon={Receipt} label="History" />
         <button
           type="button"
@@ -204,8 +200,6 @@ function MobileBottomNav({ isOwner }: { isOwner: boolean }) {
                 <>
                   <MoreSheetItem href="/reports" icon={BarChart3} label="Analytics" />
                   <MoreSheetItem href="/owner-dashboard" icon={LayoutDashboard} label="Overview" />
-                  <MoreSheetItem href="/invoices" icon={Truck} label="Purchase History" />
-                  <MoreSheetItem href="/ocr" icon={ScanLine} label="Smart Scanner" />
                 </>
               )}
               <MoreSheetItem href="/settings" icon={Settings} label="Settings" />
@@ -436,7 +430,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <SidebarNavItem href="/stock" icon={Package} label="Inventory" collapsed={collapsed} />
           <SidebarNavItem href="/customers" icon={BookUser} label="Customers" collapsed={collapsed} />
           <SidebarNavItem href="/debts" icon={Users} label="Customer Debts" collapsed={collapsed} />
-          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" collapsed={collapsed} />
 
           {!collapsed ? (
             <div className="pt-3 pb-1 px-3">
@@ -470,8 +463,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               )}
               <SidebarNavItem href="/owner-dashboard" icon={LayoutDashboard} label="Owner Dashboard" collapsed={collapsed} />
               <SidebarNavItem href="/reports" icon={BarChart3} label="Analytics" collapsed={collapsed} />
-              <SidebarNavItem href="/invoices" icon={Truck} label="Purchase History" collapsed={collapsed} />
-              <SidebarNavItem href="/ocr" icon={ScanLine} label="Smart Scanner" collapsed={collapsed} />
             </>
           )}
         </nav>

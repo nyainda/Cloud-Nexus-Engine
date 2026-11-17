@@ -38,6 +38,7 @@ import {
   FileSpreadsheet,
   Upload,
   ClipboardList,
+  ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -170,28 +171,28 @@ function getQuotationShopName(shop: any): string {
 const STATUS_META = {
   draft: {
     label: "Draft",
-    color: "text-zinc-300 bg-zinc-400/[0.08] border-zinc-400/20",
-    dot: "bg-zinc-400",
+    color: "text-muted-foreground bg-muted/70 border-border/80",
+    dot: "bg-muted-foreground",
   },
   sent: {
     label: "Sent",
-    color: "text-sky-200 bg-sky-300/[0.08] border-sky-300/20",
-    dot: "bg-sky-300",
+    color: "text-sky-700 dark:text-sky-300 bg-sky-500/12 border-sky-500/25",
+    dot: "bg-sky-500",
   },
   accepted: {
     label: "Accepted",
-    color: "text-emerald-200 bg-emerald-300/[0.08] border-emerald-300/20",
-    dot: "bg-emerald-300",
+    color: "text-emerald-700 dark:text-emerald-400 bg-emerald-500/12 border-emerald-500/25",
+    dot: "bg-emerald-500",
   },
   rejected: {
     label: "Rejected",
-    color: "text-rose-200 bg-rose-300/[0.08] border-rose-300/20",
-    dot: "bg-rose-300",
+    color: "text-rose-700 dark:text-rose-400 bg-rose-500/12 border-rose-500/25",
+    dot: "bg-rose-500",
   },
   expired: {
     label: "Expired",
-    color: "text-amber-200 bg-amber-300/[0.08] border-amber-300/20",
-    dot: "bg-amber-300",
+    color: "text-amber-700 dark:text-amber-400 bg-amber-500/12 border-amber-500/25",
+    dot: "bg-amber-500",
   },
 } as const;
 
@@ -200,11 +201,11 @@ function StatusBadge({ status }: { status: Quotation["status"] }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide px-2 py-1 rounded-md border",
+        "inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide px-2.5 py-0.5 rounded-full border",
         m.color,
       )}
     >
-      <span className={cn("h-1.5 w-1.5 rounded-full", m.dot)} />
+      <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", m.dot)} />
       {m.label}
     </span>
   );
@@ -1062,21 +1063,35 @@ function PrintView({
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 bg-[#0A0A0A] shrink-0 flex-wrap">
         <button
           onClick={onClose}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/70 text-xs font-semibold hover:bg-white/20 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/80 text-xs font-semibold hover:bg-white/20 transition-colors"
         >
           <ChevronLeft className="h-3.5 w-3.5" /> Back
         </button>
-        <span className="text-xs font-black text-[#C8FF00] font-mono">
-          {quotation.quoteNumber}
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-black text-[#C8FF00] font-mono">
+            {quotation.quoteNumber}
+          </span>
+          <span className="hidden sm:inline text-xs text-white/60 truncate">
+            · {quotation.customerName}
+          </span>
+        </div>
         <div className="flex-1" />
         <button
-          onClick={() => shareWhatsApp(quotation, shop, "quotation")}
+          onClick={() => shareWhatsApp(quotation, shop, quotation.invoiceNumber ? "invoice" : "quotation")}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/30 text-xs font-bold hover:bg-[#25D366]/30 transition-colors"
         >
           <MessageCircle className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">WhatsApp</span>
         </button>
+        {quotation.invoiceNumber && (
+          <button
+            onClick={() => downloadPdf(quotation, shop, "invoice")}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-xs font-bold hover:bg-emerald-500/30 transition-colors"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Invoice PDF</span>
+          </button>
+        )}
         <button
           onClick={handleDownload}
           disabled={downloading}
@@ -1091,7 +1106,7 @@ function PrintView({
         </button>
         <button
           onClick={() => window.print()}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/70 text-xs font-semibold hover:bg-white/20 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/80 text-xs font-semibold hover:bg-white/20 transition-colors"
         >
           <Printer className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Print</span>
@@ -2081,358 +2096,395 @@ function QuotationBuilder({
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border/60 shrink-0 bg-card/50">
-        <button
-          onClick={onCancel}
-          className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-black text-foreground font-display">
-            {editQuotation
-              ? `Edit ${editQuotation.quoteNumber}`
-              : "New Quotation"}
-          </h2>
-          <p className="text-[10px] text-muted-foreground/50">
-            {editQuotation
-              ? "Update the quote details"
-              : "Build from stock · auto-numbered"}
-          </p>
+    <div className="flex flex-col h-full bg-background">
+      {/* Sticky Builder Header */}
+      <div className="sticky top-0 z-20 border-b border-border/80 bg-card/95 backdrop-blur-md shrink-0">
+        <div className="max-w-6xl mx-auto flex items-center gap-3 px-4 sm:px-6 py-3.5">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="h-9 w-9 flex items-center justify-center rounded-xl border border-border/80 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+            title="Back to quotations"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="w-9 h-9 rounded-2xl bg-primary/12 border border-primary/20 flex items-center justify-center shrink-0">
+            <ClipboardList className="h-4 w-4 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base sm:text-lg font-bold text-foreground font-display truncate">
+              {editQuotation ? `Edit ${editQuotation.quoteNumber}` : "New Quotation"}
+            </h2>
+            <p className="text-xs text-muted-foreground truncate">
+              {items.length} line{items.length === 1 ? "" : "s"} · Live total{" "}
+              <span className="font-mono font-semibold text-foreground">{KES(total)}</span>
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="hidden sm:inline-flex h-9 items-center px-3.5 rounded-xl border border-border bg-muted/30 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="inline-flex h-9 items-center gap-1.5 px-4 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm"
+            >
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              )}
+              {saving ? "Saving…" : editQuotation ? "Update Quote" : "Save Quote"}
+            </button>
+          </div>
         </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-black hover:bg-primary/90 disabled:opacity-50 transition-colors"
-        >
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <CheckCircle2 className="h-3.5 w-3.5" />
-          )}
-          {saving ? "Saving…" : "Save Quote"}
-        </button>
       </div>
 
+      {/* Responsive 2-Column Workspace */}
       <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-3 max-w-2xl mx-auto">
-          {/* ── Customer ── */}
-          <section className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
-              <User className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">
-                CUSTOMER
-              </p>
-            </div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
-                  Name *
-                </label>
-                <CustomerAutocomplete
-                  value={customerName}
-                  onChange={(name, phone) => {
-                    setCustomerName(name);
-                    if (phone) setCustomerPhone(phone);
-                  }}
-                  shopId={shopId}
-                  placeholder="Search existing or type new name"
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
-                    Phone
-                  </label>
-                  <div className="relative">
-                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
-                    <input
-                      value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value)}
-                      placeholder="+254 700 000 000"
-                      className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                    />
-                  </div>
+        <div className="max-w-6xl mx-auto p-4 sm:p-6 pb-20 grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* Left / Main: Catalog Search & Line Items */}
+          <div className="lg:col-span-7 xl:col-span-8 space-y-4">
+            <section className="bg-card border border-border/80 rounded-2xl overflow-hidden">
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border/60 bg-muted/25">
+                <div className="flex items-center gap-2">
+                  <Package className="h-4 w-4 text-primary" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                    Products &amp; Line Items
+                  </h3>
                 </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
-                    Email{" "}
-                    <span className="normal-case font-normal opacity-60">
-                      (optional)
-                    </span>
-                  </label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
-                    <input
-                      value={customerEmail}
-                      onChange={(e) => setCustomerEmail(e.target.value)}
-                      placeholder="customer@email.com"
-                      type="email"
-                      className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* ── Products ── */}
-          <section className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
-              <Package className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">
-                PRODUCTS
-              </p>
-              {items.length > 0 && (
-                <span className="ml-auto text-[10px] font-black bg-primary/15 text-primary px-1.5 py-0.5 rounded-full">
-                  {items.length} item{items.length !== 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-
-            {/* Add item methods: catalogue, manual entry, or spreadsheet import */}
-            <div className="flex flex-wrap gap-2 p-3 border-b border-border/30">
-              <button
-                type="button"
-                onClick={() => setManualItemOpen((open) => !open)}
-                className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10"
-              >
-                <Plus className="h-3.5 w-3.5" /> Add manual item
-              </button>
-              <button
-                type="button"
-                onClick={() => importInputRef.current?.click()}
-                disabled={importing}
-                className="inline-flex items-center gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2 text-xs font-bold text-foreground hover:bg-muted/60 disabled:opacity-50"
-              >
-                {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
-                {importing ? "Reading file…" : "Import Excel / CSV"}
-              </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={(event) => void handleExcelImport(event.target.files?.[0])}
-              />
-              <p className="basis-full text-[10px] text-muted-foreground">
-                Manual and imported lines are quotation-only; they do not change stock or the product catalogue.
-              </p>
-            </div>
-
-            {manualItemOpen && (
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 p-3 border-b border-border/30 bg-primary/[0.03]">
-                <label className="sm:col-span-5 text-[11px] font-semibold text-muted-foreground">
-                  Description
-                  <input value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="e.g. HDPE PIPE 32MM" className="mt-1 w-full h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
-                </label>
-                <label className="sm:col-span-2 text-[11px] font-semibold text-muted-foreground">
-                  Unit
-                  <input value={manualUnit} onChange={(e) => setManualUnit(e.target.value)} placeholder="pcs, m, kg" className="mt-1 w-full h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
-                </label>
-                <label className="sm:col-span-2 text-[11px] font-semibold text-muted-foreground">
-                  Quantity
-                  <input type="number" min="0.001" step="any" value={manualQty} onChange={(e) => setManualQty(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
-                </label>
-                <label className="sm:col-span-3 text-[11px] font-semibold text-muted-foreground">
-                  Unit price (KES)
-                  <input type="number" min="0" step="any" value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} placeholder="0" className="mt-1 w-full h-9 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
-                </label>
-                <div className="sm:col-span-12 flex items-center justify-between gap-3">
-                  <p className="text-xs text-muted-foreground">
-                    Line amount: <strong className="text-foreground">{KES((Number(manualQty) || 0) * (Number(manualPrice) || 0))}</strong>
-                  </p>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => setManualItemOpen(false)} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted">Cancel</button>
-                    <button type="button" onClick={addManualItem} className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground hover:opacity-90"><Plus className="mr-1 inline h-3.5 w-3.5" /> Add item</button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {importPreview.length > 0 && (
-              <div className="p-3 border-b border-border/30 bg-muted/10">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <div>
-                    <p className="text-sm font-bold text-foreground">Review spreadsheet import</p>
-                    <p className="text-[11px] text-muted-foreground">{importFileName} · {importPreview.length} valid line(s)</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => { setImportPreview([]); setImportFileName(""); }} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted">Cancel import</button>
-                    <button type="button" onClick={confirmImport} className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground hover:opacity-90"><CheckCircle2 className="mr-1 inline h-3.5 w-3.5" /> Add {importPreview.length} lines</button>
-                  </div>
-                </div>
-                <div className="max-h-56 overflow-auto rounded-lg border border-border bg-card">
-                  <table className="w-full text-xs">
-                    <thead className="sticky top-0 bg-muted text-muted-foreground">
-                      <tr><th className="p-2 text-left">Description</th><th className="p-2 text-right">Qty</th><th className="p-2 text-right">Unit price</th><th className="p-2 text-right">Amount</th></tr>
-                    </thead>
-                    <tbody>
-                      {importPreview.map((item, index) => (
-                        <tr key={index} className="border-t border-border/50">
-                          <td className="p-2 text-foreground">{item.productName}<span className="ml-1 text-muted-foreground">({item.unit})</span></td>
-                          <td className="p-2 text-right tabular-nums">{item.qty}</td>
-                          <td className="p-2 text-right tabular-nums">{KES(item.unitPrice)}</td>
-                          <td className="p-2 text-right font-semibold tabular-nums">{KES(item.total)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Search */}
-            <div
-              className="p-3 border-b border-border/30"
-              ref={searchContainerRef}
-            >
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40 pointer-events-none" />
-                <input
-                  ref={searchInputRef}
-                  value={productSearch}
-                  onChange={(e) => {
-                    setProductSearch(e.target.value);
-                    setSearchOpen(true);
-                  }}
-                  onFocus={() => setSearchOpen(true)}
-                  placeholder="Search products by name, category, or SKU…"
-                  className="w-full h-9 pl-9 pr-8 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                />
-                {productSearch && (
-                  <button
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setProductSearch("");
-                      searchInputRef.current?.focus();
-                    }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground hover:bg-muted-foreground/30 transition-colors"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
+                {items.length > 0 && (
+                  <span className="text-[11px] font-bold font-mono bg-primary/12 text-primary border border-primary/20 px-2.5 py-0.5 rounded-full tabular-nums">
+                    {items.length} item{items.length !== 1 ? "s" : ""}
+                  </span>
                 )}
               </div>
 
-              {searchOpen && productMatches.length > 0 && (
-                <div className="mt-1.5 bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto">
-                  {productMatches.map((p: any) => {
-                    const isAdded = addedProductIds.has(p.id);
-                    return (
+              {/* Search + Manual + Excel Import */}
+              <div className="p-4 space-y-3 border-b border-border/60">
+                <div ref={searchContainerRef}>
+                  <div className="relative">
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <input
+                      ref={searchInputRef}
+                      value={productSearch}
+                      onChange={(e) => {
+                        setProductSearch(e.target.value);
+                        setSearchOpen(true);
+                      }}
+                      onFocus={() => setSearchOpen(true)}
+                      placeholder="Search stock products by name, category, or SKU…"
+                      className="w-full h-10 pl-10 pr-9 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
+                    />
+                    {productSearch && (
                       <button
-                        key={p.id}
                         type="button"
                         onMouseDown={(e) => {
                           e.preventDefault();
-                          addProduct(p);
+                          setProductSearch("");
+                          searchInputRef.current?.focus();
                         }}
-                        className={cn(
-                          "w-full text-left px-3 py-2.5 flex items-center gap-3 border-b border-border/30 last:border-0 transition-colors",
-                          isAdded
-                            ? "bg-primary/5 hover:bg-primary/10"
-                            : "hover:bg-muted/50",
-                        )}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full bg-muted text-muted-foreground hover:text-foreground transition-colors"
                       >
-                        {isAdded ? (
-                          <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
-                            <CheckCircle2 className="h-3 w-3 text-primary" />
-                          </div>
-                        ) : (
-                          <div className="w-5 h-5 rounded-full border border-border/60 flex items-center justify-center shrink-0">
-                            <Plus className="h-3 w-3 text-muted-foreground/40" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+
+                  {searchOpen && productMatches.length > 0 && (
+                    <div className="mt-2 bg-card border border-border rounded-2xl shadow-xl overflow-hidden max-h-72 overflow-y-auto divide-y divide-border/40">
+                      {productMatches.map((p: any) => {
+                        const isAdded = addedProductIds.has(p.id);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              addProduct(p);
+                            }}
                             className={cn(
-                              "text-xs font-semibold truncate",
-                              isAdded ? "text-primary" : "text-foreground",
+                              "w-full text-left px-3.5 py-2.5 flex items-center gap-3 transition-colors",
+                              isAdded ? "bg-primary/8 hover:bg-primary/12" : "hover:bg-muted/50",
                             )}
                           >
-                            {p.canonicalName}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground/50">
-                            {p.category} · {p.stockQty} {p.unit} in stock
-                          </p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-xs font-black text-primary font-mono">
-                            {KES(p.sellingPrice ?? 0)}
-                          </p>
-                          {isAdded && (
-                            <p className="text-[9px] text-primary/60">
-                              tap to +1
-                            </p>
-                          )}
-                        </div>
+                            {isAdded ? (
+                              <div className="w-6 h-6 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+                              </div>
+                            ) : (
+                              <div className="w-6 h-6 rounded-lg border border-border flex items-center justify-center shrink-0">
+                                <Plus className="h-3.5 w-3.5 text-muted-foreground" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p
+                                className={cn(
+                                  "text-xs sm:text-sm font-semibold truncate",
+                                  isAdded ? "text-primary" : "text-foreground",
+                                )}
+                              >
+                                {p.canonicalName}
+                              </p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {p.category} · {p.stockQty} {p.unit} in stock
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-xs font-bold text-primary font-mono tabular-nums">
+                                {KES(p.sellingPrice ?? 0)}
+                              </p>
+                              {isAdded && (
+                                <p className="text-[10px] text-muted-foreground">tap to +1</p>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {searchOpen &&
+                    productSearch.trim() &&
+                    productMatches.length === 0 && (
+                      <div className="mt-2 rounded-xl px-3.5 py-3 text-center bg-muted/25 border border-border">
+                        <p className="text-xs text-muted-foreground">
+                          No catalog items match &ldquo;<span className="font-semibold text-foreground">{productSearch}</span>&rdquo; — add a manual line below.
+                        </p>
+                      </div>
+                    )}
+                </div>
+
+                {/* Secondary Actions: Manual / Excel Import */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setManualItemOpen((open) => !open)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors",
+                      manualItemOpen
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-primary/30 bg-primary/8 text-primary hover:bg-primary/15",
+                    )}
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add manual item
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => importInputRef.current?.click()}
+                    disabled={importing}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-muted/40 px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
+                  >
+                    {importing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                    )}
+                    {importing ? "Reading file…" : "Import Excel / CSV"}
+                  </button>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    onChange={(event) => void handleExcelImport(event.target.files?.[0])}
+                  />
+                  <span className="text-[11px] text-muted-foreground ml-auto hidden sm:inline">
+                    Manual &amp; imported lines don&apos;t alter stock
+                  </span>
+                </div>
+              </div>
+
+              {/* Manual Item Drawer */}
+              {manualItemOpen && (
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 p-4 border-b border-border/60 bg-primary/[0.04]">
+                  <label className="sm:col-span-5 text-[11px] font-semibold text-muted-foreground space-y-1">
+                    <span>Description *</span>
+                    <input
+                      value={manualName}
+                      onChange={(e) => setManualName(e.target.value)}
+                      placeholder="e.g. HDPE PIPE 32MM"
+                      className="w-full h-9 rounded-xl border border-border bg-card px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/35"
+                    />
+                  </label>
+                  <label className="sm:col-span-2 text-[11px] font-semibold text-muted-foreground space-y-1">
+                    <span>Unit</span>
+                    <input
+                      value={manualUnit}
+                      onChange={(e) => setManualUnit(e.target.value)}
+                      placeholder="pcs, m, kg"
+                      className="w-full h-9 rounded-xl border border-border bg-card px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/35"
+                    />
+                  </label>
+                  <label className="sm:col-span-2 text-[11px] font-semibold text-muted-foreground space-y-1">
+                    <span>Qty</span>
+                    <input
+                      type="number"
+                      min="0.001"
+                      step="any"
+                      value={manualQty}
+                      onChange={(e) => setManualQty(e.target.value)}
+                      className="w-full h-9 rounded-xl border border-border bg-card px-3 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/35"
+                    />
+                  </label>
+                  <label className="sm:col-span-3 text-[11px] font-semibold text-muted-foreground space-y-1">
+                    <span>Unit price (KES)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={manualPrice}
+                      onChange={(e) => setManualPrice(e.target.value)}
+                      placeholder="0"
+                      className="w-full h-9 rounded-xl border border-border bg-card px-3 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/35"
+                    />
+                  </label>
+                  <div className="sm:col-span-12 flex items-center justify-between gap-3 pt-1">
+                    <p className="text-xs text-muted-foreground">
+                      Line amount:{" "}
+                      <strong className="font-mono text-foreground">
+                        {KES((Number(manualQty) || 0) * (Number(manualPrice) || 0))}
+                      </strong>
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setManualItemOpen(false)}
+                        className="rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted"
+                      >
+                        Cancel
                       </button>
-                    );
-                  })}
+                      <button
+                        type="button"
+                        onClick={addManualItem}
+                        className="rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground hover:bg-primary/90 inline-flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Add item
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              {searchOpen &&
-                productSearch.trim() &&
-                productMatches.length === 0 && (
-                  <div className="mt-1.5 rounded-xl px-3 py-3 text-center bg-muted/20 border border-border">
-                    <p className="text-xs text-muted-foreground/60">
-                      No products found for "
-                      <span className="text-foreground">{productSearch}</span>"
-                    </p>
+              {/* Excel Import Review */}
+              {importPreview.length > 0 && (
+                <div className="p-4 border-b border-border/60 bg-muted/15 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-bold text-foreground">Review spreadsheet import</p>
+                      <p className="text-xs text-muted-foreground">
+                        {importFileName} · {importPreview.length} valid line(s)
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportPreview([]);
+                          setImportFileName("");
+                        }}
+                        className="rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted"
+                      >
+                        Cancel import
+                      </button>
+                      <button
+                        type="button"
+                        onClick={confirmImport}
+                        className="rounded-xl bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground hover:bg-primary/90 inline-flex items-center gap-1"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Add {importPreview.length} lines
+                      </button>
+                    </div>
                   </div>
-                )}
-            </div>
+                  <div className="max-h-56 overflow-auto rounded-xl border border-border bg-card">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted text-muted-foreground">
+                        <tr>
+                          <th className="p-2.5 text-left">Description</th>
+                          <th className="p-2.5 text-right">Qty</th>
+                          <th className="p-2.5 text-right">Unit price</th>
+                          <th className="p-2.5 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.map((item, index) => (
+                          <tr key={index} className="border-t border-border/50">
+                            <td className="p-2.5 text-foreground">
+                              {item.productName}{" "}
+                              <span className="text-muted-foreground">({item.unit})</span>
+                            </td>
+                            <td className="p-2.5 text-right font-mono tabular-nums">{item.qty}</td>
+                            <td className="p-2.5 text-right font-mono tabular-nums">
+                              {KES(item.unitPrice)}
+                            </td>
+                            <td className="p-2.5 text-right font-mono font-semibold tabular-nums">
+                              {KES(item.total)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
-            {/* Items list */}
-            <div>
+              {/* Line Items List */}
               {items.length === 0 ? (
-                <div className="py-10 text-center">
-                  <Package className="h-7 w-7 text-muted-foreground/15 mx-auto mb-2" />
-                  <p className="text-xs text-muted-foreground/40">
-                    Search above and tap products to add them
+                <div className="py-12 px-4 text-center space-y-2">
+                  <Package className="h-9 w-9 text-muted-foreground/25 mx-auto" />
+                  <p className="text-sm font-semibold text-foreground">No items in this quote yet</p>
+                  <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                    Search products from your catalog above, add custom items manually, or import from an Excel/CSV file.
                   </p>
                 </div>
               ) : (
-                <div className="divide-y divide-border/30">
+                <div className="divide-y divide-border/50">
                   {items.map((item, idx) => (
-                    <div key={idx} className="px-4 py-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[10px] font-black text-muted-foreground/30 w-4 shrink-0">
+                    <div key={idx} className="p-4 space-y-2.5 hover:bg-muted/15 transition-colors">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-5 h-5 rounded-md bg-muted text-[10px] font-bold text-muted-foreground flex items-center justify-center shrink-0 mt-0.5 tabular-nums">
                           {idx + 1}
                         </span>
-                        <p className="flex-1 text-sm font-semibold text-foreground truncate">
-                          {item.productName}
-                        </p>
-                        <p className="text-sm font-black text-primary font-mono shrink-0">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-foreground leading-snug break-words">
+                            {item.productName}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">Unit: {item.unit}</p>
+                        </div>
+                        <p className="text-sm font-bold text-primary font-mono tabular-nums shrink-0">
                           {KES(item.total)}
                         </p>
                         <button
+                          type="button"
                           onClick={() => removeItem(idx)}
-                          className="h-6 w-6 flex items-center justify-center rounded-lg text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+                          className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
+                          title="Remove line"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
-                      <div className="flex items-center gap-2 pl-6 flex-wrap">
-                        {/* Qty stepper */}
-                        <div className="flex items-center bg-muted/40 border border-border rounded-lg overflow-hidden h-8">
+
+                      <div className="flex items-center gap-2.5 pl-7 flex-wrap">
+                        {/* Overflow-safe grid stepper */}
+                        <div className="grid grid-cols-[34px_56px_34px] items-center bg-muted/40 border border-border rounded-xl overflow-hidden h-9 shrink-0">
                           <button
+                            type="button"
                             onClick={() =>
                               updateItem(
                                 idx,
                                 "qty",
                                 Math.max(
                                   0.25,
-                                  item.qty -
-                                    (item.unit === "kg" || item.unit === "litre"
-                                      ? 0.25
-                                      : 1),
+                                  item.qty - (item.unit === "kg" || item.unit === "litre" ? 0.25 : 1),
                                 ),
                               )
                             }
-                            className="w-8 h-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 text-base transition-colors"
+                            className="h-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted text-base font-bold transition-colors"
                           >
                             −
                           </button>
@@ -2440,39 +2492,32 @@ function QuotationBuilder({
                             type="number"
                             value={item.qty}
                             onChange={(e) =>
-                              updateItem(
-                                idx,
-                                "qty",
-                                Math.max(0, parseFloat(e.target.value) || 0),
-                              )
+                              updateItem(idx, "qty", Math.max(0, parseFloat(e.target.value) || 0))
                             }
-                            className="w-12 text-center text-xs font-bold bg-transparent text-foreground focus:outline-none border-x border-border"
+                            className="w-full min-w-0 h-full text-center text-xs font-bold font-mono bg-transparent text-foreground focus:outline-none border-x border-border tabular-nums"
                             min={0}
                           />
                           <button
+                            type="button"
                             onClick={() =>
                               updateItem(
                                 idx,
                                 "qty",
-                                item.qty +
-                                  (item.unit === "kg" || item.unit === "litre"
-                                    ? 0.25
-                                    : 1),
+                                item.qty + (item.unit === "kg" || item.unit === "litre" ? 0.25 : 1),
                               )
                             }
-                            className="w-8 h-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 text-base transition-colors"
+                            className="h-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted text-base font-bold transition-colors"
                           >
                             +
                           </button>
                         </div>
-                        <span className="text-xs text-muted-foreground/50">
-                          {item.unit}
+
+                        <span className="text-xs text-muted-foreground font-medium">
+                          {item.unit} ×
                         </span>
-                        <span className="text-muted-foreground/25 text-sm">
-                          ×
-                        </span>
-                        <div className="relative flex-1 min-w-[100px]">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground/40 pointer-events-none">
+
+                        <div className="relative flex-1 min-w-[120px] max-w-[190px]">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
                             KES
                           </span>
                           <input
@@ -2485,7 +2530,7 @@ function QuotationBuilder({
                                 Math.max(0, parseFloat(e.target.value) || 0),
                               )
                             }
-                            className="w-full h-8 pl-9 pr-2 bg-muted/40 border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
+                            className="w-full h-9 pl-10 pr-2.5 bg-muted/40 border border-border rounded-xl text-xs font-mono font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/35 tabular-nums"
                             min={0}
                           />
                         </div>
@@ -2494,105 +2539,163 @@ function QuotationBuilder({
                   ))}
                 </div>
               )}
+            </section>
+          </div>
 
-              {/* Totals */}
-              {items.length > 0 && (
-                <div className="border-t border-border/40 px-4 py-3 space-y-2.5 bg-muted/10">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Subtotal</span>
-                    <span className="font-mono font-semibold text-foreground">
-                      {KES(subtotal)}
-                    </span>
+          {/* Right Sticky Column: Customer, Quote Summary & Terms */}
+          <div className="lg:col-span-5 xl:col-span-4 space-y-4 lg:sticky lg:top-20">
+            {/* Customer Card */}
+            <section className="bg-card border border-border/80 rounded-2xl overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border/60 bg-muted/25">
+                <User className="h-4 w-4 text-primary" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                  Customer Details
+                </h3>
+              </div>
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1.5">
+                    Customer Name *
+                  </label>
+                  <CustomerAutocomplete
+                    value={customerName}
+                    onChange={(name, phone) => {
+                      setCustomerName(name);
+                      if (phone) setCustomerPhone(phone);
+                    }}
+                    shopId={shopId}
+                    placeholder="Search existing or type name"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+                  <div>
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1.5">
+                      Phone Number
+                    </label>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                      <input
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        placeholder="+254 700 000 000"
+                        className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/35"
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      Discount (KES)
-                    </span>
+                  <div>
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1.5">
+                      Email <span className="normal-case font-normal">(optional)</span>
+                    </label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                      <input
+                        value={customerEmail}
+                        onChange={(e) => setCustomerEmail(e.target.value)}
+                        placeholder="customer@email.com"
+                        type="email"
+                        className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/35"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Totals & Primary Save Card */}
+            <section className="bg-card border border-border/80 rounded-2xl overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border/60 bg-muted/25">
+                <TrendingUp className="h-4 w-4 text-primary" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                  Quote Summary
+                </h3>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Subtotal ({items.length} items)</span>
+                  <span className="font-mono font-semibold text-foreground tabular-nums">
+                    {KES(subtotal)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-muted-foreground shrink-0">Discount (KES)</span>
+                  <input
+                    type="number"
+                    value={discount}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    min={0}
+                    className="w-32 h-8 px-2.5 bg-muted/40 border border-border rounded-xl text-xs font-mono text-foreground text-right focus:outline-none focus:ring-2 focus:ring-primary/35 tabular-nums"
+                  />
+                </div>
+                <div className="flex items-center justify-between border-t border-border/70 pt-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                    Quote Total
+                  </span>
+                  <span className="text-xl font-bold font-mono text-primary tabular-nums">
+                    {KES(total)}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  {saving
+                    ? "Saving…"
+                    : editQuotation
+                      ? "Update Quotation"
+                      : "Create Quotation"}
+                </button>
+              </div>
+            </section>
+
+            {/* Validity & Notes Card */}
+            <section className="bg-card border border-border/80 rounded-2xl overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border/60 bg-muted/25">
+                <FileText className="h-4 w-4 text-primary" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                  Terms &amp; Validity
+                </h3>
+              </div>
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1.5">
+                    Valid Until <span className="normal-case font-normal">(optional)</span>
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
                     <input
-                      type="number"
-                      value={discount}
-                      onChange={(e) => setDiscount(e.target.value)}
-                      min={0}
-                      className="flex-1 h-7 px-2 bg-muted/40 border border-border rounded-lg text-xs font-mono text-foreground text-right focus:outline-none focus:ring-1 focus:ring-primary/30"
+                      type="date"
+                      value={validUntil}
+                      onChange={(e) => setValidUntil(e.target.value)}
+                      className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/35"
                     />
                   </div>
-                  <div className="flex items-center justify-between border-t border-border/40 pt-2">
-                    <span className="text-sm font-black text-foreground">
-                      TOTAL
-                    </span>
-                    <span className="text-lg font-black text-primary font-mono">
-                      {KES(total)}
-                    </span>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1.5">
+                    Notes / Terms <span className="normal-case font-normal">(optional)</span>
+                  </label>
+                  <div className="relative">
+                    <StickyNote className="absolute left-3 top-3 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                    <textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="Payment terms, delivery conditions, special instructions…"
+                      rows={3}
+                      className="w-full pl-9 pr-3 py-2.5 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/35"
+                    />
                   </div>
                 </div>
-              )}
-            </div>
-          </section>
-
-          {/* ── Quote details ── */}
-          <section className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
-              <FileText className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">
-                QUOTE DETAILS
-              </p>
-            </div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
-                  Valid Until{" "}
-                  <span className="normal-case font-normal opacity-60">
-                    (optional)
-                  </span>
-                </label>
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
-                  <input
-                    type="date"
-                    value={validUntil}
-                    onChange={(e) => setValidUntil(e.target.value)}
-                    className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                  />
-                </div>
               </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">
-                  Notes / Terms{" "}
-                  <span className="normal-case font-normal opacity-60">
-                    (optional)
-                  </span>
-                </label>
-                <div className="relative">
-                  <StickyNote className="absolute left-3 top-3 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
-                  <textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Payment terms, delivery conditions, special instructions…"
-                    rows={3}
-                    className="w-full pl-9 pr-3 py-2.5 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 resize-none focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Bottom save */}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-primary text-primary-foreground font-black text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {saving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4" />
-            )}
-            {saving
-              ? "Saving…"
-              : editQuotation
-                ? "Update Quotation"
-                : "Create Quotation"}
-          </button>
+            </section>
+          </div>
         </div>
       </div>
     </div>
@@ -2627,289 +2730,322 @@ function QuotationCard({
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const isOverdue =
+    Boolean(q.validUntil) &&
+    new Date(q.validUntil!) < new Date() &&
+    q.status !== "expired" &&
+    q.status !== "rejected" &&
+    q.status !== "accepted";
+
+  const stripeColor = q.invoiceNumber
+    ? "border-l-emerald-500"
+    : q.status === "accepted"
+      ? "border-l-emerald-500"
+      : q.status === "sent"
+        ? "border-l-sky-500"
+        : q.status === "rejected"
+          ? "border-l-rose-500"
+          : q.status === "expired"
+            ? "border-l-amber-500"
+            : "border-l-border";
+
   return (
-    <article className="quotation-card group overflow-hidden rounded-xl border border-border/80 bg-card transition-colors duration-200 hover:border-primary/30">
-      <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(138px,.9fr)_minmax(240px,1.15fr)] gap-x-5 gap-y-3 px-4 py-3.5 max-xl:grid-cols-[minmax(0,1fr)_auto] max-xl:gap-x-3">
+    <article
+      className={cn(
+        "quotation-card group overflow-hidden rounded-2xl border border-border/80 border-l-4 bg-card transition-colors duration-150 hover:border-primary/40",
+        stripeColor,
+      )}
+    >
+      <div className="grid grid-cols-[minmax(0,1.65fr)_minmax(145px,.85fr)_auto] gap-x-5 gap-y-3 px-4 sm:px-5 py-4 max-xl:grid-cols-[minmax(0,1fr)_auto] max-xl:gap-x-3">
+        {/* Identity & Metadata */}
         <div className="min-w-0">
-          <div className="mb-1.5 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[11px] font-semibold tracking-tight text-primary">
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center rounded-lg bg-primary/10 border border-primary/20 px-2 py-0.5 font-mono text-[11px] font-bold tracking-tight text-primary">
               {q.quoteNumber}
             </span>
             <StatusBadge status={q.status} />
             {q.invoiceNumber && (
               <span
                 data-testid={`text-invoice-number-${q.id}`}
-                className="rounded-md border border-emerald-400/20 bg-emerald-400/[0.07] px-2 py-1 font-mono text-[9px] font-medium text-emerald-400"
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/12 px-2.5 py-0.5 font-mono text-[10px] font-bold text-emerald-700 dark:text-emerald-400"
               >
+                <FileText className="h-2.5 w-2.5" />
                 {q.invoiceNumber}
               </span>
             )}
-            {q.validUntil &&
-              new Date(q.validUntil) < new Date() &&
-              q.status !== "expired" &&
-              q.status !== "rejected" &&
-              q.status !== "accepted" && (
-                <span className="rounded-md border border-amber-400/20 bg-amber-400/[0.08] px-2 py-1 text-[9px] font-bold text-amber-400">
-                  Overdue
-                </span>
-              )}
-          </div>
-          <p className="truncate text-sm font-semibold tracking-tight text-foreground">
-            {q.customerName}
-          </p>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground">
-            {q.customerPhone && (
-              <span className="font-mono">{q.customerPhone}</span>
-            )}
-            <span className="text-muted-foreground/50">/</span>
-            <span>{format(new Date(q.createdAt), "dd MMM yyyy")}</span>
-            {q.validUntil && (
-              <span className="text-muted-foreground/70">
-                Due {format(new Date(q.validUntil), "dd MMM")}
+            {isOverdue && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/25 bg-amber-500/12 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
+                <Clock className="h-2.5 w-2.5" />
+                Past due
               </span>
             )}
           </div>
+
+          <p className="truncate text-sm sm:text-[15px] font-bold tracking-tight text-foreground">
+            {q.customerName}
+          </p>
+
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            {q.customerPhone && (
+              <span className="inline-flex items-center gap-1 font-mono">
+                <Phone className="h-3 w-3 opacity-70" />
+                {q.customerPhone}
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1">
+              <Calendar className="h-3 w-3 opacity-70" />
+              {format(new Date(q.createdAt), "dd MMM yyyy")}
+            </span>
+            {q.validUntil && (
+              <span className={cn(isOverdue && "text-amber-700 dark:text-amber-400 font-semibold")}>
+                Valid till {format(new Date(q.validUntil), "dd MMM yyyy")}
+              </span>
+            )}
+          </div>
+
+          {q.notes && (
+            <p className="mt-1.5 truncate text-[11px] italic text-muted-foreground/90 max-w-xl">
+              &ldquo;{q.notes}&rdquo;
+            </p>
+          )}
         </div>
 
+        {/* Financial Total */}
         <div className="flex flex-col justify-center border-l border-border/70 pl-5 max-xl:col-start-2 max-xl:row-start-1 max-xl:border-0 max-xl:pl-0 max-xl:text-right">
-          <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-            Quote total
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Quote Total
           </span>
-          <span className="mt-1 font-mono text-base font-bold tracking-tight text-foreground">
+          <span className="mt-1 font-mono text-base sm:text-lg font-bold tracking-tight text-foreground tabular-nums">
             {KES(q.total)}
           </span>
-          <span className="mt-1 text-[10px] text-muted-foreground">
+          <span className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
             {q.items.length} item{q.items.length !== 1 ? "s" : ""}
-            {q.discountAmount > 0 && ` · −${KES(q.discountAmount)}`}
+            {q.discountAmount > 0 && (
+              <span className="text-rose-600 dark:text-rose-400 font-medium">
+                {" "}· −{KES(q.discountAmount)}
+              </span>
+            )}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-1.5 border-l border-border/70 pl-4 max-xl:col-span-2 max-xl:justify-start max-xl:border-0 max-xl:border-t max-xl:pt-2.5 max-xl:pl-0">
-          <button
-            type="button"
-            onClick={onConvertToSale}
-            title="Load items into POS cart"
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary/25 bg-primary/10 px-2.5 text-[10px] font-bold text-primary transition-colors hover:bg-primary/20"
-          >
-            <ShoppingCart className="h-3.5 w-3.5" /> Sell
-          </button>
-          <button
-            type="button"
-            data-testid={`button-invoice-${q.id}`}
-            onClick={onInvoice}
-            disabled={invoiceBusy}
-            title={
-              q.invoiceNumber
-                ? "Download issued invoice"
-                : q.status === "accepted"
-                  ? "Issue an invoice from this accepted quotation"
-                  : "Accept this quotation and issue its invoice"
-            }
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 text-[10px] font-bold text-emerald-400 transition-colors hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {invoiceBusy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FileText className="h-3.5 w-3.5" />
-            )}
-            {invoiceBusy
-              ? "Issuing…"
-              : q.invoiceNumber
-                ? "Invoice PDF"
-                : q.status === "accepted"
-                  ? "Make invoice"
-                  : "Accept & invoice"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setExpanded((value) => !value)}
-            aria-expanded={expanded}
-            className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-[10px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            {expanded ? (
-              <ChevronUp className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
-            )}
-            {expanded ? "Hide" : "Items"}
-          </button>
-          <span className="mx-0.5 h-4 w-px bg-border max-xl:hidden" />
-          <button
-            type="button"
-            onClick={() =>
-              shareWhatsApp(q, shop, q.invoiceNumber ? "invoice" : "quotation")
-            }
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#25D366] transition-colors hover:bg-[#25D366]/10"
-            title={
-              q.invoiceNumber
-                ? "Share invoice via WhatsApp"
-                : "Share quotation via WhatsApp"
-            }
-            aria-label={
-              q.invoiceNumber
-                ? "Share invoice via WhatsApp"
-                : "Share quotation via WhatsApp"
-            }
-          >
-            <MessageCircle className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onDownloadPdf}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
-            title="Download PDF"
-            aria-label="Download PDF"
-          >
-            <Download className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onPrint}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            title="Preview"
-            aria-label="Preview quotation"
-          >
-            <Eye className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onEdit}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
-            title={q.invoiceNumber ? "Edit quotation (issued invoice remains unchanged)" : "Edit"}
-            aria-label="Edit quotation"
-            data-testid={`button-edit-quotation-${q.id}`}
-          >
-            <Edit2 className="h-4 w-4" />
-          </button>
-          {!q.invoiceNumber && (
-            <>
-              <div className="relative">
+        {/* Actions */}
+        <div className="flex flex-wrap items-center justify-end gap-1.5 border-l border-border/70 pl-4 max-xl:col-span-2 max-xl:justify-between max-xl:border-0 max-xl:border-t max-xl:border-border/60 max-xl:pt-3 max-xl:pl-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onConvertToSale}
+              title="Load items into POS cart"
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 px-3 text-[11px] font-bold text-primary transition-colors hover:bg-primary/20"
+            >
+              <ShoppingCart className="h-3.5 w-3.5" /> Sell
+            </button>
+            <button
+              type="button"
+              data-testid={`button-invoice-${q.id}`}
+              onClick={onInvoice}
+              disabled={invoiceBusy}
+              title={
+                q.invoiceNumber
+                  ? "Download issued invoice"
+                  : q.status === "accepted"
+                    ? "Issue an invoice from this accepted quotation"
+                    : "Accept this quotation and issue its invoice"
+              }
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 transition-colors hover:bg-emerald-500/18 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {invoiceBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <FileText className="h-3.5 w-3.5" />
+              )}
+              {invoiceBusy
+                ? "Issuing…"
+                : q.invoiceNumber
+                  ? "Invoice PDF"
+                  : q.status === "accepted"
+                    ? "Make invoice"
+                    : "Accept & invoice"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setExpanded((value) => !value)}
+              aria-expanded={expanded}
+              className="inline-flex h-8 items-center gap-1 rounded-xl border border-border/70 bg-muted/40 px-2.5 text-[11px] font-semibold text-foreground transition-colors hover:bg-muted"
+            >
+              {expanded ? (
+                <ChevronUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
+              {expanded ? "Hide" : `Items (${q.items.length})`}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-muted/25 p-0.5">
+            <button
+              type="button"
+              onClick={() =>
+                shareWhatsApp(q, shop, q.invoiceNumber ? "invoice" : "quotation")
+              }
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-emerald-600 dark:text-[#25D366] transition-colors hover:bg-emerald-500/12"
+              title={
+                q.invoiceNumber
+                  ? "Share invoice via WhatsApp"
+                  : "Share quotation via WhatsApp"
+              }
+              aria-label={
+                q.invoiceNumber
+                  ? "Share invoice via WhatsApp"
+                  : "Share quotation via WhatsApp"
+              }
+            >
+              <MessageCircle className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onDownloadPdf}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
+              title="Download Quote PDF"
+              aria-label="Download PDF"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onPrint}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title="Print / Full Preview"
+              aria-label="Preview quotation"
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onEdit}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/12 hover:text-primary"
+              title={q.invoiceNumber ? "Edit quotation (issued invoice stays archived)" : "Edit quotation"}
+              aria-label="Edit quotation"
+              data-testid={`button-edit-quotation-${q.id}`}
+            >
+              <Edit2 className="h-3.5 w-3.5" />
+            </button>
+            {!q.invoiceNumber && (
+              <>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setMenuOpen((value) => !value)}
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-lg transition-colors",
+                      menuOpen
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                    title="Change status"
+                    aria-label="Change quotation status"
+                    aria-expanded={menuOpen}
+                  >
+                    <MoreVertical className="h-3.5 w-3.5" />
+                  </button>
+                  {menuOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setMenuOpen(false)}
+                      />
+                      <div className="absolute right-0 top-full z-40 mt-1.5 w-48 overflow-hidden rounded-2xl border border-border bg-card py-1.5 shadow-2xl">
+                        <p className="border-b border-border/60 px-3.5 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Update status
+                        </p>
+                        {(
+                          [
+                            "draft",
+                            "sent",
+                            "accepted",
+                            "rejected",
+                            "expired",
+                          ] as const
+                        )
+                          .filter((status) => status !== q.status)
+                          .map((status) => (
+                            <button
+                              key={status}
+                              type="button"
+                              onClick={() => {
+                                onStatusChange(status);
+                                setMenuOpen(false);
+                              }}
+                              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                            >
+                              <span
+                                className={cn("h-2 w-2 rounded-full", STATUS_META[status].dot)}
+                              />
+                              Mark as {STATUS_META[status].label}
+                            </button>
+                          ))}
+                      </div>
+                    </>
+                  )}
+                </div>
                 <button
                   type="button"
-                  onClick={() => setMenuOpen((value) => !value)}
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
-                    menuOpen
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                  title="Change status"
-                  aria-label="Change quotation status"
-                  aria-expanded={menuOpen}
+                  onClick={onDelete}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-rose-500/12 hover:text-rose-600 dark:hover:text-rose-400"
+                  title="Delete quotation"
+                  aria-label="Delete quotation"
+                  data-testid={`button-delete-quotation-${q.id}`}
                 >
-                  <MoreVertical className="h-4 w-4" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
-                {menuOpen && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-30"
-                      onClick={() => setMenuOpen(false)}
-                    />
-                    <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-2xl">
-                      <p className="border-b border-border/60 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-                        Change status
-                      </p>
-                      {(
-                        [
-                          "draft",
-                          "sent",
-                          "accepted",
-                          "rejected",
-                          "expired",
-                        ] as const
-                      )
-                        .filter((status) => status !== q.status)
-                        .map((status) => (
-                          <button
-                            key={status}
-                            type="button"
-                            onClick={() => {
-                              onStatusChange(status);
-                              setMenuOpen(false);
-                            }}
-                            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[11px] font-medium text-foreground transition-colors hover:bg-muted"
-                          >
-                            <span
-                              className={cn(
-                                "h-1.5 w-1.5 rounded-full",
-                                status === "accepted"
-                                  ? "bg-emerald-400"
-                                  : status === "sent"
-                                    ? "bg-sky-400"
-                                    : status === "rejected"
-                                      ? "bg-rose-400"
-                                      : status === "expired"
-                                        ? "bg-amber-400"
-                                        : "bg-zinc-400",
-                              )}
-                            />
-                            Mark as {STATUS_META[status].label}
-                          </button>
-                        ))}
-                    </div>
-                  </>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={onDelete}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                title="Delete quotation"
-                aria-label="Delete quotation"
-                data-testid={`button-delete-quotation-${q.id}`}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </>
-          )}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {expanded && (
         <div className="border-t border-border/70 bg-muted/20">
-          <div className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] gap-3 border-b border-border/50 px-4 py-2 text-[9px] font-semibold uppercase tracking-widest text-muted-foreground max-sm:grid-cols-[minmax(0,1fr)_40px_86px]">
+          <div className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] gap-3 border-b border-border/60 px-4 sm:px-5 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground max-sm:grid-cols-[minmax(0,1fr)_48px_90px]">
             <span>Product</span>
             <span className="text-right">Qty</span>
-            <span className="text-right max-sm:hidden">Unit price</span>
-            <span className="text-right">Line total</span>
+            <span className="text-right max-sm:hidden">Unit Price</span>
+            <span className="text-right">Line Total</span>
           </div>
           {q.items.map((item, index) => (
             <div
               key={`${q.id}-${index}`}
-              className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] items-center gap-3 border-b border-border/40 px-4 py-2.5 last:border-0 max-sm:grid-cols-[minmax(0,1fr)_40px_86px]"
+              className="grid grid-cols-[minmax(0,1fr)_58px_112px_112px] items-center gap-3 border-b border-border/45 px-4 sm:px-5 py-2.5 last:border-0 max-sm:grid-cols-[minmax(0,1fr)_48px_90px]"
             >
               <div className="min-w-0">
-                <p className="truncate text-[11px] font-medium text-foreground">
+                <p className="truncate text-xs font-semibold text-foreground">
                   {item.productName}
                 </p>
-                <p className="mt-0.5 text-[9px] text-muted-foreground">
-                  {item.unit}
-                </p>
+                <p className="text-[10px] text-muted-foreground">{item.unit}</p>
               </div>
-              <span className="text-right font-mono text-[10px] text-muted-foreground">
+              <span className="text-right font-mono text-xs text-muted-foreground tabular-nums">
                 {item.qty}
               </span>
-              <span className="text-right font-mono text-[10px] text-muted-foreground max-sm:hidden">
+              <span className="text-right font-mono text-xs text-muted-foreground max-sm:hidden tabular-nums">
                 {KES(item.unitPrice)}
               </span>
-              <span className="text-right font-mono text-[10px] font-semibold text-foreground">
+              <span className="text-right font-mono text-xs font-semibold text-foreground tabular-nums">
                 {KES(item.total)}
               </span>
             </div>
           ))}
           {q.discountAmount > 0 && (
-            <div className="flex justify-between border-t border-border/50 px-4 py-2 text-[10px]">
+            <div className="flex justify-between border-t border-border/50 px-4 sm:px-5 py-2 text-xs">
               <span className="text-muted-foreground">Discount applied</span>
-              <span className="font-mono font-semibold text-rose-400">
+              <span className="font-mono font-semibold text-rose-600 dark:text-rose-400 tabular-nums">
                 −{KES(q.discountAmount)}
               </span>
             </div>
           )}
-          <div className="flex items-center justify-between border-t border-primary/15 bg-primary/5 px-4 py-2.5">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-primary/70">
-              Total
+          <div className="flex items-center justify-between border-t border-primary/20 bg-primary/8 px-4 sm:px-5 py-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+              Quote Total
             </span>
-            <span className="font-mono text-xs font-bold text-primary">
+            <span className="font-mono text-sm font-bold text-primary tabular-nums">
               {KES(q.total)}
             </span>
           </div>
@@ -2926,18 +3062,26 @@ type StatusFilter =
   | "draft"
   | "sent"
   | "accepted"
+  | "invoiced"
   | "rejected"
   | "expired";
+type QuoteSortMode = "newest" | "value" | "customer" | "validUntil";
 type PageView = "list" | "builder" | "print";
+
+const QUOTES_INITIAL_VISIBLE = 15;
+const QUOTES_PAGE_STEP = 20;
 
 export default function Quotations() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const shopName = localStorage.getItem("greenlink_shopName") || "Active Shop";
   const [, setLocation] = useLocation();
   const [view, setView] = useState<PageView>("list");
   const [quoteList, setQuoteList] = useState<Quotation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("all");
+  const [sortBy, setSortBy] = useState<QuoteSortMode>("newest");
   const [search, setSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(QUOTES_INITIAL_VISIBLE);
   const [editTarget, setEditTarget] = useState<Quotation | null>(null);
   const [printTarget, setPrintTarget] = useState<Quotation | null>(null);
   const [clearingDrafts, setClearingDrafts] = useState(false);
@@ -2967,23 +3111,51 @@ export default function Quotations() {
     loadQuotations();
   }, [loadQuotations]);
 
+  useEffect(() => {
+    setVisibleCount(QUOTES_INITIAL_VISIBLE);
+  }, [filter, search, sortBy]);
+
   const filtered = useMemo(() => {
     let list = quoteList;
-    if (filter !== "all") list = list.filter((q) => q.status === filter);
+    if (filter === "invoiced") {
+      list = list.filter((q) => Boolean(q.invoiceNumber));
+    } else if (filter !== "all") {
+      list = list.filter((q) => q.status === filter);
+    }
+
     const q = search.trim().toLowerCase();
-    if (q)
+    if (q) {
       list = list.filter(
         (x) =>
           x.customerName.toLowerCase().includes(q) ||
-          x.quoteNumber.toLowerCase().includes(q),
+          x.quoteNumber.toLowerCase().includes(q) ||
+          (x.invoiceNumber || "").toLowerCase().includes(q) ||
+          (x.customerPhone || "").toLowerCase().includes(q),
       );
-    return list;
-  }, [quoteList, filter, search]);
+    }
+
+    return [...list].sort((a, b) => {
+      if (sortBy === "value") return b.total - a.total;
+      if (sortBy === "customer") return a.customerName.localeCompare(b.customerName);
+      if (sortBy === "validUntil") {
+        const va = a.validUntil ? new Date(a.validUntil).getTime() : Number.MAX_SAFE_INTEGER;
+        const vb = b.validUntil ? new Date(b.validUntil).getTime() : Number.MAX_SAFE_INTEGER;
+        return va - vb;
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [quoteList, filter, search, sortBy]);
+
+  const visibleQuotes = useMemo(
+    () => filtered.slice(0, visibleCount),
+    [filtered, visibleCount],
+  );
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: quoteList.length };
+    const c: Record<string, number> = { all: quoteList.length, invoiced: 0 };
     quoteList.forEach((q) => {
       c[q.status] = (c[q.status] ?? 0) + 1;
+      if (q.invoiceNumber) c.invoiced += 1;
     });
     return c;
   }, [quoteList]);
@@ -3111,7 +3283,6 @@ export default function Quotations() {
     }
   };
 
-  // Print view
   if (view === "print" && printTarget) {
     return (
       <PrintView
@@ -3125,7 +3296,6 @@ export default function Quotations() {
     );
   }
 
-  // Builder view
   if (view === "builder") {
     return (
       <div className="flex flex-col h-full bg-background">
@@ -3142,12 +3312,12 @@ export default function Quotations() {
     );
   }
 
-  // List view
   const TABS: { id: StatusFilter; label: string }[] = [
     { id: "all", label: "All quotes" },
     { id: "draft", label: "Draft" },
     { id: "sent", label: "Sent" },
     { id: "accepted", label: "Accepted" },
+    { id: "invoiced", label: "Invoiced" },
     { id: "rejected", label: "Rejected" },
     { id: "expired", label: "Expired" },
   ];
@@ -3157,115 +3327,106 @@ export default function Quotations() {
   const acceptedValue = quoteList
     .filter((q) => q.status === "accepted")
     .reduce((s, q) => s + q.total, 0);
-  const openCount = (counts["draft"] ?? 0) + (counts["sent"] ?? 0);
+  const openQuotes = quoteList.filter((q) => q.status === "draft" || q.status === "sent");
+  const openCount = openQuotes.length;
+  const openValue = openQuotes.reduce((s, q) => s + q.total, 0);
+  const invoicedQuotes = quoteList.filter((q) => Boolean(q.invoiceNumber));
+  const invoicedCount = invoicedQuotes.length;
+  const invoicedValue = invoicedQuotes.reduce((s, q) => s + q.total, 0);
 
   return (
     <div className="flex flex-col h-full bg-background">
-      <div className="w-full max-w-[1480px] mx-auto px-4 sm:px-5 pt-5 pb-4 border-b border-border/70 shrink-0">
-        <div className="flex items-center justify-between gap-4 max-sm:items-start max-sm:flex-col">
-          <div className="min-w-0">
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className="h-px w-5 bg-primary/70" />
-              <span className="text-[9px] font-bold uppercase tracking-[.18em] text-primary/80">
-                Sales desk
-              </span>
+      {/* Sticky Executive Header */}
+      <div className="sticky top-0 z-20 border-b border-border/80 bg-card/95 backdrop-blur-md shrink-0">
+        <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-3.5 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-primary/12 border border-primary/20 flex items-center justify-center shrink-0">
+                <ClipboardList className="h-5 w-5 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="font-display text-lg sm:text-xl font-bold leading-tight tracking-tight text-foreground truncate">
+                  Quotations &amp; Proforma
+                </h1>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">
+                  {shopName} · {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""} on file
+                  {filtered.length !== quoteList.length && ` · ${filtered.length} matching`}
+                </p>
+              </div>
             </div>
-            <h1 className="font-display text-2xl font-semibold leading-none tracking-tight text-foreground">
-              Quotations
-            </h1>
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""} on
-              file
-              {filtered.length !== quoteList.length &&
-                ` · ${filtered.length} shown`}
-              <span className="mx-2 text-muted-foreground/50">/</span>
-              <span>Prepared for a busy counter.</span>
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 max-sm:w-full max-sm:justify-end">
-            {draftCount > 0 && (
+
+            <div className="flex shrink-0 items-center gap-2">
+              {draftCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearDrafts}
+                  disabled={clearingDrafts}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 text-xs font-semibold text-rose-700 dark:text-rose-400 transition-colors hover:bg-rose-500/18 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {clearingDrafts ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  <span className="hidden sm:inline">Clear {draftCount} draft{draftCount !== 1 ? "s" : ""}</span>
+                  <span className="sm:hidden">Clear drafts</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={handleClearDrafts}
-                disabled={clearingDrafts}
-                className="inline-flex h-9 items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/[0.06] px-3 text-[11px] font-semibold text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => {
+                  setEditTarget(null);
+                  setView("builder");
+                }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
               >
-                {clearingDrafts ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Trash2 className="h-3 w-3" />
-                )}
-                Clear {draftCount} draft{draftCount !== 1 ? "s" : ""}
+                <Plus className="h-4 w-4" /> New Quote
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                setEditTarget(null);
-                setView("builder");
-              }}
-              className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-[11px] font-bold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
-            >
-              <Plus className="h-3.5 w-3.5" /> New quote
-            </button>
-          </div>
-        </div>
-
-        {quoteList.length > 0 && (
-          <div className="mt-5 grid grid-cols-3 overflow-hidden rounded-xl border border-border/70 bg-card">
-            <div className="px-3 py-3 sm:px-4">
-              <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                Value in view
-              </p>
-              <p className="mt-1.5 truncate font-mono text-xs font-semibold tracking-tight text-foreground sm:text-base">
-                {KES(totalValue)}
-              </p>
-            </div>
-            <div className="border-l border-border/70 px-3 py-3 sm:px-4">
-              <p className="text-[9px] font-semibold uppercase tracking-widest text-emerald-500/80">
-                Accepted value
-              </p>
-              <p className="mt-1.5 truncate font-mono text-xs font-semibold tracking-tight text-emerald-500 sm:text-base">
-                {KES(acceptedValue)}
-              </p>
-            </div>
-            <div className="border-l border-border/70 px-3 py-3 sm:px-4">
-              <p className="text-[9px] font-semibold uppercase tracking-widest text-primary/80">
-                Open quotes
-              </p>
-              <p className="mt-1.5 font-mono text-xs font-semibold tracking-tight text-primary sm:text-base">
-                {openCount}
-                <span className="ml-1.5 font-sans text-[10px] font-normal text-muted-foreground">
-                  to follow up
-                </span>
-              </p>
             </div>
           </div>
-        )}
 
-        <div className="mt-4 flex items-center gap-3 max-lg:flex-col max-lg:items-stretch">
-          <label className="relative block min-w-0 flex-1">
-            <span className="sr-only">Search quotations</span>
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Find a customer or quote number"
-              className="h-10 w-full rounded-lg border border-border bg-card pl-9 pr-10 text-xs text-foreground outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10 placeholder:text-muted-foreground/70"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                aria-label="Clear search"
-                className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          {/* Search + Sort Row */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <label className="relative block min-w-0 flex-1">
+              <span className="sr-only">Search quotations</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search customer, phone, quote # or invoice #…"
+                className="h-9 w-full rounded-xl border border-border/70 bg-muted/40 pl-9 pr-9 text-sm text-foreground outline-none transition focus:border-primary/50 focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/75"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </label>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground hidden sm:block" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as QuoteSortMode)}
+                aria-label="Sort quotations"
+                className="h-9 rounded-xl border border-border/70 bg-muted/40 px-3 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/35 w-full sm:w-auto"
               >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </label>
+                <option value="newest">Sort: Newest First</option>
+                <option value="value">Sort: Highest Value</option>
+                <option value="customer">Sort: Customer (A–Z)</option>
+                <option value="validUntil">Sort: Expiring Soonest</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Filter Pills */}
           <div
-            className="flex items-center gap-1 overflow-x-auto pb-0.5 no-scrollbar max-lg:w-full"
+            className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar"
             role="group"
             aria-label="Filter quotations by status"
           >
@@ -3276,123 +3437,265 @@ export default function Quotations() {
                 onClick={() => setFilter(tab.id)}
                 aria-pressed={filter === tab.id}
                 className={cn(
-                  "flex h-9 shrink-0 items-center gap-2 rounded-lg border px-2.5 text-[10px] font-semibold whitespace-nowrap transition-colors",
+                  "flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors",
                   filter === tab.id
-                    ? "border-primary/25 bg-primary/10 text-primary"
-                    : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                    ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                    : "bg-muted/50 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground",
                 )}
               >
-                {tab.label}
-                {(counts[tab.id] ?? 0) > 0 && (
-                  <span
-                    className={cn(
-                      "font-mono text-[9px]",
-                      filter === tab.id
-                        ? "text-primary/80"
-                        : "text-muted-foreground/70",
-                    )}
-                  >
-                    {String(counts[tab.id]).padStart(2, "0")}
-                  </span>
-                )}
+                <span>{tab.label}</span>
+                <span
+                  className={cn(
+                    "font-mono text-[10px] font-bold tabular-nums px-1.5 py-0.2 rounded-full",
+                    filter === tab.id
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-background/70 text-muted-foreground",
+                  )}
+                >
+                  {counts[tab.id] ?? 0}
+                </span>
               </button>
             ))}
           </div>
         </div>
       </div>
 
+      {/* Scrollable Body */}
       <div className="flex-1 overflow-y-auto">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3">
-            <Loader2 className="h-6 w-6 text-primary animate-spin" />
-            <p className="text-sm text-muted-foreground">Loading quotations…</p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="mx-auto flex h-full min-h-[260px] w-full max-w-[1480px] flex-col items-center justify-center px-6 py-12 text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-primary/15 bg-primary/5 text-primary/70">
-              <FileText className="h-5 w-5" />
-            </div>
-            <p className="text-sm font-semibold text-foreground">
-              {search || filter !== "all"
-                ? "No matching quotations"
-                : "No quotations yet"}
-            </p>
-            <p className="mt-1 max-w-[300px] text-xs leading-relaxed text-muted-foreground">
-              {search || filter !== "all"
-                ? "Try another customer name, quote number, or status."
-                : "Create a quote to start a customer conversation."}
-            </p>
-            {search || filter !== "all" ? (
+        <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 pb-20 md:pb-8 space-y-4">
+          {/* Interactive 4-Card KPI Strip */}
+          {!loading && quoteList.length > 0 && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  setSearch("");
-                  setFilter("all");
-                }}
-                className="mt-3 text-xs font-semibold text-primary transition-colors hover:text-primary/80"
+                onClick={() => setFilter("all")}
+                className={cn(
+                  "text-left rounded-2xl border p-3.5 sm:p-4 transition-colors",
+                  filter === "all"
+                    ? "bg-card border-primary/50 ring-1 ring-primary/25"
+                    : "bg-card/80 border-border/80 hover:border-border",
+                )}
               >
-                Clear search and filters
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditTarget(null);
-                  setView("builder");
-                }}
-                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                <Plus className="h-4 w-4" /> Create first quote
-              </button>
-            )}
-          </div>
-        ) : (
-          <section
-            className="mx-auto w-full max-w-[1480px] px-4 py-4 sm:px-5"
-            aria-label="Quotation list"
-          >
-            <div className="mb-2 flex items-center justify-between px-1">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-                {filter === "all"
-                  ? "Recent quotations"
-                  : `${STATUS_META[filter].label} quotations`}
-                <span className="ml-2 font-mono font-medium tracking-normal text-muted-foreground/70">
-                  {String(filtered.length).padStart(2, "0")}
-                </span>
-              </p>
-              {search && (
-                <p className="max-w-[55%] truncate text-[10px] text-muted-foreground">
-                  Matching “{search}”
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-primary/12 flex items-center justify-center shrink-0">
+                    <ClipboardList className="h-4 w-4 text-primary" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-muted text-muted-foreground tabular-nums">
+                    {filtered.length} shown
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-muted-foreground mt-2.5">
+                  Pipeline in View
                 </p>
-              )}
+                <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-foreground leading-snug break-words mt-0.5">
+                  {KES(totalValue)}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilter(filter === "accepted" ? "all" : "accepted")}
+                className={cn(
+                  "text-left rounded-2xl border p-3.5 sm:p-4 transition-colors",
+                  filter === "accepted"
+                    ? "bg-emerald-500/10 border-emerald-500/50 ring-1 ring-emerald-500/25"
+                    : "bg-card/80 border-border/80 hover:border-emerald-500/40",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/12 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 tabular-nums">
+                    {counts["accepted"] ?? 0} won
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-muted-foreground mt-2.5">
+                  Accepted Value
+                </p>
+                <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-400 leading-snug break-words mt-0.5">
+                  {KES(acceptedValue)}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilter(filter === "sent" ? "all" : "sent")}
+                className={cn(
+                  "text-left rounded-2xl border p-3.5 sm:p-4 transition-colors",
+                  filter === "sent"
+                    ? "bg-sky-500/10 border-sky-500/50 ring-1 ring-sky-500/25"
+                    : "bg-card/80 border-border/80 hover:border-sky-500/40",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-sky-500/12 flex items-center justify-center shrink-0">
+                    <Clock className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/12 text-sky-700 dark:text-sky-400 tabular-nums">
+                    {openCount} open
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-muted-foreground mt-2.5">
+                  Awaiting Follow-Up
+                </p>
+                <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-foreground leading-snug break-words mt-0.5">
+                  {KES(openValue)}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilter(filter === "invoiced" ? "all" : "invoiced")}
+                className={cn(
+                  "text-left rounded-2xl border p-3.5 sm:p-4 transition-colors",
+                  filter === "invoiced"
+                    ? "bg-amber-500/10 border-amber-500/50 ring-1 ring-amber-500/25"
+                    : "bg-card/80 border-border/80 hover:border-amber-500/40",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/12 flex items-center justify-center shrink-0">
+                    <FileText className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/12 text-amber-700 dark:text-amber-400 tabular-nums">
+                    {invoicedCount} issued
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-muted-foreground mt-2.5">
+                  Invoiced Total
+                </p>
+                <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-foreground leading-snug break-words mt-0.5">
+                  {KES(invoicedValue)}
+                </p>
+              </button>
             </div>
-            <div className="space-y-2">
-              {filtered.map((q) => (
-                <QuotationCard
-                  key={q.id}
-                  q={q}
-                  shop={shop}
-                  onEdit={() => {
-                    setEditTarget(q);
-                    setView("builder");
-                  }}
-                  onPrint={() => {
-                    setPrintTarget(q);
-                    setView("print");
-                  }}
-                  onStatusChange={(s) => handleStatusChange(q, s)}
-                  onDelete={() => handleDelete(q)}
-                  onDownloadPdf={() => downloadPdf(q, shop)}
-                  onConvertToSale={() => handleConvertToSale(q)}
-                  onInvoice={() => {
-                    void handleInvoice(q);
-                  }}
-                  invoiceBusy={invoiceBusyId === q.id}
+          )}
+
+          {loading ? (
+            <div className="space-y-3 pt-2">
+              {[1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className="h-24 rounded-2xl bg-muted/40 border border-border/50 animate-pulse"
                 />
               ))}
             </div>
-          </section>
-        )}
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
+              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                <FileText className="h-5 w-5" />
+              </div>
+              <p className="text-sm font-bold text-foreground">
+                {search || filter !== "all"
+                  ? "No matching quotations"
+                  : "No quotations yet"}
+              </p>
+              <p className="mt-1 max-w-xs text-xs leading-relaxed text-muted-foreground">
+                {search || filter !== "all"
+                  ? "Try another customer name, phone number, quote number, or status filter."
+                  : "Create your first professional quotation to send on WhatsApp, download as PDF, or convert to a POS sale."}
+              </p>
+              {search || filter !== "all" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch("");
+                    setFilter("all");
+                  }}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                >
+                  Clear search &amp; filters
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditTarget(null);
+                    setView("builder");
+                  }}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  <Plus className="h-4 w-4" /> Create first quote
+                </button>
+              )}
+            </div>
+          ) : (
+            <section aria-label="Quotation list" className="space-y-2.5">
+              <div className="flex items-center justify-between px-1">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {filter === "all"
+                    ? "Recent quotations"
+                    : filter === "invoiced"
+                      ? "Invoiced quotations"
+                      : `${STATUS_META[filter].label} quotations`}
+                  <span className="ml-2 font-mono font-semibold text-foreground tabular-nums">
+                    {filtered.length}
+                  </span>
+                </p>
+                {search && (
+                  <p className="max-w-[55%] truncate text-xs text-muted-foreground">
+                    Matching &ldquo;{search}&rdquo;
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2.5">
+                {visibleQuotes.map((q) => (
+                  <QuotationCard
+                    key={q.id}
+                    q={q}
+                    shop={shop}
+                    onEdit={() => {
+                      setEditTarget(q);
+                      setView("builder");
+                    }}
+                    onPrint={() => {
+                      setPrintTarget(q);
+                      setView("print");
+                    }}
+                    onStatusChange={(s) => handleStatusChange(q, s)}
+                    onDelete={() => handleDelete(q)}
+                    onDownloadPdf={() => downloadPdf(q, shop)}
+                    onConvertToSale={() => handleConvertToSale(q)}
+                    onInvoice={() => {
+                      void handleInvoice(q);
+                    }}
+                    invoiceBusy={invoiceBusyId === q.id}
+                  />
+                ))}
+              </div>
+
+              {/* Pagination Footer */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-2xl border border-border/70 bg-card/60 px-4 py-3 text-xs">
+                <span className="text-muted-foreground tabular-nums">
+                  Showing{" "}
+                  <span className="font-semibold text-foreground">1–{visibleQuotes.length}</span> of{" "}
+                  <span className="font-semibold text-foreground">{filtered.length}</span> quotation
+                  {filtered.length === 1 ? "" : "s"}
+                </span>
+                {filtered.length > visibleCount && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCount((n) => n + QUOTES_PAGE_STEP)}
+                      className="inline-flex h-8 items-center rounded-xl border border-border bg-card px-3 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                    >
+                      Show {Math.min(QUOTES_PAGE_STEP, filtered.length - visibleCount)} more
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCount(filtered.length)}
+                      className="inline-flex h-8 items-center rounded-xl px-3 text-xs font-semibold text-primary hover:bg-primary/10 transition-colors"
+                    >
+                      Show all ({filtered.length})
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+        </div>
       </div>
     </div>
   );
