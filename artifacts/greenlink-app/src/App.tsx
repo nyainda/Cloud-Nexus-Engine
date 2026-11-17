@@ -138,15 +138,15 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0A0A0A", color: "#C8FF00", fontFamily: "sans-serif", gap: 16, padding: 24 }}>
+        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "hsl(var(--background))", color: "hsl(var(--primary))", fontFamily: "var(--app-font-sans)", gap: 16, padding: 24 }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/>
           </svg>
-          <p style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Something went wrong</p>
-          <p style={{ fontSize: 13, color: "#888", margin: 0, maxWidth: 320, textAlign: "center" }}>{this.state.message}</p>
+          <p style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Something went wrong</p>
+          <p style={{ fontSize: 13, color: "hsl(var(--muted-foreground))", margin: 0, maxWidth: 320, textAlign: "center" }}>{this.state.message}</p>
           <button
             onClick={() => { this.setState({ hasError: false, message: "" }); window.location.reload(); }}
-            style={{ marginTop: 8, padding: "10px 24px", background: "#C8FF00", color: "#0A0A0A", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 14 }}
+            style={{ marginTop: 8, padding: "10px 24px", background: "hsl(var(--primary))", color: "hsl(var(--primary-foreground))", border: "none", borderRadius: 12, fontWeight: 700, cursor: "pointer", fontSize: 14 }}
           >
             Reload
           </button>
@@ -160,18 +160,18 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 // ── Shared loading spinner ─────────────────────────────────────────────────────
 function PageLoader() {
   return (
-    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0A0A0A", gap: 20 }}>
-      <div style={{ width: 52, height: 52, borderRadius: 14, background: "#C8FF00", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0A0A0A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "hsl(var(--background))", gap: 20 }}>
+      <div style={{ width: 52, height: 52, borderRadius: 16, background: "linear-gradient(135deg, #C8FF1A 0%, #9EE600 100%)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 12px 32px rgba(184,248,22,0.22)" }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0A0E0C" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
           <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>
         </svg>
       </div>
       <div style={{ textAlign: "center" }}>
-        <p style={{ color: "#fff", fontWeight: 700, fontSize: 18, margin: 0, letterSpacing: "-0.02em" }}>GreenLink OS</p>
-        <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, margin: "4px 0 0" }}>Loading…</p>
+        <p style={{ color: "hsl(var(--foreground))", fontWeight: 700, fontSize: 18, margin: 0, letterSpacing: "-0.02em" }}>GreenLink OS</p>
+        <p style={{ color: "hsl(var(--muted-foreground))", fontSize: 12, margin: "4px 0 0" }}>Loading workspace…</p>
       </div>
-      <div style={{ width: 36, height: 36, borderRadius: "50%", border: "2px solid rgba(200,255,0,0.2)", borderTop: "2px solid #C8FF00", animation: "spin 0.8s linear infinite" }} />
+      <div style={{ width: 32, height: 32, borderRadius: "50%", border: "2px solid hsl(var(--primary) / 0.2)", borderTop: "2px solid hsl(var(--primary))", animation: "spin 0.8s linear infinite" }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );

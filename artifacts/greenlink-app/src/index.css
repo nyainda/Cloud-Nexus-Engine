@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=Syne:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
 @import url("https://api.fontshare.com/v2/css?f[]=clash-display@400,500,600,700&display=swap");
 
 @import "tailwindcss";
@@ -70,113 +70,133 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* Dark premium theme — Electric Lime #C8FF00 on near-black #0A0A0A */
+/* Dark Theme — Botanical Obsidian & Harvest Lime */
 :root,
 :root.dark {
-  --background: 0 0% 4%;
-  --foreground: 0 0% 96%;
-  --border: 0 0% 17%;
-  --input: 0 0% 13%;
-  --ring: 75 100% 50%;
+  --background: 150 18% 5%;
+  --foreground: 140 12% 96%;
+  --border: 150 10% 17%;
+  --input: 150 12% 13%;
+  --ring: 78 96% 52%;
 
-  --card: 0 0% 9%;
-  --card-foreground: 0 0% 96%;
-  --card-border: 0 0% 17%;
+  --card: 150 15% 8.5%;
+  --card-foreground: 140 12% 96%;
+  --card-border: 150 10% 17%;
 
-  --popover: 0 0% 10%;
-  --popover-foreground: 0 0% 96%;
-  --popover-border: 0 0% 19%;
+  --popover: 150 15% 10%;
+  --popover-foreground: 140 12% 96%;
+  --popover-border: 150 10% 19%;
 
-  /* Electric Lime */
-  --primary: 75 100% 50%;
-  --primary-foreground: 0 0% 5%;
+  /* Harvest Lime */
+  --primary: 78 96% 52%;
+  --primary-foreground: 150 28% 7%;
+  --primary-border: hsl(78 96% 42%);
 
-  --secondary: 0 0% 13%;
-  --secondary-foreground: 0 0% 88%;
+  --secondary: 150 12% 13%;
+  --secondary-foreground: 140 10% 88%;
+  --secondary-border: hsl(150 10% 20%);
 
-  --muted: 0 0% 13%;
-  --muted-foreground: 0 0% 63%;
+  --muted: 150 11% 13%;
+  --muted-foreground: 145 8% 62%;
+  --muted-border: hsl(150 10% 19%);
 
-  --accent: 75 100% 50%;
-  --accent-foreground: 0 0% 5%;
+  --accent: 78 96% 52%;
+  --accent-foreground: 150 28% 7%;
+  --accent-border: hsl(78 96% 42%);
 
-  --destructive: 0 72% 55%;
+  --destructive: 0 74% 58%;
   --destructive-foreground: 0 0% 100%;
+  --destructive-border: hsl(0 74% 48%);
 
-  --sidebar: 0 0% 5%;
-  --sidebar-foreground: 0 0% 90%;
-  --sidebar-border: 0 0% 12%;
-  --sidebar-primary: 75 100% 50%;
-  --sidebar-primary-foreground: 0 0% 5%;
-  --sidebar-accent: 0 0% 10%;
-  --sidebar-accent-foreground: 0 0% 95%;
-  --sidebar-ring: 75 100% 50%;
+  --button-outline: hsl(150 10% 22%);
+  --badge-outline: hsl(150 10% 24%);
 
-  --chart-1: 75 100% 50%;
-  --chart-2: 210 80% 60%;
-  --chart-3: 30 90% 55%;
-  --chart-4: 280 60% 60%;
-  --chart-5: 0 70% 60%;
+  --sidebar: 150 20% 6%;
+  --sidebar-foreground: 140 10% 90%;
+  --sidebar-border: 150 12% 13%;
+  --sidebar-primary: 78 96% 52%;
+  --sidebar-primary-foreground: 150 28% 7%;
+  --sidebar-primary-border: hsl(78 96% 42%);
+  --sidebar-accent: 150 14% 11%;
+  --sidebar-accent-foreground: 140 12% 96%;
+  --sidebar-accent-border: hsl(150 12% 18%);
+  --sidebar-ring: 78 96% 52%;
 
-  --app-font-sans: 'DM Sans', sans-serif;
+  --chart-1: 78 96% 52%;
+  --chart-2: 199 89% 56%;
+  --chart-3: 32 95% 56%;
+  --chart-4: 266 70% 66%;
+  --chart-5: 0 74% 60%;
+
+  --app-font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
   --app-font-serif: 'Syne', sans-serif;
   --app-font-mono: 'JetBrains Mono', monospace;
-  --app-font-display: 'Clash Display', 'DM Sans', sans-serif;
-  --radius: 0.625rem;
+  --app-font-display: 'Clash Display', 'Plus Jakarta Sans', sans-serif;
+  --radius: 0.75rem;
 }
 
-/* Light theme — premium clean editorial */
+/* Light Theme — Warm Alabaster Ledger */
 :root.light {
-  --background: 210 20% 92%;
-  --foreground: 0 0% 6%;
-  --border: 210 14% 80%;
+  --background: 140 14% 95%;
+  --foreground: 150 24% 9%;
+  --border: 145 13% 84%;
   --input: 0 0% 100%;
-  --ring: 86 74% 35%;
+  --ring: 142 72% 30%;
 
   --card: 0 0% 100%;
-  --card-foreground: 0 0% 6%;
-  --card-border: 210 14% 81%;
+  --card-foreground: 150 24% 9%;
+  --card-border: 145 13% 84%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 6%;
-  --popover-border: 210 14% 81%;
+  --popover-foreground: 150 24% 9%;
+  --popover-border: 145 13% 84%;
 
-  /* Deep lime — legible on white */
-  --primary: 86 74% 32%;
+  /* Deep Canopy Emerald */
+  --primary: 142 72% 29%;
   --primary-foreground: 0 0% 100%;
+  --primary-border: hsl(142 72% 24%);
 
-  --secondary: 210 14% 90%;
-  --secondary-foreground: 0 0% 12%;
+  --secondary: 140 12% 91%;
+  --secondary-foreground: 150 20% 14%;
+  --secondary-border: hsl(145 12% 82%);
 
-  --muted: 210 14% 90%;
-  --muted-foreground: 0 0% 34%;
+  --muted: 140 12% 91%;
+  --muted-foreground: 150 10% 38%;
+  --muted-border: hsl(145 12% 83%);
 
-  --accent: 86 74% 32%;
+  --accent: 142 72% 29%;
   --accent-foreground: 0 0% 100%;
+  --accent-border: hsl(142 72% 24%);
 
-  --destructive: 0 72% 48%;
+  --destructive: 0 74% 48%;
   --destructive-foreground: 0 0% 100%;
+  --destructive-border: hsl(0 74% 40%);
 
-  --sidebar: 0 0% 99%;
-  --sidebar-foreground: 0 0% 10%;
-  --sidebar-border: 210 14% 88%;
-  --sidebar-primary: 86 74% 32%;
+  --button-outline: hsl(145 13% 80%);
+  --badge-outline: hsl(145 13% 78%);
+
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 150 20% 12%;
+  --sidebar-border: 145 13% 88%;
+  --sidebar-primary: 142 72% 29%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 210 20% 93%;
-  --sidebar-accent-foreground: 0 0% 8%;
-  --sidebar-ring: 86 74% 32%;
+  --sidebar-primary-border: hsl(142 72% 24%);
+  --sidebar-accent: 140 16% 94%;
+  --sidebar-accent-foreground: 150 24% 10%;
+  --sidebar-accent-border: hsl(145 12% 86%);
+  --sidebar-ring: 142 72% 30%;
 
-  --chart-1: 86 74% 32%;
-  --chart-2: 210 80% 50%;
-  --chart-3: 30 90% 44%;
-  --chart-4: 280 60% 50%;
-  --chart-5: 0 70% 50%;
+  --chart-1: 142 72% 30%;
+  --chart-2: 204 82% 46%;
+  --chart-3: 30 90% 45%;
+  --chart-4: 268 62% 52%;
+  --chart-5: 0 72% 50%;
 
-  --app-font-sans: 'DM Sans', sans-serif;
+  --app-font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
   --app-font-serif: 'Syne', sans-serif;
   --app-font-mono: 'JetBrains Mono', monospace;
-  --app-font-display: 'Clash Display', 'DM Sans', sans-serif;
-  --radius: 0.625rem;
+  --app-font-display: 'Clash Display', 'Plus Jakarta Sans', sans-serif;
+  --radius: 0.75rem;
 }
 
 @layer base {
@@ -193,28 +213,44 @@
   }
 
   body {
-    @apply font-sans antialiased bg-background text-foreground;
+    @apply font-sans antialiased bg-background text-foreground selection:bg-primary/25 selection:text-foreground;
   }
 
   h1, h2, h3 {
     font-family: var(--app-font-display);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.005em;
+  }
+
+  /* Refined scrollbars across desktop browsers */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.45);
   }
 
   /* Light mode card elevation */
   .light .bg-card,
   .light [class*="bg-card"] {
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 2px rgba(15, 30, 20, 0.05), 0 4px 12px -2px rgba(15, 30, 20, 0.04);
   }
 
-  /* Dark mode card subtle lift */
+  /* Dark mode card crisp highlight */
   .dark .bg-card,
   :root:not(.light) .bg-card {
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 4px 20px -6px rgba(0, 0, 0, 0.45);
   }
 
   .light .bg-sidebar {
-    box-shadow: 1px 0 0 hsl(210 14% 80%);
+    box-shadow: 1px 0 0 hsl(145 13% 88%);
   }
 }
 
@@ -225,14 +261,44 @@
 
   .font-mono {
     font-family: var(--app-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 
   .lime-glow {
-    box-shadow: 0 0 20px rgba(200, 255, 0, 0.15);
+    box-shadow: 0 0 24px rgba(184, 248, 22, 0.18);
   }
 
   .lime-text {
-    color: hsl(75 100% 50%);
+    color: hsl(var(--primary));
+  }
+
+  .hover-elevate {
+    transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms ease, border-color 150ms ease, background-color 150ms ease;
+  }
+  .hover-elevate:hover:not(:disabled) {
+    filter: brightness(1.04);
+  }
+  .active-elevate-2:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .bg-grid-subtle {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.32) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.32) 1px, transparent 1px);
+    background-size: 28px 28px;
   }
 
   input[type="search"]::-webkit-search-cancel-button {

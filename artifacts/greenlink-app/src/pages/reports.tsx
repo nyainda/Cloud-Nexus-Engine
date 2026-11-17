@@ -16,11 +16,12 @@ import {
   Layers, Clock, ArrowUp, ArrowDown, Minus, Database,
   ClipboardCheck, X, Share2, Check, CheckCheck, Wallet, ReceiptText, Ban,
   Download, Calendar, ChevronDown, ChevronUp, FileText, Search, SearchX,
-  RefreshCw, Sprout,
+  RefreshCw, Sprout, Activity, ArrowUpRight,
 } from "lucide-react";
 import { format, startOfWeek, startOfMonth, subDays } from "date-fns";
+import { Link } from "wouter";
 import {
-  ComposedChart, AreaChart, Area, BarChart, Bar,
+  ComposedChart, AreaChart, Area, BarChart, Bar, Line,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from "recharts";
@@ -376,15 +377,17 @@ function CashUpModal({ dashboard, shopName, onClose }: {
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center">
-      <div className="bg-card w-full max-w-sm sm:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden max-h-[92dvh] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-card w-full max-w-sm rounded-t-2xl sm:rounded-2xl border border-border/80 shadow-2xl overflow-hidden max-h-[92dvh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border/60 shrink-0">
-          <div className="flex items-center gap-2">
-            <ClipboardCheck className="h-4 w-4 text-primary" />
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/70 shrink-0 bg-muted/20">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/25 text-primary flex items-center justify-center">
+              <ClipboardCheck className="h-4 w-4" />
+            </div>
             <div>
-              <h2 className="text-sm font-bold">End-of-Day Cash-Up</h2>
-              <p className="text-[10px] text-muted-foreground">{dateLabel} • {timeLabel}</p>
+              <h2 className="font-display text-sm font-bold tracking-normal">End-of-Day Cash-Up</h2>
+              <p className="text-[11px] text-muted-foreground">{dateLabel} · {timeLabel}</p>
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center transition-colors">
@@ -395,12 +398,12 @@ function CashUpModal({ dashboard, shopName, onClose }: {
         {/* Scrollable content */}
         <div className="overflow-y-auto flex-1">
           {/* Big Cash in Till */}
-          <div className="bg-primary/5 border-b border-primary/20 px-5 py-5 text-center">
-            <div className="flex items-center justify-center gap-2 mb-1">
+          <div className="bg-primary/8 border-b border-primary/20 px-5 py-5 text-center">
+            <div className="flex items-center justify-center gap-1.5 mb-1">
               <Wallet className="h-4 w-4 text-primary" />
-              <p className="text-xs font-bold uppercase tracking-widest text-primary">Cash in Till</p>
+              <p className="text-[11px] font-bold uppercase tracking-widest text-primary">Cash in Till</p>
             </div>
-            <p className="text-4xl font-bold font-mono text-foreground">{formatKES(netCashInTill)}</p>
+            <p className="font-display text-4xl font-bold tabular-nums text-foreground">{formatKES(netCashInTill)}</p>
             <p className="text-xs text-muted-foreground mt-1">Cash sales + debt payments received today</p>
           </div>
 
@@ -502,12 +505,13 @@ function CashUpModal({ dashboard, shopName, onClose }: {
   );
 }
 
-type QuickRange = "today" | "week" | "month";
+type QuickRange = "today" | "week" | "month" | "year";
 
 const QUICK_RANGES: { value: QuickRange; label: string }[] = [
   { value: "today", label: "Today" },
   { value: "week", label: "This Week" },
   { value: "month", label: "This Month" },
+  { value: "year", label: "This Year" },
 ];
 
 function getDateRange(range: QuickRange): { from: string; to: string } {
@@ -515,6 +519,7 @@ function getDateRange(range: QuickRange): { from: string; to: string } {
   const to = format(today, "yyyy-MM-dd");
   if (range === "today") return { from: to, to };
   if (range === "week") return { from: format(startOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd"), to };
+  if (range === "year") return { from: `${today.getFullYear()}-01-01`, to };
   return { from: format(startOfMonth(today), "yyyy-MM-dd"), to };
 }
 
@@ -531,7 +536,7 @@ const STALE = 5 * 60_000;
 const GC = 30 * 60_000;
 
 const CATEGORY_COLORS = [
-  "#C8FF00", "#22c55e", "#3b82f6", "#f59e0b", "#ec4899",
+  "hsl(var(--primary))", "#10b981", "#3b82f6", "#f59e0b", "#ec4899",
   "#8b5cf6", "#06b6d4", "#f97316", "#6366f1", "#14b8a6",
 ];
 
@@ -564,6 +569,47 @@ interface NurserySalesResponse {
   rows: NurserySalesRow[];
 }
 
+interface NurseryVarietyReportRow {
+  varietyKey?: string;
+  varietyId?: string;
+  varietyName: string;
+  quantity: number;
+  totalAmountCents: number;
+  cashCents?: number | string | null;
+  mpesaCents?: number | string | null;
+  creditCents?: number | string | null;
+}
+
+interface NurseryReportResponse {
+  rows: NurseryVarietyReportRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: { totalSeedlings: number; totalRevenueCents: number; cashCents: number; mpesaCents: number; creditCents: number };
+}
+
+interface NurseryEntryRow {
+  id: string;
+  businessDate: string;
+  varietyId: string;
+  varietyName: string;
+  customerName: string;
+  customerPhone: string;
+  quantity: number;
+  unitPriceCents: number;
+  totalAmountCents: number;
+  paymentMethod: "cash" | "mpesa" | "credit";
+  sourceSupplierName?: string | null;
+  createdAt: string;
+}
+
+interface NurseryEntriesResponse {
+  rows: NurseryEntryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 function dateRangeDayCount(from: string, to: string): number {
   const fromTime = Date.parse(`${from}T00:00:00Z`);
   const toTime = Date.parse(`${to}T00:00:00Z`);
@@ -574,32 +620,33 @@ function KpiCard({ label, value, sub, icon: Icon, accentClass, isLoading, change
   label: string; value?: string; sub?: string; icon: React.ElementType;
   accentClass: string; isLoading?: boolean; changePct?: number | null;
 }) {
+  const isHero = label === "Revenue";
   return (
-    <Card className={cn("reports-kpi-card shadow-none", label === "Revenue" && "reports-kpi-hero")}>
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between mb-3">
-          <div className={cn("w-8 h-8 rounded-lg border flex items-center justify-center", accentClass)}>
+    <Card className={cn("reports-kpi-card rounded-2xl border-border/80 bg-card/95 shadow-none", isHero && "reports-kpi-hero")}>
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className={cn("w-9 h-9 rounded-xl border flex items-center justify-center shrink-0", accentClass)}>
             <Icon className="h-4 w-4" />
           </div>
           {changePct != null && (
             <span className={cn(
-              "flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full",
-              changePct > 0 ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
-              : changePct < 0 ? "bg-destructive/10 text-destructive"
-              : "bg-muted text-muted-foreground"
+              "inline-flex items-center gap-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full tabular-nums",
+              changePct > 0 ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-300 border border-emerald-500/25"
+              : changePct < 0 ? "bg-destructive/12 text-destructive border border-destructive/25"
+              : "bg-muted text-muted-foreground border border-border"
             )}>
               {changePct > 0 ? <ArrowUp className="h-2.5 w-2.5" /> : changePct < 0 ? <ArrowDown className="h-2.5 w-2.5" /> : <Minus className="h-2.5 w-2.5" />}
               {Math.abs(changePct).toFixed(1)}%
             </span>
           )}
         </div>
-        <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1">{label}</p>
+        <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
         {isLoading
-          ? <Skeleton className="h-7 w-24 mt-1" />
-          : <p className="text-xl font-bold font-mono text-foreground">{value ?? "—"}</p>}
+          ? <Skeleton className="h-8 w-28 mt-1" />
+          : <p className={cn("font-display text-2xl font-bold tracking-normal tabular-nums", isHero ? "text-primary" : "text-foreground")}>{value ?? "—"}</p>}
         {isLoading
-          ? <Skeleton className="h-3 w-16 mt-2" />
-          : sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+          ? <Skeleton className="h-3.5 w-20 mt-2" />
+          : sub && <p className="text-xs text-muted-foreground mt-1 truncate">{sub}</p>}
       </CardContent>
     </Card>
   );
@@ -760,32 +807,36 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
   ];
 
   return (
-    <Card className="reports-search-card shadow-none border-primary/10">
-      <CardHeader className="pb-3 pt-4 px-4">
+    <Card className="reports-search-card rounded-2xl border-border/80 bg-card/95 shadow-none">
+      <CardHeader className="pb-3 pt-4 px-4 sm:px-5 border-b border-border/60">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-              <Search className="h-3.5 w-3.5 text-primary" />
-              Product Sales Lookup
-            </CardTitle>
-            <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-              Search a product or pack size. Variants stay separate, with a combined total for supplier reconciliation.
-            </p>
+          <div className="min-w-0 flex items-start gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0 mt-0.5">
+              <Search className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <CardTitle className="font-display text-sm sm:text-base font-bold tracking-normal">
+                Product Sales Lookup
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                Search any product or pack size. Variants stay separate, with a combined supplier-reconciliation total.
+              </p>
+            </div>
           </div>
           {resultsCurrent && variants.length > 0 && (
             <button
               type="button"
               onClick={handleShare}
               aria-label="Copy product sales report"
-              className="reports-search-share shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 transition-colors flex items-center gap-1"
+              className="reports-search-share shrink-0 text-xs font-bold px-3 py-1.5 rounded-lg bg-primary/12 border border-primary/25 text-primary hover:bg-primary/20 transition-colors flex items-center gap-1.5"
             >
-              {shareCopied ? <Check className="h-3 w-3" /> : <Share2 className="h-3 w-3" />}
+              {shareCopied ? <Check className="h-3.5 w-3.5" /> : <Share2 className="h-3.5 w-3.5" />}
               {shareCopied ? "Copied" : "Copy report"}
             </button>
           )}
         </div>
       </CardHeader>
-      <CardContent className="px-4 pb-4 reports-search-body">
+      <CardContent className="p-4 sm:p-5 reports-search-body">
 
         {/* Period pills */}
         <div className="flex flex-wrap gap-1.5 reports-search-periods" role="group" aria-label="Product sales period">
@@ -796,10 +847,10 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
               onClick={() => setPsRange(q.value)}
               aria-pressed={psRange === q.value}
               className={cn(
-                "reports-search-range px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors",
+                "reports-search-range px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors",
                 psRange === q.value
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-muted border-border text-muted-foreground hover:border-primary/40",
+                  ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                  : "bg-muted/50 border-border text-muted-foreground hover:text-foreground hover:border-primary/40",
               )}
             >
               {q.label}
@@ -812,31 +863,31 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
           <div className="flex items-center gap-2 reports-search-date-range">
             <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
               aria-label="Product lookup start date" max={customTo || today}
-              className="flex-1 h-9 px-2 rounded-lg border border-border bg-muted text-xs focus:outline-none focus:border-primary/60" />
-            <span className="text-muted-foreground text-xs">–</span>
+              className="flex-1 h-9 px-3 rounded-lg border border-border bg-background/70 text-xs focus:outline-none focus:border-primary" />
+            <span className="text-muted-foreground text-xs">to</span>
             <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
               aria-label="Product lookup end date" min={customFrom || undefined} max={today}
-              className="flex-1 h-9 px-2 rounded-lg border border-border bg-muted text-xs focus:outline-none focus:border-primary/60" />
+              className="flex-1 h-9 px-3 rounded-lg border border-border bg-background/70 text-xs focus:outline-none focus:border-primary" />
           </div>
         )}
 
         <form className="reports-search-form" onSubmit={handleSearch}>
           <div className="reports-search-input-wrap relative min-w-0">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <input
               type="search"
               value={inputValue}
               onChange={e => setInputValue(e.target.value)}
               placeholder="Product name or size, e.g. Urea 50kg or Roundup 1L"
               aria-label="Search product sales by name or pack size"
-              className="reports-search-input w-full h-11 pl-10 pr-10 rounded-xl border border-border bg-muted text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/60 transition-colors"
+              className="reports-search-input w-full h-11 pl-10 pr-10 rounded-xl border border-border bg-background/70 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary transition-colors"
             />
             {inputValue && (
               <button
                 type="button"
                 aria-label="Clear product search"
                 onClick={() => { setInputValue(""); setSubmittedSearch(null); setShareCopied(false); }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -845,7 +896,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
           <button
             type="submit"
             disabled={!canSubmitSearch || (resultsCurrent && (isLoading || isFetching))}
-            className="reports-search-submit h-11 px-5 rounded-xl bg-primary text-primary-foreground font-bold text-sm inline-flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed transition-opacity"
+            className="reports-search-submit h-11 px-5 rounded-xl bg-primary text-primary-foreground font-bold text-sm inline-flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
           >
             <Search className="h-4 w-4" />
             Search
@@ -857,7 +908,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
             Choose both dates. The end date must be on or after the start date, and neither date can be in the future.
           </p>
         )}
-        <p className="reports-search-query-note text-[10px] text-muted-foreground">
+        <p className="reports-search-query-note text-[11px] text-muted-foreground">
           Searches run only after you press Search. Typing and changing filters do not send lookup requests.
         </p>
 
@@ -883,7 +934,7 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
         )}
 
         {submittedSearch && !resultsCurrent && (
-          <div className="reports-search-pending rounded-xl border border-border bg-muted/30 px-3 py-2.5" role="status">
+          <div className="reports-search-pending rounded-xl border border-border bg-muted/30 px-3.5 py-2.5" role="status">
             <p className="text-xs font-semibold text-foreground">Search settings changed</p>
             <p className="text-[11px] text-muted-foreground mt-0.5">Press Search to apply the new product name or period. No lookup runs automatically.</p>
           </div>
@@ -892,9 +943,9 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
         {/* No results */}
         {noResults && (
           <div className="flex flex-col items-center gap-1.5 py-8 text-muted-foreground" role="status">
-            <SearchX className="h-8 w-8 text-muted-foreground/20" />
+            <SearchX className="h-8 w-8 text-muted-foreground/25" />
             <p className="text-xs font-semibold">No sales found for &ldquo;{query}&rdquo;</p>
-            <p className="text-[11px] text-muted-foreground/50">Try a shorter name or a wider date range</p>
+            <p className="text-[11px] text-muted-foreground/60">Try a shorter name or a wider date range</p>
           </div>
         )}
 
@@ -902,47 +953,45 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
         {resultsCurrent && !isLoading && !isFetching && variants.length > 0 && (
           <>
             {/* Period label */}
-            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
+            <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">
               Results for &ldquo;{query}&rdquo; · {periodLabel}
             </p>
 
             {/* ── MOBILE: card per variant ── */}
-            <div className="sm:hidden space-y-2">
+            <div className="sm:hidden space-y-2.5">
               {variants.map(v => {
                 const cost   = v.totalRevenue - v.totalProfit;
                 const margin = v.totalRevenue > 0 ? (v.totalProfit / v.totalRevenue) * 100 : 0;
                 return (
-                  <div key={v.productId} className="rounded-xl border border-border bg-muted/20 p-3 space-y-2">
-                    {/* Name + badges */}
+                  <div key={v.productId} className="rounded-xl border border-border/80 bg-muted/20 p-3 space-y-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-sm font-semibold leading-snug">{v.productName}</p>
                         <p className="text-[11px] text-muted-foreground mt-0.5">{v.category} · {v.salesCount} {v.salesCount === 1 ? "sale line" : "sale lines"}</p>
                       </div>
                       <span className={cn(
-                        "shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md",
-                        margin >= 20 ? "bg-emerald-500/10 text-emerald-400"
-                          : margin >= 10 ? "bg-amber-500/10 text-amber-400"
-                          : "bg-destructive/10 text-destructive"
+                        "shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full tabular-nums",
+                        margin >= 20 ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
+                          : margin >= 10 ? "bg-amber-500/12 text-amber-600 dark:text-amber-400"
+                          : "bg-destructive/12 text-destructive"
                       )}>{margin.toFixed(0)}% margin</span>
                     </div>
-                    {/* 2×2 metric grid */}
                     <div className="grid grid-cols-2 gap-1.5">
-                      <div className="rounded-lg bg-muted/60 px-2.5 py-2">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Qty Sold</p>
-                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5">{fmtQty(v.totalQty)}</p>
+                      <div className="rounded-lg bg-muted/50 px-2.5 py-2">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">Qty Sold</p>
+                        <p className="text-sm font-bold font-mono tabular-nums mt-0.5">{fmtQty(v.totalQty)}</p>
                       </div>
-                      <div className="rounded-lg bg-muted/60 px-2.5 py-2">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Revenue</p>
-                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5">{formatKES(v.totalRevenue)}</p>
+                      <div className="rounded-lg bg-muted/50 px-2.5 py-2">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">Revenue</p>
+                        <p className="text-sm font-bold font-mono tabular-nums mt-0.5">{formatKES(v.totalRevenue)}</p>
                       </div>
-                      <div className="rounded-lg bg-muted/60 px-2.5 py-2">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Est. cost</p>
-                        <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(cost)}</p>
+                      <div className="rounded-lg bg-muted/50 px-2.5 py-2">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">Est. cost</p>
+                        <p className="text-sm font-bold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(cost)}</p>
                       </div>
-                      <div className={cn("rounded-lg px-2.5 py-2", v.totalProfit >= 0 ? "bg-emerald-500/5" : "bg-destructive/5")}>
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Profit</p>
-                        <p className={cn("text-sm font-extrabold font-mono tabular-nums mt-0.5", v.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>{formatKES(v.totalProfit)}</p>
+                      <div className={cn("rounded-lg px-2.5 py-2", v.totalProfit >= 0 ? "bg-emerald-500/10" : "bg-destructive/10")}>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">Profit</p>
+                        <p className={cn("text-sm font-bold font-mono tabular-nums mt-0.5", v.totalProfit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>{formatKES(v.totalProfit)}</p>
                       </div>
                     </div>
                   </div>
@@ -954,35 +1003,35 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                 const totalCost   = summary.totalRevenue - summary.totalProfit;
                 const totalMargin = summary.totalRevenue > 0 ? (summary.totalProfit / summary.totalRevenue) * 100 : 0;
                 return (
-                  <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-3 space-y-2">
+                  <div className="rounded-xl border border-primary/35 bg-primary/8 p-3.5 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-extrabold text-primary">COMBINED TOTAL</p>
+                        <p className="text-xs font-extrabold uppercase tracking-wider text-primary">Combined Total</p>
                         <p className="text-[11px] text-muted-foreground">{variants.length} variants · {summary.salesCount} matching sale lines</p>
                       </div>
                       <span className={cn(
-                        "shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md",
-                        totalMargin >= 20 ? "bg-emerald-500/10 text-emerald-400"
-                          : totalMargin >= 10 ? "bg-amber-500/10 text-amber-400"
-                          : "bg-destructive/10 text-destructive"
+                        "shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full tabular-nums",
+                        totalMargin >= 20 ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
+                          : totalMargin >= 10 ? "bg-amber-500/12 text-amber-600 dark:text-amber-400"
+                          : "bg-destructive/12 text-destructive"
                       )}>{totalMargin.toFixed(0)}% margin</span>
                     </div>
                     <div className="grid grid-cols-2 gap-1.5">
                       <div className="rounded-lg bg-primary/10 px-2.5 py-2">
-                        <p className="text-[10px] text-primary/70 uppercase tracking-wide font-medium">Total Qty</p>
+                        <p className="text-[10px] text-primary/80 uppercase tracking-wide font-semibold">Total Qty</p>
                         <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-primary">{fmtQty(summary.totalQty)}</p>
                       </div>
                       <div className="rounded-lg bg-primary/10 px-2.5 py-2">
-                        <p className="text-[10px] text-primary/70 uppercase tracking-wide font-medium">Revenue</p>
+                        <p className="text-[10px] text-primary/80 uppercase tracking-wide font-semibold">Revenue</p>
                         <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-primary">{formatKES(summary.totalRevenue)}</p>
                       </div>
-                      <div className="rounded-lg bg-primary/10 px-2.5 py-2">
-                        <p className="text-[10px] text-primary/70 uppercase tracking-wide font-medium">Est. cost</p>
+                      <div className="rounded-lg bg-muted/50 px-2.5 py-2">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">Est. cost</p>
                         <p className="text-sm font-extrabold font-mono tabular-nums mt-0.5 text-muted-foreground">{formatKES(totalCost)}</p>
                       </div>
-                      <div className="rounded-lg bg-emerald-500/5 px-2.5 py-2">
-                        <p className="text-[10px] text-emerald-400/70 uppercase tracking-wide font-medium">Profit</p>
-                        <p className={cn("text-sm font-extrabold font-mono tabular-nums mt-0.5", summary.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>{formatKES(summary.totalProfit)}</p>
+                      <div className="rounded-lg bg-emerald-500/10 px-2.5 py-2">
+                        <p className="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide font-semibold">Profit</p>
+                        <p className={cn("text-sm font-extrabold font-mono tabular-nums mt-0.5", summary.totalProfit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>{formatKES(summary.totalProfit)}</p>
                       </div>
                     </div>
                   </div>
@@ -991,9 +1040,9 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
             </div>
 
             {/* ── TABLET / DESKTOP: full table ── */}
-            <div className="hidden sm:block rounded-xl border border-border overflow-x-auto">
+            <div className="hidden sm:block rounded-xl border border-border/80 overflow-x-auto bg-card/60">
               {/* Column header */}
-              <div className="reports-variant-table min-w-[660px] grid grid-cols-[minmax(180px,1fr)_56px_100px_100px_100px_48px] gap-x-3 px-4 py-2.5 bg-muted/60 border-b border-border text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+              <div className="reports-variant-table min-w-[660px] grid grid-cols-[minmax(180px,1fr)_56px_100px_100px_100px_48px] gap-x-3 px-4 py-2.5 bg-muted/40 border-b border-border/70 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                 <span>Product / Variant</span>
                 <span className="text-right">Qty</span>
                 <span className="text-right">Revenue</span>
@@ -1011,19 +1060,19 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                     <div className="min-w-0">
                       <p className="text-sm font-semibold leading-tight truncate">{v.productName}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[10px] text-muted-foreground/60">{v.category}</span>
+                        <span className="text-[11px] text-muted-foreground">{v.category}</span>
                         <span className={cn(
-                          "text-[9px] font-bold px-1 py-0.5 rounded",
-                          margin >= 20 ? "bg-emerald-500/10 text-emerald-400"
-                            : margin >= 10 ? "bg-amber-500/10 text-amber-400"
-                            : "bg-destructive/10 text-destructive"
+                          "text-[10px] font-bold px-1.5 py-0.5 rounded tabular-nums",
+                          margin >= 20 ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
+                            : margin >= 10 ? "bg-amber-500/12 text-amber-600 dark:text-amber-400"
+                            : "bg-destructive/12 text-destructive"
                         )}>{margin.toFixed(0)}%</span>
                       </div>
                     </div>
                     <span className="text-sm font-mono font-semibold text-right self-center tabular-nums">{fmtQty(v.totalQty)}</span>
                     <span className="text-sm font-mono text-right self-center tabular-nums">{formatKES(v.totalRevenue)}</span>
                     <span className="text-sm font-mono text-right self-center tabular-nums text-muted-foreground">{formatKES(cost)}</span>
-                    <span className={cn("text-sm font-mono text-right self-center tabular-nums", v.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                    <span className={cn("text-sm font-mono text-right self-center tabular-nums", v.totalProfit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
                       {formatKES(v.totalProfit)}
                     </span>
                     <span className="text-sm text-right self-center text-muted-foreground tabular-nums">{v.salesCount}</span>
@@ -1036,15 +1085,15 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
                 const totalCost   = summary.totalRevenue - summary.totalProfit;
                 const totalMargin = summary.totalRevenue > 0 ? (summary.totalProfit / summary.totalRevenue) * 100 : 0;
                 return (
-                  <div className="reports-variant-table min-w-[660px] grid grid-cols-[minmax(180px,1fr)_56px_100px_100px_100px_48px] gap-x-3 px-4 py-3 bg-primary/5 border-t-2 border-primary/20">
+                  <div className="reports-variant-table min-w-[660px] grid grid-cols-[minmax(180px,1fr)_56px_100px_100px_100px_48px] gap-x-3 px-4 py-3 bg-primary/8 border-t border-primary/25">
                     <div>
-                      <p className="text-sm font-extrabold text-primary leading-tight">TOTAL</p>
-                      <p className="text-[10px] text-muted-foreground">{variants.length} variants · {summary.salesCount} matching sale lines · {totalMargin.toFixed(0)}% margin</p>
+                      <p className="text-xs font-extrabold uppercase tracking-wider text-primary leading-tight">Combined Total</p>
+                      <p className="text-[11px] text-muted-foreground">{variants.length} variants · {summary.salesCount} matching sale lines · {totalMargin.toFixed(0)}% margin</p>
                     </div>
                     <span className="text-sm font-extrabold font-mono text-right self-center tabular-nums text-primary">{fmtQty(summary.totalQty)}</span>
                     <span className="text-sm font-extrabold font-mono text-right self-center tabular-nums text-primary">{formatKES(summary.totalRevenue)}</span>
                     <span className="text-sm font-extrabold font-mono text-right self-center tabular-nums text-muted-foreground">{formatKES(totalCost)}</span>
-                    <span className={cn("text-sm font-extrabold font-mono text-right self-center tabular-nums", summary.totalProfit >= 0 ? "text-emerald-400" : "text-destructive")}>
+                    <span className={cn("text-sm font-extrabold font-mono text-right self-center tabular-nums", summary.totalProfit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
                       {formatKES(summary.totalProfit)}
                     </span>
                     <span className="text-sm font-extrabold text-right self-center text-primary tabular-nums">{summary.salesCount}</span>
@@ -1053,11 +1102,11 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
               })()}
             </div>
 
-            <p className="reports-search-cost-note text-[10px] text-muted-foreground">
+            <p className="reports-search-cost-note text-[11px] text-muted-foreground">
               Estimated cost is revenue minus recorded profit; use it for reconciliation, not as a supplier balance due.
             </p>
             {showTotal && summary && (
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground">
                 Combined total includes all {variants.length} matching product variants for this period.
               </p>
             )}
@@ -1066,10 +1115,10 @@ function ProductSearchSection({ shopId }: { shopId: string }) {
 
         {/* Empty prompt */}
         {!submittedSearch && (
-          <div className="flex flex-col items-center gap-1 py-5 text-muted-foreground/60">
-            <Search className="h-6 w-6" />
-            <p className="text-xs">{searchText.length < 2 ? "Enter at least two letters, then press Search." : "Press Search to load this product’s sales."}</p>
-            <p className="text-[10px] text-muted-foreground/70">Variants appear individually, then roll up into one combined total.</p>
+          <div className="flex flex-col items-center gap-1 py-6 text-muted-foreground/70 rounded-xl border border-dashed border-border/70 bg-muted/15">
+            <Search className="h-5 w-5 opacity-50" />
+            <p className="text-xs font-medium">{searchText.length < 2 ? "Enter at least two letters, then press Search." : "Press Search to load this product’s sales."}</p>
+            <p className="text-[11px] text-muted-foreground/60">Variants appear individually, then roll up into one combined total.</p>
           </div>
         )}
       </CardContent>
@@ -1090,18 +1139,30 @@ export default function Reports() {
   const [showInventoryDetails, setShowInventoryDetails] = useState(false);
   const [showMonthlySales, setShowMonthlySales] = useState(false);
   const [monthlySalesYear, setMonthlySalesYear] = useState(() => new Date().getFullYear());
+  const [monthlyMetric, setMonthlyMetric] = useState<"revenue" | "profit" | "salesCount">("revenue");
+  const [comparePrevYear, setComparePrevYear] = useState(true);
+  const [nurseryView, setNurseryView] = useState<"chart" | "varieties" | "entries">("chart");
+  const [nurseryScope, setNurseryScope] = useState<"period" | "year" | "all">("period");
+  const [nurserySearch, setNurserySearch] = useState("");
+  const [nurseryEntriesLimit, setNurseryEntriesLimit] = useState(100);
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [lastManualRefreshAt, setLastManualRefreshAt] = useState<number | null>(null);
   const shopName = localStorage.getItem("greenlink_shopName") ?? "Shop";
 
   const today = format(new Date(), "yyyy-MM-dd");
   const currentYear = new Date().getFullYear();
+  const prevMonthlySalesYear = monthlySalesYear - 1;
   const dateRange = useCustom && customFrom && customTo
     ? { from: customFrom, to: customTo }
     : getDateRange(quickRange);
 
   const isToday = dateRange.from === today && dateRange.to === today;
-  const nurseryBucket: NurserySalesBucket = dateRangeDayCount(dateRange.from, dateRange.to) > 45 ? "month" : "day";
+  const nurseryDateRange = useMemo(() => {
+    if (nurseryScope === "year") return { from: `${currentYear}-01-01`, to: today };
+    if (nurseryScope === "all") return { from: "2020-01-01", to: today };
+    return dateRange;
+  }, [nurseryScope, currentYear, today, dateRange]);
+  const nurseryBucket: NurserySalesBucket = dateRangeDayCount(nurseryDateRange.from, nurseryDateRange.to) > 45 ? "month" : "day";
 
   const { data: voidedSales, refetch: refetchVoidedSales } = useQuery({
     queryKey: ["voided-sales", shopId, dateRange.from],
@@ -1118,39 +1179,39 @@ export default function Reports() {
 
   const { data: dashboard, isLoading: dashLoading, refetch: refetchDashboard } = useGetDashboard(
     { shopId, date: today },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } as any }
   );
 
   const { data: reportRange, isLoading: rangeLoading, refetch: refetchReportRange } = useGetReportRange(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId, staleTime: STALE, gcTime: GC } as any }
   );
 
   const { data: prevReport, refetch: refetchPrevReport } = useGetReportRange(
     { shopId, from: prevRange.from, to: prevRange.to },
-    { query: { enabled: !!shopId, staleTime: STALE * 10, gcTime: GC } }
+    { query: { enabled: !!shopId, staleTime: STALE * 10, gcTime: GC } as any }
   );
 
   const { data: topProducts, isLoading: topLoading, refetch: refetchTopProducts } = useGetTopProducts(
     { shopId, from: dateRange.from, to: dateRange.to, limit: 10 },
-    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } as any }
   );
 
   const { data: categoryData, isLoading: catLoading, refetch: refetchCategoryData } = useGetCategoryBreakdown(
     { shopId, from: dateRange.from, to: dateRange.to },
-    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId && showSalesDetails, staleTime: STALE, gcTime: GC } as any }
   );
 
   const { data: hourlyData, refetch: refetchHourlySales } = useGetHourlySales(
     { shopId, date: today },
-    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC } }
+    { query: { enabled: !!shopId && isToday, staleTime: STALE, gcTime: GC } as any }
   );
 
   const { data: productsData, refetch: refetchProductsData } = useListProducts(
     { shopId, limit: 3000 },
     // The full catalog is fetched only when the optional inventory panels open.
     // Other app pages can still warm and share the same query-cache entry.
-    { query: { enabled: !!shopId && showInventoryDetails, staleTime: 1_800_000, gcTime: 1_800_000 } }
+    { query: { enabled: !!shopId && showInventoryDetails, staleTime: 1_800_000, gcTime: 1_800_000 } as any }
   );
 
   const {
@@ -1169,16 +1230,59 @@ export default function Reports() {
   });
 
   const {
+    data: prevMonthlySales,
+    refetch: refetchPrevMonthlySales,
+  } = useQuery<MonthlySalesResponse>({
+    queryKey: ["reports", "monthly-sales", shopId, prevMonthlySalesYear],
+    queryFn: () => customFetch<MonthlySalesResponse>(
+      `/api/reports/monthly-sales?shopId=${encodeURIComponent(shopId)}&year=${prevMonthlySalesYear}`,
+    ),
+    enabled: !!shopId && showMonthlySales && prevMonthlySalesYear >= 2000,
+    staleTime: 30 * 60_000,
+    gcTime: GC,
+  });
+
+  const {
     data: nurserySales,
     isLoading: nurserySalesLoading,
     isError: nurserySalesError,
     refetch: refetchNurserySales,
   } = useQuery<NurserySalesResponse>({
-    queryKey: ["nursery-analytics-sales", shopId, dateRange.from, dateRange.to, nurseryBucket],
+    queryKey: ["nursery-analytics-sales", shopId, nurseryDateRange.from, nurseryDateRange.to, nurseryBucket],
     queryFn: () => customFetch<NurserySalesResponse>(
-      `/api/nursery/analytics?from=${encodeURIComponent(dateRange.from)}&to=${encodeURIComponent(dateRange.to)}&bucket=${nurseryBucket}`,
+      `/api/nursery/analytics?from=${encodeURIComponent(nurseryDateRange.from)}&to=${encodeURIComponent(nurseryDateRange.to)}&bucket=${nurseryBucket}`,
     ),
     enabled: !!shopId,
+    staleTime: STALE,
+    gcTime: GC,
+  });
+
+  const {
+    data: nurseryVarietyReport,
+    isLoading: nurseryVarietiesLoading,
+    isError: nurseryVarietiesError,
+    refetch: refetchNurseryVarieties,
+  } = useQuery<NurseryReportResponse>({
+    queryKey: ["nursery-analytics-varieties", shopId, nurseryDateRange.from, nurseryDateRange.to],
+    queryFn: () => customFetch<NurseryReportResponse>(
+      `/api/nursery/report?from=${encodeURIComponent(nurseryDateRange.from)}&to=${encodeURIComponent(nurseryDateRange.to)}&businessDate=${encodeURIComponent(today)}&page=1&pageSize=250`,
+    ),
+    enabled: !!shopId && nurseryView === "varieties",
+    staleTime: STALE,
+    gcTime: GC,
+  });
+
+  const {
+    data: nurseryEntriesReport,
+    isLoading: nurseryEntriesLoading,
+    isError: nurseryEntriesError,
+    refetch: refetchNurseryEntries,
+  } = useQuery<NurseryEntriesResponse>({
+    queryKey: ["nursery-analytics-entries", shopId, nurseryDateRange.from, nurseryDateRange.to, nurseryEntriesLimit],
+    queryFn: () => customFetch<NurseryEntriesResponse>(
+      `/api/nursery/entries?from=${encodeURIComponent(nurseryDateRange.from)}&to=${encodeURIComponent(nurseryDateRange.to)}&page=1&pageSize=${nurseryEntriesLimit}`,
+    ),
+    enabled: !!shopId && nurseryView === "entries",
     staleTime: STALE,
     gcTime: GC,
   });
@@ -1200,10 +1304,47 @@ export default function Reports() {
     };
   }), [nurserySales?.rows, nurseryBucket]);
 
-  const monthlySalesChartData = monthlySales?.monthlyBreakdown.map((month) => ({
-    ...month,
-    monthLabel: MONTH_LABELS[month.month - 1],
-  })) ?? [];
+  const filteredNurseryVarieties = useMemo(() => {
+    const rows = nurseryVarietyReport?.rows ?? [];
+    const q = nurserySearch.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r => r.varietyName.toLowerCase().includes(q));
+  }, [nurseryVarietyReport?.rows, nurserySearch]);
+
+  const filteredNurseryEntries = useMemo(() => {
+    const rows = nurseryEntriesReport?.rows ?? [];
+    const q = nurserySearch.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r =>
+      r.varietyName.toLowerCase().includes(q) ||
+      (r.customerName || "").toLowerCase().includes(q) ||
+      (r.customerPhone || "").toLowerCase().includes(q) ||
+      (r.sourceSupplierName || "").toLowerCase().includes(q)
+    );
+  }, [nurseryEntriesReport?.rows, nurserySearch]);
+
+  const monthlySalesChartData = useMemo(() => {
+    const currMap = new Map<number, { month: number; revenue: number; profit: number; salesCount: number }>();
+    (monthlySales?.monthlyBreakdown ?? []).forEach(m => currMap.set(m.month, m));
+    const prevMap = new Map<number, { month: number; revenue: number; profit: number; salesCount: number }>();
+    (prevMonthlySales?.monthlyBreakdown ?? []).forEach(m => prevMap.set(m.month, m));
+
+    return MONTH_LABELS.map((label, idx) => {
+      const mNum = idx + 1;
+      const curr = currMap.get(mNum) ?? { month: mNum, revenue: 0, profit: 0, salesCount: 0 };
+      const prev = prevMap.get(mNum) ?? { month: mNum, revenue: 0, profit: 0, salesCount: 0 };
+      return {
+        month: mNum,
+        monthLabel: label,
+        revenue: curr.revenue,
+        profit: curr.profit,
+        salesCount: curr.salesCount,
+        prevRevenue: prev.revenue,
+        prevProfit: prev.profit,
+        prevSalesCount: prev.salesCount,
+      };
+    });
+  }, [monthlySales?.monthlyBreakdown, prevMonthlySales?.monthlyBreakdown]);
 
   const refreshReportData = async () => {
     if (isManualRefreshing) return;
@@ -1216,8 +1357,10 @@ export default function Reports() {
         ...(isToday ? [refetchHourlySales(), refetchVoidedSales()] : []),
         ...(showSalesDetails ? [refetchTopProducts(), refetchCategoryData()] : []),
         ...(showInventoryDetails ? [refetchProductsData()] : []),
-        ...(showMonthlySales ? [refetchMonthlySales()] : []),
+        ...(showMonthlySales ? [refetchMonthlySales(), refetchPrevMonthlySales()] : []),
         refetchNurserySales(),
+        ...(nurseryView === "varieties" ? [refetchNurseryVarieties()] : []),
+        ...(nurseryView === "entries" ? [refetchNurseryEntries()] : []),
       ]);
       setLastManualRefreshAt(Date.now());
     } finally {
@@ -1228,27 +1371,27 @@ export default function Reports() {
   const lowMarginProducts = useMemo(() => {
     const all = productsData?.products ?? [];
     return all
-      .filter(p => {
+      .filter((p: any) => {
         const buy = p.purchasePrice ?? 0;
         const sell = p.sellingPrice ?? 0;
         return sell > 0 && buy > 0;
       })
-      .map(p => {
+      .map((p: any) => {
         const margin = ((p.sellingPrice! - p.purchasePrice!) / p.sellingPrice!) * 100;
         return { ...p, margin };
       })
-      .sort((a, b) => a.margin - b.margin)
+      .sort((a: any, b: any) => a.margin - b.margin)
       .slice(0, 10);
   }, [productsData]);
 
   const inventoryValue = useMemo(() => {
     return (productsData?.products ?? []).reduce(
-      (s, p) => s + (p.stockQty ?? 0) * (p.purchasePrice ?? 0), 0
+      (s: number, p: any) => s + (p.stockQty ?? 0) * (p.purchasePrice ?? 0), 0
     );
   }, [productsData]);
 
   const activeProductCount = useMemo(
-    () => (productsData?.products ?? []).filter(p => p.isActive && (p.stockQty ?? 0) > 0).length,
+    () => (productsData?.products ?? []).filter((p: any) => p.isActive && (p.stockQty ?? 0) > 0).length,
     [productsData]
   );
 
@@ -1304,82 +1447,122 @@ export default function Reports() {
         />
       )}
 
-      {/* Header */}
-      <div className="reports-header sticky top-0 z-20 bg-background border-b border-border px-4 py-3 space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-foreground">Analytics</h1>
-            <p className="text-xs text-muted-foreground">{format(new Date(), "EEEE, d MMMM yyyy")}</p>
+      {/* Executive Command Header */}
+      <header className="reports-header border-b border-border/70 bg-background/90 backdrop-blur-md px-4 sm:px-6 py-4 space-y-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3 max-w-[1520px] mx-auto w-full">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
+              <span className="inline-flex items-center gap-1 text-primary">
+                <Activity className="h-3 w-3" />
+                Executive Intelligence
+              </span>
+              <span className="text-border">•</span>
+              <span className="truncate">{shopName}</span>
+            </div>
+            <div className="flex flex-wrap items-baseline gap-2.5">
+              <h1 className="font-display text-2xl sm:text-[28px] font-bold tracking-normal text-foreground leading-none">
+                Analytics
+              </h1>
+              <span className="text-xs text-muted-foreground font-medium">
+                {format(new Date(), "EEEE, d MMMM yyyy")}
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="outline" className="reports-status-badge text-muted-foreground border-border/80 text-[10px] font-semibold hidden sm:inline-flex">
+              Manual sync
+            </Badge>
             <button
               type="button"
               onClick={() => void refreshReportData()}
               disabled={isManualRefreshing}
               title="Refresh the analytics reports now"
-              className="reports-header-refresh flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border bg-card text-foreground text-xs font-semibold hover:border-primary/50 disabled:opacity-60 transition-colors"
+              className="reports-header-refresh inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border/80 bg-card text-foreground text-xs font-semibold hover:border-primary/50 hover:bg-muted/40 disabled:opacity-60 transition-colors"
             >
               <RefreshCw className={cn("h-3.5 w-3.5", isManualRefreshing && "animate-spin")} />
               {isManualRefreshing ? "Updating" : lastManualRefreshAt ? `Updated ${format(lastManualRefreshAt, "h:mm a")}` : "Refresh"}
             </button>
             <button
               onClick={() => setShowCashUp(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 shadow-sm transition-colors"
             >
               <ClipboardCheck className="h-3.5 w-3.5" />
               Cash Up
             </button>
-            <Badge variant="outline" className="reports-status-badge text-muted-foreground border-border text-[10px]">
-              No polling
-            </Badge>
           </div>
         </div>
 
-        <div className="flex gap-1.5 flex-wrap">
-          {QUICK_RANGES.map(r => (
+        <div className="flex flex-wrap items-center justify-between gap-2.5 max-w-[1520px] mx-auto w-full">
+          <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-muted/50 border border-border/70 flex-wrap">
+            {QUICK_RANGES.map(r => (
+              <button
+                key={r.value}
+                onClick={() => { setQuickRange(r.value); setUseCustom(false); }}
+                className={cn(
+                  "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                  !useCustom && quickRange === r.value
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-background/60"
+                )}
+              >
+                {r.label}
+              </button>
+            ))}
             <button
-              key={r.value}
-              onClick={() => { setQuickRange(r.value); setUseCustom(false); }}
+              onClick={() => setUseCustom(true)}
               className={cn(
-                "px-3 py-1.5 rounded-full text-xs font-semibold transition-colors border",
-                !useCustom && quickRange === r.value
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-background text-muted-foreground border-border hover:bg-muted"
+                "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                useCustom
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-background/60"
               )}
             >
-              {r.label}
+              Custom
             </button>
-          ))}
-          <button
-            onClick={() => setUseCustom(true)}
-            className={cn(
-              "px-3 py-1.5 rounded-full text-xs font-semibold transition-colors border",
-              useCustom ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground border-border hover:bg-muted"
-            )}
-          >
-            Custom
-          </button>
+          </div>
+
+          <span className="text-xs text-muted-foreground font-medium tabular-nums">
+            Showing:{" "}
+            <strong className="text-foreground">
+              {dateRange.from === dateRange.to
+                ? format(new Date(`${dateRange.from}T12:00:00`), "d MMM yyyy")
+                : `${format(new Date(`${dateRange.from}T12:00:00`), "d MMM")} – ${format(new Date(`${dateRange.to}T12:00:00`), "d MMM yyyy")}`}
+            </strong>
+          </span>
         </div>
 
         {useCustom && (
-          <div className="flex items-center gap-2">
-            <input type="date" className="h-9 px-3 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring flex-1" value={customFrom} onChange={e => setCustomFrom(e.target.value)} max={today} />
+          <div className="flex items-center gap-2 max-w-[1520px] mx-auto w-full sm:max-w-md">
+            <input
+              type="date"
+              className="h-9 px-3 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring flex-1"
+              value={customFrom}
+              onChange={e => setCustomFrom(e.target.value)}
+              max={today}
+            />
             <span className="text-sm text-muted-foreground shrink-0">→</span>
-            <input type="date" className="h-9 px-3 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring flex-1" value={customTo} onChange={e => setCustomTo(e.target.value)} max={today} />
+            <input
+              type="date"
+              className="h-9 px-3 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring flex-1"
+              value={customTo}
+              onChange={e => setCustomTo(e.target.value)}
+              max={today}
+            />
           </div>
         )}
-      </div>
+      </header>
 
-      <div className="reports-content p-4 space-y-4 pb-8">
+      <div className="reports-content p-4 sm:p-6 space-y-5 pb-10">
 
-        {/* KPI Grid */}
-        <div className="reports-kpis grid grid-cols-2 gap-3">
+        {/* ── 4-Card KPI Executive Strip ── */}
+        <div className="reports-kpis grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <KpiCard
             label="Revenue"
             value={formatKES(revenue)}
             sub={`${salesCount} transaction${salesCount !== 1 ? "s" : ""}`}
             icon={TrendingUp}
-            accentClass="border-primary/30 bg-primary/5 text-primary"
+            accentClass="border-primary/30 bg-primary/10 text-primary"
             isLoading={statsLoading}
             changePct={revChangePct}
           />
@@ -1388,7 +1571,7 @@ export default function Reports() {
             value={formatKES(profit)}
             sub={`${profitPct.toFixed(1)}% margin`}
             icon={BarChart2}
-            accentClass="border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400"
+            accentClass="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
             isLoading={statsLoading}
             changePct={profitChangePct}
           />
@@ -1397,7 +1580,7 @@ export default function Reports() {
             value={formatKES(avgTxValue)}
             sub="per transaction"
             icon={Percent}
-            accentClass="border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400"
+            accentClass="border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400"
             isLoading={statsLoading}
             changePct={avgTxChangePct}
           />
@@ -1406,38 +1589,447 @@ export default function Reports() {
             value={formatKES(cashCollected)}
             sub={debtSales > 0 ? `${formatKES(debtSales)} issued on credit` : "debt payments received"}
             icon={CreditCard}
-            accentClass="border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950 text-orange-600 dark:text-orange-400"
+            accentClass="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
             isLoading={statsLoading}
             changePct={cashCollectedChangePct}
           />
         </div>
 
-        <Card className="reports-nursery shadow-none" data-testid="card-nursery-analytics">
-          <CardHeader className="flex-row items-start justify-between gap-3 pb-2 pt-4 px-4">
+        {/* ── Primary 12-Column Bento Telemetry Grid ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          {/* Left Primary Charts (8 cols) */}
+          <div className="lg:col-span-8 flex flex-col gap-4 min-w-0">
+            {/* Revenue + Profit + Transaction Count Chart */}
+            <Card className="reports-trend rounded-2xl border-border/80 bg-card/95 shadow-none">
+              <CardHeader className="pb-2 pt-4 px-4 sm:px-5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <CardTitle className="font-display text-sm sm:text-base font-bold tracking-normal">Sales Trend</CardTitle>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Daily revenue, gross profit, and transaction volume</p>
+                  </div>
+                  <div className="flex items-center gap-3.5 text-[11px] font-medium text-muted-foreground">
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-primary inline-block" />Revenue</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />Profit</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-muted-foreground/40 inline-block" />Tx Count</span>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="px-2 sm:px-4 pb-4">
+                {rangeLoading ? (
+                  <div className="h-64 flex items-center justify-center px-2">
+                    <Skeleton className="h-56 w-full rounded-xl" />
+                  </div>
+                ) : !reportRange?.dailyBreakdown || reportRange.dailyBreakdown.length === 0 ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground">
+                    <div className="text-center">
+                      <BarChart2 className="h-8 w-8 mx-auto opacity-20 mb-2" />
+                      <p className="text-xs font-medium">No sales data for this period</p>
+                      <p className="text-xs opacity-60">Try a wider date range</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={reportRange.dailyBreakdown} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="profGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.22} />
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                        <XAxis
+                          dataKey="date"
+                          tickFormatter={v => { try { return format(new Date(v + "T00:00:00"), "d"); } catch { return v; } }}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false} tickLine={false}
+                          interval={reportRange.dailyBreakdown.length > 20 ? 2 : 0}
+                        />
+                        <YAxis
+                          yAxisId="left"
+                          tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false} tickLine={false}
+                        />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false} tickLine={false}
+                          allowDecimals={false}
+                          width={24}
+                        />
+                        <Tooltip
+                          formatter={(v: number, name: string) =>
+                            name === "salesCount" ? [v, "Transactions"] :
+                            name === "revenue" ? [formatKES(v), "Revenue"] :
+                            [formatKES(v), "Profit"]
+                          }
+                          labelFormatter={l => { try { return format(new Date(l + "T00:00:00"), "EEEE, MMM d yyyy"); } catch { return l; } }}
+                          contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "10px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
+                        />
+                        <Bar yAxisId="right" dataKey="salesCount" fill="hsl(var(--muted-foreground))" radius={[3, 3, 0, 0]} barSize={7} opacity={0.25} />
+                        <Area yAxisId="left" type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2.5} fill="url(#revGrad)" activeDot={{ r: 4, fill: "hsl(var(--primary))", strokeWidth: 0 }} isAnimationActive={false} />
+                        <Area yAxisId="left" type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={1.75} fill="url(#profGrad)" activeDot={{ r: 3.5, fill: "#10b981", strokeWidth: 0 }} isAnimationActive={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {reportRange?.dailyBreakdown && reportRange.dailyBreakdown.length > 0 && (() => {
+                  const best = (reportRange.dailyBreakdown as any[]).reduce((b: any, d: any) => d.revenue > b.revenue ? d : b);
+                  const total = (reportRange.dailyBreakdown as any[]).reduce((s: number, d: any) => s + d.salesCount, 0);
+                  const activeDays = (reportRange.dailyBreakdown as any[]).filter((d: any) => d.salesCount > 0).length;
+                  return (
+                    <div className="grid grid-cols-3 gap-2.5 px-2 mt-3">
+                      <div className="rounded-xl border border-primary/25 bg-primary/8 px-3 py-2">
+                        <p className="text-[10px] text-primary font-bold uppercase tracking-wider">Best Day</p>
+                        <p className="text-xs sm:text-sm font-bold text-foreground mt-0.5 truncate">
+                          {(() => { try { return format(new Date(best.date + "T00:00:00"), "EEE, d MMM"); } catch { return best.date; } })()}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-muted/35 px-3 py-2">
+                        <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Total Sales</p>
+                        <p className="text-xs sm:text-sm font-bold tabular-nums mt-0.5">{total} orders</p>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-muted/35 px-3 py-2">
+                        <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Avg / Active Day</p>
+                        <p className="text-xs sm:text-sm font-bold font-mono tabular-nums mt-0.5">
+                          {activeDays > 0 ? formatKES(Math.round(revenue / activeDays)) : "—"}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+
+            {/* Hourly Activity — today only */}
+            {isToday && (
+              <Card className="reports-hourly rounded-2xl border-border/80 bg-card/95 shadow-none">
+                <CardHeader className="pb-2 pt-4 px-4 sm:px-5">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="font-display text-sm sm:text-base font-bold tracking-normal flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-sky-500" />
+                      Hourly Activity
+                    </CardTitle>
+                    {peakHour && peakHour.salesCount > 0 && (
+                      <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-primary/12 text-primary border border-primary/25">
+                        Peak: {peakHour.hour < 12 ? `${peakHour.hour}am` : peakHour.hour === 12 ? "12pm" : `${peakHour.hour - 12}pm`}
+                      </span>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="px-2 sm:px-4 pb-4">
+                  {!hourlyData ? (
+                    <Skeleton className="h-36 w-full rounded-xl mx-2" />
+                  ) : hourlyChartData.every((h: any) => h.salesCount === 0) ? (
+                    <div className="h-36 flex items-center justify-center text-muted-foreground">
+                      <div className="text-center">
+                        <Clock className="h-6 w-6 mx-auto opacity-20 mb-2" />
+                        <p className="text-xs">No sales recorded today yet</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-36">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={hourlyChartData} margin={{ top: 6, right: 8, left: -24, bottom: 0 }} barSize={14}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                          <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                          <Tooltip
+                            formatter={(v: number) => [v, "Sales"]}
+                            contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "10px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
+                          />
+                          <Bar dataKey="salesCount" radius={[4, 4, 0, 0]}>
+                            {hourlyChartData.map((entry: any, idx: number) => (
+                              <Cell
+                                key={idx}
+                                fill={entry.hour === peakHour?.hour ? "hsl(var(--primary))" : "hsl(var(--muted-foreground) / 0.25)"}
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* Right Insights Rail (4 cols) */}
+          <div className="lg:col-span-4 flex flex-col gap-4 min-w-0">
+            {/* Payment Method Breakdown */}
+            {(bankSales > 0 || cashOnlySales > 0) && (
+              <div className="reports-payment rounded-2xl border border-border/80 bg-card/95 overflow-hidden">
+                <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between">
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Payment Methods</p>
+                  <Wallet className="h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+                <div className="grid grid-cols-2 divide-x divide-border/70">
+                  <div className="px-4 py-3.5 text-center">
+                    <div className="flex items-center justify-center gap-1.5 mb-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Cash</p>
+                    </div>
+                    <p className="font-display text-lg font-bold tabular-nums text-foreground">
+                      {statsLoading ? "—" : formatKES(cashOnlySales)}
+                    </p>
+                    {(cashOnlySales + bankSales) > 0 && (
+                      <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5 tabular-nums">
+                        {(((cashOnlySales) / (cashOnlySales + bankSales)) * 100).toFixed(0)}% of sales
+                      </p>
+                    )}
+                  </div>
+                  <div className="px-4 py-3.5 text-center">
+                    <div className="flex items-center justify-center gap-1.5 mb-1">
+                      <span className="w-2 h-2 rounded-full bg-sky-500" />
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">M-Pesa / Bank</p>
+                    </div>
+                    <p className="font-display text-lg font-bold tabular-nums text-foreground">
+                      {statsLoading ? "—" : formatKES(bankSales)}
+                    </p>
+                    {(cashOnlySales + bankSales) > 0 && (
+                      <p className="text-[11px] font-semibold text-sky-600 dark:text-sky-400 mt-0.5 tabular-nums">
+                        {((bankSales / (cashOnlySales + bankSales)) * 100).toFixed(0)}% of sales
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {(cashOnlySales + bankSales) > 0 && (
+                  <div className="px-4 pb-3.5">
+                    <div className="h-2 rounded-full bg-sky-500/80 overflow-hidden flex">
+                      <div
+                        className="h-full bg-emerald-500 transition-all"
+                        style={{ width: `${(cashOnlySales / (cashOnlySales + bankSales)) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Period Comparison */}
+            {prevReport && (
+              <Card className="reports-comparison rounded-2xl border-border/80 bg-card/95 shadow-none">
+                <CardHeader className="pb-2.5 pt-4 px-4">
+                  <CardTitle className="font-display text-sm font-bold flex items-center gap-2 tracking-tight">
+                    <Calendar className="h-4 w-4 text-sky-500" />
+                    vs {useCustom ? "Previous Period" : quickRange === "today" ? "Yesterday" : quickRange === "week" ? "Last Week" : "Last Month"}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 pb-4">
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      {
+                        label: "Revenue",
+                        current: revenue,
+                        prev: prevReport.totalRevenue ?? 0,
+                        format: formatKES,
+                        accent: "text-primary",
+                      },
+                      {
+                        label: "Profit",
+                        current: profit,
+                        prev: prevReport.totalProfit ?? 0,
+                        format: formatKES,
+                        accent: "text-emerald-600 dark:text-emerald-400",
+                      },
+                      {
+                        label: "Sales",
+                        current: salesCount,
+                        prev: prevReport.salesCount ?? 0,
+                        format: (v: number) => String(v),
+                        accent: "text-sky-600 dark:text-sky-400",
+                      },
+                    ].map(({ label, current, prev, format: fmt, accent }) => {
+                      const diff = current - prev;
+                      const pct = prev > 0 ? (diff / prev) * 100 : current > 0 ? 100 : 0;
+                      const up = diff >= 0;
+                      return (
+                        <div key={label} className="bg-muted/35 border border-border/60 rounded-xl p-2.5 text-center">
+                          <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
+                          <p className={cn("text-xs sm:text-sm font-bold font-mono tabular-nums truncate", accent)}>{fmt(current)}</p>
+                          <div className={cn(
+                            "flex items-center justify-center gap-0.5 mt-1 text-[10px] font-bold tabular-nums",
+                            up ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+                          )}>
+                            {up ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />}
+                            {Math.abs(pct).toFixed(1)}%
+                          </div>
+                          <p className="text-[9px] text-muted-foreground mt-0.5 truncate">{fmt(prev)} prev</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {revenue > 0 && (prevReport.totalRevenue ?? 0) > 0 && (() => {
+                    const maxRev = Math.max(revenue, prevReport.totalRevenue ?? 0);
+                    const thisPct = (revenue / maxRev) * 100;
+                    const prevPct = ((prevReport.totalRevenue ?? 0) / maxRev) * 100;
+                    return (
+                      <div className="mt-3.5 space-y-2 pt-3 border-t border-border/60">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">This period</span>
+                            <span className="text-[11px] font-mono font-semibold text-foreground tabular-nums">{formatKES(revenue)}</span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full bg-primary rounded-full" style={{ width: `${thisPct}%` }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Previous period</span>
+                            <span className="text-[11px] font-mono text-muted-foreground tabular-nums">{formatKES(prevReport.totalRevenue ?? 0)}</span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full bg-muted-foreground/35 rounded-full" style={{ width: `${prevPct}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Outstanding debts */}
+            {dashboard?.pendingDebtsTotal != null && dashboard.pendingDebtsTotal > 0 && (
+              <Card className="reports-debt rounded-2xl shadow-none border-destructive/35 bg-destructive/5">
+                <CardContent className="p-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-destructive/12 border border-destructive/25 flex items-center justify-center shrink-0">
+                      <TrendingDown className="h-4 w-4 text-destructive" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-destructive">Outstanding Debt</p>
+                      <p className="text-xs text-muted-foreground">Pending customer collection</p>
+                    </div>
+                  </div>
+                  <span className="font-display font-bold text-base tabular-nums text-destructive shrink-0">
+                    {formatKES(dashboard.pendingDebtsTotal)}
+                  </span>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Inventory health */}
+            <div className="reports-stock-alerts grid grid-cols-2 gap-3">
+              <Card className="rounded-2xl shadow-none border-destructive/35 bg-card/95">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] uppercase tracking-wider font-bold text-destructive">Out of Stock</p>
+                    <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                  </div>
+                  {dashLoading
+                    ? <Skeleton className="h-8 w-12 mt-1" />
+                    : <p className="font-display text-3xl font-bold text-destructive tabular-nums">{dashboard?.outOfStockCount ?? 0}</p>}
+                  <p className="text-xs text-muted-foreground mt-1">need restocking</p>
+                </CardContent>
+              </Card>
+              <Card className="rounded-2xl shadow-none border-amber-500/35 bg-card/95">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] uppercase tracking-wider font-bold text-amber-600 dark:text-amber-400">Low Stock</p>
+                    <Package className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  {dashLoading
+                    ? <Skeleton className="h-8 w-12 mt-1" />
+                    : <p className="font-display text-3xl font-bold text-amber-600 dark:text-amber-400 tabular-nums">{dashboard?.lowStockCount ?? 0}</p>}
+                  <p className="text-xs text-muted-foreground mt-1">below threshold</p>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Nursery Plant Sales Spotlight & Full Records ── */}
+        <Card className="reports-nursery rounded-2xl border-border/80 bg-card/95 shadow-none" data-testid="card-nursery-analytics">
+          <CardHeader className="flex-row items-start justify-between gap-3 pb-3 pt-4 px-4 sm:px-5 border-b border-border/60 flex-wrap">
             <div className="flex min-w-0 items-start gap-3">
-              <div className="mt-0.5 rounded-lg border border-primary/20 bg-primary/10 p-2 text-primary">
+              <div className="mt-0.5 rounded-xl border border-primary/25 bg-primary/10 p-2 text-primary shrink-0">
                 <Sprout className="h-4 w-4" />
               </div>
               <div className="min-w-0">
-                <CardTitle className="text-sm font-bold">Nursery plant sales</CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {dateRange.from === dateRange.to ? format(new Date(`${dateRange.from}T12:00:00`), "d MMM yyyy") : `${format(new Date(`${dateRange.from}T12:00:00`), "d MMM yyyy")} – ${format(new Date(`${dateRange.to}T12:00:00`), "d MMM yyyy")}`}
+                <CardTitle className="font-display text-sm sm:text-base font-bold tracking-normal">Nursery plant sales</CardTitle>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {nurseryScope === "all"
+                    ? `All recorded history (${format(new Date(`${nurseryDateRange.from}T12:00:00`), "d MMM yyyy")} – ${format(new Date(`${nurseryDateRange.to}T12:00:00`), "d MMM yyyy")})`
+                    : nurseryDateRange.from === nurseryDateRange.to
+                    ? format(new Date(`${nurseryDateRange.from}T12:00:00`), "d MMM yyyy")
+                    : `${format(new Date(`${nurseryDateRange.from}T12:00:00`), "d MMM yyyy")} – ${format(new Date(`${nurseryDateRange.to}T12:00:00`), "d MMM yyyy")}`}
                 </p>
               </div>
             </div>
-            <Badge variant="outline" className="shrink-0 border-border text-muted-foreground">
-              {nurseryBucket === "month" ? "Monthly view" : "Daily view"}
-            </Badge>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center gap-1 rounded-xl border border-border/70 bg-muted/45 p-1" role="group" aria-label="Nursery period">
+                {([
+                  { id: "period", label: "Page range" },
+                  { id: "year", label: `This Year (${currentYear})` },
+                  { id: "all", label: "All Time" },
+                ] as { id: "period" | "year" | "all"; label: string }[]).map(s => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => { setNurseryScope(s.id); setNurseryEntriesLimit(100); }}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all",
+                      nurseryScope === s.id
+                        ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/35"
+                        : "text-muted-foreground hover:text-foreground border border-transparent"
+                    )}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="inline-flex items-center gap-1 rounded-xl border border-border/70 bg-muted/45 p-1">
+                {([
+                  { id: "chart", label: nurseryBucket === "month" ? "Monthly chart" : "Daily chart" },
+                  { id: "varieties", label: "Plants sold" },
+                  { id: "entries", label: "Sales record" },
+                ] as { id: "chart" | "varieties" | "entries"; label: string }[]).map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setNurseryView(tab.id)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all",
+                      nurseryView === tab.id
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <Link
+                href="/nursery"
+                className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-muted/35 px-2.5 py-1.5 text-[11px] font-semibold text-foreground hover:border-primary/40 hover:text-primary transition-colors"
+              >
+                Nursery Register
+                <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            </div>
           </CardHeader>
-          <CardContent className="space-y-4 px-4 pb-4">
+          <CardContent className="space-y-4 p-4 sm:p-5">
             {nurserySalesLoading && !nurserySales ? (
               <div className="space-y-3" aria-label="Loading nursery analytics">
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                   <Skeleton className="h-20 rounded-xl" />
                   <Skeleton className="h-20 rounded-xl" />
-                  <Skeleton className="col-span-2 h-20 rounded-xl sm:col-span-1" />
+                  <Skeleton className="h-20 rounded-xl" />
+                  <Skeleton className="h-20 rounded-xl" />
                 </div>
-                <Skeleton className="h-48 rounded-xl" />
+                <Skeleton className="h-52 rounded-xl" />
               </div>
             ) : nurserySalesError && !nurserySales ? (
               <div className="flex flex-col items-center gap-3 py-8 text-center">
@@ -1446,62 +2038,243 @@ export default function Reports() {
               </div>
             ) : nurserySales ? (
               <>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <div className="min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Plant sales value</p>
-                    <p data-testid="text-nursery-analytics-revenue" className="mt-1 truncate text-lg font-bold tabular-nums text-primary">{formatKES(nurserySalesTotals.totalRevenueCents / 100)}</p>
+                <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+                  <div className="min-w-0 rounded-xl border border-primary/25 bg-primary/8 p-3.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Plant sales value</p>
+                    <p data-testid="text-nursery-analytics-revenue" className="mt-1 truncate font-display text-lg sm:text-xl font-bold tabular-nums text-foreground">
+                      {formatKES(nurserySalesTotals.totalRevenueCents / 100)}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">Total across period</p>
                   </div>
-                  <div className="min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Plants sold</p>
-                    <p data-testid="text-nursery-analytics-seedlings" className="mt-1 text-lg font-bold tabular-nums">{nurserySalesTotals.seedlingsSold.toLocaleString()}</p>
-                  </div>
-                  <div className="col-span-2 min-w-0 rounded-xl border border-border/70 bg-muted/20 p-3 sm:col-span-1">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Received · On credit</p>
-                    <p data-testid="text-nursery-analytics-payments" className="mt-1 truncate text-sm font-bold tabular-nums">
-                      {formatKES((nurserySalesTotals.cashCents + nurserySalesTotals.mpesaCents) / 100)}
-                      <span className="px-1.5 text-muted-foreground">·</span>
-                      {formatKES(nurserySalesTotals.creditCents / 100)}
+
+                  <div className="min-w-0 rounded-xl border border-emerald-500/30 bg-emerald-500/8 p-3.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Cash received</p>
+                    <p className="mt-1 truncate font-display text-lg sm:text-xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {formatKES(nurserySalesTotals.cashCents / 100)}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground tabular-nums truncate">
+                      M-Pesa: {formatKES(nurserySalesTotals.mpesaCents / 100)}
                     </p>
                   </div>
+
+                  <div className="min-w-0 rounded-xl border border-border/70 bg-muted/25 p-3.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Plants sold</p>
+                    <p data-testid="text-nursery-analytics-seedlings" className="mt-1 font-display text-lg sm:text-xl font-bold tabular-nums">
+                      {nurserySalesTotals.seedlingsSold.toLocaleString()}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">Total seedlings & plants</p>
+                  </div>
+
+                  <div className="min-w-0 rounded-xl border border-border/70 bg-muted/25 p-3.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Received · On credit</p>
+                    <p data-testid="text-nursery-analytics-payments" className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-sm sm:text-base font-bold font-mono tabular-nums leading-snug">
+                      <span>{formatKES((nurserySalesTotals.cashCents + nurserySalesTotals.mpesaCents) / 100)}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span className="text-amber-600 dark:text-amber-400">{formatKES(nurserySalesTotals.creditCents / 100)}</span>
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground tabular-nums">Cash+M-Pesa vs Credit</p>
+                  </div>
                 </div>
-                {nurserySalesChartData.length === 0 ? (
-                  <p data-testid="text-nursery-analytics-empty" className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No nursery plant sales in this period.</p>
-                ) : (
-                  <div className="h-52 sm:h-60" aria-label={nurseryBucket === "month" ? "Monthly nursery plant sales chart" : "Daily nursery plant sales chart"}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={nurserySalesChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                        <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="label"
-                          interval={nurserySalesChartData.length > 14 ? "preserveStartEnd" : 0}
-                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          width={48}
-                          tickFormatter={value => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : String(value)}
-                          tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <Tooltip
-                          formatter={(value: number) => [formatKES(value), "Plant sales"]}
-                          contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
-                        />
-                        <Bar dataKey="revenue" name="Plant sales" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
-                      </BarChart>
-                    </ResponsiveContainer>
+
+                {nurseryView === "chart" && (
+                  nurserySalesChartData.length === 0 ? (
+                    <p data-testid="text-nursery-analytics-empty" className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No nursery plant sales in this period.</p>
+                  ) : (
+                    <div className="h-52 sm:h-60" aria-label={nurseryBucket === "month" ? "Monthly nursery plant sales chart" : "Daily nursery plant sales chart"}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={nurserySalesChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                          <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                          <XAxis
+                            dataKey="label"
+                            interval={nurserySalesChartData.length > 14 ? "preserveStartEnd" : 0}
+                            tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            width={48}
+                            tickFormatter={value => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : String(value)}
+                            tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            formatter={(value: number) => [formatKES(value), "Plant sales"]}
+                            contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "10px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
+                          />
+                          <Bar dataKey="revenue" name="Plant sales" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )
+                )}
+
+                {(nurseryView === "varieties" || nurseryView === "entries") && (
+                  <div className="space-y-3">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <input
+                        type="search"
+                        value={nurserySearch}
+                        onChange={e => setNurserySearch(e.target.value)}
+                        placeholder={nurseryView === "varieties" ? "Filter plant varieties sold…" : "Filter records by plant variety, customer, or supplier…"}
+                        className="h-9 w-full rounded-xl border border-border/80 bg-background/70 pl-9 pr-8 text-xs focus:outline-none focus:border-primary"
+                      />
+                      {nurserySearch && (
+                        <button
+                          type="button"
+                          onClick={() => setNurserySearch("")}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {nurseryView === "varieties" ? (
+                      nurseryVarietiesLoading && !nurseryVarietyReport ? (
+                        <div className="space-y-2"><Skeleton className="h-10 rounded-xl" /><Skeleton className="h-10 rounded-xl" /><Skeleton className="h-10 rounded-xl" /></div>
+                      ) : nurseryVarietiesError ? (
+                        <div className="flex items-center justify-between rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs">
+                          <span className="text-destructive">Could not load plant varieties sold.</span>
+                          <Button type="button" size="sm" variant="outline" onClick={() => void refetchNurseryVarieties()}>Retry</Button>
+                        </div>
+                      ) : filteredNurseryVarieties.length === 0 ? (
+                        <p className="rounded-xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">No plant varieties sold match this period.</p>
+                      ) : (
+                        <div className="overflow-x-auto rounded-xl border border-border/80 bg-background/40 max-h-[380px] overflow-y-auto">
+                          <table className="w-full border-collapse text-left text-xs">
+                            <thead className="sticky top-0 border-b border-border/70 bg-card/95 backdrop-blur-sm text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              <tr>
+                                <th className="py-2.5 pl-4 pr-3">Plant Variety</th>
+                                <th className="py-2.5 px-3 text-right whitespace-nowrap">Plants Sold</th>
+                                <th className="py-2.5 px-3 text-right whitespace-nowrap hidden sm:table-cell">Cash · M-Pesa · Credit</th>
+                                <th className="py-2.5 pl-3 pr-4 text-right whitespace-nowrap">Revenue</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border/50">
+                              {filteredNurseryVarieties.map((row, idx) => (
+                                <tr key={row.varietyKey || row.varietyId || idx} className="hover:bg-muted/25">
+                                  <td className="py-2.5 pl-4 pr-3 font-semibold text-foreground">{row.varietyName}</td>
+                                  <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">{Number(row.quantity || 0).toLocaleString()}</td>
+                                  <td className="py-2.5 px-3 text-right font-mono text-[11px] text-muted-foreground tabular-nums hidden sm:table-cell whitespace-nowrap">
+                                    {formatKES(Number(row.cashCents || 0) / 100)} · {formatKES(Number(row.mpesaCents || 0) / 100)} · {formatKES(Number(row.creditCents || 0) / 100)}
+                                  </td>
+                                  <td className="py-2.5 pl-3 pr-4 text-right font-mono font-bold text-primary tabular-nums whitespace-nowrap">
+                                    {formatKES(Number(row.totalAmountCents || 0) / 100)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot className="sticky bottom-0 border-t border-border bg-card/95 backdrop-blur-sm font-bold">
+                              <tr>
+                                <td className="py-2.5 pl-4 pr-3 text-foreground">
+                                  TOTAL ({filteredNurseryVarieties.length} {filteredNurseryVarieties.length === 1 ? "variety" : "varieties"})
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono tabular-nums text-foreground">
+                                  {filteredNurseryVarieties.reduce((s, r) => s + Number(r.quantity || 0), 0).toLocaleString()}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono text-[11px] text-emerald-500 tabular-nums hidden sm:table-cell whitespace-nowrap">
+                                  Cash {formatKES(filteredNurseryVarieties.reduce((s, r) => s + Number(r.cashCents || 0), 0) / 100)} · M-Pesa {formatKES(filteredNurseryVarieties.reduce((s, r) => s + Number(r.mpesaCents || 0), 0) / 100)} · Credit {formatKES(filteredNurseryVarieties.reduce((s, r) => s + Number(r.creditCents || 0), 0) / 100)}
+                                </td>
+                                <td className="py-2.5 pl-3 pr-4 text-right font-mono text-primary tabular-nums whitespace-nowrap">
+                                  {formatKES(filteredNurseryVarieties.reduce((s, r) => s + Number(r.totalAmountCents || 0), 0) / 100)}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      )
+                    ) : (
+                      nurseryEntriesLoading && !nurseryEntriesReport ? (
+                        <div className="space-y-2"><Skeleton className="h-10 rounded-xl" /><Skeleton className="h-10 rounded-xl" /><Skeleton className="h-10 rounded-xl" /></div>
+                      ) : nurseryEntriesError ? (
+                        <div className="flex items-center justify-between rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs">
+                          <span className="text-destructive">Could not load nursery sales records.</span>
+                          <Button type="button" size="sm" variant="outline" onClick={() => void refetchNurseryEntries()}>Retry</Button>
+                        </div>
+                      ) : filteredNurseryEntries.length === 0 ? (
+                        <p className="rounded-xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">No individual nursery plant sales recorded in this period.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="overflow-x-auto rounded-xl border border-border/80 bg-background/40 max-h-[380px] overflow-y-auto">
+                            <table className="w-full border-collapse text-left text-xs">
+                              <thead className="sticky top-0 border-b border-border/70 bg-card/95 backdrop-blur-sm text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                                <tr>
+                                  <th className="py-2.5 pl-4 pr-3 whitespace-nowrap">Date</th>
+                                  <th className="py-2.5 px-3">Plant & Source</th>
+                                  <th className="py-2.5 px-3">Customer</th>
+                                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Qty</th>
+                                  <th className="py-2.5 px-3 whitespace-nowrap">Payment</th>
+                                  <th className="py-2.5 pl-3 pr-4 text-right whitespace-nowrap">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border/50">
+                                {filteredNurseryEntries.map(entry => (
+                                  <tr key={entry.id} className="hover:bg-muted/25">
+                                    <td className="py-2.5 pl-4 pr-3 font-mono text-[11px] text-muted-foreground whitespace-nowrap">
+                                      {format(new Date(`${entry.businessDate}T12:00:00`), "d MMM yy")}
+                                    </td>
+                                    <td className="py-2.5 px-3">
+                                      <p className="font-semibold text-foreground">{entry.varietyName}</p>
+                                      {entry.sourceSupplierName && (
+                                        <p className="text-[10px] text-muted-foreground">From: {entry.sourceSupplierName}</p>
+                                      )}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-muted-foreground">
+                                      {entry.customerName || "Walk-in"}
+                                      {entry.customerPhone ? <span className="ml-1 font-mono text-[10px]">({entry.customerPhone})</span> : null}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums">{entry.quantity}</td>
+                                    <td className="py-2.5 px-3 whitespace-nowrap">
+                                      <span className={cn(
+                                        "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                                        entry.paymentMethod === "cash" ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
+                                        : entry.paymentMethod === "mpesa" ? "bg-sky-500/12 text-sky-600 dark:text-sky-400"
+                                        : "bg-amber-500/12 text-amber-600 dark:text-amber-400"
+                                      )}>
+                                        {entry.paymentMethod}
+                                      </span>
+                                    </td>
+                                    <td className="py-2.5 pl-3 pr-4 text-right font-mono font-bold text-foreground tabular-nums whitespace-nowrap">
+                                      {formatKES(Number(entry.totalAmountCents || 0) / 100)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
+                            <span>
+                              Showing {filteredNurseryEntries.length.toLocaleString()} of {(nurseryEntriesReport?.total ?? filteredNurseryEntries.length).toLocaleString()} records
+                            </span>
+                            {(nurseryEntriesReport?.total ?? 0) > nurseryEntriesLimit && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 rounded-lg text-xs"
+                                onClick={() => setNurseryEntriesLimit(n => n + 100)}
+                              >
+                                Load +100 more
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    )}
                   </div>
                 )}
+
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Sales value includes credit transactions. Received is cash plus M-Pesa; credit is shown separately. Nursery sales remain separate from POS inventory and gross-profit figures.
+                  Sales value includes credit transactions. Cash received shows physical cash collected separately from M-Pesa and credit. Nursery totals can be switched to Full Year or All Time independently above.
                 </p>
               </>
             ) : null}
           </CardContent>
         </Card>
 
+        {/* ── Opt-In Deep Dive Bar ── */}
         <div className="reports-insight-controls" aria-label="Optional analytics details">
           <button
             type="button"
@@ -1547,733 +2320,693 @@ export default function Reports() {
           </button>
         </div>
 
+        {/* ── Expandable: Monthly Revenue (Comparative Showcase) ── */}
         {showMonthlySales && (
-          <Card className="reports-monthly shadow-none">
-            <CardHeader className="pb-2 pt-4 px-4">
+          <Card className="reports-monthly rounded-2xl border-border/80 bg-card/95 shadow-none overflow-hidden">
+            <CardHeader className="pb-3 pt-4 px-4 sm:px-5 border-b border-border/60">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
-                  <CardTitle className="text-sm font-bold">Monthly revenue</CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">Revenue for all 12 months; yearly profit and transaction totals below</p>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="font-display text-base sm:text-lg font-bold tracking-normal">Monthly Revenue</CardTitle>
+                    <Badge variant="outline" className="text-[10px] font-bold border-primary/30 bg-primary/10 text-primary">
+                      {monthlySalesYear} {comparePrevYear && prevMonthlySalesYear >= 2000 ? `vs ${prevMonthlySalesYear}` : ""}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    12-month trajectory comparing {monthlySalesYear} against {prevMonthlySalesYear} performance
+                  </p>
                 </div>
-                <label className="reports-year-select">
-                  <span className="sr-only">Choose year</span>
-                  <select
-                    aria-label="Year for monthly sales"
-                    value={monthlySalesYear}
-                    onChange={event => setMonthlySalesYear(Number(event.target.value))}
-                  >
-                    {Array.from({ length: currentYear - 1999 }, (_, index) => currentYear - index).map(year => (
-                      <option key={year} value={year}>{year}</option>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-1 rounded-xl border border-border/70 bg-muted/45 p-1">
+                    {([
+                      { id: "revenue", label: "Revenue" },
+                      { id: "profit", label: "Profit" },
+                      { id: "salesCount", label: "Orders" },
+                    ] as { id: "revenue" | "profit" | "salesCount"; label: string }[]).map(m => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setMonthlyMetric(m.id)}
+                        className={cn(
+                          "px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all",
+                          monthlyMetric === m.id
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {m.label}
+                      </button>
                     ))}
-                  </select>
-                  <ChevronDown className="h-3.5 w-3.5 pointer-events-none text-muted-foreground" />
-                </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setComparePrevYear(v => !v)}
+                    className={cn(
+                      "px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold transition-colors",
+                      comparePrevYear
+                        ? "border-sky-500/35 bg-sky-500/10 text-sky-600 dark:text-sky-300"
+                        : "border-border bg-muted/40 text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    vs {prevMonthlySalesYear}
+                  </button>
+
+                  <label className="reports-year-select">
+                    <span className="sr-only">Choose year</span>
+                    <select
+                      aria-label="Year for monthly sales"
+                      value={monthlySalesYear}
+                      onChange={event => setMonthlySalesYear(Number(event.target.value))}
+                    >
+                      {Array.from({ length: currentYear - 1999 }, (_, index) => currentYear - index).map(year => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="h-3.5 w-3.5 pointer-events-none text-muted-foreground" />
+                  </label>
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="px-3 pb-4">
+            <CardContent className="p-4 sm:p-5 space-y-4">
               {monthlySalesLoading ? (
-                <Skeleton className="h-[250px] w-full rounded-xl" />
+                <Skeleton className="h-[310px] w-full rounded-xl" />
               ) : monthlySalesError ? (
-                <div className="reports-monthly-error" role="alert">
-                  <span>Monthly sales could not be loaded.</span>
+                <div className="reports-monthly-error flex items-center justify-between rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-xs" role="alert">
+                  <span className="text-destructive">Monthly sales could not be loaded.</span>
                   <Button variant="outline" size="sm" onClick={() => void refetchMonthlySales()}>Try again</Button>
                 </div>
-              ) : monthlySales ? (
-                <>
-                  <div className="reports-monthly-chart">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={monthlySalesChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                        <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="monthLabel"
-                          interval={0}
-                          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          width={48}
-                          tickFormatter={value => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : String(value)}
-                          tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <Tooltip
-                          formatter={(value: number, name: string) => [formatKES(value), name === "revenue" ? "Revenue" : "Profit"]}
-                          labelFormatter={label => `${label} ${monthlySalesYear}`}
-                          contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
-                        />
-                        <Bar dataKey="revenue" name="Revenue" fill="#C8FF00" radius={[5, 5, 0, 0]} maxBarSize={34} isAnimationActive={false}>
-                          {monthlySalesChartData.map(month => (
-                            <Cell key={month.month} fill={month.month === new Date().getMonth() + 1 && monthlySalesYear === currentYear ? "#C8FF00" : "hsl(var(--primary) / 0.55)"} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                  {monthlySales.totalSalesCount === 0 ? (
-                    <p className="reports-monthly-empty">No sales recorded in {monthlySalesYear}.</p>
-                  ) : (
-                    <div className="reports-monthly-totals">
-                      <div><span>YEAR REVENUE</span><strong>{formatKES(monthlySales.totalRevenue)}</strong></div>
-                      <div><span>GROSS PROFIT</span><strong>{formatKES(monthlySales.totalProfit)}</strong></div>
-                      <div><span>TRANSACTIONS</span><strong>{monthlySales.totalSalesCount.toLocaleString()}</strong></div>
-                    </div>
-                  )}
-                </>
-              ) : null}
-            </CardContent>
-          </Card>
-        )}
+              ) : monthlySales ? (() => {
+                const currKey = monthlyMetric;
+                const prevKey = monthlyMetric === "revenue" ? "prevRevenue" : monthlyMetric === "profit" ? "prevProfit" : "prevSalesCount";
+                const metricColor = monthlyMetric === "profit" ? "#10b981" : monthlyMetric === "salesCount" ? "#38bdf8" : "hsl(var(--primary))";
+                const activeMonths = monthlySalesChartData.filter((m: any) => m.revenue > 0 || m.salesCount > 0);
+                const bestMonth = monthlySalesChartData.reduce((b: any, m: any) => (m[currKey] > (b?.[currKey] ?? -1) ? m : b), monthlySalesChartData[0]);
 
-        {/* Payment Method Breakdown */}
-        {(bankSales > 0 || cashOnlySales > 0) && (
-          <div className="reports-payment rounded-2xl border border-border bg-card overflow-hidden">
-            <div className="px-4 py-3 border-b border-border/50">
-              <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Payment Methods</p>
-            </div>
-            <div className="grid grid-cols-2 divide-x divide-border">
-              <div className="px-4 py-3 text-center">
-                <div className="flex items-center justify-center gap-1.5 mb-1">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Cash</p>
-                </div>
-                <p className="text-base font-bold font-mono text-foreground">
-                  {statsLoading ? "—" : formatKES(cashOnlySales)}
-                </p>
-                {(cashOnlySales + bankSales) > 0 && (
-                  <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                    {(((cashOnlySales) / (cashOnlySales + bankSales)) * 100).toFixed(0)}% of sales
-                  </p>
-                )}
-              </div>
-              <div className="px-4 py-3 text-center">
-                <div className="flex items-center justify-center gap-1.5 mb-1">
-                  <div className="w-2 h-2 rounded-full bg-blue-500" />
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">M-Pesa / Bank</p>
-                </div>
-                <p className="text-base font-bold font-mono text-foreground">
-                  {statsLoading ? "—" : formatKES(bankSales)}
-                </p>
-                {(cashOnlySales + bankSales) > 0 && (
-                  <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                    {((bankSales / (cashOnlySales + bankSales)) * 100).toFixed(0)}% of sales
-                  </p>
-                )}
-              </div>
-            </div>
-            {(cashOnlySales + bankSales) > 0 && (
-              <div className="px-4 pb-3">
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className="h-full bg-emerald-500 rounded-full"
-                    style={{ width: `${(cashOnlySales / (cashOnlySales + bankSales)) * 100}%` }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+                const revDelta = prevMonthlySales && prevMonthlySales.totalRevenue > 0
+                  ? ((monthlySales.totalRevenue - prevMonthlySales.totalRevenue) / prevMonthlySales.totalRevenue) * 100
+                  : null;
+                const profitDelta = prevMonthlySales && prevMonthlySales.totalProfit > 0
+                  ? ((monthlySales.totalProfit - prevMonthlySales.totalProfit) / prevMonthlySales.totalProfit) * 100
+                  : null;
+                const txDelta = prevMonthlySales && prevMonthlySales.totalSalesCount > 0
+                  ? ((monthlySales.totalSalesCount - prevMonthlySales.totalSalesCount) / prevMonthlySales.totalSalesCount) * 100
+                  : null;
+                const yearMargin = monthlySales.totalRevenue > 0
+                  ? (monthlySales.totalProfit / monthlySales.totalRevenue) * 100
+                  : 0;
 
-        {/* Month-over-Month Comparison */}
-        {prevReport && (
-          <Card className="reports-comparison shadow-none">
-            <CardHeader className="pb-2 pt-4 px-4">
-              <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-                <Calendar className="h-4 w-4 text-blue-500" />
-                vs {useCustom ? "Previous Period" : quickRange === "today" ? "Yesterday" : quickRange === "week" ? "Last Week" : "Last Month"}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  {
-                    label: "Revenue",
-                    current: revenue,
-                    prev: prevReport.totalRevenue ?? 0,
-                    format: formatKES,
-                    accent: "text-primary",
-                  },
-                  {
-                    label: "Profit",
-                    current: profit,
-                    prev: prevReport.totalProfit ?? 0,
-                    format: formatKES,
-                    accent: "text-emerald-500",
-                  },
-                  {
-                    label: "Sales",
-                    current: salesCount,
-                    prev: prevReport.salesCount ?? 0,
-                    format: (v: number) => String(v),
-                    accent: "text-blue-400",
-                  },
-                ].map(({ label, current, prev, format: fmt, accent }) => {
-                  const diff = current - prev;
-                  const pct = prev > 0 ? (diff / prev) * 100 : current > 0 ? 100 : 0;
-                  const up = diff >= 0;
-                  return (
-                    <div key={label} className="bg-muted/40 rounded-xl p-3 text-center">
-                      <p className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground mb-1">{label}</p>
-                      <p className={cn("text-sm font-bold font-mono", accent)}>{fmt(current)}</p>
-                      <div className={cn(
-                        "flex items-center justify-center gap-0.5 mt-1.5 text-[10px] font-bold",
-                        up ? "text-emerald-500" : "text-destructive"
-                      )}>
-                        {up ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />}
-                        {Math.abs(pct).toFixed(1)}%
-                      </div>
-                      <p className="text-[9px] text-muted-foreground mt-0.5">{fmt(prev)} prev</p>
-                    </div>
-                  );
-                })}
-              </div>
-              {/* Progress bars comparing current vs prev */}
-              {revenue > 0 && (prevReport.totalRevenue ?? 0) > 0 && (() => {
-                const maxRev = Math.max(revenue, prevReport.totalRevenue ?? 0);
-                const thisPct = (revenue / maxRev) * 100;
-                const prevPct = ((prevReport.totalRevenue ?? 0) / maxRev) * 100;
                 return (
-                  <div className="mt-3 space-y-2">
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wide">This period</span>
-                        <span className="text-[9px] font-mono text-foreground">{formatKES(revenue)}</span>
-                      </div>
-                      <div className="h-2 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-primary rounded-full" style={{ width: `${thisPct}%` }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wide">Previous period</span>
-                        <span className="text-[9px] font-mono text-muted-foreground">{formatKES(prevReport.totalRevenue ?? 0)}</span>
-                      </div>
-                      <div className="h-2 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-muted-foreground/30 rounded-full" style={{ width: `${prevPct}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Full catalog analysis is opt-in to avoid an unnecessary 3,000-row read. */}
-        {showInventoryDetails && (
-        <Card className="reports-stock-value shadow-none">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950 text-violet-600 dark:text-violet-400 flex items-center justify-center">
-                  <Database className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Stock Value</p>
-                  {!productsData
-                    ? <Skeleton className="h-7 w-28 mt-1" />
-                    : <p className="text-xl font-bold font-mono">{formatKES(inventoryValue)}</p>}
-                  <p className="text-xs text-muted-foreground mt-0.5">{activeProductCount} products with stock</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">Capital Tied Up</p>
-                <p className="text-xs text-muted-foreground mt-0.5">purchase prices</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        )}
-
-        {/* Outstanding debts */}
-        {dashboard?.pendingDebtsTotal != null && dashboard.pendingDebtsTotal > 0 && (
-          <Card className="reports-debt shadow-none border-destructive/40">
-            <CardContent className="p-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TrendingDown className="h-4 w-4 text-destructive shrink-0" />
-                <div>
-                  <p className="text-sm font-bold text-destructive">Outstanding Debt</p>
-                  <p className="text-xs text-muted-foreground">Pending collection</p>
-                </div>
-              </div>
-              <span className="font-bold font-mono text-destructive">{formatKES(dashboard.pendingDebtsTotal)}</span>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Inventory health */}
-        <div className="reports-stock-alerts grid grid-cols-2 gap-3">
-          <Card className="shadow-none border-destructive/40">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[10px] uppercase tracking-wide font-bold text-destructive">Out of Stock</p>
-                <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
-              </div>
-              {dashLoading
-                ? <Skeleton className="h-9 w-12 mt-1" />
-                : <p className="text-3xl font-bold text-destructive font-mono">{dashboard?.outOfStockCount ?? 0}</p>}
-              <p className="text-xs text-muted-foreground mt-1">need restocking</p>
-            </CardContent>
-          </Card>
-          <Card className="shadow-none border-orange-300 dark:border-orange-800">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[10px] uppercase tracking-wide font-bold text-orange-600 dark:text-orange-400">Low Stock</p>
-                <Package className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
-              </div>
-              {dashLoading
-                ? <Skeleton className="h-9 w-12 mt-1" />
-                : <p className="text-3xl font-bold text-orange-600 dark:text-orange-400 font-mono">{dashboard?.lowStockCount ?? 0}</p>}
-              <p className="text-xs text-muted-foreground mt-1">below alert threshold</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Revenue + Profit + Transaction Count Chart */}
-        <Card className="reports-trend shadow-none">
-          <CardHeader className="pb-2 pt-4 px-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <CardTitle className="text-sm font-bold">Sales Trend</CardTitle>
-              <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary inline-block" />Revenue</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Profit</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-blue-400/60 inline-block" />Transactions</span>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="px-2 pb-4">
-            {rangeLoading ? (
-              <div className="h-56 flex items-center justify-center">
-                <Skeleton className="h-44 w-full rounded-xl" />
-              </div>
-            ) : !reportRange?.dailyBreakdown || reportRange.dailyBreakdown.length === 0 ? (
-              <div className="h-56 flex items-center justify-center text-muted-foreground">
-                <div className="text-center">
-                  <BarChart2 className="h-8 w-8 mx-auto opacity-20 mb-2" />
-                  <p className="text-xs">No sales data for this period</p>
-                  <p className="text-xs opacity-60">Try a wider date range</p>
-                </div>
-              </div>
-            ) : (
-              <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={reportRange.dailyBreakdown} margin={{ top: 5, right: 8, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#C8FF00" stopOpacity={0.18} />
-                        <stop offset="95%" stopColor="#C8FF00" stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="profGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.18} />
-                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={v => { try { return format(new Date(v + "T00:00:00"), "d"); } catch { return v; } }}
-                      tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-                      axisLine={false} tickLine={false}
-                      interval={reportRange.dailyBreakdown.length > 20 ? 2 : 0}
-                    />
-                    <YAxis
-                      yAxisId="left"
-                      tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
-                      tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-                      axisLine={false} tickLine={false}
-                    />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-                      axisLine={false} tickLine={false}
-                      allowDecimals={false}
-                      width={22}
-                    />
-                    <Tooltip
-                      formatter={(v: number, name: string) =>
-                        name === "salesCount" ? [v, "Transactions"] :
-                        name === "revenue" ? [formatKES(v), "Revenue"] :
-                        [formatKES(v), "Profit"]
-                      }
-                      labelFormatter={l => { try { return format(new Date(l + "T00:00:00"), "EEEE, MMM d yyyy"); } catch { return l; } }}
-                      contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
-                    />
-                    <Bar yAxisId="right" dataKey="salesCount" fill="hsl(var(--muted))" radius={[2, 2, 0, 0]} barSize={6} opacity={0.7} />
-                    <Area yAxisId="left" type="monotone" dataKey="revenue" stroke="#C8FF00" strokeWidth={2} fill="url(#revGrad)" activeDot={{ r: 4, fill: "#C8FF00", strokeWidth: 0 }} isAnimationActive={false} />
-                    <Area yAxisId="left" type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={1.5} fill="url(#profGrad)" activeDot={{ r: 3, fill: "#22c55e", strokeWidth: 0 }} isAnimationActive={false} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-            {/* Best day callout */}
-            {reportRange?.dailyBreakdown && reportRange.dailyBreakdown.length > 0 && (() => {
-              const best = (reportRange.dailyBreakdown as any[]).reduce((b, d) => d.revenue > b.revenue ? d : b);
-              const total = (reportRange.dailyBreakdown as any[]).reduce((s, d) => s + d.salesCount, 0);
-              const activeDays = (reportRange.dailyBreakdown as any[]).filter(d => d.salesCount > 0).length;
-              return (
-                <div className="flex items-center gap-3 px-3 mt-3 flex-wrap">
-                  <div className="bg-primary/10 rounded-lg px-2.5 py-1.5">
-                    <p className="text-[9px] text-primary/70 font-bold uppercase tracking-wide">Best Day</p>
-                    <p className="text-xs font-bold text-primary">{(() => { try { return format(new Date(best.date + "T00:00:00"), "MMM d"); } catch { return best.date; } })()}</p>
-                  </div>
-                  <div className="bg-muted/50 rounded-lg px-2.5 py-1.5">
-                    <p className="text-[9px] text-muted-foreground font-bold uppercase tracking-wide">Total Sales</p>
-                    <p className="text-xs font-bold">{total} transactions</p>
-                  </div>
-                  {activeDays > 0 && (
-                    <div className="bg-muted/50 rounded-lg px-2.5 py-1.5">
-                      <p className="text-[9px] text-muted-foreground font-bold uppercase tracking-wide">Avg / Day</p>
-                      <p className="text-xs font-bold font-mono">{formatKES(Math.round(revenue / activeDays))}</p>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </CardContent>
-        </Card>
-
-        {/* Hourly Activity — today only */}
-        {isToday && (
-          <Card className="reports-hourly shadow-none">
-            <CardHeader className="pb-2 pt-4 px-4">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-                  <Clock className="h-4 w-4 text-blue-500" />
-                  Hourly Activity
-                </CardTitle>
-                {peakHour && peakHour.salesCount > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    Peak: <span className="font-semibold text-foreground">{peakHour.hour < 12 ? `${peakHour.hour}am` : peakHour.hour === 12 ? "12pm" : `${peakHour.hour - 12}pm`}</span>
-                  </span>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="px-2 pb-4">
-              {!hourlyData ? (
-                <Skeleton className="h-32 w-full rounded-xl mx-2" />
-              ) : hourlyChartData.every(h => h.salesCount === 0) ? (
-                <div className="h-32 flex items-center justify-center text-muted-foreground">
-                  <div className="text-center">
-                    <Clock className="h-6 w-6 mx-auto opacity-20 mb-2" />
-                    <p className="text-xs">No sales recorded today yet</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="h-32">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={hourlyChartData} margin={{ top: 4, right: 8, left: -28, bottom: 0 }} barSize={12}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                      <XAxis dataKey="label" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                      <Tooltip
-                        formatter={(v: number) => [v, "Sales"]}
-                        contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", color: "hsl(var(--card-foreground))" }}
-                      />
-                      <Bar dataKey="salesCount" radius={[3, 3, 0, 0]}>
-                        {hourlyChartData.map((entry, idx) => (
-                          <Cell
-                            key={idx}
-                            fill={entry.hour === peakHour?.hour ? "#C8FF00" : "hsl(var(--muted))"}
-                          />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {showSalesDetails && (
-        <>
-        {/* Top Selling Products */}
-        <Card className="reports-products shadow-none">
-          <CardHeader className="pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-              <Trophy className="h-4 w-4 text-amber-500" />
-              Top Selling Products
-              <span className="text-xs font-normal text-muted-foreground ml-1">
-                {dateRange.from === dateRange.to ? "Today" : `${dateRange.from} – ${dateRange.to}`}
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {topLoading ? (
-              <div className="px-4 pb-4 space-y-3 pt-1">
-                {[1, 2, 3, 4, 5].map(i => (
-                  <div key={i} className="flex items-center gap-3">
-                    <Skeleton className="w-7 h-7 rounded-lg shrink-0" />
-                    <div className="flex-1 space-y-1.5">
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-2 w-1/2" />
-                    </div>
-                    <Skeleton className="h-5 w-16 shrink-0" />
-                  </div>
-                ))}
-              </div>
-            ) : !topProducts || topProducts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
-                <ShoppingBag className="h-8 w-8 opacity-20" />
-                <p className="text-sm font-medium">No sales for this period</p>
-                <p className="text-xs opacity-60">Complete a sale on the POS to see data here</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {topProducts.map((p, i) => {
-                  const maxRevenue = topProducts[0]?.totalRevenue || 1;
-                  const pct = Math.max(6, (p.totalRevenue / maxRevenue) * 100);
-                  return (
-                    <div key={p.productId} className="flex items-center gap-3 px-4 py-3">
-                      <span className={cn(
-                        "w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0",
-                        i === 0 ? "border-amber-300 dark:border-amber-800 text-amber-600 dark:text-amber-400" :
-                        i === 1 ? "border-slate-300 dark:border-slate-700 text-slate-500" :
-                        i === 2 ? "border-orange-300 dark:border-orange-800 text-orange-600 dark:text-orange-400" :
-                        "border-border text-muted-foreground"
-                      )}>#{i + 1}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold truncate">{p.productName}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden max-w-[90px]">
-                            <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
-                          </div>
-                          <span className="text-xs text-muted-foreground">{p.totalQtySold} sold</span>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-bold text-sm font-mono">{formatKES(p.totalRevenue)}</p>
-                        {p.totalProfit != null && p.totalProfit > 0 && (
-                          <p className="text-xs font-mono text-emerald-600 dark:text-emerald-400">+{formatKES(p.totalProfit)}</p>
+                  <>
+                    {/* Legend row */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-4">
+                        <span className="inline-flex items-center gap-1.5 font-semibold text-foreground">
+                          <span className="h-2.5 w-2.5 rounded-sm inline-block" style={{ background: metricColor }} />
+                          {monthlySalesYear} {monthlyMetric === "revenue" ? "Revenue" : monthlyMetric === "profit" ? "Gross Profit" : "Transactions"}
+                        </span>
+                        {comparePrevYear && (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="h-2.5 w-2.5 rounded-sm bg-muted-foreground/35 inline-block" />
+                            {prevMonthlySalesYear} Comparison
+                          </span>
                         )}
                       </div>
+                      <span className="tabular-nums">
+                        {activeMonths.length} active month{activeMonths.length !== 1 ? "s" : ""} recorded
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
 
-        {/* Category Breakdown */}
-        <Card className="reports-categories shadow-none">
-          <CardHeader className="pb-2 pt-4 px-4">
-            <div className="flex items-center justify-between w-full gap-2">
-              <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-                <Layers className="h-4 w-4 text-violet-500" />
-                Category Breakdown
-                <span className="text-xs font-normal text-muted-foreground ml-1">
-                  {dateRange.from === dateRange.to ? "Today" : `${dateRange.from} – ${dateRange.to}`}
-                </span>
-              </CardTitle>
-              {categoryData && (categoryData as any[]).length > 0 && (() => {
-                const cats = categoryData as any[];
-                const period = dateRange.from === dateRange.to ? dateRange.from : `${dateRange.from} to ${dateRange.to}`;
-                return (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => printCategoryPdf(cats, period, shopName)}
-                      className="flex items-center gap-1 text-[10px] font-bold text-rose-500 hover:text-rose-400 transition-colors bg-rose-500/10 hover:bg-rose-500/20 rounded-lg px-2.5 py-1.5"
-                      title="Open print dialog — choose 'Save as PDF'"
-                    >
-                      <Download className="h-3 w-3" />
-                      PDF
-                    </button>
-                    <button
-                      onClick={() => downloadCategoryCsv(cats, period, shopName)}
-                      className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors bg-muted/50 hover:bg-muted rounded-lg px-2.5 py-1.5"
-                    >
-                      <Download className="h-3 w-3" />
-                      CSV
-                    </button>
-                  </div>
-                );
-              })()}
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            {catLoading ? (
-              <div className="px-4 pb-4 pt-1 space-y-3">
-                {[1,2,3,4].map(i => (
-                  <div key={i} className="flex items-center gap-3">
-                    <Skeleton className="w-2.5 h-2.5 rounded-full shrink-0" />
-                    <div className="flex-1 space-y-1">
-                      <Skeleton className="h-3.5 w-1/2" />
-                      <Skeleton className="h-1.5 w-full rounded-full" />
+                    {/* Explicitly sized h-[300px] sm:h-[320px] chart container */}
+                    <div className="h-[300px] sm:h-[320px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={monthlySalesChartData} margin={{ top: 10, right: 8, left: 0, bottom: 0 }} barGap={4}>
+                          <defs>
+                            <linearGradient id="monthlyMainBarGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={metricColor} stopOpacity={0.95} />
+                              <stop offset="100%" stopColor={metricColor} stopOpacity={0.45} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                          <XAxis
+                            dataKey="monthLabel"
+                            interval={0}
+                            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            width={54}
+                            tickFormatter={value => {
+                              if (monthlyMetric === "salesCount") return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
+                              if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+                              if (value >= 1000) return `${(value / 1000).toFixed(0)}k`;
+                              return String(value);
+                            }}
+                            tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            cursor={{ fill: "hsl(var(--muted) / 0.3)" }}
+                            content={({ active, payload }) => {
+                              if (!active || !payload?.length) return null;
+                              const row = payload[0]?.payload as any;
+                              if (!row) return null;
+                              const margin = row.revenue > 0 ? (row.profit / row.revenue) * 100 : 0;
+                              const yoy = row.prevRevenue > 0 ? ((row.revenue - row.prevRevenue) / row.prevRevenue) * 100 : null;
+                              return (
+                                <div className="rounded-xl border border-border bg-card/95 backdrop-blur-md p-3 shadow-xl text-xs space-y-1.5 min-w-[205px]">
+                                  <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-1.5">
+                                    <span className="font-bold text-foreground">{row.monthLabel} {monthlySalesYear}</span>
+                                    {yoy !== null && (
+                                      <span className={cn(
+                                        "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+                                        yoy >= 0 ? "bg-emerald-500/15 text-emerald-500" : "bg-destructive/15 text-destructive"
+                                      )}>
+                                        {yoy >= 0 ? "+" : ""}{yoy.toFixed(1)}% YoY
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted-foreground">Revenue</span>
+                                    <span className="font-mono font-bold text-primary tabular-nums">{formatKES(row.revenue)}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted-foreground">Profit ({margin.toFixed(0)}%)</span>
+                                    <span className="font-mono font-semibold text-emerald-500 tabular-nums">{formatKES(row.profit)}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted-foreground">Transactions</span>
+                                    <span className="font-mono font-semibold text-foreground tabular-nums">{row.salesCount.toLocaleString()}</span>
+                                  </div>
+                                  {comparePrevYear && (
+                                    <div className="border-t border-border/60 pt-1.5 mt-1 space-y-1 text-[11px] text-muted-foreground">
+                                      <div className="flex items-center justify-between gap-4">
+                                        <span>{row.monthLabel} {prevMonthlySalesYear} Rev</span>
+                                        <span className="font-mono tabular-nums">{formatKES(row.prevRevenue)}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between gap-4">
+                                        <span>{row.monthLabel} {prevMonthlySalesYear} Orders</span>
+                                        <span className="font-mono tabular-nums">{row.prevSalesCount.toLocaleString()}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }}
+                          />
+                          {comparePrevYear && (
+                            <Bar
+                              dataKey={prevKey}
+                              name={`${prevMonthlySalesYear}`}
+                              fill="hsl(var(--muted-foreground) / 0.28)"
+                              radius={[5, 5, 0, 0]}
+                              maxBarSize={20}
+                              isAnimationActive={false}
+                            />
+                          )}
+                          <Bar
+                            dataKey={currKey}
+                            name={`${monthlySalesYear}`}
+                            fill="url(#monthlyMainBarGrad)"
+                            radius={[6, 6, 0, 0]}
+                            maxBarSize={comparePrevYear ? 24 : 34}
+                            isAnimationActive={false}
+                          >
+                            {monthlySalesChartData.map((month: any) => {
+                              const isCurrentMonth = month.month === new Date().getMonth() + 1 && monthlySalesYear === currentYear;
+                              return (
+                                <Cell
+                                  key={month.month}
+                                  fill={isCurrentMonth ? metricColor : "url(#monthlyMainBarGrad)"}
+                                />
+                              );
+                            })}
+                          </Bar>
+                          {comparePrevYear && (
+                            <Line
+                              type="monotone"
+                              dataKey={currKey}
+                              stroke={metricColor}
+                              strokeWidth={2}
+                              dot={{ r: 2.5, fill: metricColor, strokeWidth: 0 }}
+                              activeDot={{ r: 4 }}
+                              isAnimationActive={false}
+                            />
+                          )}
+                        </ComposedChart>
+                      </ResponsiveContainer>
                     </div>
-                    <Skeleton className="h-4 w-16 shrink-0" />
+
+                    {monthlySales.totalSalesCount === 0 ? (
+                      <p className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+                        No sales recorded in {monthlySalesYear}.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+                        <div className="rounded-xl border border-primary/25 bg-primary/8 p-3.5">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">Year Revenue</span>
+                            {revDelta !== null && (
+                              <span className={cn(
+                                "text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums",
+                                revDelta >= 0 ? "bg-emerald-500/15 text-emerald-500" : "bg-destructive/15 text-destructive"
+                              )}>
+                                {revDelta >= 0 ? "+" : ""}{revDelta.toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                          <p className="font-display text-lg sm:text-xl font-bold tabular-nums text-foreground mt-1">
+                            {formatKES(monthlySales.totalRevenue)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums truncate">
+                            {prevMonthlySales ? `vs ${prevMonthlySalesYear}: ${formatKES(prevMonthlySales.totalRevenue)}` : `${monthlySalesYear} cumulative`}
+                          </p>
+                        </div>
+
+                        <div className="rounded-xl border border-border/75 bg-muted/25 p-3.5">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Gross Profit</span>
+                            {profitDelta !== null && (
+                              <span className={cn(
+                                "text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums",
+                                profitDelta >= 0 ? "bg-emerald-500/15 text-emerald-500" : "bg-destructive/15 text-destructive"
+                              )}>
+                                {profitDelta >= 0 ? "+" : ""}{profitDelta.toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                          <p className="font-display text-lg sm:text-xl font-bold tabular-nums text-emerald-500 mt-1">
+                            {formatKES(monthlySales.totalProfit)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums truncate">
+                            {yearMargin.toFixed(1)}% margin{prevMonthlySales ? ` · prev ${formatKES(prevMonthlySales.totalProfit)}` : ""}
+                          </p>
+                        </div>
+
+                        <div className="rounded-xl border border-border/75 bg-muted/25 p-3.5">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Transactions</span>
+                            {txDelta !== null && (
+                              <span className={cn(
+                                "text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums",
+                                txDelta >= 0 ? "bg-emerald-500/15 text-emerald-500" : "bg-destructive/15 text-destructive"
+                              )}>
+                                {txDelta >= 0 ? "+" : ""}{txDelta.toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                          <p className="font-display text-lg sm:text-xl font-bold tabular-nums text-foreground mt-1">
+                            {monthlySales.totalSalesCount.toLocaleString()}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums truncate">
+                            {prevMonthlySales ? `vs ${prevMonthlySalesYear}: ${prevMonthlySales.totalSalesCount.toLocaleString()} orders` : "Completed sales"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-xl border border-border/75 bg-muted/25 p-3.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Peak & Average</span>
+                          <p className="font-display text-lg sm:text-xl font-bold tabular-nums text-foreground mt-1 truncate">
+                            {bestMonth ? `${bestMonth.monthLabel} · ${bestMonth[currKey] && monthlyMetric !== "salesCount" ? formatKES(bestMonth[currKey]) : `${bestMonth.salesCount}`}` : "—"}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums truncate">
+                            Avg {activeMonths.length > 0 ? formatKES(monthlySales.totalRevenue / activeMonths.length) : "—"}/active mo
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })() : null}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Expandable: Inventory Valuation ── */}
+        {showInventoryDetails && (
+          <Card className="reports-stock-value rounded-2xl border-border/80 bg-card/95 shadow-none">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl border border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center shrink-0">
+                    <Database className="h-4.5 w-4.5" />
                   </div>
-                ))}
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Stock Value at Cost</p>
+                    {!productsData
+                      ? <Skeleton className="h-8 w-32 mt-1" />
+                      : <p className="font-display text-2xl font-bold tabular-nums">{formatKES(inventoryValue)}</p>}
+                    <p className="text-xs text-muted-foreground mt-0.5">{activeProductCount} active products with stock on hand</p>
+                  </div>
+                </div>
+                <div className="text-right hidden sm:block">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">Capital Tied Up</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Calculated from purchase prices</p>
+                </div>
               </div>
-            ) : !categoryData || categoryData.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-muted-foreground gap-2">
-                <Layers className="h-7 w-7 opacity-20" />
-                <p className="text-xs">No category data for this period</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {(categoryData as any[]).map((cat, i) => {
-                  const maxRev = (categoryData as any[])[0]?.totalRevenue || 1;
-                  const pct = Math.max(4, (cat.totalRevenue / maxRev) * 100);
-                  const color = CATEGORY_COLORS[i % CATEGORY_COLORS.length];
-                  const totalRev = (categoryData as any[]).reduce((s, c) => s + c.totalRevenue, 0);
-                  const share = totalRev > 0 ? (cat.totalRevenue / totalRev * 100) : 0;
-                  const marginPct = cat.totalRevenue > 0 ? (cat.totalProfit / cat.totalRevenue * 100) : 0;
-                  const isExpanded = expandedCat === cat.category;
-                  const prods: any[] = cat.products ?? [];
-                  const catPeriod = dateRange.from === dateRange.to ? dateRange.from : `${dateRange.from} to ${dateRange.to}`;
-                  return (
-                    <div key={cat.category}>
-                      {/* Category header row — click to expand */}
-                      <button
-                        className="w-full text-left px-4 py-3 hover:bg-muted/30 transition-colors"
-                        onClick={() => setExpandedCat(isExpanded ? null : cat.category)}
-                      >
-                        <div className="flex items-center gap-3 mb-2">
-                          <div className="w-2.5 h-2.5 rounded-full shrink-0 mt-0.5" style={{ background: color }} />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Expandable: Sales Breakdown Bento (Top Products 5-col + Category Breakdown 7-col) ── */}
+        {showSalesDetails && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+            {/* Top Selling Products (5 cols) */}
+            <Card className="lg:col-span-5 reports-products rounded-2xl border-border/80 bg-card/95 shadow-none">
+              <CardHeader className="pb-2.5 pt-4 px-4 sm:px-5 border-b border-border/60">
+                <CardTitle className="font-display text-sm sm:text-base font-bold tracking-normal flex items-center gap-2">
+                  <Trophy className="h-4 w-4 text-amber-500 shrink-0" />
+                  Top Selling Products
+                  <span className="text-xs font-normal text-muted-foreground ml-auto">
+                    {dateRange.from === dateRange.to ? "Today" : `${dateRange.from} – ${dateRange.to}`}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {topLoading ? (
+                  <div className="p-4 space-y-3">
+                    {[1, 2, 3, 4, 5].map(i => (
+                      <div key={i} className="flex items-center gap-3">
+                        <Skeleton className="w-7 h-7 rounded-lg shrink-0" />
+                        <div className="flex-1 space-y-1.5">
+                          <Skeleton className="h-4 w-3/4" />
+                          <Skeleton className="h-2 w-1/2" />
+                        </div>
+                        <Skeleton className="h-5 w-16 shrink-0" />
+                      </div>
+                    ))}
+                  </div>
+                ) : !topProducts || topProducts.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
+                    <ShoppingBag className="h-8 w-8 opacity-20" />
+                    <p className="text-sm font-medium">No sales for this period</p>
+                    <p className="text-xs opacity-60">Complete a sale on the POS to see data here</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border/60">
+                    {topProducts.map((p: any, i: number) => {
+                      const maxRevenue = topProducts[0]?.totalRevenue || 1;
+                      const pct = Math.max(6, (p.totalRevenue / maxRevenue) * 100);
+                      return (
+                        <div key={p.productId} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/20 transition-colors">
+                          <span className={cn(
+                            "w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0 tabular-nums",
+                            i === 0 ? "border-amber-500/40 bg-amber-500/12 text-amber-600 dark:text-amber-400" :
+                            i === 1 ? "border-slate-400/40 bg-slate-500/10 text-slate-600 dark:text-slate-300" :
+                            i === 2 ? "border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400" :
+                            "border-border text-muted-foreground"
+                          )}>#{i + 1}</span>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between">
-                              <p className="text-sm font-semibold truncate">{cat.category}</p>
-                              <div className="flex items-center gap-1.5 ml-2 shrink-0">
-                                <span className="text-xs font-bold text-muted-foreground">{share.toFixed(0)}%</span>
-                                {isExpanded
-                                  ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-                                  : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                                }
+                            <p className="text-sm font-semibold truncate">{p.productName}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden max-w-[96px]">
+                                <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
                               </div>
+                              <span className="text-xs text-muted-foreground tabular-nums">{p.totalQtySold} sold</span>
                             </div>
                           </div>
                           <div className="text-right shrink-0">
-                            <p className="font-bold text-sm font-mono">{formatKES(cat.totalRevenue)}</p>
+                            <p className="font-bold text-sm font-mono tabular-nums">{formatKES(p.totalRevenue)}</p>
+                            {p.totalProfit != null && p.totalProfit > 0 && (
+                              <p className="text-xs font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">+{formatKES(p.totalProfit)}</p>
+                            )}
                           </div>
                         </div>
-                        <div className="h-1.5 bg-muted rounded-full overflow-hidden mb-2 ml-5">
-                          <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
-                        </div>
-                        <div className="flex items-center gap-2 ml-5">
-                          <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
-                            {Number(cat.salesCount).toFixed(0)} units sold
-                          </span>
-                          {cat.totalProfit > 0 && (
-                            <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 rounded px-1.5 py-0.5">
-                              +{formatKES(cat.totalProfit)} profit
-                            </span>
-                          )}
-                          {marginPct > 0 && (
-                            <span className="text-[10px] text-muted-foreground">{marginPct.toFixed(0)}% margin</span>
-                          )}
-                        </div>
-                      </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-                      {/* Expanded: product list + per-category download buttons */}
-                      {isExpanded && (
-                        <div className="bg-muted/20 border-t border-border/60">
-                          {/* Download buttons for this category */}
-                          <div className="flex items-center justify-between px-4 py-2 border-b border-border/40">
-                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                              {prods.length} product{prods.length !== 1 ? "s" : ""} sold
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); printSingleCategoryPdf(cat, catPeriod, shopName); }}
-                                className="flex items-center gap-1 text-[10px] font-bold text-rose-500 hover:text-rose-400 transition-colors bg-rose-500/10 hover:bg-rose-500/20 rounded px-2 py-1"
-                                title="Download PDF for this category"
-                              >
-                                <FileText className="h-3 w-3" />
-                                PDF
-                              </button>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); downloadSingleCategoryCsv(cat, catPeriod, shopName); }}
-                                className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors bg-muted/50 hover:bg-muted rounded px-2 py-1"
-                                title="Download CSV for this category"
-                              >
-                                <Download className="h-3 w-3" />
-                                CSV
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Products table */}
-                          {prods.length === 0 ? (
-                            <p className="text-[11px] text-muted-foreground px-4 py-3">No product details available</p>
-                          ) : (
-                            <div className="divide-y divide-border/40">
-                              {prods.map((p: any, pi: number) => {
-                                const prodMargin = p.totalRevenue > 0 ? (p.totalProfit / p.totalRevenue * 100) : 0;
-                                return (
-                                  <div key={p.productId || pi} className="flex items-center gap-2 px-4 py-2">
-                                    <span className="text-[10px] font-mono text-muted-foreground w-5 shrink-0 text-right">{pi + 1}.</span>
-                                    <p className="text-xs flex-1 min-w-0 truncate font-medium">{p.productName}</p>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                      <span className="text-[10px] font-mono text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5">
-                                        ×{Number(p.qtySold).toFixed(2)}
-                                      </span>
-                                      <span className="text-[10px] font-mono font-bold">{formatKES(p.totalRevenue)}</span>
-                                      {prodMargin > 0 && (
-                                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono hidden sm:inline">
-                                          {prodMargin.toFixed(0)}%
-                                        </span>
-                                      )}
-                                    </div>
+            {/* Category Breakdown (7 cols) */}
+            <Card className="lg:col-span-7 reports-categories rounded-2xl border-border/80 bg-card/95 shadow-none">
+              <CardHeader className="pb-2.5 pt-4 px-4 sm:px-5 border-b border-border/60">
+                <div className="flex items-center justify-between w-full gap-2 flex-wrap">
+                  <CardTitle className="font-display text-sm sm:text-base font-bold tracking-normal flex items-center gap-2">
+                    <Layers className="h-4 w-4 text-violet-500 shrink-0" />
+                    Category Breakdown
+                    <span className="text-xs font-normal text-muted-foreground ml-1">
+                      {dateRange.from === dateRange.to ? "Today" : `${dateRange.from} – ${dateRange.to}`}
+                    </span>
+                  </CardTitle>
+                  {categoryData && (categoryData as any[]).length > 0 && (() => {
+                    const cats = categoryData as any[];
+                    const period = dateRange.from === dateRange.to ? dateRange.from : `${dateRange.from} to ${dateRange.to}`;
+                    return (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => printCategoryPdf(cats, period, shopName)}
+                          className="flex items-center gap-1 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 transition-colors bg-rose-500/10 border border-rose-500/20 rounded-lg px-2.5 py-1.5"
+                          title="Open print dialog — choose 'Save as PDF'"
+                        >
+                          <Download className="h-3 w-3" />
+                          PDF
+                        </button>
+                        <button
+                          onClick={() => downloadCategoryCsv(cats, period, shopName)}
+                          className="flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-foreground transition-colors bg-muted/60 hover:bg-muted border border-border rounded-lg px-2.5 py-1.5"
+                        >
+                          <Download className="h-3 w-3" />
+                          CSV
+                        </button>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {catLoading ? (
+                  <div className="p-4 space-y-3">
+                    {[1,2,3,4].map(i => (
+                      <div key={i} className="flex items-center gap-3">
+                        <Skeleton className="w-2.5 h-2.5 rounded-full shrink-0" />
+                        <div className="flex-1 space-y-1">
+                          <Skeleton className="h-3.5 w-1/2" />
+                          <Skeleton className="h-1.5 w-full rounded-full" />
+                        </div>
+                        <Skeleton className="h-4 w-16 shrink-0" />
+                      </div>
+                    ))}
+                  </div>
+                ) : !categoryData || categoryData.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
+                    <Layers className="h-7 w-7 opacity-20" />
+                    <p className="text-xs">No category data for this period</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border/60">
+                    {(categoryData as any[]).map((cat: any, i: number) => {
+                      const maxRev = (categoryData as any[])[0]?.totalRevenue || 1;
+                      const pct = Math.max(4, (cat.totalRevenue / maxRev) * 100);
+                      const color = CATEGORY_COLORS[i % CATEGORY_COLORS.length];
+                      const totalRev = (categoryData as any[]).reduce((s: number, c: any) => s + c.totalRevenue, 0);
+                      const share = totalRev > 0 ? (cat.totalRevenue / totalRev * 100) : 0;
+                      const marginPct = cat.totalRevenue > 0 ? (cat.totalProfit / cat.totalRevenue * 100) : 0;
+                      const isExpanded = expandedCat === cat.category;
+                      const prods: any[] = cat.products ?? [];
+                      const catPeriod = dateRange.from === dateRange.to ? dateRange.from : `${dateRange.from} to ${dateRange.to}`;
+                      return (
+                        <div key={cat.category}>
+                          <button
+                            className="w-full text-left px-4 py-3.5 hover:bg-muted/25 transition-colors"
+                            onClick={() => setExpandedCat(isExpanded ? null : cat.category)}
+                          >
+                            <div className="flex items-center gap-3 mb-2">
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-sm font-semibold truncate">{cat.category}</p>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-xs font-bold text-muted-foreground tabular-nums">{share.toFixed(0)}%</span>
+                                    {isExpanded
+                                      ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                                      : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                                    }
                                   </div>
-                                );
-                              })}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="font-bold text-sm font-mono tabular-nums">{formatKES(cat.totalRevenue)}</p>
+                              </div>
+                            </div>
+                            <div className="h-1.5 bg-muted rounded-full overflow-hidden mb-2 ml-5">
+                              <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                            </div>
+                            <div className="flex items-center gap-2 ml-5 flex-wrap">
+                              <span className="text-[10px] text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5 font-mono tabular-nums">
+                                {Number(cat.salesCount).toFixed(0)} units sold
+                              </span>
+                              {cat.totalProfit > 0 && (
+                                <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 rounded px-1.5 py-0.5 tabular-nums">
+                                  +{formatKES(cat.totalProfit)} profit
+                                </span>
+                              )}
+                              {marginPct > 0 && (
+                                <span className="text-[10px] text-muted-foreground tabular-nums">{marginPct.toFixed(0)}% margin</span>
+                              )}
+                            </div>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="bg-muted/20 border-t border-border/60">
+                              <div className="flex items-center justify-between px-4 py-2 border-b border-border/40">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                  {prods.length} product{prods.length !== 1 ? "s" : ""} sold
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); printSingleCategoryPdf(cat, catPeriod, shopName); }}
+                                    className="flex items-center gap-1 text-[10px] font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 transition-colors bg-rose-500/10 rounded px-2 py-1"
+                                    title="Download PDF for this category"
+                                  >
+                                    <FileText className="h-3 w-3" />
+                                    PDF
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); downloadSingleCategoryCsv(cat, catPeriod, shopName); }}
+                                    className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground hover:text-foreground transition-colors bg-muted/60 hover:bg-muted rounded px-2 py-1"
+                                    title="Download CSV for this category"
+                                  >
+                                    <Download className="h-3 w-3" />
+                                    CSV
+                                  </button>
+                                </div>
+                              </div>
+
+                              {prods.length === 0 ? (
+                                <p className="text-[11px] text-muted-foreground px-4 py-3">No product details available</p>
+                              ) : (
+                                <div className="divide-y divide-border/40">
+                                  {prods.map((p: any, pi: number) => {
+                                    const prodMargin = p.totalRevenue > 0 ? (p.totalProfit / p.totalRevenue * 100) : 0;
+                                    return (
+                                      <div key={p.productId || pi} className="flex items-center gap-2 px-4 py-2">
+                                        <span className="text-[10px] font-mono text-muted-foreground w-5 shrink-0 text-right">{pi + 1}.</span>
+                                        <p className="text-xs flex-1 min-w-0 truncate font-medium">{p.productName}</p>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          <span className="text-[10px] font-mono text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5 tabular-nums">
+                                            ×{Number(p.qtySold).toFixed(2)}
+                                          </span>
+                                          <span className="text-[10px] font-mono font-bold tabular-nums">{formatKES(p.totalRevenue)}</span>
+                                          {prodMargin > 0 && (
+                                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono hidden sm:inline tabular-nums">
+                                              {prodMargin.toFixed(0)}%
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
-                      )}
+                      );
+                    })}
+                  </div>
+                )}
+                {categoryData && (categoryData as any[]).length > 0 && (() => {
+                  const cats = categoryData as any[];
+                  const totalRev = cats.reduce((s: number, c: any) => s + c.totalRevenue, 0);
+                  const totalProfit = cats.reduce((s: number, c: any) => s + c.totalProfit, 0);
+                  const totalItems = cats.reduce((s: number, c: any) => s + c.salesCount, 0);
+                  const totalMargin = totalRev > 0 ? (totalProfit / totalRev * 100) : 0;
+                  return (
+                    <div className="border-t border-border/70 bg-muted/25 px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="text-xs font-bold text-foreground">Total</span>
+                        <span className="text-[10px] text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5 font-mono tabular-nums">
+                          {totalItems} items sold
+                        </span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 rounded px-1.5 py-0.5 font-mono tabular-nums">
+                          +{formatKES(totalProfit)} profit
+                        </span>
+                        <span className="text-[10px] text-muted-foreground tabular-nums">{totalMargin.toFixed(0)}% avg margin</span>
+                      </div>
+                      <span className="font-bold text-sm font-mono tabular-nums">{formatKES(totalRev)}</span>
+                    </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* ── Expandable: Low Margin Alert ── */}
+        {showInventoryDetails && lowMarginProducts.length > 0 && (
+          <Card className="reports-low-margin rounded-2xl border-border/80 bg-card/95 shadow-none">
+            <CardHeader className="pb-2.5 pt-4 px-4 sm:px-5 border-b border-border/60">
+              <CardTitle className="font-display text-sm sm:text-base font-bold tracking-normal flex items-center gap-2">
+                <Flame className="h-4 w-4 text-orange-500" />
+                Low Margin Alert
+                <span className="text-xs font-normal text-muted-foreground ml-1">Bottom 10 by profit margin</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border/60">
+                {lowMarginProducts.map((p: any, i: number) => {
+                  const marginColor =
+                    p.margin < 5 ? "text-destructive" :
+                    p.margin < 15 ? "text-orange-600 dark:text-orange-400" :
+                    "text-amber-600 dark:text-amber-400";
+                  const bgColor =
+                    p.margin < 5 ? "bg-destructive/12" :
+                    p.margin < 15 ? "bg-orange-500/12" :
+                    "bg-amber-500/12";
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/20 transition-colors">
+                      <span className={cn(
+                        "w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0 tabular-nums",
+                        p.margin < 5 ? "border-destructive/40 text-destructive" :
+                        p.margin < 15 ? "border-orange-500/40 text-orange-500" :
+                        "border-amber-500/40 text-amber-500"
+                      )}>
+                        {i + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold truncate">{p.canonicalName}</p>
+                        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground font-mono tabular-nums">
+                          <span>Buy {formatKES(p.purchasePrice ?? 0)}</span>
+                          <span>→</span>
+                          <span>Sell {formatKES(p.sellingPrice ?? 0)}</span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className={cn("text-xs font-bold font-mono px-2 py-0.5 rounded-md tabular-nums", bgColor, marginColor)}>
+                          {p.margin.toFixed(1)}%
+                        </span>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">margin</p>
+                      </div>
                     </div>
                   );
                 })}
               </div>
-            )}
-            {/* Totals footer */}
-            {categoryData && (categoryData as any[]).length > 0 && (() => {
-              const cats = categoryData as any[];
-              const totalRev = cats.reduce((s, c) => s + c.totalRevenue, 0);
-              const totalProfit = cats.reduce((s, c) => s + c.totalProfit, 0);
-              const totalItems = cats.reduce((s, c) => s + c.salesCount, 0);
-              const totalMargin = totalRev > 0 ? (totalProfit / totalRev * 100) : 0;
-              return (
-                <div className="border-t border-border/60 bg-muted/20 px-4 py-3 flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className="text-xs font-bold text-foreground">Total</span>
-                    <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
-                      {totalItems} items sold
-                    </span>
-                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 rounded px-1.5 py-0.5 font-mono">
-                      +{formatKES(totalProfit)} profit
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">{totalMargin.toFixed(0)}% avg margin</span>
-                  </div>
-                  <span className="font-bold text-sm font-mono">{formatKES(totalRev)}</span>
-                </div>
-              );
-            })()}
-          </CardContent>
-        </Card>
-        </>
+            </CardContent>
+          </Card>
         )}
 
+        {/* ── Product Sales Lookup ── */}
         <ProductSearchSection shopId={shopId} />
 
-        {/* Voided Sales (today only) */}
+        {/* ── Voided Sales (today only) ── */}
         {isToday && voidedSales && voidedSales.length > 0 && (
-          <Card className="reports-void shadow-none border-destructive/20">
-            <CardHeader className="pb-2 pt-4 px-4">
-              <CardTitle className="text-sm font-bold flex items-center gap-1.5">
+          <Card className="reports-void rounded-2xl shadow-none border-destructive/25 bg-card/95">
+            <CardHeader className="pb-2.5 pt-4 px-4 sm:px-5 border-b border-border/60">
+              <CardTitle className="font-display text-sm sm:text-base font-bold tracking-normal flex items-center gap-2">
                 <Ban className="h-4 w-4 text-destructive" />
                 Voided Sales Today
                 <span className="text-xs font-normal text-muted-foreground ml-1">{voidedSales.length} reversal{voidedSales.length !== 1 ? "s" : ""}</span>
-                <span className="ml-auto text-xs font-bold text-destructive font-mono">
+                <span className="ml-auto text-xs font-bold text-destructive font-mono tabular-nums">
                   -{formatKES(voidedSales.reduce((s: number, v: any) => s + (v.totalAmount ?? 0), 0))}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="divide-y divide-border/40">
+              <div className="divide-y divide-border/50">
                 {voidedSales.map((v: any) => {
                   const time = new Date(v.createdAt).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" });
                   return (
@@ -2285,64 +3018,11 @@ export default function Reports() {
                         <p className="text-sm font-semibold text-muted-foreground line-through truncate">
                           {v.saleType === "debt" ? "Debt Sale" : "Cash Sale"} · {time}
                         </p>
-                        {v.deleteReason && <p className="text-[11px] text-muted-foreground/50 truncate">{v.deleteReason}</p>}
+                        {v.deleteReason && <p className="text-[11px] text-muted-foreground/70 truncate">{v.deleteReason}</p>}
                       </div>
-                      <span className="text-sm font-bold font-mono text-destructive/70 line-through shrink-0">
+                      <span className="text-sm font-bold font-mono text-destructive/75 line-through shrink-0 tabular-nums">
                         {formatKES(v.totalAmount ?? 0)}
                       </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Low Margin Alert */}
-        {showInventoryDetails && lowMarginProducts.length > 0 && (
-          <Card className="reports-low-margin shadow-none">
-            <CardHeader className="pb-2 pt-4 px-4">
-              <CardTitle className="text-sm font-bold flex items-center gap-1.5">
-                <Flame className="h-4 w-4 text-orange-500" />
-                Low Margin Alert
-                <span className="text-xs font-normal text-muted-foreground ml-1">Bottom 10 by profit margin</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="divide-y divide-border">
-                {lowMarginProducts.map((p, i) => {
-                  const marginColor =
-                    p.margin < 5 ? "text-destructive" :
-                    p.margin < 15 ? "text-orange-500" :
-                    "text-amber-500";
-                  const bgColor =
-                    p.margin < 5 ? "bg-destructive/10" :
-                    p.margin < 15 ? "bg-orange-500/10" :
-                    "bg-amber-500/10";
-                  return (
-                    <div key={p.id} className="flex items-center gap-3 px-4 py-3">
-                      <span className={cn(
-                        "w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0",
-                        p.margin < 5 ? "border-destructive/40 text-destructive" :
-                        p.margin < 15 ? "border-orange-400/40 text-orange-500" :
-                        "border-amber-400/40 text-amber-500"
-                      )}>
-                        {i + 1}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold truncate">{p.canonicalName}</p>
-                        <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground font-mono">
-                          <span>Buy {formatKES(p.purchasePrice ?? 0)}</span>
-                          <span>→</span>
-                          <span>Sell {formatKES(p.sellingPrice ?? 0)}</span>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span className={cn("text-sm font-bold font-mono px-2 py-0.5 rounded-lg", bgColor, marginColor)}>
-                          {p.margin.toFixed(1)}%
-                        </span>
-                        <p className="text-[10px] text-muted-foreground mt-1">margin</p>
-                      </div>
                     </div>
                   );
                 })}
