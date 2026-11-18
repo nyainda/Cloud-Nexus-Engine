@@ -23,7 +23,9 @@ import {
   normalizeCustomerKey,
   removeShopNurseryPayout,
   roundMoney,
+  saveNurseryAutoSync,
   saveShopNurseryConfig,
+  triggerNurseryAutoSyncSweep,
   type NurseryPoolMode,
   type NurserySettlementMetrics,
   type NurserySupplierSummary,
@@ -44,6 +46,7 @@ import {
   Trash2,
   UserCheck,
   Wallet,
+  Zap,
 } from "lucide-react";
 
 type SettlementModalTab = "settle" | "history";
@@ -94,6 +97,8 @@ export function NurseryDebtSettlementDialog({
   const [payoutNote, setPayoutNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [linking, setLinking] = useState(false);
+  const [savingAutoSync, setSavingAutoSync] = useState(false);
+  const [sweeping, setSweeping] = useState(false);
 
   const fetchedDebtsQuery = useListDebts(
     { shopId },
@@ -219,7 +224,16 @@ export function NurseryDebtSettlementDialog({
   }, [metrics?.shopId, metrics?.shopConfig.commissionPct, metrics?.shopConfig.poolMode]);
 
   useEffect(() => {
-    if (!open || initialCustomerName || selectedCustomerKey || !metrics?.suppliers?.length) return;
+    if (!open || initialCustomerName || selectedCustomerKey) return;
+    if (metrics?.autoSyncConfig?.ownerCustomerName) {
+      const targetKey = normalizeCustomerKey(metrics.autoSyncConfig.ownerCustomerName);
+      const match = customerOptions.find((c) => c.key === targetKey);
+      if (match) {
+        setSelectedCustomerKey(match.key);
+        return;
+      }
+    }
+    if (!metrics?.suppliers?.length) return;
     const linkedSupplier = metrics.suppliers.find((s) => s.customerName || s.name);
     if (!linkedSupplier) return;
     const match = customerOptions.find(
@@ -228,7 +242,7 @@ export function NurseryDebtSettlementDialog({
         c.key === normalizeCustomerKey(linkedSupplier.name),
     );
     if (match) setSelectedCustomerKey(match.key);
-  }, [open, initialCustomerName, selectedCustomerKey, metrics?.suppliers, customerOptions]);
+  }, [open, initialCustomerName, selectedCustomerKey, metrics?.autoSyncConfig?.ownerCustomerName, metrics?.suppliers, customerOptions]);
 
   const feePct = useMemo(() => {
     const num = Number(feePctInput);
@@ -322,6 +336,85 @@ export function NurseryDebtSettlementDialog({
     }
   };
 
+  const invalidateFinancialViews = async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: getListDebtsQueryKey({ shopId }) }),
+      qc.invalidateQueries({ queryKey: getListDebtsQueryKey() }),
+      qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] }),
+      qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+      qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] }),
+      qc.invalidateQueries({ queryKey: ["/api/nursery/suppliers", shopId] }),
+    ]);
+  };
+
+  const handleToggleAutoSync = async (nextEnabled: boolean, overrideFeePct?: number) => {
+    if (!isOwner || savingAutoSync) return;
+    if (!navigator.onLine) {
+      toast.error("Reconnect to the internet before changing automatic sync settings.");
+      return;
+    }
+    const targetName =
+      activeCustomer?.name ||
+      metrics?.autoSyncConfig?.ownerCustomerName ||
+      "Nursery";
+    const targetPhone =
+      activeCustomer?.phone ||
+      metrics?.autoSyncConfig?.ownerCustomerPhone ||
+      "";
+    setSavingAutoSync(true);
+    try {
+      const res = await saveNurseryAutoSync({
+        enabled: nextEnabled,
+        ownerCustomerName: targetName,
+        ownerCustomerPhone: targetPhone,
+        commissionPct: overrideFeePct ?? feePct,
+        sweepRemaining: true,
+      });
+      await invalidateFinancialViews();
+      await stateQuery.refetch();
+      onSettled?.();
+      const sweptAmt = roundMoney(Number(res?.sweep?.sweptNetCents ?? 0) / 100);
+      if (nextEnabled) {
+        toast.success(
+          sweptAmt > 0
+            ? `Auto-Sync ON for ${toTitleCase(targetName)} · Synced ${formatKES(sweptAmt)} remaining proceeds!`
+            : `Auto-Sync ON — future collected plant sales will credit ${toTitleCase(targetName)} automatically.`,
+        );
+      } else {
+        toast.success("Automatic plant sync paused (manual settlements still available).");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "Could not update automatic plant sync settings");
+    } finally {
+      setSavingAutoSync(false);
+    }
+  };
+
+  const handleManualSweep = async () => {
+    if (sweeping) return;
+    if (!navigator.onLine) {
+      toast.error("Reconnect to the internet to sync collected plant proceeds.");
+      return;
+    }
+    setSweeping(true);
+    try {
+      const res = await triggerNurseryAutoSyncSweep("manual");
+      await invalidateFinancialViews();
+      await stateQuery.refetch();
+      onSettled?.();
+      const net = roundMoney(Number(res?.sweep?.sweptNetCents ?? 0) / 100);
+      toast.success(
+        net > 0
+          ? `Synced ${formatKES(net)} of collected plant proceeds to ${toTitleCase(res.config.ownerCustomerName)}!`
+          : "All collected plant proceeds are already synced.",
+      );
+    } catch (err: any) {
+      toast.error(err?.message || "Could not sync remaining plant balance");
+    } finally {
+      setSweeping(false);
+    }
+  };
+
   const handleSettle = async () => {
     if (!metrics || !projection || !activeCustomer || submitting) return;
     if (!navigator.onLine) {
@@ -340,6 +433,7 @@ export function NurseryDebtSettlementDialog({
           qc,
           shopId,
           customerName: activeCustomer.name,
+          customerPhone: activeCustomer.phone,
           customerDebts,
           netAmount: effectiveApplyAmount,
           feePct,
@@ -359,6 +453,7 @@ export function NurseryDebtSettlementDialog({
           qc,
           shopId,
           customerName: activeCustomer.name,
+          customerPhone: activeCustomer.phone,
           customerDebts,
           netAmount: effectiveApplyAmount,
           feePct,
@@ -494,6 +589,109 @@ export function NurseryDebtSettlementDialog({
               {/* ── TAB 1: SETTLE DEBT & SPLIT ─────────────────────────── */}
               {activeTab === "settle" && (
                 <>
+                  {/* Automatic Sync Banner */}
+                  <div
+                    className={cn(
+                      "rounded-2xl border p-3.5 space-y-2.5",
+                      metrics.autoSyncConfig?.enabled
+                        ? "border-emerald-500/35 bg-emerald-500/[0.06]"
+                        : "border-border/80 bg-muted/20",
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className={cn(
+                            "w-7 h-7 rounded-xl border flex items-center justify-center shrink-0",
+                            metrics.autoSyncConfig?.enabled
+                              ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-500"
+                              : "bg-muted border-border text-muted-foreground",
+                          )}
+                        >
+                          <Zap className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-xs font-bold text-foreground">
+                              Automatic Plant → Mum&apos;s Account Sync
+                            </p>
+                            <span
+                              className={cn(
+                                "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border",
+                                metrics.autoSyncConfig?.enabled
+                                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                  : "bg-muted text-muted-foreground border-border",
+                              )}
+                            >
+                              {metrics.autoSyncConfig?.enabled ? "Auto ON" : "Manual"}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            {metrics.autoSyncConfig?.enabled
+                              ? `Every Cash/M-Pesa plant sale & paid seedling credit debt automatically credits ${toTitleCase(metrics.autoSyncConfig.ownerCustomerName)}${metrics.autoSyncConfig.ownerCustomerPhone ? ` (${metrics.autoSyncConfig.ownerCustomerPhone})` : ""} and auto-cuts any debt taken.`
+                              : "Turn on Auto-Sync so collected plant sales automatically pay open debts and add to Mum's credit."}
+                          </p>
+                        </div>
+                      </div>
+                      {isOwner && (
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          {metrics.autoSyncConfig?.enabled &&
+                            (metrics.autoSyncTotals?.remainingCollectedCents ?? 0) > 0 && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={sweeping}
+                                onClick={() => void handleManualSweep()}
+                                className="h-8 rounded-xl text-xs bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
+                              >
+                                {sweeping
+                                  ? "Syncing…"
+                                  : `Sync ${formatKES((metrics.autoSyncTotals?.remainingCollectedCents ?? 0) / 100)} Now`}
+                              </Button>
+                            )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={metrics.autoSyncConfig?.enabled ? "outline" : "default"}
+                            disabled={savingAutoSync}
+                            onClick={() =>
+                              void handleToggleAutoSync(!metrics.autoSyncConfig?.enabled)
+                            }
+                            className="h-8 rounded-xl text-xs cursor-pointer"
+                          >
+                            {savingAutoSync
+                              ? "Saving…"
+                              : metrics.autoSyncConfig?.enabled
+                              ? feePct !== metrics.autoSyncConfig.commissionPct
+                                ? "Update Rule"
+                                : "Pause Auto-Sync"
+                              : "Turn On Auto-Sync"}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    {isOwner &&
+                      metrics.autoSyncConfig?.enabled &&
+                      feePct !== metrics.autoSyncConfig.commissionPct && (
+                        <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                          <span>
+                            You changed Shop Split to <strong>{feePct}%</strong> (D1 currently uses{" "}
+                            <strong>{metrics.autoSyncConfig.commissionPct}%</strong>).
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={savingAutoSync}
+                            onClick={() => void handleToggleAutoSync(true, feePct)}
+                            className="h-7 rounded-lg text-[11px] cursor-pointer"
+                          >
+                            Save Split to D1
+                          </Button>
+                        </div>
+                      )}
+                  </div>
+
                   <div className="rounded-2xl border border-border/80 bg-muted/20 p-3.5 space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                       <div className="min-w-0 flex-1">
@@ -580,8 +778,12 @@ export function NurseryDebtSettlementDialog({
                         1. Plant Sales Pool ({metrics.totalSeedlings.toLocaleString()} seedlings sold)
                       </p>
                       <p className="text-[11px] text-muted-foreground">
-                        Cash {formatKES(metrics.cashTotal)} + M-Pesa {formatKES(metrics.mpesaTotal)} collected · Credit{" "}
-                        {formatKES(metrics.creditSales)} uncollected
+                        Cash {formatKES(metrics.cashTotal)} + M-Pesa {formatKES(metrics.mpesaTotal)} till
+                        {metrics.paidCreditDebtAmount > 0
+                          ? ` + ${formatKES(metrics.paidCreditDebtAmount)} paid seedling credit`
+                          : ""}
+                        {" "}· Unpaid credit{" "}
+                        {formatKES(Math.max(0, roundMoney(metrics.creditSales - metrics.paidCreditDebtAmount)))}
                       </p>
                     </div>
 

@@ -484,6 +484,7 @@ export default function POS() {
             qc.invalidateQueries({ queryKey: getListDebtsQueryKey() });
             qc.invalidateQueries({ queryKey: ["/api/crm"] });
             qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
+            qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] });
           }
           void syncProductsDelta(qc, shopId);
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });

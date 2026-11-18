@@ -20,6 +20,7 @@ const NURSERY_SUPPLIER_MARKER = "nursery-supplier-tracking-v1";
 const NOTIFICATION_COUNTER_MARKER = "notification-unread-counter-v1";
 const CUSTOMER_SCHEMA_MARKER = "customer-credit-columns-v1";
 const PERF_INDEXES_MARKER = "perf-indexes-v1";
+const NURSERY_AUTOSYNC_MARKER = "nursery-owner-autosync-v1";
 
 async function ensureQuotationInvoiceColumns(db: D1Database, appliedKeys: Set<string>): Promise<void> {
   if (appliedKeys.has(QUOTATION_INVOICE_MARKER)) return;
@@ -364,6 +365,42 @@ async function ensurePerfIndexes(db: D1Database, appliedKeys: Set<string>): Prom
   ]);
 }
 
+/** Nursery owner auto-sync settings, idempotent posting log, and debt credit indexes. */
+async function ensureNurseryOwnerAutoSync(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(NURSERY_AUTOSYNC_MARKER)) return;
+
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS nursery_auto_sync (
+      shop_id TEXT PRIMARY KEY REFERENCES shops(id),
+      enabled INTEGER NOT NULL DEFAULT 0,
+      owner_customer_name TEXT NOT NULL DEFAULT 'Nursery',
+      owner_customer_phone TEXT NOT NULL DEFAULT '',
+      commission_pct REAL NOT NULL DEFAULT 0,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS nursery_auto_postings (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      source_key TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      gross_cents INTEGER NOT NULL,
+      net_cents INTEGER NOT NULL,
+      commission_pct REAL NOT NULL DEFAULT 0,
+      debt_payment_id TEXT,
+      debt_id TEXT,
+      details_json TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(shop_id, source_key)
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_auto_postings_shop_created ON nursery_auto_postings(shop_id, created_at DESC)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_debts_shop_status_balance ON debts(shop_id, status, balance)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_debts_shop_notes ON debts(shop_id, notes)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(NURSERY_AUTOSYNC_MARKER, new Date().toISOString()),
+  ]);
+}
+
 async function runBootstrapD1(db: D1Database): Promise<void> {
   // Cloudflare may execute this module in many short-lived isolates. Load all
   // applied migration keys in ONE single query instead of 10 sequential probes,
@@ -389,6 +426,7 @@ async function runBootstrapD1(db: D1Database): Promise<void> {
     await ensureNotificationReadModel(db, appliedKeys);
     await ensureCustomerSchema(db, appliedKeys);
     await ensurePerfIndexes(db, appliedKeys);
+    await ensureNurseryOwnerAutoSync(db, appliedKeys);
     bootstrapped = true;
     return;
   }
@@ -583,6 +621,7 @@ async function runBootstrapD1(db: D1Database): Promise<void> {
   await ensureNotificationReadModel(db, appliedKeys);
   await ensureCustomerSchema(db, appliedKeys);
   await ensurePerfIndexes(db, appliedKeys);
+  await ensureNurseryOwnerAutoSync(db, appliedKeys);
 
   // Only mark the schema work complete after all bootstrap/migration steps
   // above have been attempted. Future isolates do one single app_migrations

@@ -13,7 +13,15 @@ import {
   creditBalance,
   getCustomerCreditSources,
   getCustomerOutstandingDebts,
+  matchesCustomerIdentities,
 } from "../lib/debt-credit";
+import {
+  buildCreditOwnerStatements,
+  buildDebitOwnerAdjustmentStatements,
+  getNurserySyncConfig,
+  isNurseryCreditDebt,
+  resolveEffectiveCreditIdentities,
+} from "../lib/nursery-sync";
 import { chunk } from "../lib/chunk";
 
 const debtsRouter = new Hono<AppEnv>();
@@ -204,19 +212,22 @@ debtsRouter.get("/debts/settlement-payments", requireAuth, async (c) => {
        dp.payment_type AS paymentType,
        dp.note,
        d.customer_name AS customerName,
+       d.customer_phone AS customerPhone,
        d.created_at AS debtCreatedAt
      FROM debt_payments dp
      INNER JOIN debts d ON d.id = dp.debt_id
      WHERE d.shop_id = ?
        AND d.status != 'cancelled'
        AND dp.payment_type != 'reversal'
-       AND dp.amount > 0
        AND (
-         LOWER(COALESCE(dp.note, '')) LIKE '%[plant-settle:%'
-         OR (
-           TRIM(COALESCE(dp.recorded_by, '')) = 'Nursery'
-           AND LOWER(COALESCE(dp.note, '')) LIKE '%nursery supplier%'
-         )
+         (dp.amount > 0 AND (
+           LOWER(COALESCE(dp.note, '')) LIKE '%[plant-settle:%'
+           OR (
+             TRIM(COALESCE(dp.recorded_by, '')) = 'Nursery'
+             AND LOWER(COALESCE(dp.note, '')) LIKE '%nursery supplier%'
+           )
+         ))
+         OR LOWER(COALESCE(dp.note, '')) LIKE '%[plant-settle-adj:%'
        )
        AND NOT EXISTS (
          SELECT 1 FROM debt_payments rev
@@ -234,6 +245,7 @@ debtsRouter.get("/debts/settlement-payments", requireAuth, async (c) => {
     paymentType: string | null;
     note: string | null;
     customerName: string;
+    customerPhone: string;
     debtCreatedAt: string;
   }>();
 
@@ -258,7 +270,20 @@ debtsRouter.post("/debts", requireAuth, async (c) => {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const customerName = normalizeCustomerName(body.customerName);
-  const creditSources = await getCustomerCreditSources(db, body.shopId, customerName);
+  const creditLookup = await resolveEffectiveCreditIdentities(
+    c.env.DB,
+    c.env.SESSIONS,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+  );
+  const creditSources = await getCustomerCreditSources(
+    db,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+    creditLookup.extraIdentities,
+  );
   const creditAllocations = allocateCredit(creditSources, body.totalAmount);
   const creditApplied = money(creditAllocations.reduce((sum, allocation) => sum + allocation.amount, 0));
   const balance = money(body.totalAmount - creditApplied);
@@ -694,11 +719,25 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   // this just runs it here too, on demand, for an existing debt. The
   // ordinary "Record Payment" dialog never sets this flag, so real cash
   // entered there is never silently swapped out for stored credit.
+  const syncLookupPromise = resolveEffectiveCreditIdentities(
+    c.env.DB,
+    c.env.SESSIONS,
+    debtBefore.shopId,
+    debtBefore.customerName,
+    debtBefore.customerPhone,
+  );
   let creditAllocations: Array<{ source: (typeof debts.$inferSelect); amount: number }> = [];
   let creditApplied = 0;
   if (body.useAvailableCredit) {
+    const syncLookup = await syncLookupPromise;
     const creditSources = (
-      await getCustomerCreditSources(db, debtBefore.shopId, debtBefore.customerName)
+      await getCustomerCreditSources(
+        db,
+        debtBefore.shopId,
+        debtBefore.customerName,
+        debtBefore.customerPhone,
+        syncLookup.extraIdentities,
+      )
     ).filter((source) => source.id !== debtId);
     creditAllocations = allocateCredit(creditSources, amount);
     creditApplied = money(creditAllocations.reduce((sum, allocation) => sum + allocation.amount, 0));
@@ -798,8 +837,9 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   // oldest first, the same way POST /debts/customer-payment already does for
   // a fresh incoming payment; only the leftover (if any) stays as credit here.
   const overpayAmount = money(-(Number(updatedDebt?.balance ?? 0)));
+  const sweptNurseryCredits: Array<{ debt: typeof debts.$inferSelect; paymentId: string; amount: number }> = [];
   if (overpayAmount > 0.005) {
-    const otherOutstanding = await getCustomerOutstandingDebts(db, debtBefore.shopId, debtBefore.customerName);
+    const otherOutstanding = await getCustomerOutstandingDebts(db, debtBefore.shopId, debtBefore.customerName, debtBefore.customerPhone);
     const { allocations, remaining } = allocatePayment(otherOutstanding, overpayAmount);
     if (allocations.length > 0) {
       const swept = money(overpayAmount - remaining);
@@ -836,6 +876,10 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
         ),
       ]);
 
+      allocations.forEach(({ debt, amount: portion }, i) => {
+        sweptNurseryCredits.push({ debt, paymentId: sweepPaymentIds[i]!, amount: portion });
+      });
+
       const sweptPaidOffIds = allocations
         .filter(({ debt, amount: portion }) => money(Number(debt.balance) - portion) <= 0.005)
         .map(({ debt }) => debt.id);
@@ -843,6 +887,67 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
         await db
           .delete(notifications)
           .where(and(inArray(notifications.debtId, sweptPaidOffIds), eq(notifications.type, "debt_reminder")));
+      }
+    }
+  }
+
+  // If this collected payment settled a Nursery seedling credit debt, auto-credit Mum's account.
+  if (!(body.note ?? "").includes("[plant-settle:") && !(body.note ?? "").includes("[plant-settle-adj:")) {
+    const syncLookup = await syncLookupPromise;
+    if (syncLookup.config.enabled) {
+      const ownerIdentity = {
+        customerName: syncLookup.config.ownerCustomerName,
+        customerPhone: syncLookup.config.ownerCustomerPhone,
+      };
+      const nurseryPayJobs: Array<{ paymentId: string; customerName: string; grossCents: number }> = [];
+      const directPaidCents = Math.round(
+        Math.min(amount, Math.max(0, Number(debtBefore.balance || 0))) * 100,
+      );
+      if (
+        directPaidCents > 0 &&
+        !matchesCustomerIdentities(debtBefore, [ownerIdentity]) &&
+        (await isNurseryCreditDebt(c.env.DB, debtBefore.shopId, debtBefore))
+      ) {
+        nurseryPayJobs.push({
+          paymentId: primaryPaymentId,
+          customerName: debtBefore.customerName,
+          grossCents: directPaidCents,
+        });
+      }
+      for (const item of sweptNurseryCredits) {
+        const sweptCents = Math.round(item.amount * 100);
+        if (
+          sweptCents > 0 &&
+          !matchesCustomerIdentities(item.debt, [ownerIdentity]) &&
+          (await isNurseryCreditDebt(c.env.DB, debtBefore.shopId, item.debt))
+        ) {
+          nurseryPayJobs.push({
+            paymentId: item.paymentId,
+            customerName: item.debt.customerName,
+            grossCents: sweptCents,
+          });
+        }
+      }
+      for (const job of nurseryPayJobs) {
+        const built = await buildCreditOwnerStatements({
+          d1: c.env.DB,
+          db,
+          shopId: debtBefore.shopId,
+          config: syncLookup.config,
+          grossCents: job.grossCents,
+          sourceKey: `credit-debt-pay:${job.paymentId}`,
+          sourceType: "credit_debt_payment",
+          label: `Seedling credit paid — ${job.customerName}`,
+          recordedBy: "Nursery Auto-Sync",
+          now,
+        });
+        if (built.statements.length > 0) {
+          try {
+            await c.env.DB.batch(built.statements);
+          } catch (err) {
+            if (!String(err).toLowerCase().includes("unique")) throw err;
+          }
+        }
       }
     }
   }
@@ -868,6 +973,7 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
   const body = await c.req.json<{
     shopId: string;
     customerName: string;
+    customerPhone?: string;
     amount: number;
     recordedBy?: string;
     note?: string | null;
@@ -881,7 +987,20 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
   if (body.shopId !== session.shopId) throw new HTTPException(403, { message: "Forbidden" });
 
   const customerName = normalizeCustomerName(body.customerName);
-  const outstanding = await getCustomerOutstandingDebts(db, body.shopId, customerName);
+  const syncLookup = await resolveEffectiveCreditIdentities(
+    c.env.DB,
+    c.env.SESSIONS,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+  );
+  const outstanding = await getCustomerOutstandingDebts(
+    db,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+    syncLookup.extraIdentities,
+  );
   if (outstanding.length === 0) {
     return c.json({ error: "This customer has no outstanding debts" }, 404);
   }
@@ -952,6 +1071,48 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
       .where(and(inArray(notifications.debtId, paidOffIds), eq(notifications.type, "debt_reminder")));
   }
 
+  // Forward collected payments on Nursery seedling credit debts to Mum's account when auto-sync is enabled.
+  if (
+    syncLookup.config.enabled &&
+    !(body.note ?? "").includes("[plant-settle:") &&
+    !(body.note ?? "").includes("[plant-settle-adj:")
+  ) {
+    const ownerIdentity = {
+      customerName: syncLookup.config.ownerCustomerName,
+      customerPhone: syncLookup.config.ownerCustomerPhone,
+    };
+    for (let i = 0; i < allocations.length; i++) {
+      const alloc = allocations[i]!;
+      const grossCents = Math.round(alloc.amount * 100);
+      if (
+        grossCents <= 0 ||
+        matchesCustomerIdentities(alloc.debt, [ownerIdentity]) ||
+        !(await isNurseryCreditDebt(c.env.DB, body.shopId, alloc.debt))
+      ) {
+        continue;
+      }
+      const built = await buildCreditOwnerStatements({
+        d1: c.env.DB,
+        db,
+        shopId: body.shopId,
+        config: syncLookup.config,
+        grossCents,
+        sourceKey: `credit-debt-pay:${paymentIds[i]!}`,
+        sourceType: "credit_debt_payment",
+        label: `Seedling credit paid — ${alloc.debt.customerName}`,
+        recordedBy: "Nursery Auto-Sync",
+        now,
+      });
+      if (built.statements.length > 0) {
+        try {
+          await c.env.DB.batch(built.statements);
+        } catch (err) {
+          if (!String(err).toLowerCase().includes("unique")) throw err;
+        }
+      }
+    }
+  }
+
   await db.insert(auditLog).values({
     id: crypto.randomUUID(),
     shopId: body.shopId,
@@ -993,6 +1154,7 @@ debtsRouter.post("/debts/customer-credit", requireAuth, async (c) => {
   const body = await c.req.json<{
     shopId: string;
     customerName: string;
+    customerPhone?: string;
     amount: number;
     recordedBy?: string;
     note?: string | null;
@@ -1022,7 +1184,20 @@ debtsRouter.post("/debts/customer-credit", requireAuth, async (c) => {
   }
 
   const customerName = normalizeCustomerName(body.customerName);
-  const creditSources = await getCustomerCreditSources(db, body.shopId, customerName);
+  const creditLookup = await resolveEffectiveCreditIdentities(
+    c.env.DB,
+    c.env.SESSIONS,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+  );
+  const creditSources = await getCustomerCreditSources(
+    db,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+    creditLookup.extraIdentities,
+  );
 
   // Prefer the customer's existing credit row. With none, a customer who is
   // fully settled can still prepay: park it on their newest paid debt. A
@@ -1030,16 +1205,29 @@ debtsRouter.post("/debts/customer-credit", requireAuth, async (c) => {
   // as credit next to an open balance.
   let target: (typeof creditSources)[number] | undefined = creditSources[creditSources.length - 1];
   if (!target) {
-    const outstanding = await getCustomerOutstandingDebts(db, body.shopId, customerName);
+    const outstanding = await getCustomerOutstandingDebts(
+      db,
+      body.shopId,
+      customerName,
+      body.customerPhone,
+      creditLookup.extraIdentities,
+    );
     if (outstanding.length > 0) {
       return c.json({
         error: "This customer still owes money — record a payment against their debts instead of a credit top-up",
       }, 409);
     }
-    const key = customerNameKey(customerName);
-    const rows = await db.select().from(debts).where(eq(debts.shopId, body.shopId)).all();
+    const identities = [
+      { customerName, customerPhone: body.customerPhone },
+      ...creditLookup.extraIdentities,
+    ];
+    const rows = await db
+      .select()
+      .from(debts)
+      .where(and(eq(debts.shopId, body.shopId), eq(debts.status, "paid")))
+      .all();
     target = rows
-      .filter((r) => customerNameKey(r.customerName) === key && r.status === "paid")
+      .filter((r) => matchesCustomerIdentities(r, identities))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     if (!target) return c.json({ error: "No debt record found for this customer" }, 404);
   }
@@ -1135,6 +1323,33 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
   const now = new Date().toISOString();
   const reversalId = crypto.randomUUID();
   const reason = body.reason?.trim() || "Payment correction";
+
+  const linkedPosting = await c.env.DB
+    .prepare(
+      "SELECT gross_cents AS grossCents FROM nursery_auto_postings WHERE shop_id = ? AND source_key = ? LIMIT 1",
+    )
+    .bind(debt.shopId, `credit-debt-pay:${original.id}`)
+    .first<{ grossCents: number }>();
+
+  let nurseryReverseAdj: Awaited<ReturnType<typeof buildDebitOwnerAdjustmentStatements>> | null = null;
+  if (linkedPosting && linkedPosting.grossCents > 0) {
+    const syncConfig = await getNurserySyncConfig(c.env.DB, c.env.SESSIONS, debt.shopId);
+    nurseryReverseAdj = await buildDebitOwnerAdjustmentStatements({
+      d1: c.env.DB,
+      db,
+      shopId: debt.shopId,
+      config: syncConfig,
+      grossReductionCents: linkedPosting.grossCents,
+      sourceKey: `reverse-credit-debt-pay:${original.id}`,
+      label: `Reversed seedling credit payment (${debt.customerName})`,
+      recordedBy: "Nursery Auto-Sync",
+      now,
+    });
+    if (!nurseryReverseAdj.ok) {
+      return c.json({ error: nurseryReverseAdj.error }, 409);
+    }
+  }
+
   await db.insert(debtPayments).values({
     id: reversalId,
     debtId,
@@ -1167,6 +1382,14 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
     performedBy: session.userName ?? "Owner",
     createdAt: now,
   });
+
+  if (nurseryReverseAdj && nurseryReverseAdj.ok && nurseryReverseAdj.statements.length > 0) {
+    try {
+      await c.env.DB.batch(nurseryReverseAdj.statements);
+    } catch (err) {
+      if (!String(err).toLowerCase().includes("unique")) throw err;
+    }
+  }
 
   const today = now.slice(0, 10);
   await kvDel(c.env.SESSIONS, CK.debts(debt.shopId), CK.dashboard(debt.shopId, today));

@@ -1,9 +1,28 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, ne } from "drizzle-orm";
 import { debts } from "@workspace/db/schema";
 import type { Db } from "./db";
-import { customerNameKey } from "./normalize";
+import { customerNameKey, phonesMatch } from "./normalize";
 
 export type CreditSource = typeof debts.$inferSelect;
+
+export interface CustomerIdentity {
+  customerName?: string | null;
+  customerPhone?: string | null;
+}
+
+/** True when a debt record belongs to any of the provided customer name/phone identities. */
+export function matchesCustomerIdentities(
+  row: Pick<CreditSource, "customerName" | "customerPhone">,
+  identities: CustomerIdentity[],
+): boolean {
+  const rowNameKey = customerNameKey(row.customerName ?? "");
+  for (const identity of identities) {
+    const targetNameKey = customerNameKey(identity.customerName ?? "");
+    if (targetNameKey && rowNameKey === targetNameKey) return true;
+    if (phonesMatch(row.customerPhone, identity.customerPhone)) return true;
+  }
+  return false;
+}
 
 /** Positive customer credit is stored as a negative debt balance. */
 export function creditBalance(debt: Pick<CreditSource, "balance" | "status">): number {
@@ -14,11 +33,20 @@ export async function getCustomerCreditSources(
   db: Db,
   shopId: string,
   customerName: string,
+  customerPhone?: string | null,
+  extraIdentities: CustomerIdentity[] = [],
 ): Promise<CreditSource[]> {
-  const key = customerNameKey(customerName);
-  const rows = await db.select().from(debts).where(eq(debts.shopId, shopId)).all();
+  const identities: CustomerIdentity[] = [
+    { customerName, customerPhone },
+    ...extraIdentities,
+  ];
+  const rows = await db
+    .select()
+    .from(debts)
+    .where(and(eq(debts.shopId, shopId), ne(debts.status, "cancelled"), lt(debts.balance, 0)))
+    .all();
   return rows
-    .filter((row) => customerNameKey(row.customerName) === key && creditBalance(row) > 0)
+    .filter((row) => creditBalance(row) > 0 && matchesCustomerIdentities(row, identities))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
@@ -52,15 +80,26 @@ export async function getCustomerOutstandingDebts(
   db: Db,
   shopId: string,
   customerName: string,
+  customerPhone?: string | null,
+  extraIdentities: CustomerIdentity[] = [],
 ): Promise<CreditSource[]> {
-  const key = customerNameKey(customerName);
-  const rows = await db.select().from(debts).where(eq(debts.shopId, shopId)).all();
-  return rows
-    .filter(
-      (row) =>
-        customerNameKey(row.customerName) === key &&
-        (row.status === "unpaid" || row.status === "partial"),
+  const identities: CustomerIdentity[] = [
+    { customerName, customerPhone },
+    ...extraIdentities,
+  ];
+  const rows = await db
+    .select()
+    .from(debts)
+    .where(
+      and(
+        eq(debts.shopId, shopId),
+        inArray(debts.status, ["unpaid", "partial"]),
+        gt(debts.balance, 0),
+      ),
     )
+    .all();
+  return rows
+    .filter((row) => matchesCustomerIdentities(row, identities))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 

@@ -63,6 +63,28 @@ export interface ShopNurseryConfig {
   poolMode: NurseryPoolMode;
 }
 
+export interface NurseryAutoSyncConfig {
+  shopId: string;
+  enabled: boolean;
+  ownerCustomerName: string;
+  ownerCustomerPhone: string;
+  commissionPct: number;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
+export interface NurseryAutoSyncTotals {
+  collectedTillCents: number;
+  creditSalesCents: number;
+  paidCreditDebtCents: number;
+  totalCollectedCents: number;
+  settledNetCents: number;
+  settledGrossCents: number;
+  remainingCollectedCents: number;
+  hasInitialSweep: boolean;
+  settlementCount: number;
+}
+
 export interface NurserySettlementMetrics {
   shopId: string;
   shopName: string;
@@ -71,12 +93,15 @@ export interface NurserySettlementMetrics {
   grossTotal: number;
   cashTotal: number;
   mpesaTotal: number;
+  collectedTillCashMpesa: number;
+  paidCreditDebtAmount: number;
   collectedCashMpesa: number;
   creditSales: number;
   matchedSupplier: NurserySupplierSummary | null;
   suppliers: NurserySupplierSummary[];
   settledPayments: SettledPlantPaymentEntry[];
   settledByCustomerKey: Record<string, number>;
+  settledByPhoneDigits: Record<string, number>;
   d1SettledNetTotal: number;
   d1SettledGrossConsumed: number;
   d1HistoricalShopProfit: number;
@@ -85,6 +110,8 @@ export interface NurserySettlementMetrics {
   payoutGrossConsumed: number;
   payoutShopProfit: number;
   shopConfig: ShopNurseryConfig;
+  autoSyncConfig: NurseryAutoSyncConfig | null;
+  autoSyncTotals: NurseryAutoSyncTotals | null;
 }
 
 export interface NurseryProjection {
@@ -101,8 +128,9 @@ export interface NurseryProjection {
 
 const CONFIG_STORAGE_KEY = "greenlink_nursery_shop_config_v1";
 const PAYOUTS_STORAGE_KEY = "greenlink_nursery_payouts_v1";
-const PLANT_SETTLE_TAG_RE = /\[plant-settle:([^\]]+)\]/i;
+const PLANT_SETTLE_TAG_RE = /\[plant-settle(?:-adj)?:([^\]]+)\]/i;
 let _settlementEndpointUnsupported = false;
+let _autoSyncEndpointUnsupported = false;
 
 export function roundMoney(value: number): number {
   const numeric = Number(value);
@@ -249,6 +277,7 @@ export function formatPlantSettlementNoteDisplay(note: string | null | undefined
 
 export function parsePlantSettlementPayment(payment: any): {
   isPlantLinked: boolean;
+  isAdjustment: boolean;
   source: "plant_settlement" | "supplier_auto_offset" | null;
   feePct: number;
   mode: NurseryPoolMode;
@@ -268,6 +297,7 @@ export function parsePlantSettlementPayment(payment: any): {
     }
     return {
       isPlantLinked: true,
+      isAdjustment: note.toLowerCase().includes("[plant-settle-adj:"),
       source: "plant_settlement",
       feePct,
       mode,
@@ -281,6 +311,7 @@ export function parsePlantSettlementPayment(payment: any): {
   ) {
     return {
       isPlantLinked: true,
+      isAdjustment: false,
       source: "supplier_auto_offset",
       feePct: 0,
       mode: "collected",
@@ -289,10 +320,62 @@ export function parsePlantSettlementPayment(payment: any): {
 
   return {
     isPlantLinked: false,
+    isAdjustment: false,
     source: null,
     feePct: 0,
     mode: "collected",
   };
+}
+
+export async function fetchNurseryAutoSync(): Promise<{
+  config: NurseryAutoSyncConfig;
+  totals: NurseryAutoSyncTotals;
+} | null> {
+  if (_autoSyncEndpointUnsupported) return null;
+  try {
+    return await customFetch<{ config: NurseryAutoSyncConfig; totals: NurseryAutoSyncTotals }>(
+      "/api/nursery/auto-sync",
+    );
+  } catch (err: any) {
+    if (err?.status === 404) {
+      _autoSyncEndpointUnsupported = true;
+    }
+    return null;
+  }
+}
+
+export async function saveNurseryAutoSync(params: {
+  enabled: boolean;
+  ownerCustomerName: string;
+  ownerCustomerPhone: string;
+  commissionPct: number;
+  sweepRemaining?: boolean;
+}) {
+  return customFetch<{
+    config: NurseryAutoSyncConfig;
+    totals: NurseryAutoSyncTotals;
+    sweep: any;
+  }>("/api/nursery/auto-sync", {
+    method: "PUT",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function triggerNurseryAutoSyncSweep(mode: "initial" | "manual" = "initial") {
+  return customFetch<{
+    sweep: {
+      sweptGrossCents: number;
+      sweptNetCents: number;
+      appliedToDebtsCents: number;
+      addedToCreditCents: number;
+      alreadyDone: boolean;
+    };
+    config: NurseryAutoSyncConfig;
+    totals: NurseryAutoSyncTotals;
+  }>("/api/nursery/auto-sync/sweep", {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  });
 }
 
 function localTodayIso(): string {
@@ -319,7 +402,7 @@ export async function loadNurserySettlementState(params: {
   const { qc, shopId, shopName, customerName = "", customerPhone = "", allDebts } = params;
   const today = localTodayIso();
 
-  const [reportData, suppliersData] = await Promise.all([
+  const [reportData, suppliersData, autoSyncData] = await Promise.all([
     qc.fetchQuery({
       queryKey: ["/api/nursery/report", shopId, "all-time-settlement", today],
       queryFn: () =>
@@ -344,6 +427,7 @@ export async function loadNurserySettlementState(params: {
             customFetch<{ rows: NurserySupplierSummary[] }>("/api/nursery/suppliers"),
           staleTime: 30_000,
         }),
+    fetchNurseryAutoSync(),
   ]);
 
   const suppliers = suppliersData.rows ?? [];
@@ -354,13 +438,16 @@ export async function loadNurserySettlementState(params: {
   const summary = reportData?.summary ?? {};
   const cashTotal = roundMoney(Number(summary.cashCents ?? 0) / 100);
   const mpesaTotal = roundMoney(Number(summary.mpesaCents ?? 0) / 100);
-  const collectedCashMpesa = roundMoney(cashTotal + mpesaTotal);
+  const collectedTillCashMpesa = roundMoney(cashTotal + mpesaTotal);
+  const paidCreditDebtAmount = roundMoney(Number(autoSyncData?.totals?.paidCreditDebtCents ?? 0) / 100);
+  const collectedCashMpesa = roundMoney(collectedTillCashMpesa + paidCreditDebtAmount);
   const creditSales = roundMoney(Number(summary.creditCents ?? 0) / 100);
   const grossTotal = roundMoney(Number(summary.totalRevenueCents ?? 0) / 100);
   const totalSeedlings = Number(summary.totalSeedlings ?? 0);
 
   const settledPayments: SettledPlantPaymentEntry[] = [];
   const settledByCustomerKey: Record<string, number> = {};
+  const settledByPhoneDigits: Record<string, number> = {};
   let d1SettledNetTotal = 0;
   let d1SettledGrossConsumed = 0;
   let d1HistoricalShopProfit = 0;
@@ -369,16 +456,17 @@ export async function loadNurserySettlementState(params: {
     debtId: string;
     paymentId: string;
     customerName: string;
+    customerPhone?: string;
     amount: number;
     paidAt: string;
     recordedBy: string;
     payment: any;
   }) => {
     const amount = roundMoney(Number(row.amount ?? 0));
-    if (amount <= 0) return;
-
     const parsed = parsePlantSettlementPayment(row.payment);
     if (!parsed.isPlantLinked || !parsed.source) return;
+    if (!parsed.isAdjustment && amount <= 0) return;
+    if (parsed.isAdjustment && Math.abs(amount) < 0.005) return;
 
     const rate = (100 - parsed.feePct) / 100;
     const grossConsumed = rate > 0 ? roundMoney(amount / rate) : amount;
@@ -391,6 +479,10 @@ export async function loadNurserySettlementState(params: {
     const cKey = normalizeCustomerKey(row.customerName);
     if (cKey) {
       settledByCustomerKey[cKey] = roundMoney((settledByCustomerKey[cKey] ?? 0) + amount);
+    }
+    const pKey = normalizePhoneDigits(row.customerPhone);
+    if (pKey && pKey.length >= 9) {
+      settledByPhoneDigits[pKey] = roundMoney((settledByPhoneDigits[pKey] ?? 0) + amount);
     }
 
     settledPayments.push({
@@ -422,6 +514,7 @@ export async function loadNurserySettlementState(params: {
             debtId: String(p.debtId ?? ""),
             paymentId: String(p.paymentId ?? p.id ?? ""),
             customerName: String(p.customerName ?? ""),
+            customerPhone: String(p.customerPhone ?? ""),
             amount: Number(p.amount ?? 0),
             paidAt: String(p.paidAt ?? p.debtCreatedAt ?? ""),
             recordedBy: String(p.recordedBy ?? "System"),
@@ -518,6 +611,15 @@ export async function loadNurserySettlementState(params: {
     payoutShopProfit = roundMoney(payoutShopProfit + Number(p.shopProfitTaken || 0));
   }
 
+  const localConfig = getShopNurseryConfig(shopId);
+  const autoSyncConfig = autoSyncData?.config ?? null;
+  const shopConfig: ShopNurseryConfig = autoSyncConfig?.enabled
+    ? {
+        commissionPct: autoSyncConfig.commissionPct,
+        poolMode: "collected",
+      }
+    : localConfig;
+
   return {
     shopId,
     shopName,
@@ -526,12 +628,15 @@ export async function loadNurserySettlementState(params: {
     grossTotal,
     cashTotal,
     mpesaTotal,
+    collectedTillCashMpesa,
+    paidCreditDebtAmount,
     collectedCashMpesa,
     creditSales,
     matchedSupplier,
     suppliers,
     settledPayments,
     settledByCustomerKey,
+    settledByPhoneDigits,
     d1SettledNetTotal,
     d1SettledGrossConsumed,
     d1HistoricalShopProfit,
@@ -539,7 +644,9 @@ export async function loadNurserySettlementState(params: {
     payoutNetTotal,
     payoutGrossConsumed,
     payoutShopProfit,
-    shopConfig: getShopNurseryConfig(shopId),
+    shopConfig,
+    autoSyncConfig,
+    autoSyncTotals: autoSyncData?.totals ?? null,
   };
 }
 
@@ -683,6 +790,7 @@ export async function applyPlantSalesToCustomerDebts(params: {
   qc: QueryClient;
   shopId: string;
   customerName: string;
+  customerPhone?: string;
   customerDebts: any[];
   netAmount: number;
   feePct: number;
@@ -694,6 +802,7 @@ export async function applyPlantSalesToCustomerDebts(params: {
     qc,
     shopId,
     customerName,
+    customerPhone,
     customerDebts,
     netAmount,
     feePct,
@@ -731,6 +840,7 @@ export async function applyPlantSalesToCustomerDebts(params: {
       body: JSON.stringify({
         shopId,
         customerName,
+        customerPhone,
         amount: cleanNet,
         recordedBy,
         note,
@@ -793,6 +903,7 @@ export async function applyPlantSalesToCustomerDebts(params: {
       body: JSON.stringify({
         shopId,
         customerName,
+        customerPhone,
         amount: cleanNet,
         recordedBy,
         note,

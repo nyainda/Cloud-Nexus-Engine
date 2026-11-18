@@ -151,13 +151,21 @@ export function PaymentDialog({ debt }: { debt: any }) {
 
       customFetch("/api/debts/customer-payment", {
         method: "POST",
-        body: JSON.stringify({ shopId, customerName: debt.customerName, amount: paid, recordedBy: userName }),
+        body: JSON.stringify({
+          shopId,
+          customerName: debt.customerName,
+          customerPhone: debt.customerPhone || undefined,
+          amount: paid,
+          recordedBy: userName,
+        }),
       })
         .then(() => {
           qc.invalidateQueries({ queryKey: exactKey });
           allocations.forEach(({ debt: d }) => qc.invalidateQueries({ queryKey: getGetDebtQueryKey(d.id) }));
           qc.invalidateQueries({ queryKey: ["/api/crm"] });
           qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
+          qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] });
+          qc.invalidateQueries({ queryKey: ["nursery-auto-sync", shopId] });
         })
         .catch(() => {
           qc.setQueryData(exactKey, snapshot);
@@ -218,6 +226,8 @@ export function PaymentDialog({ debt }: { debt: any }) {
         qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
         qc.invalidateQueries({ queryKey: ["/api/crm"] });
         qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
+        qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] });
+        qc.invalidateQueries({ queryKey: ["nursery-auto-sync", shopId] });
       })
       .catch(() => {
         qc.setQueryData(exactKey, snapshot);
@@ -569,6 +579,8 @@ export function MarkPaidButton({ debt }: { debt: any }) {
       qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
       qc.invalidateQueries({ queryKey: ["/api/crm"] });
       qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
+      qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] });
+      qc.invalidateQueries({ queryKey: ["nursery-auto-sync", shopId] });
     } catch {
       qc.setQueryData(exactKey, snapshot);
       qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
@@ -611,6 +623,8 @@ export function ReversePaymentButton({ debtId, payment, onDone }: { debtId: stri
       toast.success("Payment reversed — the balance has been restored");
       qc.invalidateQueries({ queryKey: ["/api/crm"] });
       qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
+      qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] });
+      qc.invalidateQueries({ queryKey: ["nursery-auto-sync", shopId] });
       onDone();
     } catch (error: any) {
       toast.error(error?.message || "Could not reverse this payment");
