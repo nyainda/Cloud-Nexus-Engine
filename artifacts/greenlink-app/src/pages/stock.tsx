@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
 import { cn } from "@/lib/utils";
 import { getCategoryStyle } from "@/lib/product-utils";
+import { syncProductsDelta } from "@/lib/product-sync";
 import { RestockDialog } from "@/features/stock/RestockDialog";
 import { EditProductDialog } from "@/features/stock/EditProductDialog";
 import { AddProductDialog } from "@/features/stock/AddProductDialog";
@@ -73,8 +74,23 @@ export default function Stock() {
 
   const { data: productsData, isLoading } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, refetchInterval: 120_000, refetchIntervalInBackground: false } as any }
+    { query: { enabled: !!shopId, staleTime: 5 * 60_000, refetchInterval: false, refetchOnWindowFocus: false } as any }
   );
+
+  useEffect(() => {
+    if (!shopId) return;
+    const runDelta = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        void syncProductsDelta(qc, shopId);
+      }
+    };
+    const intervalId = window.setInterval(runDelta, 120_000);
+    window.addEventListener("focus", runDelta);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", runDelta);
+    };
+  }, [shopId, qc]);
 
   const allProducts = productsData?.products || [];
   const detailProduct = useMemo(

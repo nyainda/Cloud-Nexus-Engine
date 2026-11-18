@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, desc, like, or, sql } from "drizzle-orm";
+import { eq, and, desc, gt, like, or, sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { createDb, normalizeProductName } from "../lib/db";
 import { requireAuth, requireOwner } from "../middleware/auth";
@@ -19,6 +19,28 @@ const productsRouter = new Hono<AppEnv>();
 
 const FULL_CATALOG_LIMIT = 3000;
 const PRODUCT_EDGE_CACHE_TTL = 600;
+
+const productListColumns = {
+  id: products.id,
+  shopId: products.shopId,
+  canonicalName: products.canonicalName,
+  sku: products.sku,
+  category: products.category,
+  unit: products.unit,
+  purchasePrice: products.purchasePrice,
+  sellingPrice: products.sellingPrice,
+  profitMargin: products.profitMargin,
+  productType: products.productType,
+  allowDecimals: products.allowDecimals,
+  stockQty: products.stockQty,
+  alertQty: products.alertQty,
+  expiryDate: products.expiryDate,
+  size: products.size,
+  isActive: products.isActive,
+  lastSoldAt: products.lastSoldAt,
+  createdAt: products.createdAt,
+  updatedAt: products.updatedAt,
+} as const;
 
 function isFullCatalogRequest(
   shopId: string | undefined,
@@ -51,8 +73,45 @@ productsRouter.get("/products", requireAuth, async (c) => {
   const q = c.req.query("q")?.trim();
   const category = c.req.query("category");
   const lowStock = c.req.query("lowStock");
+  const updatedSince = c.req.query("updatedSince")?.trim();
   const limit = Math.min(parseInt(c.req.query("limit") ?? "100"), 3000);
   const offset = parseInt(c.req.query("offset") ?? "0");
+
+  // Incremental delta sync path (uses idx_products_shop_updated_at) so POS
+  // checkouts and periodic refreshes only read modified/created/archived rows.
+  if (updatedSince && shopId && !q && !category && lowStock !== "true") {
+    const versionRow = await db
+      .select({ updatedAt: products.updatedAt })
+      .from(products)
+      .where(eq(products.shopId, shopId))
+      .orderBy(desc(products.updatedAt))
+      .limit(1)
+      .get();
+    const catalogVersion = versionRow?.updatedAt ?? "";
+
+    if (!catalogVersion || catalogVersion <= updatedSince) {
+      return c.json({
+        products: [],
+        total: 0,
+        delta: true,
+        catalogVersion,
+      });
+    }
+
+    const deltaRows = await db
+      .select(productListColumns)
+      .from(products)
+      .where(and(eq(products.shopId, shopId), gt(products.updatedAt, updatedSince)))
+      .limit(limit)
+      .all();
+
+    return c.json({
+      products: deltaRows,
+      total: deltaRows.length,
+      delta: true,
+      catalogVersion,
+    });
+  }
 
   const isFullCatalog = isFullCatalogRequest(shopId, q, category, lowStock, limit, offset);
   let cacheKey: Request | undefined;
@@ -62,8 +121,7 @@ productsRouter.get("/products", requireAuth, async (c) => {
   // The version probe is a single indexed row read, so cache hits do not scan
   // the catalog and product edits are visible without relying on isolate-local
   // memory or serving a stale fixed-TTL response after a write.
-  if (isFullCatalog && shopId && typeof caches !== "undefined" && caches.default) {
-    cacheKey = productCatalogCacheKey(shopId);
+  if (isFullCatalog && shopId) {
     const versionRow = await db
       .select({ updatedAt: products.updatedAt })
       .from(products)
@@ -73,12 +131,61 @@ productsRouter.get("/products", requireAuth, async (c) => {
       .get();
     catalogVersion = versionRow?.updatedAt ?? "";
 
-    const cached = await caches.default.match(cacheKey);
-    if (cached && cached.headers.get("X-Product-Catalog-Version") === catalogVersion) {
-      const response = new Response(cached.body, cached);
-      response.headers.set("X-Product-Cache", "HIT");
-      response.headers.set("Cache-Control", "private, no-cache");
-      return response;
+    const ifNoneMatch = c.req.header("If-None-Match")?.trim();
+    if (
+      catalogVersion &&
+      ifNoneMatch &&
+      (ifNoneMatch === catalogVersion ||
+        ifNoneMatch === `"${catalogVersion}"` ||
+        ifNoneMatch === `W/"${catalogVersion}"`)
+    ) {
+      return new Response(null, {
+        status: 304,
+        headers: {
+          ETag: `"${catalogVersion}"`,
+          "X-Product-Catalog-Version": catalogVersion,
+          "Cache-Control": "private, no-cache",
+        },
+      });
+    }
+
+    const memCached = await kvGet<{ version: string; body: string }>(
+      c.env.SESSIONS,
+      CK.products(shopId),
+    );
+    if (memCached && memCached.version === catalogVersion) {
+      return new Response(memCached.body, {
+        headers: {
+          "Content-Type": "application/json",
+          ETag: `"${catalogVersion}"`,
+          "X-Product-Catalog-Version": catalogVersion,
+          "X-Product-Cache": "MEM",
+          "Cache-Control": "private, no-cache",
+        },
+      });
+    }
+
+    if (typeof caches !== "undefined" && caches.default) {
+      cacheKey = productCatalogCacheKey(shopId);
+      const cached = await caches.default.match(cacheKey);
+      if (cached && cached.headers.get("X-Product-Catalog-Version") === catalogVersion) {
+        const bodyText = await cached.text();
+        await kvSet(
+          c.env.SESSIONS,
+          CK.products(shopId),
+          { version: catalogVersion, body: bodyText },
+          CACHE_TTL.products,
+        );
+        return new Response(bodyText, {
+          headers: {
+            "Content-Type": "application/json",
+            ETag: `"${catalogVersion}"`,
+            "X-Product-Catalog-Version": catalogVersion,
+            "X-Product-Cache": "HIT",
+            "Cache-Control": "private, no-cache",
+          },
+        });
+      }
     }
   }
 
@@ -113,7 +220,7 @@ productsRouter.get("/products", requireAuth, async (c) => {
   const includeTotal = c.req.query("includeTotal") === "true";
   const needsExactTotal = includeTotal || limit < 3000 || offset > 0;
   const rows = await db
-    .select()
+    .select(productListColumns)
     .from(products)
     .where(where)
     .limit(limit)
@@ -130,38 +237,48 @@ productsRouter.get("/products", requireAuth, async (c) => {
     total = Number(countRows[0]?.n ?? 0);
   }
   const payload = {
-    products: rows.map((p) => {
-      // Strip heavy internal fields never used by the frontend
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { tokensJson, normalizedName, ...rest } = p as any;
-      return rest;
-    }),
+    products: rows,
     total,
+    ...(catalogVersion ? { catalogVersion } : {}),
   };
-  const response = c.json(payload);
 
-  if (cacheKey && catalogVersion !== undefined) {
-    response.headers.set("X-Product-Catalog-Version", catalogVersion);
-    response.headers.set("Cache-Control", `private, max-age=0`);
-    c.executionCtx.waitUntil(
-      caches.default.put(
-        cacheKey,
-        new Response(JSON.stringify(payload), {
-          headers: {
-            "Content-Type": "application/json",
-            "X-Product-Catalog-Version": catalogVersion,
-            // This response is stored under a shop-scoped internal cache key.
-            // `private` prevents the Workers Cache API from storing it; the
-            // response returned to the authenticated browser remains private.
-            "Cache-Control": `public, max-age=${PRODUCT_EDGE_CACHE_TTL}`,
-          },
-        }),
-      ),
+  if (isFullCatalog && shopId && catalogVersion !== undefined) {
+    const bodyText = JSON.stringify(payload);
+    await kvSet(
+      c.env.SESSIONS,
+      CK.products(shopId),
+      { version: catalogVersion, body: bodyText },
+      CACHE_TTL.products,
     );
-    response.headers.set("X-Product-Cache", "MISS");
+    if (cacheKey) {
+      c.executionCtx?.waitUntil?.(
+        caches.default.put(
+          cacheKey,
+          new Response(bodyText, {
+            headers: {
+              "Content-Type": "application/json",
+              "X-Product-Catalog-Version": catalogVersion,
+              // This response is stored under a shop-scoped internal cache key.
+              // `private` prevents the Workers Cache API from storing it; the
+              // response returned to the authenticated browser remains private.
+              "Cache-Control": `public, max-age=${PRODUCT_EDGE_CACHE_TTL}`,
+            },
+          }),
+        ),
+      );
+    }
+    return new Response(bodyText, {
+      headers: {
+        "Content-Type": "application/json",
+        ETag: `"${catalogVersion}"`,
+        "X-Product-Catalog-Version": catalogVersion,
+        "X-Product-Cache": "MISS",
+        "Cache-Control": "private, max-age=0",
+      },
+    });
   }
 
-  return response;
+  return c.json(payload);
 });
 
 productsRouter.post("/products", requireAuth, async (c) => {

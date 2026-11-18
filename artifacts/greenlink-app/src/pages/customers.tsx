@@ -51,9 +51,10 @@ export default function Customers() {
     queryKey: crmKey(shopId),
     queryFn: () => customFetch<CustomerEntry[]>(`/api/crm?shopId=${encodeURIComponent(shopId)}`),
     enabled: !!shopId,
-    staleTime: 15_000,
+    staleTime: 60_000,
     refetchOnWindowFocus: true,
-    refetchInterval: 60_000,
+    refetchInterval: 180_000,
+    refetchIntervalInBackground: false,
   });
 
   useEffect(() => {

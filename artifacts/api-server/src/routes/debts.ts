@@ -131,8 +131,14 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
     );
   }
 
-  // Batch-fetch sale items for all debts that have a saleId — single query, no N+1
-  const saleIds = rows.map(r => r.saleId).filter((id): id is string => !!id);
+  // Batch-fetch sale items ONLY for debts that have a saleId and do not already store itemsJson.
+  const saleIds = Array.from(
+    new Set(
+      rows
+        .filter((r) => !!r.saleId && parseDebtItems(r.itemsJson) === null)
+        .map((r) => r.saleId!),
+    ),
+  );
   let itemsByHuman: Record<string, { productName: string; qty: number; unitPrice: number; totalPrice: number; totalProfit?: number | null }[]> = {};
   if (saleIds.length > 0) {
     const itemChunks = await Promise.all(
@@ -176,6 +182,67 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
   }));
 
   return c.json(result);
+});
+
+// Single-query plant settlement payment lookup — replaces up to 60 parallel
+// /api/debts/:debtId requests from the Debts/Analytics settlement summary.
+debtsRouter.get("/debts/settlement-payments", requireAuth, async (c) => {
+  const session = c.get("session");
+  const requestedShopId = c.req.query("shopId");
+  const shopId = requestedShopId || session.shopId;
+  if (requestedShopId && requestedShopId !== session.shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT
+       dp.id AS paymentId,
+       dp.debt_id AS debtId,
+       dp.amount,
+       dp.recorded_by AS recordedBy,
+       dp.paid_at AS paidAt,
+       dp.payment_type AS paymentType,
+       dp.note,
+       d.customer_name AS customerName,
+       d.created_at AS debtCreatedAt
+     FROM debt_payments dp
+     INNER JOIN debts d ON d.id = dp.debt_id
+     WHERE d.shop_id = ?
+       AND d.status != 'cancelled'
+       AND dp.payment_type != 'reversal'
+       AND dp.amount > 0
+       AND (
+         LOWER(COALESCE(dp.note, '')) LIKE '%[plant-settle:%'
+         OR (
+           TRIM(COALESCE(dp.recorded_by, '')) = 'Nursery'
+           AND LOWER(COALESCE(dp.note, '')) LIKE '%nursery supplier%'
+         )
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM debt_payments rev
+         WHERE rev.debt_id = dp.debt_id
+           AND rev.payment_type = 'reversal'
+           AND rev.reversal_of_id = dp.id
+       )
+     ORDER BY COALESCE(dp.paid_at, d.created_at) DESC`,
+  ).bind(shopId).all<{
+    paymentId: string;
+    debtId: string;
+    amount: number;
+    recordedBy: string | null;
+    paidAt: string | null;
+    paymentType: string | null;
+    note: string | null;
+    customerName: string;
+    debtCreatedAt: string;
+  }>();
+
+  return c.json({
+    payments: (results ?? []).map((row) => ({
+      ...row,
+      customerName: normalizeCustomerName(row.customerName),
+    })),
+  });
 });
 
 debtsRouter.post("/debts", requireAuth, async (c) => {

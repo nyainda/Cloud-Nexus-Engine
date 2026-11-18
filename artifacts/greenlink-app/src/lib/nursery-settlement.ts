@@ -102,6 +102,7 @@ export interface NurseryProjection {
 const CONFIG_STORAGE_KEY = "greenlink_nursery_shop_config_v1";
 const PAYOUTS_STORAGE_KEY = "greenlink_nursery_payouts_v1";
 const PLANT_SETTLE_TAG_RE = /\[plant-settle:([^\]]+)\]/i;
+let _settlementEndpointUnsupported = false;
 
 export function roundMoney(value: number): number {
   const numeric = Number(value);
@@ -333,7 +334,7 @@ export async function loadNurserySettlementState(params: {
         }>(
           `/api/nursery/report?from=2020-01-01&to=${encodeURIComponent(today)}&businessDate=${encodeURIComponent(today)}&page=1&pageSize=1`,
         ),
-      staleTime: 10_000,
+      staleTime: 30_000,
     }),
     params.suppliers
       ? Promise.resolve({ rows: params.suppliers })
@@ -341,7 +342,7 @@ export async function loadNurserySettlementState(params: {
           queryKey: ["/api/nursery/suppliers", shopId],
           queryFn: () =>
             customFetch<{ rows: NurserySupplierSummary[] }>("/api/nursery/suppliers"),
-          staleTime: 15_000,
+          staleTime: 30_000,
         }),
   ]);
 
@@ -358,99 +359,148 @@ export async function loadNurserySettlementState(params: {
   const grossTotal = roundMoney(Number(summary.totalRevenueCents ?? 0) / 100);
   const totalSeedlings = Number(summary.totalSeedlings ?? 0);
 
-  // Prioritize target customer + matched supplier debts, and also include any other
-  // active/paid debts in the shop (up to 60 total) so cross-device D1 settlements are always captured.
-  const targetCustomerKey = normalizeCustomerKey(customerName);
-  const targetPhoneDigits = normalizePhoneDigits(customerPhone);
-  const activePaymentDebts = allDebts.filter((debt) => {
-    if (!debt || debt.status === "cancelled") return false;
-    return (
-      Number(debt.amountPaid ?? 0) > 0 ||
-      debt.status === "paid" ||
-      debt.status === "partial" ||
-      Number(debt.balance ?? 0) < 0
-    );
-  });
-
-  const priorityDebts: any[] = [];
-  const otherDebts: any[] = [];
-  for (const debt of activePaymentDebts) {
-    const dKey = normalizeCustomerKey(debt.customerName);
-    const dPhone = normalizePhoneDigits(debt.customerPhone);
-    const matchesTarget =
-      (targetCustomerKey && dKey === targetCustomerKey) ||
-      (targetPhoneDigits.length >= 7 && dPhone === targetPhoneDigits);
-    const matchesAnySupplier = suppliers.some((s) =>
-      customerMatchesSupplier(debt.customerName, debt.customerPhone, s),
-    );
-    if (matchesTarget || matchesAnySupplier) priorityDebts.push(debt);
-    else otherDebts.push(debt);
-  }
-  const candidateDebts = [...priorityDebts, ...otherDebts].slice(0, 60);
-
-  const debtDetails = await Promise.all(
-    candidateDebts.map((d) =>
-      qc
-        .fetchQuery({
-          queryKey: getGetDebtQueryKey(d.id),
-          queryFn: () => customFetch<any>(`/api/debts/${encodeURIComponent(d.id)}`),
-          staleTime: 10_000,
-        })
-        .catch(() => null),
-    ),
-  );
-
   const settledPayments: SettledPlantPaymentEntry[] = [];
   const settledByCustomerKey: Record<string, number> = {};
   let d1SettledNetTotal = 0;
   let d1SettledGrossConsumed = 0;
   let d1HistoricalShopProfit = 0;
 
-  for (const detail of debtDetails) {
-    if (!detail || !Array.isArray(detail.payments)) continue;
-    const reversedIds = new Set<string>(
-      detail.payments
-        .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
-        .map((p: any) => String(p.reversalOfId)),
+  const pushSettledPayment = (row: {
+    debtId: string;
+    paymentId: string;
+    customerName: string;
+    amount: number;
+    paidAt: string;
+    recordedBy: string;
+    payment: any;
+  }) => {
+    const amount = roundMoney(Number(row.amount ?? 0));
+    if (amount <= 0) return;
+
+    const parsed = parsePlantSettlementPayment(row.payment);
+    if (!parsed.isPlantLinked || !parsed.source) return;
+
+    const rate = (100 - parsed.feePct) / 100;
+    const grossConsumed = rate > 0 ? roundMoney(amount / rate) : amount;
+    const shopProfitTaken = Math.max(0, roundMoney(grossConsumed - amount));
+
+    d1SettledNetTotal = roundMoney(d1SettledNetTotal + amount);
+    d1SettledGrossConsumed = roundMoney(d1SettledGrossConsumed + grossConsumed);
+    d1HistoricalShopProfit = roundMoney(d1HistoricalShopProfit + shopProfitTaken);
+
+    const cKey = normalizeCustomerKey(row.customerName);
+    if (cKey) {
+      settledByCustomerKey[cKey] = roundMoney((settledByCustomerKey[cKey] ?? 0) + amount);
+    }
+
+    settledPayments.push({
+      debtId: row.debtId,
+      paymentId: row.paymentId,
+      customerName: row.customerName,
+      amount,
+      grossConsumed,
+      shopProfitTaken,
+      feePct: parsed.feePct,
+      mode: parsed.mode,
+      paidAt: row.paidAt,
+      recordedBy: row.recordedBy,
+      note: formatPlantSettlementNoteDisplay(row.payment?.note),
+      source: parsed.source,
+    });
+  };
+
+  let fetchedBulkPayments = false;
+  if (!_settlementEndpointUnsupported) {
+    try {
+      const bulkRes = await customFetch<{ payments?: any[] }>(
+        `/api/debts/settlement-payments?shopId=${encodeURIComponent(shopId)}`,
+      );
+      if (Array.isArray(bulkRes?.payments)) {
+        fetchedBulkPayments = true;
+        for (const p of bulkRes.payments) {
+          pushSettledPayment({
+            debtId: String(p.debtId ?? ""),
+            paymentId: String(p.paymentId ?? p.id ?? ""),
+            customerName: String(p.customerName ?? ""),
+            amount: Number(p.amount ?? 0),
+            paidAt: String(p.paidAt ?? p.debtCreatedAt ?? ""),
+            recordedBy: String(p.recordedBy ?? "System"),
+            payment: p,
+          });
+        }
+      }
+    } catch (err: any) {
+      // Only fall back to legacy per-debt fan-out if worker doesn't serve the endpoint yet
+      if (err?.status === 404) {
+        _settlementEndpointUnsupported = true;
+      } else {
+        fetchedBulkPayments = true;
+      }
+    }
+  }
+
+  if (!fetchedBulkPayments) {
+    const targetCustomerKey = normalizeCustomerKey(customerName);
+    const targetPhoneDigits = normalizePhoneDigits(customerPhone);
+    const activePaymentDebts = allDebts.filter((debt) => {
+      if (!debt || debt.status === "cancelled") return false;
+      return (
+        Number(debt.amountPaid ?? 0) > 0 ||
+        debt.status === "paid" ||
+        debt.status === "partial" ||
+        Number(debt.balance ?? 0) < 0
+      );
+    });
+
+    const priorityDebts: any[] = [];
+    const otherDebts: any[] = [];
+    for (const debt of activePaymentDebts) {
+      const dKey = normalizeCustomerKey(debt.customerName);
+      const dPhone = normalizePhoneDigits(debt.customerPhone);
+      const matchesTarget =
+        (targetCustomerKey && dKey === targetCustomerKey) ||
+        (targetPhoneDigits.length >= 7 && dPhone === targetPhoneDigits);
+      const matchesAnySupplier = suppliers.some((s) =>
+        customerMatchesSupplier(debt.customerName, debt.customerPhone, s),
+      );
+      if (matchesTarget || matchesAnySupplier) priorityDebts.push(debt);
+      else otherDebts.push(debt);
+    }
+    const candidateDebts = [...priorityDebts, ...otherDebts].slice(0, 60);
+
+    const debtDetails = await Promise.all(
+      candidateDebts.map((d) =>
+        qc
+          .fetchQuery({
+            queryKey: getGetDebtQueryKey(d.id),
+            queryFn: () => customFetch<any>(`/api/debts/${encodeURIComponent(d.id)}`),
+            staleTime: 30_000,
+          })
+          .catch(() => null),
+      ),
     );
 
-    for (const payment of detail.payments) {
-      if (!payment || payment.paymentType === "reversal") continue;
-      if (reversedIds.has(String(payment.id))) continue;
-      const amount = roundMoney(Number(payment.amount ?? 0));
-      if (amount <= 0) continue;
+    for (const detail of debtDetails) {
+      if (!detail || !Array.isArray(detail.payments)) continue;
+      const reversedIds = new Set<string>(
+        detail.payments
+          .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
+          .map((p: any) => String(p.reversalOfId)),
+      );
 
-      const parsed = parsePlantSettlementPayment(payment);
-      if (!parsed.isPlantLinked || !parsed.source) continue;
-
-      const rate = (100 - parsed.feePct) / 100;
-      const grossConsumed =
-        rate > 0 ? roundMoney(amount / rate) : amount;
-      const shopProfitTaken = Math.max(0, roundMoney(grossConsumed - amount));
-
-      d1SettledNetTotal = roundMoney(d1SettledNetTotal + amount);
-      d1SettledGrossConsumed = roundMoney(d1SettledGrossConsumed + grossConsumed);
-      d1HistoricalShopProfit = roundMoney(d1HistoricalShopProfit + shopProfitTaken);
-
-      const cKey = normalizeCustomerKey(detail.customerName);
-      if (cKey) {
-        settledByCustomerKey[cKey] = roundMoney((settledByCustomerKey[cKey] ?? 0) + amount);
+      for (const payment of detail.payments) {
+        if (!payment || payment.paymentType === "reversal") continue;
+        if (reversedIds.has(String(payment.id))) continue;
+        pushSettledPayment({
+          debtId: detail.id,
+          paymentId: payment.id,
+          customerName: detail.customerName ?? "",
+          amount: Number(payment.amount ?? 0),
+          paidAt: payment.paidAt ?? detail.createdAt,
+          recordedBy: payment.recordedBy ?? "System",
+          payment,
+        });
       }
-
-      settledPayments.push({
-        debtId: detail.id,
-        paymentId: payment.id,
-        customerName: detail.customerName ?? "",
-        amount,
-        grossConsumed,
-        shopProfitTaken,
-        feePct: parsed.feePct,
-        mode: parsed.mode,
-        paidAt: payment.paidAt ?? detail.createdAt,
-        recordedBy: payment.recordedBy ?? "System",
-        note: formatPlantSettlementNoteDisplay(payment.note),
-        source: parsed.source,
-      });
     }
   }
 

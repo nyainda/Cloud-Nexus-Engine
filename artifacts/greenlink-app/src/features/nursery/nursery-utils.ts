@@ -151,8 +151,8 @@ export interface NurserySaleEditState {
 }
 
 export const nurseryQueryOptions = {
-  staleTime: 10_000,
-  refetchInterval: 30_000,
+  staleTime: 30_000,
+  refetchInterval: 120_000,
   refetchIntervalInBackground: false,
   refetchOnWindowFocus: true,
 } as const;

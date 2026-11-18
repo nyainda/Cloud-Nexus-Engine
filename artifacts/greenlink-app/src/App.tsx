@@ -5,6 +5,12 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions, getListProductsQueryKey } from "@workspace/api-client-react";
 import { mergeWithMutationResults } from "@/lib/product-version-guard";
 import { loadCachedProducts, saveProductsToCache } from "@/lib/product-db";
+import {
+  syncProductsDelta,
+  setStoredCatalogVersion,
+  getStoredCatalogVersion,
+  deriveCatalogVersionFromProducts,
+} from "@/lib/product-sync";
 import { API_BASE } from "@/lib/api-base";
 import { useEffect, useRef, useState, lazy, Suspense, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
@@ -94,7 +100,12 @@ queryClient.getQueryCache().subscribe((event) => {
   const key = event.query.queryKey;
   if (!Array.isArray(key) || key[0] !== "/api/products") return;
 
-  // 1. Version guard merge
+  // 1. Record authoritative server catalog version before optimistic merge
+  const serverVersion =
+    (action.data as any)?.catalogVersion ||
+    deriveCatalogVersionFromProducts(action.data?.products);
+
+  // 2. Version guard merge
   const merged = mergeWithMutationResults(action.data);
   if (merged !== action.data) {
     _applyingVersionGuard = true;
@@ -102,12 +113,13 @@ queryClient.getQueryCache().subscribe((event) => {
     _applyingVersionGuard = false;
   }
 
-  // 2. Write-through to IndexedDB — use the merged data (authoritative)
+  // 3. Write-through to IndexedDB — use the merged data (authoritative)
   const finalData = merged !== action.data ? merged : action.data;
   const products: any[] | undefined = finalData?.products;
   if (products && products.length > 0) {
     const shopId: string | undefined = products[0]?.shopId;
     if (shopId) {
+      if (serverVersion) setStoredCatalogVersion(shopId, serverVersion);
       // Fire-and-forget — IndexedDB write is non-blocking
       saveProductsToCache(shopId, products).catch(() => {});
     }
@@ -219,9 +231,15 @@ function AuthGuard({ children }: { children: ReactNode }) {
     const opts = getListProductsQueryOptions({ shopId, limit: 3000 });
     loadCachedProducts(shopId).then((cached) => {
       if (cached.length > 0 && !qc.getQueryData(opts.queryKey)) {
-        qc.setQueryData(opts.queryKey, { products: cached });
+        qc.setQueryData(opts.queryKey, { products: cached, total: cached.length });
       }
-      qc.prefetchQuery(opts);
+      if (cached.length > 0 && getStoredCatalogVersion(shopId)) {
+        syncProductsDelta(qc, shopId).catch(() => {
+          qc.prefetchQuery(opts);
+        });
+      } else {
+        qc.prefetchQuery(opts);
+      }
     }).catch(() => {
       qc.prefetchQuery(opts);
     });

@@ -86,7 +86,7 @@ export default function Reports() {
       query: {
         queryKey: getListDebtsQueryKey({ shopId }),
         enabled: !!shopId,
-        staleTime: 30_000,
+        staleTime: 120_000,
       },
     },
   );
@@ -108,7 +108,7 @@ export default function Reports() {
         allDebts: shopDebts,
       }),
     enabled: !!shopId && !shopDebtsLoading,
-    staleTime: 30_000,
+    staleTime: 120_000,
   });
 
   const nurserySettlementProjection = useMemo(() => {

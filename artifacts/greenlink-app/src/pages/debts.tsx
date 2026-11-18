@@ -75,10 +75,10 @@ export default function Debts() {
       query: {
         queryKey: getListDebtsQueryKey({ shopId }),
         enabled: !!shopId,
-        staleTime: 15_000,
+        staleTime: 60_000,
         refetchOnWindowFocus: true,
         refetchOnMount: true,
-        refetchInterval: 60_000,
+        refetchInterval: 180_000,
         refetchIntervalInBackground: false,
       },
     }
@@ -101,7 +101,7 @@ export default function Debts() {
         suppliers: nurserySuppliers,
       }),
     enabled: !!shopId && !isLoading,
-    staleTime: 15_000,
+    staleTime: 60_000,
   });
   const nurseryMetrics = nurserySettlementQuery.data;
   const nurseryProjection = useMemo(() => {
