@@ -7,6 +7,7 @@ import { sales, saleItems, products, debts, debtPayments, inventoryMovements, no
 import { kvDel, CK } from "../lib/cache";
 import { normalizeCustomerName } from "../lib/normalize";
 import { allocateCredit, getCustomerCreditSources } from "../lib/debt-credit";
+import { resolveEffectiveCreditIdentities } from "../lib/nursery-sync";
 import { chunk } from "../lib/chunk";
 
 const salesRouter = new Hono<AppEnv>();
@@ -256,8 +257,24 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   const discount = discountInput;
   totalAmount = Math.max(0, totalAmount - discount);
 
+  const debtPhoneClean = body.debtCustomerPhone?.trim() || undefined;
+  const creditLookup = debtCustomerName
+    ? await resolveEffectiveCreditIdentities(
+        c.env.DB,
+        c.env.SESSIONS,
+        body.shopId,
+        debtCustomerName,
+        debtPhoneClean,
+      )
+    : null;
   const creditSources = debtCustomerName
-    ? await getCustomerCreditSources(db, body.shopId, debtCustomerName)
+    ? await getCustomerCreditSources(
+        db,
+        body.shopId,
+        debtCustomerName,
+        debtPhoneClean,
+        creditLookup?.extraIdentities ?? [],
+      )
     : [];
   const creditAllocations = allocateCredit(creditSources, totalAmount);
   const creditApplied = money(creditAllocations.reduce((sum, allocation) => sum + allocation.amount, 0));

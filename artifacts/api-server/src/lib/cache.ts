@@ -26,15 +26,17 @@
  */
 
 export const CACHE_TTL = {
-  products: 300,   // 5 minutes — busted on any product/sale write
-  dashboard: 300,  // 5 minutes — busted on every sale
-  debts: 300,      // 5 minutes — busted on debt create/update/payment
+  products:    300,   // 5 minutes — busted on any product/sale write
+  dashboard:   300,   // 5 minutes — busted on every sale
+  debts:       300,   // 5 minutes — busted on debt create/update/payment
+  nurserySync: 300,   // 5 minutes — busted on nursery auto-sync settings write
 } as const;
 
 export const CK = {
-  products:  (shopId: string) => `c:p:${shopId}`,
-  dashboard: (shopId: string, date: string) => `c:d:${shopId}:${date}`,
-  debts:     (shopId: string) => `c:dbt:${shopId}`,
+  products:    (shopId: string) => `c:p:${shopId}`,
+  dashboard:   (shopId: string, date: string) => `c:d:${shopId}:${date}`,
+  debts:       (shopId: string) => `c:dbt:${shopId}`,
+  nurserySync: (shopId: string) => `c:nsync:${shopId}`,
 };
 
 // ── Module-level in-memory store ────────────────────────────────────────────

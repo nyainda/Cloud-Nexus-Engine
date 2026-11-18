@@ -1,7 +1,17 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { createDb } from "../lib/db";
 import { requireAuth } from "../middleware/auth";
 import { CK, kvDel } from "../lib/cache";
+import {
+  INITIAL_SWEEP_SOURCE_KEY,
+  buildCreditOwnerStatements,
+  buildDebitOwnerAdjustmentStatements,
+  computeCollectedPlantTotals,
+  getNurserySyncConfig,
+  runCollectedPlantSweep,
+  saveNurserySyncConfig,
+} from "../lib/nursery-sync";
 
 const nurseryRouter = new Hono<AppEnv>();
 const paymentMethods = new Set(["cash", "mpesa", "credit"]);
@@ -159,6 +169,84 @@ function validDate(value: string): boolean {
   const parsed = new Date(value + "T00:00:00Z");
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
+
+nurseryRouter.get("/nursery/auto-sync", requireAuth, async (c) => {
+  const shopId = c.get("session").shopId;
+  const [config, totals] = await Promise.all([
+    getNurserySyncConfig(c.env.DB, c.env.SESSIONS, shopId),
+    computeCollectedPlantTotals(c.env.DB, shopId),
+  ]);
+  return c.json({ config, totals });
+});
+
+nurseryRouter.put("/nursery/auto-sync", requireAuth, async (c) => {
+  const session = c.get("session");
+  if (session.role !== "owner") {
+    return c.json({ error: "Owner access required to change automatic nursery sync rules." }, 403);
+  }
+  const shopId = session.shopId;
+  const body = await c.req.json<{
+    enabled?: boolean;
+    ownerCustomerName?: string;
+    ownerCustomerPhone?: string;
+    commissionPct?: number;
+    sweepRemaining?: boolean;
+  }>();
+
+  const ownerCustomerName = String(body.ownerCustomerName ?? "Nursery").trim().slice(0, 120) || "Nursery";
+  const ownerCustomerPhone = String(body.ownerCustomerPhone ?? "").trim().slice(0, 40);
+  const commissionPct = Number(body.commissionPct ?? 0);
+  if (!Number.isFinite(commissionPct) || commissionPct < 0 || commissionPct > 95) {
+    return c.json({ error: "Shop profit split must be between 0% and 95%." }, 400);
+  }
+
+  const config = await saveNurserySyncConfig(c.env.DB, c.env.SESSIONS, shopId, {
+    enabled: Boolean(body.enabled),
+    ownerCustomerName,
+    ownerCustomerPhone,
+    commissionPct,
+    updatedBy: session.userName ?? "Owner",
+  });
+
+  let sweep = null;
+  if (config.enabled && body.sweepRemaining !== false) {
+    sweep = await runCollectedPlantSweep({
+      d1: c.env.DB,
+      db: createDb(c.env.DB),
+      kv: c.env.SESSIONS,
+      shopId,
+      recordedBy: "Nursery Auto-Sync",
+      sourceKey: `enable-sweep:${Date.now()}:${crypto.randomUUID().slice(0, 8)}`,
+    });
+  }
+  const totals = await computeCollectedPlantTotals(c.env.DB, shopId);
+  return c.json({ config, totals, sweep });
+});
+
+nurseryRouter.post("/nursery/auto-sync/sweep", requireAuth, async (c) => {
+  const session = c.get("session");
+  const shopId = session.shopId;
+  const body = await c.req.json<{ mode?: "initial" | "manual" }>().catch(() => ({} as { mode?: "initial" | "manual" }));
+  const mode = body.mode === "manual" ? "manual" : "initial";
+  const sourceKey =
+    mode === "manual"
+      ? `manual-sweep:${Date.now()}:${crypto.randomUUID().slice(0, 8)}`
+      : INITIAL_SWEEP_SOURCE_KEY;
+
+  const sweep = await runCollectedPlantSweep({
+    d1: c.env.DB,
+    db: createDb(c.env.DB),
+    kv: c.env.SESSIONS,
+    shopId,
+    recordedBy: session.userName ?? "Nursery Auto-Sync",
+    sourceKey,
+  });
+  const [config, totals] = await Promise.all([
+    getNurserySyncConfig(c.env.DB, c.env.SESSIONS, shopId),
+    computeCollectedPlantTotals(c.env.DB, shopId),
+  ]);
+  return c.json({ sweep, config, totals });
+});
 
 nurseryRouter.get("/nursery/supplier-customers", requireAuth, async (c) => {
   const shopId = c.get("session").shopId;
@@ -787,6 +875,42 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
   }
 
   statements.push(...await buildSupplierProceedsStatements(c.env.DB, shopId, supplierSales, now));
+
+  const autoSyncItems = paymentMethod !== "credit"
+    ? newItems.filter((item) => !item.sourceSupplierId?.trim() && Math.round(Number(item.unitPrice) * 100) > 0)
+    : [];
+  const autoSyncGrossCents = autoSyncItems.reduce(
+    (sum, item) => sum + Number(item.quantity) * Math.round(Number(item.unitPrice) * 100),
+    0,
+  );
+  let autoSyncApplied = false;
+  if (autoSyncGrossCents > 0) {
+    const syncConfig = await getNurserySyncConfig(c.env.DB, c.env.SESSIONS, shopId);
+    if (syncConfig.enabled) {
+      const varietySummary = autoSyncItems
+        .slice(0, 2)
+        .map((i) => `${varietiesById.get(i.varietyId!)?.name ?? "Seedlings"} × ${Number(i.quantity)}`)
+        .join(", ");
+      const moreSuffix = autoSyncItems.length > 2 ? ` +${autoSyncItems.length - 2} more` : "";
+      const built = await buildCreditOwnerStatements({
+        d1: c.env.DB,
+        db: createDb(c.env.DB),
+        shopId,
+        config: syncConfig,
+        grossCents: autoSyncGrossCents,
+        sourceKey: `nursery-batch:${newItems[0]!.requestId!}`,
+        sourceType: "nursery_sale",
+        label: `${paymentMethod.toUpperCase()} · ${varietySummary}${moreSuffix}`,
+        recordedBy: "Nursery Auto-Sync",
+        now,
+      });
+      if (built.statements.length > 0) {
+        statements.push(...built.statements);
+        autoSyncApplied = true;
+      }
+    }
+  }
+
   try {
     await c.env.DB.batch(statements);
   } catch (error) {
@@ -795,7 +919,9 @@ nurseryRouter.post("/nursery/entries/batch", requireAuth, async (c) => {
     }
     throw error;
   }
-  if (supplierSales.length) await invalidateDebtViews(c.env, shopId);
+  if (supplierSales.length || autoSyncApplied || paymentMethod === "credit") {
+    await invalidateDebtViews(c.env, shopId);
+  }
   return c.json({ ok: true, processedItems: items.length, duplicateItems: priorIds.size });
 });
 
@@ -907,7 +1033,32 @@ nurseryRouter.post("/nursery/entries", requireAuth, async (c) => {
   statements.push(c.env.DB.prepare(
     "INSERT OR IGNORE INTO nursery_entry_requests (id, shop_id, created_at, debt_id) VALUES (?, ?, ?, ?)"
   ).bind(requestId, shopId, now, debtId));
+
+  let autoSyncApplied = false;
+  if (paymentMethod !== "credit" && totalCents > 0) {
+    const syncConfig = await getNurserySyncConfig(c.env.DB, c.env.SESSIONS, shopId);
+    if (syncConfig.enabled) {
+      const built = await buildCreditOwnerStatements({
+        d1: c.env.DB,
+        db: createDb(c.env.DB),
+        shopId,
+        config: syncConfig,
+        grossCents: totalCents,
+        sourceKey: `nursery-entry:${requestId}`,
+        sourceType: "nursery_sale",
+        label: `${paymentMethod.toUpperCase()} · ${variety.name} × ${quantity}`,
+        recordedBy: "Nursery Auto-Sync",
+        now,
+      });
+      if (built.statements.length > 0) {
+        statements.push(...built.statements);
+        autoSyncApplied = true;
+      }
+    }
+  }
+
   await c.env.DB.batch(statements);
+  if (debtId || autoSyncApplied) await invalidateDebtViews(c.env, shopId);
   const saved = await c.env.DB.prepare(
     "SELECT debt_id AS debtId FROM nursery_entry_requests WHERE id = ? AND shop_id = ?"
   ).bind(requestId, shopId).first<{ debtId: string | null }>();
@@ -1050,7 +1201,51 @@ nurseryRouter.patch("/nursery/entries/:id", requireAuth, async (c) => {
     ).bind(crypto.randomUUID(), shopId, businessDate, customerKey, customerName, customerPhone, variety.id, unitPriceCents, paymentMethod, quantity, totalAmountCents, now, now));
   }
 
+  const oldCollectedCents = old.paymentMethod !== "credit" ? old.totalAmountCents : 0;
+  const newCollectedCents = paymentMethod !== "credit" ? totalAmountCents : 0;
+  const deltaCollectedCents = newCollectedCents - oldCollectedCents;
+  let syncTouchedDebts = Boolean(old.debtId || linkedDebtId);
+  if (deltaCollectedCents !== 0) {
+    const syncConfig = await getNurserySyncConfig(c.env.DB, c.env.SESSIONS, shopId);
+    if (syncConfig.enabled) {
+      if (deltaCollectedCents > 0) {
+        const built = await buildCreditOwnerStatements({
+          d1: c.env.DB,
+          db: createDb(c.env.DB),
+          shopId,
+          config: syncConfig,
+          grossCents: deltaCollectedCents,
+          sourceKey: `nursery-edit:${id}:${crypto.randomUUID()}`,
+          sourceType: "nursery_adjustment",
+          label: `Edited sale (${variety.name} × ${quantity})`,
+          recordedBy: "Nursery Auto-Sync",
+          now,
+        });
+        statements.push(...built.statements);
+        syncTouchedDebts = true;
+      } else {
+        const adj = await buildDebitOwnerAdjustmentStatements({
+          d1: c.env.DB,
+          db: createDb(c.env.DB),
+          shopId,
+          config: syncConfig,
+          grossReductionCents: Math.abs(deltaCollectedCents),
+          sourceKey: `nursery-edit:${id}:${crypto.randomUUID()}`,
+          label: `Reduced/changed sale (${variety.name})`,
+          recordedBy: "Nursery Auto-Sync",
+          now,
+        });
+        if (!adj.ok) {
+          return c.json({ error: adj.error }, 409);
+        }
+        statements.push(...adj.statements);
+        syncTouchedDebts = true;
+      }
+    }
+  }
+
   await c.env.DB.batch(statements);
+  if (syncTouchedDebts) await invalidateDebtViews(c.env, shopId);
   return c.json({ ok: true, id, businessDate, varietyId: variety.id, varietyName: variety.name, customerName, customerPhone, quantity, unitPriceCents, totalAmountCents, paymentMethod, debtId: linkedDebtId, createdAt: old.createdAt });
 });
 
@@ -1082,7 +1277,30 @@ nurseryRouter.delete("/nursery/entries/:id", requireAuth, async (c) => {
     statements.push(c.env.DB.prepare("DELETE FROM debts WHERE id = ? AND shop_id = ? AND amount_paid = 0").bind(old.debtId, shopId));
     statements.push(c.env.DB.prepare("UPDATE nursery_entry_requests SET debt_id = NULL WHERE id = ? AND shop_id = ?").bind(old.requestId, shopId));
   }
+  let syncTouchedDebts = Boolean(old.debtId);
+  if (old.paymentMethod !== "credit" && old.totalAmountCents > 0) {
+    const syncConfig = await getNurserySyncConfig(c.env.DB, c.env.SESSIONS, shopId);
+    if (syncConfig.enabled) {
+      const adj = await buildDebitOwnerAdjustmentStatements({
+        d1: c.env.DB,
+        db: createDb(c.env.DB),
+        shopId,
+        config: syncConfig,
+        grossReductionCents: old.totalAmountCents,
+        sourceKey: `nursery-delete:${id}`,
+        label: "Deleted nursery sale",
+        recordedBy: "Nursery Auto-Sync",
+        now,
+      });
+      if (!adj.ok) {
+        return c.json({ error: adj.error }, 409);
+      }
+      statements.push(...adj.statements);
+      syncTouchedDebts = true;
+    }
+  }
   await c.env.DB.batch(statements);
+  if (syncTouchedDebts) await invalidateDebtViews(c.env, shopId);
   return c.json({ ok: true, deleted: true });
 });
 

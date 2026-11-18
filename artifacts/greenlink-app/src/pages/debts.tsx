@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useListDebts, getListDebtsQueryKey, customFetch } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toTitleCase } from "@/components/customer-autocomplete";
@@ -7,16 +7,21 @@ import {
   computeNurseryProjection,
   findMatchingSupplier,
   loadNurserySettlementState,
+  normalizeCustomerKey,
+  normalizePhoneDigits,
+  roundMoney,
+  triggerNurseryAutoSyncSweep,
   type NurserySettlementMetrics,
   type NurserySupplierSummary,
 } from "@/lib/nursery-settlement";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatKES } from "@/lib/format";
 import {
   Search, Phone, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
-  ChevronRight, Send, X, ArrowUpDown, Sprout,
+  ChevronRight, Send, X, ArrowUpDown, Sprout, Zap,
 } from "lucide-react";
 import { useDebounce } from "@/hooks/use-debounce";
 import { differenceInDays } from "date-fns";
@@ -113,6 +118,42 @@ export default function Debts() {
     });
   }, [nurseryMetrics]);
   const nurseryTotalGross = nurseryMetrics?.grossTotal ?? 0;
+
+  // One-time atomic sweep of any remaining collected plant balance when Auto-Sync is enabled.
+  const autoSweepTriggeredRef = useRef<string>("");
+  useEffect(() => {
+    const cfg = nurseryMetrics?.autoSyncConfig;
+    const totals = nurseryMetrics?.autoSyncTotals;
+    if (!shopId || !cfg?.enabled || !totals || totals.hasInitialSweep || totals.remainingCollectedCents <= 0) {
+      return;
+    }
+    if (autoSweepTriggeredRef.current === shopId) return;
+    autoSweepTriggeredRef.current = shopId;
+    triggerNurseryAutoSyncSweep("initial")
+      .then(async (res) => {
+        const net = roundMoney(Number(res?.sweep?.sweptNetCents ?? 0) / 100);
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: getListDebtsQueryKey({ shopId }) }),
+          qc.invalidateQueries({ queryKey: getListDebtsQueryKey() }),
+          qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] }),
+          qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+          qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] }),
+        ]);
+        if (net > 0) {
+          toast.success(
+            `Auto-synced remaining ${formatKES(net)} plant proceeds to ${toTitleCase(cfg.ownerCustomerName)}`,
+          );
+        }
+      })
+      .catch(() => {
+        autoSweepTriggeredRef.current = "";
+      });
+  }, [
+    shopId,
+    qc,
+    nurseryMetrics?.autoSyncConfig,
+    nurseryMetrics?.autoSyncTotals,
+  ]);
 
   // Keep selectedDebt in sync when data refreshes
   useEffect(() => {
@@ -443,11 +484,21 @@ export default function Debts() {
                       <Sprout className="h-4 w-4 text-emerald-500" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-bold text-foreground truncate">
-                        Nursery Plant Proceeds · {shopName}
-                      </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-xs font-bold text-foreground truncate">
+                          Nursery Plant Proceeds · {shopName}
+                        </p>
+                        {nurseryMetrics.autoSyncConfig?.enabled && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                            <Zap className="h-2.5 w-2.5" />
+                            Auto-Sync → {toTitleCase(nurseryMetrics.autoSyncConfig.ownerCustomerName)}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[11px] text-muted-foreground truncate">
-                        Collected Cash+M-Pesa vs amount already used to pay debts
+                        {nurseryMetrics.autoSyncConfig?.enabled
+                          ? "Cash, M-Pesa & paid seedling credit sales auto-credit Mum's account; debts auto-cut"
+                          : "Collected Cash+M-Pesa vs amount already used to pay debts"}
                       </p>
                     </div>
                   </div>
@@ -460,10 +511,12 @@ export default function Debts() {
                       onClick={() =>
                         setPlantSettleTarget({
                           customerName:
+                            nurseryMetrics.autoSyncConfig?.ownerCustomerName ??
                             nurserySuppliers.find((s) => !!s.customerName)?.customerName ??
                             nurserySuppliers[0]?.name ??
                             "",
                           customerPhone:
+                            nurseryMetrics.autoSyncConfig?.ownerCustomerPhone ??
                             nurserySuppliers.find((s) => !!s.customerPhone)?.customerPhone ??
                             nurserySuppliers[0]?.phone ??
                             "",
@@ -481,10 +534,12 @@ export default function Debts() {
                       onClick={() =>
                         setPlantSettleTarget({
                           customerName:
+                            nurseryMetrics.autoSyncConfig?.ownerCustomerName ??
                             nurserySuppliers.find((s) => !!s.customerName)?.customerName ??
                             nurserySuppliers[0]?.name ??
                             "",
                           customerPhone:
+                            nurseryMetrics.autoSyncConfig?.ownerCustomerPhone ??
                             nurserySuppliers.find((s) => !!s.customerPhone)?.customerPhone ??
                             nurserySuppliers[0]?.phone ??
                             "",
@@ -493,14 +548,14 @@ export default function Debts() {
                       }
                     >
                       <Sprout className="h-3.5 w-3.5" />
-                      Settle w/ Plants
+                      {nurseryMetrics.autoSyncConfig?.enabled ? "Auto-Sync & Split" : "Settle w/ Plants"}
                     </Button>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                   <div className="rounded-xl border border-border/60 bg-background/75 p-2.5">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Collected Cash+M-Pesa</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Collected Plant Money</p>
                     <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-foreground">
                       {formatKES(nurseryMetrics.collectedCashMpesa)}
                     </p>
@@ -528,7 +583,11 @@ export default function Debts() {
                       {formatKES(nurseryProjection.availableNetProceeds)}
                     </p>
                     <p className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">
-                      {nurseryMetrics.payoutNetTotal > 0 ? `After ${formatKES(nurseryMetrics.payoutNetTotal)} payouts` : "Ready to clear debts"}
+                      {nurseryMetrics.payoutNetTotal > 0
+                        ? `After ${formatKES(nurseryMetrics.payoutNetTotal)} payouts`
+                        : nurseryMetrics.autoSyncConfig?.enabled && nurseryProjection.availableNetProceeds <= 0.01
+                        ? "Auto-synced to account"
+                        : "Ready to clear debts"}
                     </p>
                   </div>
                 </div>
@@ -655,16 +714,38 @@ export default function Debts() {
               ) : (
                 <div>
                   {viewMode === "customers" ? (
-                    visibleGroups.map((group) => (
-                      <CustomerGroupRow
-                        key={group.key}
-                        group={group}
-                        onSelectDebt={setSelectedDebt}
-                        matchedSupplier={findMatchingSupplier(nurserySuppliers, group.customerName, group.customerPhone)}
-                        plantPaidAmount={nurseryMetrics?.settledByCustomerKey[group.key] ?? 0}
-                        onOpenPlantSettle={(target) => setPlantSettleTarget(target)}
-                      />
-                    ))
+                    visibleGroups.map((group) => {
+                      const supplierMatch = findMatchingSupplier(nurserySuppliers, group.customerName, group.customerPhone);
+                      const ownerSync = nurseryMetrics?.autoSyncConfig;
+                      const ownerMatch = Boolean(
+                        ownerSync?.enabled &&
+                        ((normalizeCustomerKey(ownerSync.ownerCustomerName) &&
+                          normalizeCustomerKey(ownerSync.ownerCustomerName) === group.key) ||
+                          (normalizePhoneDigits(ownerSync.ownerCustomerPhone).length >= 9 &&
+                            normalizePhoneDigits(ownerSync.ownerCustomerPhone) ===
+                              normalizePhoneDigits(group.customerPhone))),
+                      );
+                      const syntheticOwnerSupplier =
+                        !supplierMatch && ownerMatch && ownerSync
+                          ? {
+                              id: "auto-sync-owner",
+                              name: ownerSync.ownerCustomerName,
+                              phone: ownerSync.ownerCustomerPhone,
+                              customerName: ownerSync.ownerCustomerName,
+                              customerPhone: ownerSync.ownerCustomerPhone,
+                            }
+                          : null;
+                      return (
+                        <CustomerGroupRow
+                          key={group.key}
+                          group={group}
+                          onSelectDebt={setSelectedDebt}
+                          matchedSupplier={supplierMatch ?? syntheticOwnerSupplier}
+                          plantPaidAmount={nurseryMetrics?.settledByCustomerKey[group.key] ?? 0}
+                          onOpenPlantSettle={(target) => setPlantSettleTarget(target)}
+                        />
+                      );
+                    })
                   ) : (
                     <div className="divide-y divide-border/50">
                       {visibleDebts.map((debt: any) => {

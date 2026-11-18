@@ -6,10 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { downloadNurseryReceipt, downloadNurseryStatement } from "@/lib/nursery-pdf";
+import { loadPdfStampLogo, tryGetPdfShopLogoAssets } from "@/lib/pdf-stamp";
 import { NurseryDebtSettlementDialog } from "@/components/NurseryDebtSettlementDialog";
+import { fetchNurseryAutoSync } from "@/lib/nursery-settlement";
 import {
   Sprout, CalendarDays, CheckCircle2, PackagePlus, LayoutDashboard,
-  Users, ReceiptText, BarChart3, Truck,
+  Users, ReceiptText, BarChart3, Truck, Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -171,6 +173,13 @@ export default function NurseryRegister() {
     enabled: !!shopId && activeTab === "overview" && /^\d{4}-\d{2}$/.test(selectedMonth),
     ...nurseryQueryOptions,
   });
+  const autoSyncQuery = useQuery({
+    queryKey: ["nursery-auto-sync", shopId],
+    queryFn: fetchNurseryAutoSync,
+    enabled: !!shopId,
+    staleTime: 60_000,
+  });
+
   const suppliersQuery = useQuery({
     queryKey: ["/api/nursery/suppliers", shopId],
     queryFn: () => customFetch("/api/nursery/suppliers") as Promise<{ rows: SupplierRow[] }>,
@@ -295,7 +304,14 @@ export default function NurseryRegister() {
         } catch {}
       }
     }
-    return { shopName, logoDataUrl };
+    const shopAssets = tryGetPdfShopLogoAssets(shopId, shopName);
+    let sealLogoDataUrl: string | null = null;
+    if (shopAssets) {
+      try {
+        sealLogoDataUrl = await loadPdfStampLogo(shopAssets.seal);
+      } catch {}
+    }
+    return { shopId, shopName, logoDataUrl, sealLogoDataUrl };
   }
 
   async function createCustomerStatement() {
@@ -427,6 +443,8 @@ export default function NurseryRegister() {
         qc.invalidateQueries({ queryKey: ["/api/nursery/sale-sources", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+        qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] }),
+        qc.invalidateQueries({ queryKey: ["nursery-auto-sync", shopId] }),
       ]);
     } catch (error: any) {
       if (savedRequestIds.size > 0) {
@@ -625,6 +643,8 @@ export default function NurseryRegister() {
         qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+        qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] }),
+        qc.invalidateQueries({ queryKey: ["nursery-auto-sync", shopId] }),
       ]);
     } catch (error: any) {
       toast.error(error?.message || "Could not update sale. Your changes are still available to retry.");
@@ -648,6 +668,8 @@ export default function NurseryRegister() {
         qc.invalidateQueries({ queryKey: ["/api/nursery/monthly-summary", shopId] }),
         qc.invalidateQueries({ queryKey: ["/api/debts"] }),
         qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+        qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] }),
+        qc.invalidateQueries({ queryKey: ["nursery-auto-sync", shopId] }),
       ]);
     } catch (error: any) {
       toast.error(error?.message || "Could not delete sale. The entry is still in the register.");
@@ -689,6 +711,23 @@ export default function NurseryRegister() {
                     <CheckCircle2 className="h-3 w-3" />
                     Separate from POS stock
                   </span>
+                  {autoSyncQuery.data?.config?.enabled && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlantSettleCustomer({
+                          customerName: autoSyncQuery.data!.config.ownerCustomerName,
+                          customerPhone: autoSyncQuery.data!.config.ownerCustomerPhone,
+                        });
+                        setPlantSettleTab("settle");
+                        setPlantSettleOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-bold text-emerald-400 hover:bg-emerald-500/25 transition-colors cursor-pointer"
+                    >
+                      <Zap className="h-3 w-3" />
+                      Auto-Sync → {autoSyncQuery.data.config.ownerCustomerName}
+                    </button>
+                  )}
                 </div>
                 <p className="mt-0.5 text-xs sm:text-sm text-muted-foreground">
                   Manage seedling sales, varieties, supplier stock, and customer statements in one dedicated ledger.

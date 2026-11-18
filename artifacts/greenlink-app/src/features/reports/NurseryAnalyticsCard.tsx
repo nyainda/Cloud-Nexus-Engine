@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { formatKES } from "@/lib/format";
 import { toTitleCase } from "@/components/customer-autocomplete";
 import type { computeNurseryProjection, NurserySettlementMetrics } from "@/lib/nursery-settlement";
-import { X, Search, Sprout, ArrowUpRight, History } from "lucide-react";
+import { X, Search, Sprout, ArrowUpRight, History, Zap } from "lucide-react";
 import { format } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { cn } from "@/lib/utils";
@@ -237,11 +237,17 @@ export function NurseryAnalyticsCard({
             {nurserySettlementMetrics && nurserySettlementProjection && (
               <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-3.5 space-y-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <Sprout className="h-4 w-4 text-emerald-500 shrink-0" />
                     <p className="text-xs font-bold text-foreground">
                       Plant Money Used for Debts &amp; Remaining Balance ({shopName})
                     </p>
+                    {nurserySettlementMetrics.autoSyncConfig?.enabled && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                        <Zap className="h-2.5 w-2.5" />
+                        Auto-Sync → {toTitleCase(nurserySettlementMetrics.autoSyncConfig.ownerCustomerName)}
+                      </span>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -285,7 +291,9 @@ export function NurseryAnalyticsCard({
                       {formatKES(nurserySettlementProjection.availableNetProceeds)}
                     </p>
                     <p className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">
-                      From {nurserySettlementMetrics.shopConfig.poolMode === "collected" ? "Cash+M-Pesa" : "All Plant Sales"}
+                      {nurserySettlementMetrics.autoSyncConfig?.enabled && nurserySettlementProjection.availableNetProceeds <= 0.01
+                        ? "Auto-synced to account"
+                        : `From ${nurserySettlementMetrics.shopConfig.poolMode === "collected" ? "Cash+M-Pesa+Paid Credit" : "All Plant Sales"}`}
                     </p>
                   </div>
                 </div>

@@ -739,6 +739,7 @@ export async function downloadPdf(
       shopName: shopLogoAssets.sealName,
       logoData: stampLogoBase64,
       status: isInvoice ? "ISSUED" : pdfData.status,
+      subtitle: isInvoice ? "OFFICIAL SALES INVOICE" : "OFFICIAL QUOTATION SEAL",
       dateLabel: format(
         new Date(
           isInvoice
@@ -748,6 +749,8 @@ export async function downloadPdf(
         "dd MMM yyyy",
       ),
       documentRef: documentNumber,
+      metaLine: KES(pdfData.total),
+      amountLabel: String(pdfData.total),
     };
     drawPdfWatermark(doc, stampOptions);
     doc.setPage(numPages);

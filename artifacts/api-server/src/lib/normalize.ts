@@ -29,3 +29,20 @@ export function normalizeCustomerName(name: string): string {
 export function customerNameKey(name: string): string {
   return name.trim().replace(/\s+/g, " ").toLowerCase();
 }
+
+/** Canonical Kenyan local 9-digit suffix for phone matching across 07xx / +2547xx / 2547xx. */
+export function normalizePhoneKey(phone: string | null | undefined): string {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  if (digits.length < 9) return "";
+  return digits.slice(-9);
+}
+
+/** True when two non-empty phones represent the same 9-digit local subscriber number. */
+export function phonesMatch(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const ka = normalizePhoneKey(a);
+  const kb = normalizePhoneKey(b);
+  return ka.length === 9 && ka === kb;
+}
