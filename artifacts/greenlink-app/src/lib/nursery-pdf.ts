@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { drawPdfStamp, drawPdfWatermark, tryGetPdfShopLogoAssets } from "@/lib/pdf-stamp";
 
 export type NurseryPdfEntry = {
   id: string;
@@ -18,10 +19,17 @@ export type NurseryPdfEntry = {
   createdAt: string;
 };
 
-type PdfBrand = { shopName: string; logoDataUrl?: string | null };
+type PdfBrand = {
+  shopId?: string;
+  shopName: string;
+  logoDataUrl?: string | null;
+  sealLogoDataUrl?: string | null;
+};
 const money = (cents: number) => new Intl.NumberFormat("en-KE", {
   style: "currency", currency: "KES", minimumFractionDigits: 2, maximumFractionDigits: 2,
 }).format(Number(cents || 0) / 100);
+const compactMoney = (cents: number) =>
+  `KES ${Math.round(Number(cents || 0) / 100).toLocaleString("en-KE")}`;
 const dateLabel = (value: string) => {
   if (!value) return "—";
   const date = new Date(value + "T12:00:00");
@@ -80,29 +88,23 @@ function addFooter(doc: jsPDF, brand: PdfBrand) {
   }
 }
 
-function addWatermark(doc: jsPDF, shopName: string) {
-  const width = doc.internal.pageSize.getWidth();
-  const height = doc.internal.pageSize.getHeight();
-  doc.setTextColor(239, 243, 240);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(27);
-  doc.text((shopName || "NURSERY").toLocaleUpperCase().slice(0, 34), width / 2, height / 2, {
-    align: "center", angle: 32, maxWidth: width - 28,
-  });
-}
-
 export function downloadNurseryReceipt(entries: NurseryPdfEntry[], brand: PdfBrand) {
   if (!entries.length) return;
   const first = entries[0];
   const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const width = doc.internal.pageSize.getWidth();
+  const height = doc.internal.pageSize.getHeight();
+  const stampSize = 36;
+  const stampX = width - 15 - stampSize;
+  const stampY = height - 55;
   const customerName = first.customerName?.trim() || "Walk-in customer";
   const transactionRef = first.transactionId
     ? first.transactionId.slice(0, 8).toUpperCase()
     : first.id.slice(0, 8).toUpperCase();
   const totalCents = entries.reduce((sum, entry) => sum + Number(entry.totalAmountCents || 0), 0);
   const totalQuantity = entries.reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
+  const shopAssets = tryGetPdfShopLogoAssets(brand.shopId, brand.shopName);
   addBrandHeader(doc, brand, "SALES RECEIPT", `Receipt reference: NUR-${transactionRef} • Sale date: ${dateLabel(first.businessDate)}`);
-  addWatermark(doc, brand.shopName);
   doc.setFillColor(246, 249, 246);
   doc.roundedRect(15, 61, 180, 26, 3, 3, "F");
   doc.setFont("helvetica", "bold");
@@ -136,8 +138,9 @@ export function downloadNurseryReceipt(entries: NurseryPdfEntry[], brand: PdfBra
     columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right", fontStyle: "bold" } },
   });
   const finalY = (doc as any).lastAutoTable?.finalY ?? 115;
-  if (finalY > 235) doc.addPage();
-  const summaryY = finalY > 235 ? 24 : finalY + 8;
+  const breakBeforeSummary = finalY + 8 + 25 > stampY - 5;
+  if (breakBeforeSummary) doc.addPage();
+  const summaryY = breakBeforeSummary ? 24 : finalY + 8;
   doc.setFillColor(240, 247, 241);
   doc.roundedRect(120, summaryY, 75, 25, 3, 3, "F");
   doc.setFont("helvetica", "normal");
@@ -151,18 +154,37 @@ export function downloadNurseryReceipt(entries: NurseryPdfEntry[], brand: PdfBra
   doc.setFont("helvetica", "normal");
   doc.setTextColor(100, 116, 105);
   doc.setFontSize(9);
-  doc.text("Thank you for supporting our nursery.", 15, Math.min(summaryY + 12, 265));
+  doc.text("Thank you for supporting our nursery.", 15, Math.min(summaryY + 11, stampY - 12));
   doc.setFontSize(8);
-  doc.text(`Recorded at: ${first.createdAt ? new Date(first.createdAt).toLocaleString("en-KE") : "Not available"}`, 15, Math.min(summaryY + 19, 270));
+  doc.text(`Recorded at: ${first.createdAt ? new Date(first.createdAt).toLocaleString("en-KE") : "Not available"}`, 15, Math.min(summaryY + 18, stampY - 5));
+
+  const stampOptions = {
+    shopName: shopAssets?.sealName || brand.shopName || "GreenLink",
+    logoData: brand.sealLogoDataUrl ?? brand.logoDataUrl ?? null,
+    status: first.paymentMethod === "credit" ? "ON CREDIT" : "PAID",
+    subtitle: "OFFICIAL NURSERY RECEIPT",
+    dateLabel: dateLabel(first.businessDate),
+    documentRef: `NUR-${transactionRef}`,
+    metaLine: `${totalQuantity.toLocaleString("en-KE")} SEEDLINGS · ${compactMoney(totalCents)}`,
+    amountLabel: String(totalCents / 100),
+  };
+  drawPdfWatermark(doc, stampOptions);
+  doc.setPage(doc.getNumberOfPages());
+  drawPdfStamp(doc, { x: stampX, y: stampY, size: stampSize, ...stampOptions });
   addFooter(doc, brand);
   doc.save(`nursery-receipt-${safeFilePart(customerName)}-${first.businessDate}-${transactionRef}.pdf`);
 }
 
 export function downloadNurseryStatement(entries: NurseryPdfEntry[], brand: PdfBrand, customerName: string, customerPhone: string, from: string, to: string) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const width = doc.internal.pageSize.getWidth();
+  const height = doc.internal.pageSize.getHeight();
+  const stampSize = 36;
+  const stampX = width - 15 - stampSize;
+  const stampY = height - 55;
   const title = "CUSTOMER PURCHASE STATEMENT";
+  const shopAssets = tryGetPdfShopLogoAssets(brand.shopId, brand.shopName);
   addBrandHeader(doc, brand, title, `Statement period: ${dateLabel(from)} to ${dateLabel(to)}`);
-  addWatermark(doc, brand.shopName);
   const totalQuantity = entries.reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
   const totalCents = entries.reduce((sum, entry) => sum + Number(entry.totalAmountCents || 0), 0);
   const creditCents = entries.filter(entry => entry.paymentMethod === "credit").reduce((sum, entry) => sum + Number(entry.totalAmountCents || 0), 0);
@@ -192,11 +214,11 @@ export function downloadNurseryStatement(entries: NurseryPdfEntry[], brand: PdfB
     headStyles: { fillColor: [20, 83, 45], textColor: [255, 255, 255], fontStyle: "bold" },
     alternateRowStyles: { fillColor: [248, 250, 248] },
     columnStyles: { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right", fontStyle: "bold" } },
-    didDrawPage: () => addWatermark(doc, brand.shopName),
   });
   const finalY = (doc as any).lastAutoTable?.finalY ?? 110;
-  if (finalY > 235) doc.addPage();
-  const summaryY = finalY > 235 ? 24 : finalY + 9;
+  const breakBeforeSummary = finalY + 9 + 31 > stampY - 5;
+  if (breakBeforeSummary) doc.addPage();
+  const summaryY = breakBeforeSummary ? 24 : finalY + 9;
   doc.setFillColor(240, 247, 241);
   doc.roundedRect(110, summaryY, 85, 31, 3, 3, "F");
   doc.setFont("helvetica", "normal");
@@ -211,6 +233,20 @@ export function downloadNurseryStatement(entries: NurseryPdfEntry[], brand: PdfB
   doc.setFontSize(9);
   doc.setTextColor(124, 74, 0);
   doc.text(money(creditCents), 190, summaryY + 25, { align: "right" });
+
+  const stampOptions = {
+    shopName: shopAssets?.sealName || brand.shopName || "GreenLink",
+    logoData: brand.sealLogoDataUrl ?? brand.logoDataUrl ?? null,
+    status: creditCents > 0 ? "STATEMENT · CREDIT" : "VERIFIED STATEMENT",
+    subtitle: "NURSERY CUSTOMER STATEMENT",
+    dateLabel: dateLabel(to),
+    documentRef: `${dateLabel(from)} - ${dateLabel(to)}`,
+    metaLine: `${totalQuantity.toLocaleString("en-KE")} SEEDLINGS · ${compactMoney(totalCents)}`,
+    amountLabel: String(totalCents / 100),
+  };
+  drawPdfWatermark(doc, stampOptions);
+  doc.setPage(doc.getNumberOfPages());
+  drawPdfStamp(doc, { x: stampX, y: stampY, size: stampSize, ...stampOptions });
   addFooter(doc, brand);
   doc.save(`nursery-statement-${safeFilePart(customerName)}-${from}-to-${to}.pdf`);
 }

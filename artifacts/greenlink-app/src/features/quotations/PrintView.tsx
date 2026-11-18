@@ -15,6 +15,7 @@ import {
   type Quotation,
 } from "@/lib/quotation-utils";
 import { downloadPdf, shareWhatsApp } from "@/lib/quotation-pdf";
+import { OfficialStamp } from "@/components/OfficialStamp";
 
 export function PrintView({
   quotation,
@@ -27,6 +28,26 @@ export function PrintView({
 }) {
   const [downloading, setDownloading] = useState(false);
   const shopDisplayName = getQuotationShopName(shop);
+  const isIssuedInvoice = Boolean(quotation.invoiceNumber);
+  const activeShopId =
+    shop?.id ||
+    (typeof localStorage !== "undefined"
+      ? localStorage.getItem("greenlink_shopId")
+      : null) ||
+    undefined;
+  const stampStatus = isIssuedInvoice ? "ISSUED" : quotation.status;
+  const stampSubtitle = isIssuedInvoice
+    ? "OFFICIAL SALES INVOICE"
+    : "OFFICIAL QUOTATION SEAL";
+  const stampDateLabel = format(
+    new Date(
+      isIssuedInvoice
+        ? (quotation.invoiceIssuedAt ?? quotation.createdAt)
+        : quotation.createdAt,
+    ),
+    "dd MMM yyyy",
+  );
+  const stampRef = quotation.invoiceNumber || quotation.quoteNumber;
 
   const handleDownload = async () => {
     setDownloading(true);
@@ -250,7 +271,34 @@ export function PrintView({
           </div>
 
           {/* ── Bill To ── */}
-          <div style={{ padding: "24px 36px 0" }}>
+          <div style={{ padding: "24px 36px 0", position: "relative" }}>
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none",
+                zIndex: 1,
+                overflow: "hidden",
+              }}
+            >
+              <OfficialStamp
+                shopId={activeShopId}
+                shopName={shop?.name ?? shopDisplayName}
+                status={stampStatus}
+                subtitle={stampSubtitle}
+                dateLabel={stampDateLabel}
+                documentRef={stampRef}
+                metaLine={KES(quotation.total)}
+                amountLabel={String(quotation.total)}
+                size={310}
+                tiltDeg={-22}
+                watermark
+              />
+            </div>
             <div
               style={{
                 display: "flex",
@@ -611,6 +659,80 @@ export function PrintView({
                 </div>
               </div>
             )}
+
+            {/* ── Authorization & Official Seal ── */}
+            <div
+              style={{
+                position: "relative",
+                zIndex: 2,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-end",
+                gap: "20px",
+                marginTop: "6px",
+                marginBottom: "18px",
+                paddingTop: "8px",
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ flex: "1 1 220px", minWidth: "200px" }}>
+                <p
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 900,
+                    letterSpacing: "0.2em",
+                    color: "#94a3b8",
+                    textTransform: "uppercase",
+                    margin: "0 0 18px",
+                  }}
+                >
+                  Authorized Issue
+                </p>
+                <div
+                  style={{
+                    borderTop: "1px dashed #cbd5e1",
+                    paddingTop: "7px",
+                    maxWidth: "240px",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 800,
+                      color: "#0f172a",
+                      margin: "0 0 2px",
+                    }}
+                  >
+                    {shopDisplayName}
+                  </p>
+                  <p
+                    style={{
+                      fontSize: "10px",
+                      color: "#64748b",
+                      margin: 0,
+                    }}
+                  >
+                    {isIssuedInvoice
+                      ? "Official Sales Invoice"
+                      : "Issued Electronically · Verified Seal"}
+                  </p>
+                </div>
+              </div>
+              <div style={{ flexShrink: 0, paddingRight: "4px" }}>
+                <OfficialStamp
+                  shopId={activeShopId}
+                  shopName={shop?.name ?? shopDisplayName}
+                  status={stampStatus}
+                  subtitle={stampSubtitle}
+                  dateLabel={stampDateLabel}
+                  documentRef={stampRef}
+                  metaLine={KES(quotation.total)}
+                  amountLabel={String(quotation.total)}
+                  size={148}
+                  tiltDeg={-4}
+                />
+              </div>
+            </div>
 
             {/* ── Footer ── */}
             <div

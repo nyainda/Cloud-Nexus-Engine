@@ -80,9 +80,9 @@ export async function downloadDebtPdf(debtId: string, shopId: string) {
       : isPartial
         ? "PARTIALLY PAID"
         : "OUTSTANDING";
-    const stampSize = 32;
+    const stampSize = 36;
     const stampX = W - MR - stampSize;
-    const stampY = H - 49;
+    const stampY = H - 52;
 
     const shopLogoAssets = getPdfShopLogoAssets(shop?.id ?? shopId);
     const logoUrl = shopLogoAssets.header;
@@ -583,8 +583,14 @@ export async function downloadDebtPdf(debtId: string, shopId: string) {
       shopName: shopLogoAssets.sealName,
       logoData: stampLogoBase64,
       status: statusLabel,
+      subtitle: "OFFICIAL DEBT STATEMENT",
       dateLabel: format(new Date(), "dd MMM yyyy"),
       documentRef: `#${(debt?.id ?? "").slice(0, 8).toUpperCase()}`,
+      metaLine:
+        balanceDue > 0.005
+          ? `BAL KES ${balanceDue.toLocaleString("en-KE")}`
+          : "SETTLED IN FULL",
+      amountLabel: String(debt?.totalAmount ?? 0),
     };
     drawPdfWatermark(doc, stampOptions);
     doc.setPage(numPages);
@@ -672,9 +678,9 @@ export async function downloadCustomerPdf(
         : totalPaid > 0
           ? "PARTIALLY PAID"
           : "OUTSTANDING";
-    const stampSize = 32;
+    const stampSize = 36;
     const stampX = W - MR - stampSize;
-    const stampY = H - 49;
+    const stampY = H - 52;
 
     const shopLogoAssets = getPdfShopLogoAssets(shop?.id ?? shopId);
     let logoBase64 = "";
@@ -1000,8 +1006,11 @@ export async function downloadCustomerPdf(
       shopName: shopLogoAssets.sealName,
       logoData: stampLogoBase64,
       status,
+      subtitle: "CUSTOMER ACCOUNT SUMMARY",
       dateLabel: format(new Date(), "dd MMM yyyy"),
       documentRef: "CUSTOMER STATEMENT",
+      metaLine: `${details.length} RECORD${details.length === 1 ? "" : "S"}`,
+      amountLabel: String(totalAmount),
     };
     drawPdfWatermark(doc, stampOptions);
     doc.setPage(pageCount);

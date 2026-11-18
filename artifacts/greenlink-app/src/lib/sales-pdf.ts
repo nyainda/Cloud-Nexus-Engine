@@ -312,8 +312,11 @@ export async function downloadSalePdf(sale: any, returns: any[] = []): Promise<v
     shopName: shopLogoAssets.sealName || shopName,
     logoData: stampLogo,
     status: isVoided ? "VOIDED" : isDebt ? "ON CREDIT" : "PAID",
+    subtitle: isVoided ? "VOIDED TRANSACTION" : "VERIFIED SALES RECEIPT",
     dateLabel: sale.createdAt ? format(new Date(sale.createdAt), "dd MMM yyyy") : format(new Date(), "dd MMM yyyy"),
     documentRef: ref,
+    metaLine: `${paymentLabel.toUpperCase()} · ${money(sale.totalAmount)}`,
+    amountLabel: String(sale.totalAmount),
   };
 
   // Apply the same official seal styling used on quotations and invoices.
