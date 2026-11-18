@@ -7,6 +7,7 @@ import {
   getListInventoryMovementsQueryKey,
 } from "@workspace/api-client-react";
 import { recordMutationResult } from "@/lib/product-version-guard";
+import { syncProductsDelta } from "@/lib/product-sync";
 import { logInventory, newMutationId } from "@/lib/inventory-logger";
 import { enqueueMutation } from "@/lib/offline-queue";
 import { useOfflineSyncCtx } from "@/lib/offline-context";
@@ -62,10 +63,27 @@ export default function POS() {
 
   const { data: productsData, isLoading, isRefetching, dataUpdatedAt } = useListProducts(
     { shopId, limit: 3000 },
-    { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } as any }
+    { query: { enabled: !!shopId, staleTime: 5 * 60_000, refetchInterval: false, refetchOnWindowFocus: false } as any }
   );
 
-  const isStale = !isRefetching && dataUpdatedAt > 0 && (Date.now() - dataUpdatedAt) > 90_000;
+  // Sync only products modified on other devices/tabs instead of rescanning the
+  // entire active product catalog in D1 every 60 seconds.
+  useEffect(() => {
+    if (!shopId) return;
+    const runDelta = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        void syncProductsDelta(qc, shopId);
+      }
+    };
+    const intervalId = window.setInterval(runDelta, 120_000);
+    window.addEventListener("focus", runDelta);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", runDelta);
+    };
+  }, [shopId, qc]);
+
+  const isStale = !isRefetching && dataUpdatedAt > 0 && (Date.now() - dataUpdatedAt) > 5 * 60_000;
 
   const categoryOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -467,7 +485,7 @@ export default function POS() {
             qc.invalidateQueries({ queryKey: ["/api/crm"] });
             qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] });
           }
-          qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+          void syncProductsDelta(qc, shopId);
           qc.invalidateQueries({ queryKey: getListInventoryMovementsQueryKey() });
           logInventory({ stage: "invalidate_triggered", mutationId, source: "pos", timestamp: new Date().toISOString(), extra: { pending_removed: true } });
         },

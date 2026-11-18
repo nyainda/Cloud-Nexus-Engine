@@ -207,7 +207,7 @@ export default function OwnerDashboard() {
       query: {
         queryKey: getGetDashboardQueryKey({ shopId, date: selectedDate }),
         enabled: !!shopId,
-        refetchInterval: 60_000,
+        refetchInterval: 120_000,
         refetchIntervalInBackground: false,
       },
     }
@@ -225,7 +225,7 @@ export default function OwnerDashboard() {
       query: {
         queryKey: getGetReportRangeQueryKey({ shopId, from: rangeFrom, to: selectedDate }),
         enabled: !!shopId,
-        refetchInterval: 60_000,
+        refetchInterval: 120_000,
         refetchIntervalInBackground: false,
       },
     }

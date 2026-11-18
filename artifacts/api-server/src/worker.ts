@@ -9,6 +9,7 @@ const SHOP_A_ID = "shop-greenlink";
 const SHOP_B_ID = "shop-sunrise";
 
 let bootstrapped = false;
+let bootPromise: Promise<void> | null = null;
 const BOOTSTRAP_MARKER = "schema-bootstrap-v2";
 const QUOTATION_INVOICE_MARKER = "quotation-invoice-v1";
 const NURSERY_REGISTER_MARKER = "nursery-register-v1";
@@ -18,8 +19,11 @@ const NURSERY_CATEGORY_MARKER = "nursery-categories-v1";
 const NURSERY_SUPPLIER_MARKER = "nursery-supplier-tracking-v1";
 const NOTIFICATION_COUNTER_MARKER = "notification-unread-counter-v1";
 const CUSTOMER_SCHEMA_MARKER = "customer-credit-columns-v1";
+const PERF_INDEXES_MARKER = "perf-indexes-v1";
 
-async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
+async function ensureQuotationInvoiceColumns(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(QUOTATION_INVOICE_MARKER)) return;
+
   for (const statement of [
     "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
     "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
@@ -52,10 +56,8 @@ async function ensureQuotationInvoiceColumns(db: D1Database): Promise<void> {
 }
 
 /** One-time nursery register schema. The durable marker prevents DDL on cold starts. */
-async function ensureNurseryRegister(db: D1Database): Promise<void> {
-  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(NURSERY_REGISTER_MARKER).first<{ key: string }>();
-  if (marker) return;
+async function ensureNurseryRegister(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(NURSERY_REGISTER_MARKER)) return;
 
   const statements = [
     `CREATE TABLE IF NOT EXISTS nursery_varieties (
@@ -96,10 +98,8 @@ async function ensureNurseryRegister(db: D1Database): Promise<void> {
 }
 
 /** Extend nursery reporting with optional customer summaries and credit sales. */
-async function ensureNurseryCustomerCredit(db: D1Database): Promise<void> {
-  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(NURSERY_CUSTOMER_MARKER).first<{ key: string }>();
-  if (marker) return;
+async function ensureNurseryCustomerCredit(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(NURSERY_CUSTOMER_MARKER)) return;
 
   // Rebuild the compact aggregate table to add the credit payment category.
   // The previous table contains aggregates only, so copying it preserves every
@@ -150,10 +150,8 @@ async function ensureNurseryCustomerCredit(db: D1Database): Promise<void> {
 }
 
 
-async function ensureNurseryIndividualEntries(db: D1Database): Promise<void> {
-  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(NURSERY_ENTRIES_MARKER).first<{ key: string }>();
-  if (marker) return;
+async function ensureNurseryIndividualEntries(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(NURSERY_ENTRIES_MARKER)) return;
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS nursery_sale_entries (id TEXT PRIMARY KEY, request_id TEXT NOT NULL, shop_id TEXT NOT NULL, business_date TEXT NOT NULL, variety_id TEXT NOT NULL, variety_name TEXT NOT NULL, customer_name TEXT NOT NULL DEFAULT '', customer_phone TEXT NOT NULL DEFAULT '', quantity INTEGER NOT NULL CHECK(quantity > 0), unit_price_cents INTEGER NOT NULL, total_amount_cents INTEGER NOT NULL, payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')), debt_id TEXT, created_at TEXT NOT NULL, UNIQUE(shop_id, request_id))"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_nursery_entries_shop_date ON nursery_sale_entries(shop_id, business_date, created_at DESC)"),
@@ -162,11 +160,9 @@ async function ensureNurseryIndividualEntries(db: D1Database): Promise<void> {
 }
 
 /** Add transaction grouping for multi-variety nursery receipts. */
-async function ensureNurseryTransactions(db: D1Database): Promise<void> {
+async function ensureNurseryTransactions(db: D1Database, appliedKeys: Set<string>): Promise<void> {
   const markerKey = "nursery_transaction_grouping_v1";
-  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(markerKey).first<{ key: string }>();
-  if (marker) return;
+  if (appliedKeys.has(markerKey)) return;
   const columns = await db.prepare("PRAGMA table_info(nursery_sale_entries)").all<{ name: string }>();
   if (!(columns.results ?? []).some(column => column.name === "transaction_id")) {
     try {
@@ -184,10 +180,8 @@ async function ensureNurseryTransactions(db: D1Database): Promise<void> {
 }
 
 /** Add shop-defined categories without rewriting historical sales aggregates. */
-async function ensureNurseryCategories(db: D1Database): Promise<void> {
-  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(NURSERY_CATEGORY_MARKER).first<{ key: string }>();
-  if (marker) return;
+async function ensureNurseryCategories(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(NURSERY_CATEGORY_MARKER)) return;
 
   try {
     await db.prepare("ALTER TABLE nursery_varieties ADD COLUMN category TEXT NOT NULL DEFAULT 'Uncategorized'").run();
@@ -207,10 +201,8 @@ async function ensureNurseryCategories(db: D1Database): Promise<void> {
 }
 
 /** Track nursery stock by supplier and preserve a ledger for sale proceeds/debt offsets. */
-async function ensureNurserySupplierTracking(db: D1Database): Promise<void> {
-  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(NURSERY_SUPPLIER_MARKER).first<{ key: string }>();
-  if (marker) return;
+async function ensureNurserySupplierTracking(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(NURSERY_SUPPLIER_MARKER)) return;
 
   const ensureColumn = async (table: string, name: string, statement: string) => {
     const columns = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
@@ -288,10 +280,8 @@ async function ensureNurserySupplierTracking(db: D1Database): Promise<void> {
 }
 
 /** Keep unread notification totals current without rescanning the full list. */
-async function ensureNotificationReadModel(db: D1Database): Promise<void> {
-  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(NOTIFICATION_COUNTER_MARKER).first<{ key: string }>();
-  if (marker) return;
+async function ensureNotificationReadModel(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(NOTIFICATION_COUNTER_MARKER)) return;
 
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS notification_unread_counts (
@@ -334,10 +324,8 @@ async function ensureNotificationReadModel(db: D1Database): Promise<void> {
 }
 
 /** Keep the shared customer table compatible with nursery and CRM writes. */
-async function ensureCustomerSchema(db: D1Database): Promise<void> {
-  const marker = await db.prepare("SELECT key FROM app_migrations WHERE key = ?")
-    .bind(CUSTOMER_SCHEMA_MARKER).first<{ key: string }>();
-  if (marker) return;
+async function ensureCustomerSchema(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(CUSTOMER_SCHEMA_MARKER)) return;
 
   const hasColumn = async (columnName: string): Promise<boolean> => {
     const columns = await db.prepare("PRAGMA table_info(customers)").all<{ name: string }>();
@@ -363,36 +351,44 @@ async function ensureCustomerSchema(db: D1Database): Promise<void> {
     .bind(CUSTOMER_SCHEMA_MARKER, new Date().toISOString()).run();
 }
 
-async function bootstrapD1(db: D1Database): Promise<void> {
-  if (bootstrapped) return;
+/** One-time indexes for hot debt/report/sale joins to prevent table scans as data grows. */
+async function ensurePerfIndexes(db: D1Database, appliedKeys: Set<string>): Promise<void> {
+  if (appliedKeys.has(PERF_INDEXES_MARKER)) return;
 
-  // Cloudflare may execute this module in many short-lived isolates. The
-  // module flag only protects one isolate, so check a durable D1 marker before
-  // doing any bootstrap or migration DDL. Without this guard, every cold
-  // isolate repeats the whole schema setup and can rebuild/drop the old FTS
-  // table, consuming D1 row-write quota.
-  let marker: { key: string } | null = null;
+  await db.batch([
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_debts_sale ON debts(sale_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_debt_payments_paid_at ON debt_payments(paid_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_sales_shop_deleted_date ON sales(shop_id, is_deleted, created_at)"),
+    db.prepare("INSERT OR IGNORE INTO app_migrations (key, applied_at) VALUES (?, ?)")
+      .bind(PERF_INDEXES_MARKER, new Date().toISOString()),
+  ]);
+}
+
+async function runBootstrapD1(db: D1Database): Promise<void> {
+  // Cloudflare may execute this module in many short-lived isolates. Load all
+  // applied migration keys in ONE single query instead of 10 sequential probes,
+  // and skip all DDL statements once markers are recorded.
+  const appliedKeys = new Set<string>();
   try {
-    marker = await db
-      .prepare("SELECT key FROM app_migrations WHERE key = ?")
-      .bind(BOOTSTRAP_MARKER)
-      .first<{ key: string }>();
+    const { results } = await db.prepare("SELECT key FROM app_migrations").all<{ key: string }>();
+    for (const row of results ?? []) {
+      if (row?.key) appliedKeys.add(row.key);
+    }
   } catch {
-    // The marker table is absent only on an uninitialized/legacy database.
-    // The one-time bootstrap below creates it.
+    // app_migrations is absent only on an uninitialized/legacy database.
   }
 
-  if (marker) {
-    // Idempotently ensure the invoice snapshot column exists and backfill legacy invoices.
-    await ensureQuotationInvoiceColumns(db);
-    await ensureNurseryRegister(db);
-    await ensureNurseryCustomerCredit(db);
-    await ensureNurseryIndividualEntries(db);
-    await ensureNurseryTransactions(db);
-    await ensureNurseryCategories(db);
-    await ensureNurserySupplierTracking(db);
-    await ensureNotificationReadModel(db);
-    await ensureCustomerSchema(db);
+  if (appliedKeys.has(BOOTSTRAP_MARKER)) {
+    await ensureQuotationInvoiceColumns(db, appliedKeys);
+    await ensureNurseryRegister(db, appliedKeys);
+    await ensureNurseryCustomerCredit(db, appliedKeys);
+    await ensureNurseryIndividualEntries(db, appliedKeys);
+    await ensureNurseryTransactions(db, appliedKeys);
+    await ensureNurseryCategories(db, appliedKeys);
+    await ensureNurserySupplierTracking(db, appliedKeys);
+    await ensureNotificationReadModel(db, appliedKeys);
+    await ensureCustomerSchema(db, appliedKeys);
+    await ensurePerfIndexes(db, appliedKeys);
     bootstrapped = true;
     return;
   }
@@ -577,19 +573,20 @@ async function bootstrapD1(db: D1Database): Promise<void> {
 
   // Invoice issuance is an additive migration; keep this after the legacy
   // quotation-table repair above, which may recreate the table.
-  await ensureQuotationInvoiceColumns(db);
-  await ensureNurseryRegister(db);
-  await ensureNurseryCustomerCredit(db);
-  await ensureNurseryIndividualEntries(db);
-  await ensureNurseryTransactions(db);
-  await ensureNurseryCategories(db);
-  await ensureNurserySupplierTracking(db);
-  await ensureNotificationReadModel(db);
-  await ensureCustomerSchema(db);
+  await ensureQuotationInvoiceColumns(db, appliedKeys);
+  await ensureNurseryRegister(db, appliedKeys);
+  await ensureNurseryCustomerCredit(db, appliedKeys);
+  await ensureNurseryIndividualEntries(db, appliedKeys);
+  await ensureNurseryTransactions(db, appliedKeys);
+  await ensureNurseryCategories(db, appliedKeys);
+  await ensureNurserySupplierTracking(db, appliedKeys);
+  await ensureNotificationReadModel(db, appliedKeys);
+  await ensureCustomerSchema(db, appliedKeys);
+  await ensurePerfIndexes(db, appliedKeys);
 
   // Only mark the schema work complete after all bootstrap/migration steps
-  // above have been attempted. Future isolates do one indexed marker lookup
-  // and skip every DDL statement.
+  // above have been attempted. Future isolates do one single app_migrations
+  // read and skip every DDL statement.
   await db
     .prepare("INSERT OR REPLACE INTO app_migrations (key, applied_at) VALUES (?, ?)")
     .bind(BOOTSTRAP_MARKER, new Date().toISOString())
@@ -613,6 +610,17 @@ async function bootstrapD1(db: D1Database): Promise<void> {
   }
 
   bootstrapped = true;
+}
+
+async function bootstrapD1(db: D1Database): Promise<void> {
+  if (bootstrapped) return;
+  if (!bootPromise) {
+    bootPromise = runBootstrapD1(db).catch((err) => {
+      bootPromise = null;
+      throw err;
+    });
+  }
+  await bootPromise;
 }
 
 async function archiveOldSessions(db: D1Database): Promise<void> {
@@ -709,7 +717,8 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", cors({
   origin: "*",
   allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization"],
+  allowHeaders: ["Content-Type", "Authorization", "If-None-Match"],
+  exposeHeaders: ["ETag", "X-Product-Catalog-Version"],
 }));
 
 app.use("*", async (c, next) => {

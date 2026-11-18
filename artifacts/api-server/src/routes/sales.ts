@@ -289,6 +289,17 @@ salesRouter.post("/sales", requireAuth, async (c) => {
   // stock movements, and notifications. Any failure in that path left a valid
   // debt sale in Sale History with no customer/debt record behind it.
   const debtId = body.saleType === "debt" ? crypto.randomUUID() : null;
+  const debtItemsJson =
+    debtId && debtCustomerName
+      ? JSON.stringify(
+          lineItems.map((i) => ({
+            productName: i.productName,
+            qty: i.qty,
+            unitPrice: i.unitPrice,
+            totalPrice: i.totalPrice,
+          })),
+        )
+      : null;
   await db.batch([
     db.insert(sales).values(saleValues),
     ...(debtId && debtCustomerName
@@ -304,6 +315,7 @@ salesRouter.post("/sales", requireAuth, async (c) => {
             balance: newDebtBalance,
             status: newDebtStatus,
             notes: null,
+            itemsJson: debtItemsJson,
             paidAt: newDebtStatus === "paid" ? now : null,
             createdAt: now,
           }),
