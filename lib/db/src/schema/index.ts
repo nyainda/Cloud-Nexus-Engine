@@ -266,6 +266,9 @@ export const customers = sqliteTable("customers", {
   notes: text("notes"),
   creditLimit: real("credit_limit"),
   createdAt: createdAt(),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
 });
 
 export type Customer = typeof customers.$inferSelect;
@@ -327,6 +330,7 @@ export const quotations = sqliteTable("quotations", {
   itemsJson: text("items_json").notNull().default("[]"),
   invoiceNumber: text("invoice_number"),
   invoiceIssuedAt: text("invoice_issued_at"),
+  invoiceSnapshotJson: text("invoice_snapshot_json"),
   createdBy: text("created_by"),
   createdAt: createdAt(),
 });

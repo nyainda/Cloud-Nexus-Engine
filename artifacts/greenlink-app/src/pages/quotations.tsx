@@ -1,1488 +1,61 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import {
-  customFetch, useListProducts, useGetShop,
-  getListProductsQueryKey, getGetShopQueryKey,
+  customFetch,
+  useGetShop,
+  getGetShopQueryKey,
 } from "@workspace/api-client-react";
 import {
-  Plus, Search, Trash2, ChevronLeft, Printer, CheckCircle2,
-  XCircle, Clock, FileText, User, Phone, Mail, Calendar, StickyNote,
-  Edit2, Package, Loader2, X, Eye, Download, MessageCircle,
-  ChevronDown, ChevronUp, ShoppingCart, Copy, MoreVertical, TrendingUp,
+  Plus,
+  Search,
+  Trash2,
+  CheckCircle2,
+  Clock,
+  FileText,
+  Loader2,
+  X,
+  ClipboardList,
+  ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
-import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-
-// ─── types ────────────────────────────────────────────────────────────────────
-
-interface QuotationItem {
-  productId?: string;
-  productName: string;
-  unit: string;
-  qty: number;
-  unitPrice: number;
-  total: number;
-}
-
-interface Quotation {
-  id: string;
-  shopId: string;
-  quoteNumber: string;
-  customerName: string;
-  customerPhone: string;
-  customerEmail: string | null;
-  status: "draft" | "sent" | "accepted" | "rejected" | "expired";
-  notes: string | null;
-  validUntil: string | null;
-  subtotal: number;
-  discountAmount: number;
-  total: number;
-  items: QuotationItem[];
-  invoiceNumber: string | null;
-  invoiceIssuedAt: string | null;
-  createdBy: string | null;
-  createdAt: string;
-}
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
-
-const KES = (n: number) =>
-  "KES " + n.toLocaleString("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-
-const STATUS_META = {
-  draft:    { label: "Draft",    color: "text-zinc-400 bg-zinc-400/10 border-zinc-400/20" },
-  sent:     { label: "Sent",     color: "text-blue-400 bg-blue-400/10 border-blue-400/20" },
-  accepted: { label: "Accepted", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20" },
-  rejected: { label: "Rejected", color: "text-red-400 bg-red-400/10 border-red-400/20" },
-  expired:  { label: "Expired",  color: "text-amber-400 bg-amber-400/10 border-amber-400/20" },
-} as const;
-
-function StatusBadge({ status }: { status: Quotation["status"] }) {
-  const m = STATUS_META[status];
-  return (
-    <span className={cn("inline-flex items-center text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border", m.color)}>
-      {m.label}
-    </span>
-  );
-}
-
-// ─── PDF generation ────────────────────────────────────────────────────────────
-
-async function downloadPdf(quotation: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation") {
-  const isInvoice = documentType === "invoice";
-  if (isInvoice && !quotation.invoiceNumber) {
-    toast.error("Issue an invoice first");
-    return;
-  }
-  const documentNumber = isInvoice ? quotation.invoiceNumber! : quotation.quoteNumber;
-  toast.loading(`Generating ${isInvoice ? "invoice" : "quotation"} PDF…`, { id: "pdf" });
-  try {
-    const { jsPDF } = await import("jspdf");
-    const autoTable = (await import("jspdf-autotable")).default;
-
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W   = doc.internal.pageSize.getWidth();
-    const H   = doc.internal.pageSize.getHeight();
-    const ML  = 12;
-    const MR  = 12;
-    const CW  = W - ML - MR;
-
-    // ── Brand palette ─────────────────────────────────────────────────────────
-    type RGB = [number, number, number];
-    const DARK:    RGB = [10,  10,  10];
-    const EMERALD: RGB = [16, 185, 129];   // #10B981 — primary accent
-    const DKEMER:  RGB = [5,  150, 105];   // #059669 — darker emerald
-    const WHITE:   RGB = [255, 255, 255];
-    const LGRAY:   RGB = [248, 250, 252];  // very light gray — alternating rows
-    const OFFWHITE:RGB = [241, 245, 249];  // totals rows
-    const MGRAY:   RGB = [100, 116, 139];
-    const DKTXT:   RGB = [15,  23,  42];
-    const BORD:    RGB = [220, 226, 234];
-
-    // ── Load shop logo ─────────────────────────────────────────────────────────
-    const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
-    const logoUrl = shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
-    let logoBase64 = "";
-    let logoNatW = 0;
-    let logoNatH = 0;
-    try {
-      const resp = await fetch(logoUrl);
-      const blob = await resp.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      await new Promise<void>(resolve => {
-        const img = new Image();
-        img.onload  = () => { logoNatW = img.naturalWidth; logoNatH = img.naturalHeight; resolve(); };
-        img.onerror = () => resolve();
-        img.src = blobUrl;
-      });
-      URL.revokeObjectURL(blobUrl);
-      logoBase64 = await new Promise<string>(resolve => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    } catch { /* logo optional */ }
-
-    // ── Helper: info box with dark header + emerald left accent ───────────────
-    function infoBox(bx: number, by: number, bw: number, bh: number, label: string) {
-      doc.setDrawColor(...BORD);
-      doc.setLineWidth(0.25);
-      doc.rect(bx, by, bw, bh, "S");
-      const hh = 7.5;
-      doc.setFillColor(...DARK);
-      doc.rect(bx, by, bw, hh, "F");
-      doc.setFillColor(...EMERALD);
-      doc.rect(bx, by, 3, hh, "F");
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7);
-      doc.setTextColor(...WHITE);
-      doc.text(label, bx + 7, by + 5.3);
-    }
-
-    // ── Helper: label : value row inside a box ────────────────────────────────
-    function fieldRow(bx: number, by: number, bw: number, label: string, value: string) {
-      const valX = bx + bw * 0.44;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7);
-      doc.setTextColor(...MGRAY);
-      doc.text(label, bx + 6, by);
-      doc.setTextColor(...DKTXT);
-      doc.text(value || "—", valX, by);
-    }
-
-    // ── Helper: footer ─────────────────────────────────────────────────────────
-    function drawFooter() {
-      doc.setFillColor(...DARK);
-      doc.rect(0, H - 14, W, 14, "F");
-      doc.setFillColor(...EMERALD);
-      doc.rect(0, H - 14, W, 1.2, "F");
-      const cols = [ML, W / 2, W - MR];
-      const align: ("left"|"center"|"right")[] = ["left","center","right"];
-      const heads = ["LOCATION", "CONTACT", shop?.name ? "SHOP" : ""];
-      const bits: string[] = [
-        shop?.address ?? "",
-        [shop?.ownerWhatsapp, shop?.email].filter(Boolean).join("  ·  "),
-        shop?.name ?? "",
-      ];
-      heads.forEach((h, i) => {
-        if (!h && !bits[i]) return;
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(6);
-        doc.setTextColor(...EMERALD);
-        doc.text(h, cols[i], H - 9, { align: align[i] });
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(180, 188, 200);
-        doc.text(bits[i], cols[i], H - 4.8, { align: align[i] });
-      });
-    }
-
-    // ── Helper: continuation header (pages 2+) ────────────────────────────────
-    function drawContinuationHeader(pg: number, total: number) {
-      // Do NOT fill the entire page white here — pages are already white in
-      // jsPDF, and doing so in didDrawPage leaves fill state dirty (set to DARK/
-      // EMERALD at the end) which makes autotable body rows render black on page 2+.
-      doc.setFillColor(...DARK);
-      doc.rect(0, 0, W, 9, "F");
-      doc.setFillColor(...EMERALD);
-      doc.rect(0, 0, W, 1.8, "F");
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(6);
-      doc.setTextColor(180, 188, 200);
-      doc.text(`${shop?.name ?? ""}  ·  ${documentNumber}  ·  continued`, ML, 6.5);
-      doc.text(`Page ${pg} of ${total}`, W - MR, 6.5, { align: "right" });
-      // Reset graphics state so autotable inherits clean defaults after this hook
-      doc.setFillColor(...WHITE);
-      doc.setTextColor(0, 0, 0);
-      doc.setDrawColor(0, 0, 0);
-      doc.setLineWidth(0.2);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // PAGE 1
-    // ══════════════════════════════════════════════════════════════════════════
-    doc.setFillColor(...WHITE);
-    doc.rect(0, 0, W, H, "F");
-
-    // ── HEADER — dark band with logo right, shop info + emerald tag left ──────
-    const HDR_H = 32;
-    doc.setFillColor(...DARK);
-    doc.rect(0, 0, W, HDR_H, "F");
-    doc.setFillColor(...EMERALD);
-    doc.rect(0, 0, W, 2.5, "F");
-
-    // Logo — right side of header, max 50×26 bounding box
-    const LOGO_BOX_W = 50, LOGO_BOX_H = 26;
-    if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
-      const scale = Math.min(LOGO_BOX_W / logoNatW, LOGO_BOX_H / logoNatH);
-      const dW = logoNatW * scale;
-      const dH = logoNatH * scale;
-      const lx = W - MR - LOGO_BOX_W + (LOGO_BOX_W - dW) / 2;
-      const ly = 3 + (LOGO_BOX_H - dH) / 2;
-      doc.addImage(logoBase64, "JPEG", lx, ly, dW, dH);
-    }
-
-    // Shop name + contact on left
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(...WHITE);
-    doc.text(shop?.name ?? "Our Shop", ML, 14);
-
-    const shopBits = [shop?.address, shop?.ownerWhatsapp, shop?.email].filter(Boolean) as string[];
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(6.5);
-    doc.setTextColor(160, 170, 185);
-    if (shopBits.length) doc.text(shopBits.join("  ·  "), ML, 20.5);
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6);
-    doc.setTextColor(...EMERALD);
-    doc.text("QUALITY  ·  RELIABILITY  ·  GROWTH", ML, 27);
-
-    // ── QUOTATION BANNER ──────────────────────────────────────────────────────
-    const BANNER_Y = HDR_H;
-    const BANNER_H = 11;
-    doc.setFillColor(22, 28, 40);
-    doc.rect(0, BANNER_Y, W, BANNER_H, "F");
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(...WHITE);
-    const qText  = isInvoice ? "  INVOICE  " : "  QUOTATION  ";
-    const qTextW = doc.getTextWidth(qText);
-    const qTextX = W / 2 - qTextW / 2;
-    doc.setDrawColor(...EMERALD);
-    doc.setLineWidth(0.5);
-    doc.line(ML + 4, BANNER_Y + BANNER_H / 2, qTextX - 2, BANNER_Y + BANNER_H / 2);
-    doc.line(qTextX + qTextW + 2, BANNER_Y + BANNER_H / 2, W - MR - 4, BANNER_Y + BANNER_H / 2);
-    doc.text(qText, W / 2, BANNER_Y + BANNER_H - 3, { align: "center" });
-
-    let y = BANNER_Y + BANNER_H + 6;
-
-    // ── INFO BOXES ────────────────────────────────────────────────────────────
-    const LBW = CW * 0.56;
-    const RBW = CW - LBW - 5;
-    const LBX = ML;
-    const RBX = ML + LBW + 5;
-    const INFO_H = 38;
-
-    infoBox(LBX, y, LBW, INFO_H, "CUSTOMER DETAILS");
-    let fy = y + 13;
-    const GAP = 5.8;
-    fieldRow(LBX, fy, LBW, "Customer Name",  quotation.customerName);         fy += GAP;
-    fieldRow(LBX, fy, LBW, "Phone / Mobile", quotation.customerPhone ?? "");   fy += GAP;
-    fieldRow(LBX, fy, LBW, "Email",           quotation.customerEmail ?? "");
-
-    infoBox(RBX, y, RBW, INFO_H, isInvoice ? "INVOICE DETAILS" : "QUOTE DETAILS");
-    let qy = y + 13;
-    if (isInvoice) {
-      fieldRow(RBX, qy, RBW, "Invoice No.", documentNumber); qy += GAP;
-      fieldRow(RBX, qy, RBW, "Quote Ref.", quotation.quoteNumber); qy += GAP;
-      fieldRow(RBX, qy, RBW, "Invoice Date", format(new Date(quotation.invoiceIssuedAt ?? quotation.createdAt), "dd MMM yyyy"));
-    } else {
-      fieldRow(RBX, qy, RBW, "Quotation No.", quotation.quoteNumber);            qy += GAP;
-      fieldRow(RBX, qy, RBW, "Date",          format(new Date(quotation.createdAt), "dd MMM yyyy")); qy += GAP;
-      if (quotation.validUntil) {
-        fieldRow(RBX, qy, RBW, "Valid Until", format(new Date(quotation.validUntil), "dd MMM yyyy"));
-      }
-    }
-    y += INFO_H + 5;
-
-    // ── ITEMS TABLE ───────────────────────────────────────────────────────────
-    autoTable(doc, {
-      startY: y,
-      margin: { left: ML, right: MR, bottom: 17 },
-      showHead: "firstPage",
-      head: [["#", "DESCRIPTION", "QTY", "UNIT", "UNIT PRICE", "TOTAL (KES)"]],
-      body: quotation.items.map((item, i) => [
-        String(i + 1),
-        item.productName,
-        item.qty % 1 === 0 ? String(item.qty) : item.qty.toFixed(2),
-        item.unit || "—",
-        item.unitPrice.toLocaleString("en-KE"),
-        item.total.toLocaleString("en-KE"),
-      ]),
-      headStyles: {
-        fillColor: DARK,
-        textColor: WHITE,
-        fontStyle: "bold",
-        fontSize: 7,
-        cellPadding: { top: 3, bottom: 3, left: 3.5, right: 3.5 },
-        halign: "center",
-      },
-      bodyStyles: {
-        fontSize: 7.5,
-        cellPadding: { top: 2, bottom: 2, left: 3.5, right: 3.5 },
-        textColor: DKTXT,
-        lineColor: BORD,
-        lineWidth: 0.15,
-      },
-      alternateRowStyles: { fillColor: LGRAY },
-      columnStyles: {
-        0: { cellWidth: 10,   halign: "center", fontStyle: "bold", textColor: MGRAY, fontSize: 6.5 },
-        1: { cellWidth: "auto", halign: "left" },
-        2: { cellWidth: 14,   halign: "center" },
-        3: { cellWidth: 16,   halign: "center", textColor: MGRAY },
-        4: { cellWidth: 28,   halign: "right" },
-        5: { cellWidth: 30,   halign: "right", fontStyle: "bold" },
-      },
-      tableLineColor: BORD,
-      tableLineWidth: 0.2,
-      didDrawCell: (data: any) => {
-        if (data.row.index === -1 && data.column.index === data.table.columns.length - 1) {
-          doc.setDrawColor(...EMERALD);
-          doc.setLineWidth(1);
-          doc.line(ML, data.cell.y + data.cell.height, W - MR, data.cell.y + data.cell.height);
-        }
-      },
-      didDrawPage: (_: any) => {
-        const pg: number    = (doc as any).internal.getCurrentPageInfo().pageNumber;
-        const total: number = (doc as any).internal.getNumberOfPages();
-        if (pg > 1) drawContinuationHeader(pg, total);
-      },
-    });
-
-    let ty: number = (doc as any).lastAutoTable.finalY + 6;
-
-    const BOT_ESTIMATE = 85;
-    if (ty + BOT_ESTIMATE > H - 16) {
-      doc.addPage();
-      doc.setFillColor(...WHITE);
-      doc.rect(0, 0, W, H, "F");
-      const newPg = (doc as any).internal.getNumberOfPages();
-      drawContinuationHeader(newPg, newPg);
-      ty = 14;
-    }
-
-    // ── BOTTOM SECTION ────────────────────────────────────────────────────────
-    const LCW = CW * 0.52;
-    const RCW = CW - LCW - 5;
-    const LCX = ML;
-    const RCX = ML + LCW + 5;
-
-    // Terms & Conditions
-    const defaultTerms = isInvoice
-      ? [
-          "Payment is due upon receipt of this invoice.",
-          "Please use the invoice number as your payment reference.",
-          "Goods remain property of the shop until full payment is received.",
-        ]
-      : [
-          "Prices are valid for 30 days from date of quotation.",
-          "Prices are subject to change without prior notice.",
-          "Goods remain property of the shop until full payment received.",
-          "Delivery charges may apply depending on location.",
-        ];
-    const termLines: string[] = quotation.notes
-      ? (doc.splitTextToSize(quotation.notes, LCW - 12) as string[])
-      : defaultTerms;
-    const TERMS_H = Math.max(26, termLines.length * 4.5 + 14);
-
-    infoBox(LCX, ty, LCW, TERMS_H, "TERMS & CONDITIONS");
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(6.5);
-    doc.setTextColor(60, 72, 90);
-    termLines.forEach((line, i) => {
-      doc.text(`•  ${line}`, LCX + 6, ty + 13 + i * 4.5);
-    });
-
-    // Payment Methods
-    const PAY_Y = ty + TERMS_H + 4;
-    const PAY_H = 38;
-    infoBox(LCX, PAY_Y, LCW, PAY_H, "PAYMENT METHODS");
-    const PAY_CONTENT_Y = PAY_Y + 8;
-    const payMethods = [
-      { label: "Cash",          sub: "On delivery" },
-      { label: "M-Pesa",        sub: "Paybill / Till" },
-      { label: "Bank Transfer", sub: "Account details" },
-    ];
-    const slotW = LCW / payMethods.length;
-    payMethods.forEach((pm, i) => {
-      const cx = LCX + slotW * i + slotW / 2;
-      const iconY = PAY_CONTENT_Y + 4;
-
-      if (i === 0) {
-        const bx = cx - 7, by = iconY, bw = 14, bh = 8;
-        doc.setFillColor(...DKEMER);
-        doc.roundedRect(bx, by, bw, bh, 1.5, 1.5, "F");
-        doc.setFillColor(...EMERALD);
-        doc.roundedRect(bx + 2, by + 2, bw - 4, bh - 4, 0.8, 0.8, "F");
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(5.5);
-        doc.setTextColor(...WHITE);
-        doc.text("KES", cx, by + bh / 2 + 1.8, { align: "center" });
-      } else if (i === 1) {
-        const ph = 10, pw = 6.5;
-        const px2 = cx - pw / 2, py2 = iconY;
-        doc.setFillColor(...DKEMER);
-        doc.roundedRect(px2, py2, pw, ph, 1.2, 1.2, "F");
-        doc.setFillColor(...WHITE);
-        doc.roundedRect(cx - 1.5, py2 + 1.2, 3, 0.9, 0.3, 0.3, "F");
-        doc.setFillColor(...EMERALD);
-        doc.roundedRect(px2 + 0.8, py2 + 2.8, pw - 1.6, ph - 5.2, 0.5, 0.5, "F");
-        doc.setFillColor(...WHITE);
-        doc.circle(cx, py2 + ph - 1.5, 0.9, "F");
-      } else {
-        const bw2 = 13, bx2 = cx - bw2 / 2, by2 = iconY;
-        doc.setDrawColor(...DKEMER);
-        doc.setLineWidth(0.8);
-        doc.line(cx, by2, bx2, by2 + 3.5);
-        doc.line(cx, by2, bx2 + bw2, by2 + 3.5);
-        doc.line(bx2, by2 + 3.5, bx2 + bw2, by2 + 3.5);
-        doc.setFillColor(...DKEMER);
-        const colW = 1.8, colH = 4.5, colY = by2 + 3.5;
-        const colGap = (bw2 - colW * 4) / 5;
-        for (let c = 0; c < 4; c++) {
-          doc.rect(bx2 + colGap * (c + 1) + colW * c, colY, colW, colH, "F");
-        }
-        doc.rect(bx2 - 0.5, by2 + 3.5 + colH, bw2 + 1, 1.5, "F");
-      }
-
-      const labelY = PAY_CONTENT_Y + 4 + 12;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(6.5);
-      doc.setTextColor(...DKTXT);
-      doc.text(pm.label, cx, labelY, { align: "center" });
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(5.5);
-      doc.setTextColor(...MGRAY);
-      doc.text(pm.sub, cx, labelY + 4, { align: "center" });
-      if (i < payMethods.length - 1) {
-        doc.setDrawColor(...BORD);
-        doc.setLineWidth(0.2);
-        doc.line(LCX + slotW * (i + 1), PAY_CONTENT_Y + 2, LCX + slotW * (i + 1), PAY_Y + PAY_H - 3);
-      }
-    });
-
-    // Totals (right column)
-    let ry = ty;
-    const ROW_H = 8.5;
-
-    function totRow(label: string, value: string, highlight = false) {
-      if (highlight) {
-        doc.setFillColor(...DARK);
-        doc.rect(RCX, ry, RCW, ROW_H + 1, "F");
-        doc.setFillColor(...EMERALD);
-        doc.rect(RCX, ry, 3.5, ROW_H + 1, "F");
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8.5);
-        doc.setTextColor(...EMERALD);
-        doc.text(label, RCX + 7, ry + 6.2);
-        doc.setTextColor(...WHITE);
-        doc.text(value, RCX + RCW - 4, ry + 6.2, { align: "right" });
-      } else {
-        doc.setFillColor(...OFFWHITE);
-        doc.rect(RCX, ry, RCW, ROW_H, "F");
-        doc.setDrawColor(...BORD);
-        doc.setLineWidth(0.2);
-        doc.line(RCX, ry + ROW_H, RCX + RCW, ry + ROW_H);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(7.5);
-        doc.setTextColor(...MGRAY);
-        doc.text(label, RCX + 4, ry + 5.8);
-        doc.setTextColor(...DKTXT);
-        doc.text(value, RCX + RCW - 4, ry + 5.8, { align: "right" });
-      }
-      ry += highlight ? ROW_H + 1 : ROW_H;
-    }
-
-    if (quotation.discountAmount > 0) {
-      totRow("SUBTOTAL", `KES ${quotation.subtotal.toLocaleString("en-KE")}`);
-      totRow("DISCOUNT", `− KES ${quotation.discountAmount.toLocaleString("en-KE")}`);
-    }
-    totRow(isInvoice ? "AMOUNT DUE" : "TOTAL AMOUNT", `KES ${quotation.total.toLocaleString("en-KE")}`, true);
-
-    // Thank you box
-    const TY_BOX_Y = ry + 4;
-    const TY_BOX_H = 18;
-    doc.setFillColor(236, 253, 245);
-    doc.rect(RCX, TY_BOX_Y, RCW, TY_BOX_H, "F");
-    doc.setDrawColor(...EMERALD);
-    doc.setLineWidth(0.4);
-    doc.rect(RCX, TY_BOX_Y, RCW, TY_BOX_H, "S");
-    doc.setFillColor(...EMERALD);
-    doc.rect(RCX, TY_BOX_Y, 3.5, TY_BOX_H, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
-    doc.setTextColor(...DARK);
-    doc.text("Thank you for your business!", RCX + RCW / 2 + 2, TY_BOX_Y + 8.5, { align: "center" });
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(6.5);
-    doc.setTextColor(...MGRAY);
-    doc.text("We appreciate your trust in us.", RCX + RCW / 2 + 2, TY_BOX_Y + 13.5, { align: "center" });
-
-    // Signature lines
-    const sigY = Math.max(PAY_Y + PAY_H + 9, TY_BOX_Y + TY_BOX_H + 9);
-    doc.setDrawColor(...BORD);
-    doc.setLineWidth(0.3);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(...MGRAY);
-    doc.text("Prepared By:", ML, sigY);
-    doc.line(ML + 24, sigY + 0.5, ML + CW * 0.42, sigY + 0.5);
-    doc.setFontSize(6.5);
-    doc.text("Name:", ML, sigY + 6);
-    doc.line(ML + 11, sigY + 6.5, ML + CW * 0.42, sigY + 6.5);
-    const rSigX = W - MR - CW * 0.42;
-    doc.setFontSize(7);
-    doc.text("Received By:", rSigX, sigY);
-    doc.line(rSigX + 24, sigY + 0.5, W - MR, sigY + 0.5);
-    doc.setFontSize(6.5);
-    doc.text("Name:", rSigX, sigY + 6);
-    doc.line(rSigX + 11, sigY + 6.5, W - MR, sigY + 6.5);
-
-    // Footer on every page
-    const numPages: number = (doc as any).internal.getNumberOfPages();
-    for (let p = 1; p <= numPages; p++) {
-      doc.setPage(p);
-      drawFooter();
-    }
-
-    const custSlug = (quotation.customerName?.trim() || "")
-      .replace(/[^a-z0-9]/gi, "_")
-      .replace(/_+/g, "_")
-      .replace(/^_+|_+$/g, "");
-    doc.save(custSlug ? `${custSlug}_${documentNumber}.pdf` : `${documentNumber}.pdf`);
-    toast.success("PDF downloaded!", { id: "pdf" });
-  } catch (err) {
-    console.error(err);
-    toast.error("PDF generation failed. Try printing instead.", { id: "pdf" });
-  }
-}
-
-// ─── WhatsApp ─────────────────────────────────────────────────────────────────
-
-function buildWhatsAppText(q: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation"): string {
-  const isInvoice = documentType === "invoice" && !!q.invoiceNumber;
-  const documentNumber = isInvoice ? q.invoiceNumber! : q.quoteNumber;
-  const lines: string[] = [
-    `*${isInvoice ? "INVOICE" : "QUOTATION"} — ${documentNumber}*`,
-    `_${shop?.name ?? "Our Shop"}_`,
-    "",
-    `👤 *Customer:* ${q.customerName}`,
-    ...(q.customerPhone ? [`📞 *Phone:* ${q.customerPhone}`] : []),
-    ...(isInvoice
-      ? [
-          `📄 *Quotation Ref:* ${q.quoteNumber}`,
-          `📅 *Invoice Date:* ${format(new Date(q.invoiceIssuedAt ?? q.createdAt), "dd MMM yyyy")}`,
-        ]
-      : [
-          `📅 *Date:* ${format(new Date(q.createdAt), "dd MMM yyyy")}`,
-          ...(q.validUntil ? [`⏳ *Valid Until:* ${format(new Date(q.validUntil), "dd MMM yyyy")}`] : []),
-        ]),
-    "",
-    "*─── ITEMS ───*",
-    ...q.items.map((item, i) =>
-      `${i + 1}. ${item.productName}\n   ${item.qty} ${item.unit} × ${KES(item.unitPrice)} = *${KES(item.total)}*`
-    ),
-    "",
-    ...(q.discountAmount > 0 ? [
-      `Subtotal: ${KES(q.subtotal)}`,
-      `Discount: -${KES(q.discountAmount)}`,
-    ] : []),
-    `*${isInvoice ? "AMOUNT DUE" : "TOTAL"}: ${KES(q.total)}*`,
-    ...(q.notes ? ["", `📝 _${q.notes}_`] : []),
-    "",
-    "─────────────────",
-    ...(shop?.ownerWhatsapp ? [`📞 ${shop.ownerWhatsapp}`] : []),
-    ...(shop?.address ? [`📍 ${shop.address}`] : []),
-    ...(shop?.email ? [`✉️ ${shop.email}`] : []),
-    "",
-    "_Thank you for your business!_",
-  ];
-  return lines.join("\n");
-}
-
-function shareWhatsApp(q: Quotation, shop: any, documentType: "quotation" | "invoice" = "quotation") {
-  const text = buildWhatsAppText(q, shop, documentType);
-  const phone = q.customerPhone?.replace(/\D/g, "") ?? "";
-  const url = phone
-    ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
-    : `https://wa.me/?text=${encodeURIComponent(text)}`;
-  window.open(url, "_blank");
-}
-
-// ─── Print preview ────────────────────────────────────────────────────────────
-
-function PrintView({ quotation, shop, onClose }: { quotation: Quotation; shop: any; onClose: () => void }) {
-  const [downloading, setDownloading] = useState(false);
-
-  const handleDownload = async () => {
-    setDownloading(true);
-    await downloadPdf(quotation, shop);
-    setDownloading(false);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/95 flex flex-col overflow-hidden">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 bg-[#0A0A0A] shrink-0 flex-wrap">
-        <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/70 text-xs font-semibold hover:bg-white/20 transition-colors">
-          <ChevronLeft className="h-3.5 w-3.5" /> Back
-        </button>
-        <span className="text-xs font-black text-[#C8FF00] font-mono">{quotation.quoteNumber}</span>
-        <div className="flex-1" />
-        <button
-          onClick={() => shareWhatsApp(quotation, shop, "quotation")}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/30 text-xs font-bold hover:bg-[#25D366]/30 transition-colors"
-        >
-          <MessageCircle className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">WhatsApp</span>
-        </button>
-        <button
-          onClick={handleDownload}
-          disabled={downloading}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#C8FF00] text-[#0A0A0A] text-xs font-black hover:bg-[#C8FF00]/90 disabled:opacity-60 transition-colors"
-        >
-          {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-          {downloading ? "Generating…" : "Download PDF"}
-        </button>
-        <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 text-white/70 text-xs font-semibold hover:bg-white/20 transition-colors">
-          <Printer className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Print</span>
-        </button>
-      </div>
-
-      {/* Document */}
-      <div className="flex-1 overflow-y-auto px-3 py-6 sm:px-6">
-        <div
-          id="quote-doc"
-          className="mx-auto bg-white text-gray-900 shadow-2xl overflow-hidden"
-          style={{ fontFamily: "'DM Sans', sans-serif", maxWidth: "760px", borderRadius: "16px" }}
-        >
-          {/* ── Premium header ── */}
-          <div style={{ background: "#0A0A0A", padding: "0" }}>
-            {/* Lime top stripe */}
-            <div style={{ height: "4px", background: "#C8FF00" }} />
-            <div style={{ padding: "28px 36px 26px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "20px", flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: "180px" }}>
-                <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.25em", color: "#C8FF00", textTransform: "uppercase", marginBottom: "8px", margin: "0 0 8px" }}>Official Quotation</p>
-                <h1 style={{ fontSize: "24px", fontWeight: 900, color: "#fff", margin: "0 0 8px", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{shop?.name ?? "Our Shop"}</h1>
-                <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-                  {shop?.address && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.address}</span>}
-                  {shop?.ownerWhatsapp && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.ownerWhatsapp}</span>}
-                  {shop?.email && <span style={{ fontSize: "11px", color: "#9ca3af" }}>{shop.email}</span>}
-                </div>
-              </div>
-              <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <p style={{ fontSize: "9px", fontWeight: 800, color: "#C8FF00", letterSpacing: "0.2em", textTransform: "uppercase", margin: "0 0 6px" }}>QUOTATION</p>
-                <p style={{ fontSize: "26px", fontWeight: 900, color: "#ffffff", fontFamily: "monospace", margin: "0 0 10px", letterSpacing: "-0.01em" }}>{quotation.quoteNumber}</p>
-                <p style={{ fontSize: "11px", color: "#9ca3af", margin: "2px 0" }}>Date: {format(new Date(quotation.createdAt), "dd MMM yyyy")}</p>
-                {quotation.validUntil && <p style={{ fontSize: "11px", color: "#9ca3af", margin: "2px 0" }}>Valid Until: {format(new Date(quotation.validUntil), "dd MMM yyyy")}</p>}
-                <span style={{
-                  display: "inline-block", marginTop: "10px", fontSize: "9px", fontWeight: 800,
-                  textTransform: "uppercase", letterSpacing: "0.12em", padding: "4px 12px", borderRadius: "20px",
-                  background: quotation.status === "accepted" ? "rgba(34,197,94,0.15)" : quotation.status === "rejected" ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.08)",
-                  color: quotation.status === "accepted" ? "#4ade80" : quotation.status === "rejected" ? "#f87171" : quotation.status === "sent" ? "#60a5fa" : "#9ca3af",
-                  border: `1px solid ${quotation.status === "accepted" ? "rgba(34,197,94,0.3)" : quotation.status === "rejected" ? "rgba(239,68,68,0.3)" : "rgba(255,255,255,0.1)"}`,
-                }}>
-                  {STATUS_META[quotation.status].label}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* ── Bill To ── */}
-          <div style={{ padding: "24px 36px 0" }}>
-            <div style={{ display: "flex", alignItems: "stretch", gap: "0", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden", marginBottom: "24px" }}>
-              <div style={{ width: "4px", background: "#C8FF00", flexShrink: 0 }} />
-              <div style={{ padding: "14px 18px", flex: 1 }}>
-                <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.2em", color: "#94a3b8", textTransform: "uppercase", margin: "0 0 8px" }}>Bill To</p>
-                <p style={{ fontSize: "17px", fontWeight: 800, color: "#0f172a", margin: "0 0 5px" }}>{quotation.customerName}</p>
-                <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
-                  {quotation.customerPhone && <span style={{ fontSize: "12px", color: "#64748b" }}>{quotation.customerPhone}</span>}
-                  {quotation.customerEmail && <span style={{ fontSize: "12px", color: "#64748b" }}>{quotation.customerEmail}</span>}
-                </div>
-              </div>
-            </div>
-
-            {/* ── Items table ── */}
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", marginBottom: "20px" }}>
-              <thead>
-                <tr style={{ background: "#0A0A0A" }}>
-                  <th style={{ textAlign: "center", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "4%" }}>#</th>
-                  <th style={{ textAlign: "left", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00" }}>Product / Description</th>
-                  <th style={{ textAlign: "center", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "9%" }}>Unit</th>
-                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "8%" }}>Qty</th>
-                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "17%" }}>Unit Price</th>
-                  <th style={{ textAlign: "right", padding: "10px 10px", fontSize: "8px", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.15em", color: "#C8FF00", width: "18%" }}>Total (KES)</th>
-                </tr>
-                <tr><td colSpan={6} style={{ height: "2px", background: "#C8FF00", padding: 0 }} /></tr>
-              </thead>
-              <tbody>
-                {quotation.items.map((item, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#f9fafb" }}>
-                    <td style={{ padding: "11px 10px", textAlign: "center", fontSize: "10px", fontWeight: 800, color: "#94a3b8", borderBottom: "1px solid #f1f5f9" }}>{i + 1}</td>
-                    <td style={{ padding: "11px 10px", fontWeight: 600, color: "#0f172a", borderBottom: "1px solid #f1f5f9" }}>{item.productName}</td>
-                    <td style={{ padding: "11px 10px", textAlign: "center", color: "#64748b", fontSize: "11px", borderBottom: "1px solid #f1f5f9" }}>{item.unit || "unit"}</td>
-                    <td style={{ padding: "11px 10px", textAlign: "right", color: "#374151", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{item.qty}</td>
-                    <td style={{ padding: "11px 10px", textAlign: "right", color: "#475569", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{KES(item.unitPrice)}</td>
-                    <td style={{ padding: "11px 10px", textAlign: "right", fontWeight: 800, color: "#0f172a", fontFamily: "monospace", borderBottom: "1px solid #f1f5f9" }}>{KES(item.total)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {/* ── Totals ── */}
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "24px" }}>
-              <div style={{ width: "260px" }}>
-                {quotation.discountAmount > 0 && <>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", fontSize: "13px", color: "#64748b", background: "#f8fafc", borderRadius: "6px 6px 0 0" }}>
-                    <span>Subtotal</span><span style={{ fontFamily: "monospace" }}>{KES(quotation.subtotal)}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", fontSize: "13px", color: "#dc2626", background: "#fef2f2" }}>
-                    <span>Discount</span><span style={{ fontFamily: "monospace" }}>− {KES(quotation.discountAmount)}</span>
-                  </div>
-                </>}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#0A0A0A", borderRadius: quotation.discountAmount > 0 ? "0 0 10px 10px" : "10px" }}>
-                  <span style={{ fontSize: "11px", fontWeight: 900, color: "#C8FF00", textTransform: "uppercase", letterSpacing: "0.1em" }}>Total Due</span>
-                  <span style={{ fontSize: "18px", fontWeight: 900, color: "#fff", fontFamily: "monospace" }}>{KES(quotation.total)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* ── Notes ── */}
-            {quotation.notes && (
-              <div style={{ display: "flex", gap: "0", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden", marginBottom: "20px" }}>
-                <div style={{ width: "4px", background: "#C8FF00", flexShrink: 0 }} />
-                <div style={{ padding: "12px 16px", flex: 1, background: "#f8fafc" }}>
-                  <p style={{ fontSize: "9px", fontWeight: 900, letterSpacing: "0.2em", color: "#94a3b8", textTransform: "uppercase", margin: "0 0 7px" }}>Notes & Terms</p>
-                  <p style={{ fontSize: "12px", color: "#475569", whiteSpace: "pre-wrap", lineHeight: 1.7, margin: 0 }}>{quotation.notes}</p>
-                </div>
-              </div>
-            )}
-
-            {/* ── Footer ── */}
-            <div style={{ borderTop: "2px solid #C8FF00", paddingTop: "14px", paddingBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
-              <p style={{ fontSize: "10px", color: "#94a3b8", lineHeight: 1.6, margin: 0 }}>
-                Valid {quotation.validUntil ? `until ${format(new Date(quotation.validUntil), "dd MMMM yyyy")}` : "for 30 days from issue"} · Prices subject to availability
-              </p>
-              <p style={{ fontSize: "11px", fontWeight: 800, color: "#0f172a", margin: 0 }}>{shop?.name ?? ""}</p>
-            </div>
-          </div>
-        </div>
-        <div className="h-8" />
-      </div>
-
-      <style>{`
-        @media print {
-          body > * { display: none !important; }
-          #quote-doc { display: block !important; }
-          * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-// ─── Customer autocomplete ─────────────────────────────────────────────────────
-
-function CustomerAutocomplete({ value, onChange, shopId, placeholder }: {
-  value: string; onChange: (v: string, phone?: string) => void; shopId: string; placeholder?: string;
-}) {
-  const [customers, setCustomers] = useState<Array<{ customer_name: string; customer_phone: string }>>([]);
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    customFetch(`/api/quotation-customers?shopId=${shopId}`)
-      .then((d: any) => setCustomers(Array.isArray(d) ? d : []))
-      .catch(() => {});
-  }, [shopId]);
-
-  useEffect(() => {
-    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", fn);
-    return () => document.removeEventListener("mousedown", fn);
-  }, []);
-
-  const matches = useMemo(() => {
-    const q = value.trim().toLowerCase();
-    if (!q) return customers.slice(0, 8);
-    return customers.filter(c => c.customer_name.toLowerCase().includes(q)).slice(0, 8);
-  }, [customers, value]);
-
-  return (
-    <div ref={ref} className="relative">
-      <div className="relative">
-        <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40 pointer-events-none" />
-        <input
-          value={value}
-          onChange={e => { onChange(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          placeholder={placeholder ?? "Search or type customer name"}
-          className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-        />
-      </div>
-      {open && matches.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
-          {matches.map((c, i) => (
-            <button
-              key={i}
-              type="button"
-              onMouseDown={() => { onChange(c.customer_name, c.customer_phone); setOpen(false); }}
-              className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/60 flex items-center gap-2 border-b border-border/30 last:border-0"
-            >
-              <User className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-              <span className="font-semibold text-foreground">{c.customer_name}</span>
-              {c.customer_phone && <span className="text-xs text-muted-foreground/50 ml-auto font-mono">{c.customer_phone}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Quotation Builder ─────────────────────────────────────────────────────────
-
-function QuotationBuilder({ shopId, editQuotation, onSave, onCancel }: {
-  shopId: string; editQuotation: Quotation | null; onSave: (q: Quotation) => void; onCancel: () => void;
-}) {
-  const role = localStorage.getItem("greenlink_role") || "cashier";
-  const userName = localStorage.getItem("greenlink_userName") || "";
-
-  const [customerName, setCustomerName] = useState(editQuotation?.customerName ?? "");
-  const [customerPhone, setCustomerPhone] = useState(editQuotation?.customerPhone ?? "");
-  const [customerEmail, setCustomerEmail] = useState(editQuotation?.customerEmail ?? "");
-  const [validUntil, setValidUntil] = useState(editQuotation?.validUntil?.split("T")[0] ?? "");
-  const [notes, setNotes] = useState(editQuotation?.notes ?? "");
-  const [items, setItems] = useState<QuotationItem[]>(editQuotation?.items ?? []);
-  const [discount, setDiscount] = useState(String(editQuotation?.discountAmount ?? 0));
-  const [saving, setSaving] = useState(false);
-
-  const [productSearch, setProductSearch] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchContainerRef = useRef<HTMLDivElement>(null);
-
-  const productParams = { shopId, limit: 3000 };
-  const { data: productsData } = useListProducts(productParams, {
-    // Every other page that loads the full catalog (POS, Stock, Reports,
-    // Alerts) sets staleTime/refetchInterval so they all share one cached
-    // fetch instead of re-requesting on every mount. This call was missing
-    // that, so opening Quotations always forced a fresh full-catalog read
-    // (up to ~3,000 rows) even seconds after POS had just fetched the same
-    // data — a large, avoidable chunk of D1 read-row volume.
-    query: {
-      enabled: !!shopId,
-      queryKey: getListProductsQueryKey(productParams),
-      staleTime: 1_800_000,
-      refetchInterval: 1_800_000,
-      refetchIntervalInBackground: false,
-    },
-  });
-  const allProducts = useMemo(() => (productsData as any)?.products ?? [], [productsData]);
-
-  const addedProductIds = useMemo(() => new Set(items.map(i => i.productId).filter(Boolean)), [items]);
-
-  const productMatches = useMemo(() => {
-    const q = productSearch.trim().toLowerCase();
-    if (!q) return [];
-    return allProducts
-      .filter((p: any) => p.isActive !== false && (
-        p.canonicalName?.toLowerCase().includes(q) ||
-        p.normalizedName?.toLowerCase().includes(q) ||
-        p.sku?.toLowerCase().includes(q) ||
-        p.category?.toLowerCase().includes(q)
-      ))
-      .slice(0, 10);
-  }, [allProducts, productSearch]);
-
-  useEffect(() => {
-    const fn = (e: MouseEvent) => {
-      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
-        setSearchOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", fn);
-    return () => document.removeEventListener("mousedown", fn);
-  }, []);
-
-  const addProduct = useCallback((p: any) => {
-    setItems(prev => {
-      const existing = prev.findIndex(i => i.productId === p.id);
-      if (existing >= 0) {
-        return prev.map((item, idx) =>
-          idx === existing ? { ...item, qty: item.qty + 1, total: (item.qty + 1) * item.unitPrice } : item
-        );
-      }
-      return [...prev, {
-        productId: p.id,
-        productName: p.canonicalName,
-        unit: p.unit ?? "unit",
-        qty: 1,
-        unitPrice: p.sellingPrice ?? 0,
-        total: p.sellingPrice ?? 0,
-      }];
-    });
-    setProductSearch("");
-    // Keep search open & re-focus for adding more products
-    setTimeout(() => {
-      searchInputRef.current?.focus();
-    }, 0);
-  }, []);
-
-  const updateItem = (idx: number, field: keyof QuotationItem, val: number | string) => {
-    setItems(prev => prev.map((item, i) => {
-      if (i !== idx) return item;
-      const updated = { ...item, [field]: val };
-      if (field === "qty" || field === "unitPrice") {
-        updated.total = Number(updated.qty) * Number(updated.unitPrice);
-      }
-      return updated;
-    }));
-  };
-
-  const removeItem = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
-
-  const subtotal = items.reduce((s, i) => s + i.total, 0);
-  const discountAmount = Math.max(0, parseFloat(discount) || 0);
-  const total = Math.max(0, subtotal - discountAmount);
-
-  const handleSave = async () => {
-    if (!customerName.trim()) { toast.error("Customer name is required"); return; }
-    if (items.length === 0) { toast.error("Add at least one product"); return; }
-    setSaving(true);
-    try {
-      const body = {
-        shopId,
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim(),
-        customerEmail: customerEmail.trim() || undefined,
-        notes: notes.trim() || undefined,
-        validUntil: validUntil ? new Date(validUntil).toISOString() : undefined,
-        discountAmount,
-        items,
-        createdBy: userName || role,
-      };
-      let result: Quotation;
-      if (editQuotation) {
-        result = await customFetch(`/api/quotations/${editQuotation.id}`, {
-          method: "PATCH",
-          body: JSON.stringify(body),
-        }) as Quotation;
-      } else {
-        result = await customFetch(`/api/quotations`, {
-          method: "POST",
-          body: JSON.stringify(body),
-        }) as Quotation;
-      }
-      onSave(result);
-    } catch (err: any) {
-      toast.error(err?.message ?? "Failed to save quotation");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border/60 shrink-0 bg-card/50">
-        <button onClick={onCancel} className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-black text-foreground font-display">
-            {editQuotation ? `Edit ${editQuotation.quoteNumber}` : "New Quotation"}
-          </h2>
-          <p className="text-[10px] text-muted-foreground/50">
-            {editQuotation ? "Update the quote details" : "Build from stock · auto-numbered"}
-          </p>
-        </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-black hover:bg-primary/90 disabled:opacity-50 transition-colors"
-        >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-          {saving ? "Saving…" : "Save Quote"}
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-3 max-w-2xl mx-auto">
-
-          {/* ── Customer ── */}
-          <section className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
-              <User className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">CUSTOMER</p>
-            </div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Name *</label>
-                <CustomerAutocomplete
-                  value={customerName}
-                  onChange={(name, phone) => {
-                    setCustomerName(name);
-                    if (phone) setCustomerPhone(phone);
-                  }}
-                  shopId={shopId}
-                  placeholder="Search existing or type new name"
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Phone</label>
-                  <div className="relative">
-                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
-                    <input
-                      value={customerPhone}
-                      onChange={e => setCustomerPhone(e.target.value)}
-                      placeholder="+254 700 000 000"
-                      className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Email <span className="normal-case font-normal opacity-60">(optional)</span></label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
-                    <input
-                      value={customerEmail}
-                      onChange={e => setCustomerEmail(e.target.value)}
-                      placeholder="customer@email.com"
-                      type="email"
-                      className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* ── Products ── */}
-          <section className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
-              <Package className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">PRODUCTS</p>
-              {items.length > 0 && (
-                <span className="ml-auto text-[10px] font-black bg-primary/15 text-primary px-1.5 py-0.5 rounded-full">
-                  {items.length} item{items.length !== 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-
-            {/* Search */}
-            <div className="p-3 border-b border-border/30" ref={searchContainerRef}>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40 pointer-events-none" />
-                <input
-                  ref={searchInputRef}
-                  value={productSearch}
-                  onChange={e => { setProductSearch(e.target.value); setSearchOpen(true); }}
-                  onFocus={() => setSearchOpen(true)}
-                  placeholder="Search products by name, category, or SKU…"
-                  className="w-full h-9 pl-9 pr-8 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                />
-                {productSearch && (
-                  <button
-                    onMouseDown={e => { e.preventDefault(); setProductSearch(""); searchInputRef.current?.focus(); }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground hover:bg-muted-foreground/30 transition-colors"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                )}
-              </div>
-
-              {searchOpen && productMatches.length > 0 && (
-                <div className="mt-1.5 bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto">
-                  {productMatches.map((p: any) => {
-                    const isAdded = addedProductIds.has(p.id);
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onMouseDown={e => { e.preventDefault(); addProduct(p); }}
-                        className={cn(
-                          "w-full text-left px-3 py-2.5 flex items-center gap-3 border-b border-border/30 last:border-0 transition-colors",
-                          isAdded ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/50"
-                        )}
-                      >
-                        {isAdded ? (
-                          <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
-                            <CheckCircle2 className="h-3 w-3 text-primary" />
-                          </div>
-                        ) : (
-                          <div className="w-5 h-5 rounded-full border border-border/60 flex items-center justify-center shrink-0">
-                            <Plus className="h-3 w-3 text-muted-foreground/40" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className={cn("text-xs font-semibold truncate", isAdded ? "text-primary" : "text-foreground")}>{p.canonicalName}</p>
-                          <p className="text-[10px] text-muted-foreground/50">{p.category} · {p.stockQty} {p.unit} in stock</p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-xs font-black text-primary font-mono">{KES(p.sellingPrice ?? 0)}</p>
-                          {isAdded && <p className="text-[9px] text-primary/60">tap to +1</p>}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {searchOpen && productSearch.trim() && productMatches.length === 0 && (
-                <div className="mt-1.5 rounded-xl px-3 py-3 text-center bg-muted/20 border border-border">
-                  <p className="text-xs text-muted-foreground/60">No products found for "<span className="text-foreground">{productSearch}</span>"</p>
-                </div>
-              )}
-            </div>
-
-            {/* Items list */}
-            <div>
-              {items.length === 0 ? (
-                <div className="py-10 text-center">
-                  <Package className="h-7 w-7 text-muted-foreground/15 mx-auto mb-2" />
-                  <p className="text-xs text-muted-foreground/40">Search above and tap products to add them</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-border/30">
-                  {items.map((item, idx) => (
-                    <div key={idx} className="px-4 py-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[10px] font-black text-muted-foreground/30 w-4 shrink-0">{idx + 1}</span>
-                        <p className="flex-1 text-sm font-semibold text-foreground truncate">{item.productName}</p>
-                        <p className="text-sm font-black text-primary font-mono shrink-0">{KES(item.total)}</p>
-                        <button
-                          onClick={() => removeItem(idx)}
-                          className="h-6 w-6 flex items-center justify-center rounded-lg text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2 pl-6 flex-wrap">
-                        {/* Qty stepper */}
-                        <div className="flex items-center bg-muted/40 border border-border rounded-lg overflow-hidden h-8">
-                          <button
-                            onClick={() => updateItem(idx, "qty", Math.max(0.25, item.qty - (item.unit === "kg" || item.unit === "litre" ? 0.25 : 1)))}
-                            className="w-8 h-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 text-base transition-colors"
-                          >−</button>
-                          <input
-                            type="number"
-                            value={item.qty}
-                            onChange={e => updateItem(idx, "qty", Math.max(0, parseFloat(e.target.value) || 0))}
-                            className="w-12 text-center text-xs font-bold bg-transparent text-foreground focus:outline-none border-x border-border"
-                            min={0}
-                          />
-                          <button
-                            onClick={() => updateItem(idx, "qty", item.qty + (item.unit === "kg" || item.unit === "litre" ? 0.25 : 1))}
-                            className="w-8 h-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 text-base transition-colors"
-                          >+</button>
-                        </div>
-                        <span className="text-xs text-muted-foreground/50">{item.unit}</span>
-                        <span className="text-muted-foreground/25 text-sm">×</span>
-                        <div className="relative flex-1 min-w-[100px]">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground/40 pointer-events-none">KES</span>
-                          <input
-                            type="number"
-                            value={item.unitPrice}
-                            onChange={e => updateItem(idx, "unitPrice", Math.max(0, parseFloat(e.target.value) || 0))}
-                            className="w-full h-8 pl-9 pr-2 bg-muted/40 border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
-                            min={0}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Totals */}
-              {items.length > 0 && (
-                <div className="border-t border-border/40 px-4 py-3 space-y-2.5 bg-muted/10">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Subtotal</span>
-                    <span className="font-mono font-semibold text-foreground">{KES(subtotal)}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground shrink-0">Discount (KES)</span>
-                    <input
-                      type="number"
-                      value={discount}
-                      onChange={e => setDiscount(e.target.value)}
-                      min={0}
-                      className="flex-1 h-7 px-2 bg-muted/40 border border-border rounded-lg text-xs font-mono text-foreground text-right focus:outline-none focus:ring-1 focus:ring-primary/30"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between border-t border-border/40 pt-2">
-                    <span className="text-sm font-black text-foreground">TOTAL</span>
-                    <span className="text-lg font-black text-primary font-mono">{KES(total)}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* ── Quote details ── */}
-          <section className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20">
-              <FileText className="h-3.5 w-3.5 text-primary" />
-              <p className="text-xs font-black text-foreground tracking-wide">QUOTE DETAILS</p>
-            </div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Valid Until <span className="normal-case font-normal opacity-60">(optional)</span></label>
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
-                  <input
-                    type="date"
-                    value={validUntil}
-                    onChange={e => setValidUntil(e.target.value)}
-                    className="w-full h-10 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50 block mb-1.5">Notes / Terms <span className="normal-case font-normal opacity-60">(optional)</span></label>
-                <div className="relative">
-                  <StickyNote className="absolute left-3 top-3 h-3.5 w-3.5 text-muted-foreground/30 pointer-events-none" />
-                  <textarea
-                    value={notes}
-                    onChange={e => setNotes(e.target.value)}
-                    placeholder="Payment terms, delivery conditions, special instructions…"
-                    rows={3}
-                    className="w-full pl-9 pr-3 py-2.5 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/30 resize-none focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Bottom save */}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-primary text-primary-foreground font-black text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            {saving ? "Saving…" : editQuotation ? "Update Quotation" : "Create Quotation"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Quotation Card ────────────────────────────────────────────────────────────
-
-function QuotationCard({ q, shop, onEdit, onPrint, onStatusChange, onDelete, onDownloadPdf, onConvertToSale, onInvoice, invoiceBusy }: {
-  q: Quotation;
-  shop: any;
-  onEdit: () => void;
-  onPrint: () => void;
-  onStatusChange: (s: Quotation["status"]) => void;
-  onDelete: () => void;
-  onDownloadPdf: () => void;
-  onConvertToSale: () => void;
-  onInvoice: () => void;
-  invoiceBusy: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  return (
-    <div className="bg-card border border-border rounded-2xl overflow-hidden hover:border-primary/20 transition-all group">
-      {/* Top lime accent on hover */}
-      <div className="h-0.5 bg-primary/0 group-hover:bg-primary/60 transition-colors" />
-
-      {/* Main row */}
-      <div className="px-4 py-3.5">
-        {/* Header row: quote# + status + amount */}
-        <div className="flex items-start justify-between gap-3 mb-2.5">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className="text-sm font-black text-primary font-mono tracking-tight">{q.quoteNumber}</span>
-              <StatusBadge status={q.status} />
-              {q.invoiceNumber && (
-                <span data-testid={`text-invoice-number-${q.id}`} className="text-[9px] font-black text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-1.5 py-0.5 rounded-full">
-                  {q.invoiceNumber}
-                </span>
-              )}
-              {q.validUntil && new Date(q.validUntil) < new Date() && q.status !== "expired" && q.status !== "rejected" && q.status !== "accepted" && (
-                <span className="text-[9px] font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-full border border-amber-400/20">OVERDUE</span>
-              )}
-            </div>
-            <p className="text-sm font-bold text-foreground truncate leading-tight">{q.customerName}</p>
-            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-              {q.customerPhone && <span className="text-[11px] text-muted-foreground/50 font-mono">{q.customerPhone}</span>}
-              <span className="text-[11px] text-muted-foreground/35">
-                {format(new Date(q.createdAt), "dd MMM yyyy")}
-                {q.validUntil && ` · Valid till ${format(new Date(q.validUntil), "dd MMM")}`}
-              </span>
-            </div>
-          </div>
-          <div className="text-right shrink-0">
-            <p className="text-base font-black text-primary font-mono">{KES(q.total)}</p>
-            <p className="text-[10px] text-muted-foreground/40 mt-0.5">
-              {q.items.length} item{q.items.length !== 1 ? "s" : ""}
-              {q.discountAmount > 0 && ` · −${KES(q.discountAmount)}`}
-            </p>
-          </div>
-        </div>
-
-        {/* Action bar */}
-        <div className="flex items-center gap-1 pt-2 border-t border-border/30 flex-wrap">
-          {/* Convert to Sale — primary action, lime pill */}
-          <button
-            onClick={onConvertToSale}
-            title="Load items into POS cart"
-            className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary hover:text-primary-foreground text-[10px] font-black transition-all"
-          >
-            <ShoppingCart className="h-3 w-3" />
-            <span>Sell</span>
-          </button>
-
-          <button
-            data-testid={`button-invoice-${q.id}`}
-            onClick={onInvoice}
-            disabled={invoiceBusy}
-            title={q.invoiceNumber ? "Download issued invoice" : q.status === "accepted" ? "Issue an invoice from this accepted quotation" : "Accept this quotation and issue its invoice"}
-            className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 text-[10px] font-black transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {invoiceBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-            <span>{invoiceBusy ? "Issuing…" : q.invoiceNumber ? "Invoice PDF" : q.status === "accepted" ? "Make invoice" : "Accept & invoice"}</span>
-          </button>
-
-          <button
-            onClick={() => setExpanded(v => !v)}
-            className="h-7 px-2 flex items-center gap-1 rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors text-[10px] font-semibold"
-          >
-            {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            {expanded ? "Hide" : "Items"}
-          </button>
-
-          <div className="flex-1" />
-
-          <button
-            onClick={() => shareWhatsApp(q, shop, q.invoiceNumber ? "invoice" : "quotation")}
-            className="h-7 w-7 flex items-center justify-center rounded-lg text-[#25D366] hover:bg-[#25D366]/10 transition-colors"
-            title={q.invoiceNumber ? "Share invoice via WhatsApp" : "Share quotation via WhatsApp"}
-          >
-            <MessageCircle className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={onDownloadPdf}
-            className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/60 hover:text-primary hover:bg-primary/10 transition-colors"
-            title="Download PDF"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={onPrint}
-            className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/60 hover:text-foreground hover:bg-muted/60 transition-colors"
-            title="Preview"
-          >
-            <Eye className="h-3.5 w-3.5" />
-          </button>
-          {!q.invoiceNumber && (
-            <button
-              onClick={onEdit}
-              className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/60 hover:text-primary hover:bg-primary/10 transition-colors"
-              title="Edit"
-              data-testid={`button-edit-quotation-${q.id}`}
-            >
-              <Edit2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-          {/* Status menu */}
-          {!q.invoiceNumber && <div className="relative">
-            <button
-              onClick={() => setMenuOpen(v => !v)}
-              className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
-              title="Change status"
-            >
-              <MoreVertical className="h-3.5 w-3.5" />
-            </button>
-            {menuOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-xl shadow-2xl z-40 overflow-hidden">
-                  <div className="px-3 py-2 border-b border-border/40">
-                    <p className="text-[10px] font-black text-muted-foreground/40 uppercase tracking-wider">Change Status</p>
-                  </div>
-                  {(["draft", "sent", "accepted", "rejected", "expired"] as const).filter(s => s !== q.status).map(s => (
-                    <button
-                      key={s}
-                      onClick={() => { onStatusChange(s); setMenuOpen(false); }}
-                      className="w-full text-left px-3 py-2 text-xs font-semibold hover:bg-muted/60 flex items-center gap-2.5 border-b border-border/20 last:border-0"
-                    >
-                      <span className={cn("w-2 h-2 rounded-full shrink-0",
-                        s === "accepted" ? "bg-emerald-400" :
-                        s === "sent" ? "bg-blue-400" :
-                        s === "rejected" ? "bg-red-400" :
-                        s === "expired" ? "bg-amber-400" : "bg-zinc-400"
-                      )} />
-                      Mark as {STATUS_META[s].label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>}
-          {!q.invoiceNumber && (
-            <button
-              onClick={onDelete}
-              className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-              title="Delete quotation"
-              data-testid={`button-delete-quotation-${q.id}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Expanded items */}
-      {expanded && (
-        <div className="border-t border-border/40 bg-muted/10">
-          <div className="px-4 py-1.5 grid grid-cols-[1fr_auto_auto_auto] gap-x-4 text-[9px] font-black uppercase tracking-widest text-muted-foreground/30 border-b border-border/20">
-            <span>Product</span><span className="text-right">Qty</span><span className="text-right">Unit Price</span><span className="text-right">Total</span>
-          </div>
-          {q.items.map((item, i) => (
-            <div key={i} className="px-4 py-2.5 grid grid-cols-[1fr_auto_auto_auto] gap-x-4 items-center border-b border-border/15 last:border-0">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-foreground truncate">{item.productName}</p>
-                <p className="text-[10px] text-muted-foreground/40 mt-0.5">{item.unit}</p>
-              </div>
-              <span className="text-xs font-mono text-muted-foreground text-right">{item.qty}</span>
-              <span className="text-xs font-mono text-muted-foreground/60 text-right">{KES(item.unitPrice)}</span>
-              <span className="text-xs font-black font-mono text-foreground text-right">{KES(item.total)}</span>
-            </div>
-          ))}
-          {q.discountAmount > 0 && (
-            <div className="px-4 py-2 flex justify-between text-xs border-t border-border/20 bg-muted/20">
-              <span className="text-muted-foreground/50">Discount applied</span>
-              <span className="font-mono font-bold text-red-400">−{KES(q.discountAmount)}</span>
-            </div>
-          )}
-          <div className="px-4 py-2.5 flex justify-between items-center bg-primary/5 border-t border-primary/10">
-            <span className="text-[10px] font-black text-primary/60 uppercase tracking-wider">Total</span>
-            <span className="text-sm font-black font-mono text-primary">{KES(q.total)}</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+import {
+  type Quotation,
+  KES,
+  STATUS_META,
+} from "@/lib/quotation-utils";
+import { downloadPdf } from "@/lib/quotation-pdf";
+import { PrintView } from "@/features/quotations/PrintView";
+import { QuotationBuilder } from "@/features/quotations/QuotationBuilder";
+import { QuotationCard } from "@/features/quotations/QuotationCard";
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-type StatusFilter = "all" | "draft" | "sent" | "accepted" | "rejected" | "expired";
+type StatusFilter =
+  | "all"
+  | "draft"
+  | "sent"
+  | "accepted"
+  | "invoiced"
+  | "rejected"
+  | "expired";
+type QuoteSortMode = "newest" | "value" | "customer" | "validUntil";
 type PageView = "list" | "builder" | "print";
+
+const QUOTES_INITIAL_VISIBLE = 15;
+const QUOTES_PAGE_STEP = 20;
 
 export default function Quotations() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
+  const shopName = localStorage.getItem("greenlink_shopName") || "Active Shop";
   const [, setLocation] = useLocation();
   const [view, setView] = useState<PageView>("list");
   const [quoteList, setQuoteList] = useState<Quotation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("all");
+  const [sortBy, setSortBy] = useState<QuoteSortMode>("newest");
   const [search, setSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(QUOTES_INITIAL_VISIBLE);
   const [editTarget, setEditTarget] = useState<Quotation | null>(null);
   const [printTarget, setPrintTarget] = useState<Quotation | null>(null);
   const [clearingDrafts, setClearingDrafts] = useState(false);
@@ -1497,7 +70,9 @@ export default function Quotations() {
     if (!shopId) return;
     setLoading(true);
     try {
-      const data = await customFetch(`/api/quotations?shopId=${shopId}&limit=200`) as Quotation[];
+      const data = (await customFetch(
+        `/api/quotations?shopId=${shopId}&limit=200`,
+      )) as Quotation[];
       setQuoteList(Array.isArray(data) ? data : []);
     } catch {
       toast.error("Failed to load quotations");
@@ -1506,40 +81,88 @@ export default function Quotations() {
     }
   }, [shopId]);
 
-  useEffect(() => { loadQuotations(); }, [loadQuotations]);
+  useEffect(() => {
+    loadQuotations();
+  }, [loadQuotations]);
+
+  useEffect(() => {
+    setVisibleCount(QUOTES_INITIAL_VISIBLE);
+  }, [filter, search, sortBy]);
 
   const filtered = useMemo(() => {
     let list = quoteList;
-    if (filter !== "all") list = list.filter(q => q.status === filter);
+    if (filter === "invoiced") {
+      list = list.filter((q) => Boolean(q.invoiceNumber));
+    } else if (filter !== "all") {
+      list = list.filter((q) => q.status === filter);
+    }
+
     const q = search.trim().toLowerCase();
-    if (q) list = list.filter(x => x.customerName.toLowerCase().includes(q) || x.quoteNumber.toLowerCase().includes(q));
-    return list;
-  }, [quoteList, filter, search]);
+    if (q) {
+      list = list.filter(
+        (x) =>
+          x.customerName.toLowerCase().includes(q) ||
+          x.quoteNumber.toLowerCase().includes(q) ||
+          (x.invoiceNumber || "").toLowerCase().includes(q) ||
+          (x.customerPhone || "").toLowerCase().includes(q),
+      );
+    }
+
+    return [...list].sort((a, b) => {
+      if (sortBy === "value") return b.total - a.total;
+      if (sortBy === "customer") return a.customerName.localeCompare(b.customerName);
+      if (sortBy === "validUntil") {
+        const va = a.validUntil ? new Date(a.validUntil).getTime() : Number.MAX_SAFE_INTEGER;
+        const vb = b.validUntil ? new Date(b.validUntil).getTime() : Number.MAX_SAFE_INTEGER;
+        return va - vb;
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [quoteList, filter, search, sortBy]);
+
+  const visibleQuotes = useMemo(
+    () => filtered.slice(0, visibleCount),
+    [filtered, visibleCount],
+  );
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: quoteList.length };
-    quoteList.forEach(q => { c[q.status] = (c[q.status] ?? 0) + 1; });
+    const c: Record<string, number> = { all: quoteList.length, invoiced: 0 };
+    quoteList.forEach((q) => {
+      c[q.status] = (c[q.status] ?? 0) + 1;
+      if (q.invoiceNumber) c.invoiced += 1;
+    });
     return c;
   }, [quoteList]);
 
   const handleSave = (q: Quotation) => {
-    setQuoteList(prev => {
-      const idx = prev.findIndex(x => x.id === q.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = q; return next; }
+    setQuoteList((prev) => {
+      const idx = prev.findIndex((x) => x.id === q.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = q;
+        return next;
+      }
       return [q, ...prev];
     });
-    toast.success(editTarget ? "Quotation updated" : `${q.quoteNumber} created!`);
+    toast.success(
+      editTarget ? "Quotation updated" : `${q.quoteNumber} created!`,
+    );
     setView("list");
     setEditTarget(null);
   };
 
-  const handleStatusChange = async (q: Quotation, status: Quotation["status"]) => {
+  const handleStatusChange = async (
+    q: Quotation,
+    status: Quotation["status"],
+  ) => {
     try {
-      const updated = await customFetch(`/api/quotations/${q.id}`, {
+      const updated = (await customFetch(`/api/quotations/${q.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
-      }) as Quotation;
-      setQuoteList(prev => prev.map(x => x.id === updated.id ? updated : x));
+      })) as Quotation;
+      setQuoteList((prev) =>
+        prev.map((x) => (x.id === updated.id ? updated : x)),
+      );
       toast.success(`Marked as ${STATUS_META[status].label}`);
     } catch {
       toast.error("Failed to update status");
@@ -1550,7 +173,7 @@ export default function Quotations() {
     if (!confirm(`Delete ${q.quoteNumber}? This cannot be undone.`)) return;
     try {
       await customFetch(`/api/quotations/${q.id}`, { method: "DELETE" });
-      setQuoteList(prev => prev.filter(x => x.id !== q.id));
+      setQuoteList((prev) => prev.filter((x) => x.id !== q.id));
       toast.success("Quotation deleted");
     } catch {
       toast.error("Failed to delete");
@@ -1558,32 +181,46 @@ export default function Quotations() {
   };
 
   const handleClearDrafts = async () => {
-    const drafts = quoteList.filter(q => q.status === "draft");
-    if (drafts.length === 0) { toast.info("No drafts to clear"); return; }
-    if (!confirm(`Delete all ${drafts.length} draft quotation${drafts.length !== 1 ? "s" : ""}?`)) return;
+    const drafts = quoteList.filter((q) => q.status === "draft");
+    if (drafts.length === 0) {
+      toast.info("No drafts to clear");
+      return;
+    }
+    if (
+      !confirm(
+        `Delete all ${drafts.length} draft quotation${drafts.length !== 1 ? "s" : ""}?`,
+      )
+    )
+      return;
     setClearingDrafts(true);
     let deleted = 0;
     for (const q of drafts) {
-      try { await customFetch(`/api/quotations/${q.id}`, { method: "DELETE" }); deleted++; } catch {}
+      try {
+        await customFetch(`/api/quotations/${q.id}`, { method: "DELETE" });
+        deleted++;
+      } catch {}
     }
-    setQuoteList(prev => prev.filter(q => q.status !== "draft"));
+    setQuoteList((prev) => prev.filter((q) => q.status !== "draft"));
     toast.success(`Cleared ${deleted} draft${deleted !== 1 ? "s" : ""}`);
     setClearingDrafts(false);
   };
 
   const handleConvertToSale = (q: Quotation) => {
-    sessionStorage.setItem("greenlink_pending_cart", JSON.stringify({
-      items: q.items.map(item => ({
-        productId: item.productId,
-        productName: item.productName,
-        qty: item.qty,
-        unitPrice: item.unitPrice,
-        unit: item.unit,
-      })),
-      customerName: q.customerName,
-      discount: q.discountAmount,
-      fromQuote: q.quoteNumber,
-    }));
+    sessionStorage.setItem(
+      "greenlink_pending_cart",
+      JSON.stringify({
+        items: q.items.map((item) => ({
+          productId: item.productId,
+          productName: item.productName,
+          qty: item.qty,
+          unitPrice: item.unitPrice,
+          unit: item.unit,
+        })),
+        customerName: q.customerName,
+        discount: q.discountAmount,
+        fromQuote: q.quoteNumber,
+      }),
+    );
     toast.success(`Loading ${q.quoteNumber} into POS…`);
     setLocation("/pos");
   };
@@ -1597,16 +234,20 @@ export default function Quotations() {
     setInvoiceBusyId(q.id);
     try {
       if (q.status !== "accepted") {
-        const accepted = await customFetch(`/api/quotations/${q.id}`, {
+        const accepted = (await customFetch(`/api/quotations/${q.id}`, {
           method: "PATCH",
           body: JSON.stringify({ status: "accepted" }),
-        }) as Quotation;
-        setQuoteList(prev => prev.map(item => item.id === accepted.id ? accepted : item));
+        })) as Quotation;
+        setQuoteList((prev) =>
+          prev.map((item) => (item.id === accepted.id ? accepted : item)),
+        );
       }
-      const issued = await customFetch(`/api/quotations/${q.id}/invoice`, {
+      const issued = (await customFetch(`/api/quotations/${q.id}/invoice`, {
         method: "POST",
-      }) as Quotation;
-      setQuoteList(prev => prev.map(item => item.id === issued.id ? issued : item));
+      })) as Quotation;
+      setQuoteList((prev) =>
+        prev.map((item) => (item.id === issued.id ? issued : item)),
+      );
       toast.success(`${issued.invoiceNumber} issued`);
       await downloadPdf(issued, shop, "invoice");
     } catch (err: any) {
@@ -1616,12 +257,19 @@ export default function Quotations() {
     }
   };
 
-  // Print view
   if (view === "print" && printTarget) {
-    return <PrintView quotation={printTarget} shop={shop} onClose={() => { setView("list"); setPrintTarget(null); }} />;
+    return (
+      <PrintView
+        quotation={printTarget}
+        shop={shop}
+        onClose={() => {
+          setView("list");
+          setPrintTarget(null);
+        }}
+      />
+    );
   }
 
-  // Builder view
   if (view === "builder") {
     return (
       <div className="flex flex-col h-full bg-background">
@@ -1629,167 +277,399 @@ export default function Quotations() {
           shopId={shopId}
           editQuotation={editTarget}
           onSave={handleSave}
-          onCancel={() => { setView("list"); setEditTarget(null); }}
+          onCancel={() => {
+            setView("list");
+            setEditTarget(null);
+          }}
         />
       </div>
     );
   }
 
-  // List view
   const TABS: { id: StatusFilter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "draft", label: "Drafts" },
+    { id: "all", label: "All quotes" },
+    { id: "draft", label: "Draft" },
     { id: "sent", label: "Sent" },
     { id: "accepted", label: "Accepted" },
+    { id: "invoiced", label: "Invoiced" },
     { id: "rejected", label: "Rejected" },
+    { id: "expired", label: "Expired" },
   ];
 
   const draftCount = counts["draft"] ?? 0;
-  const acceptedCount = counts["accepted"] ?? 0;
   const totalValue = filtered.reduce((s, q) => s + q.total, 0);
-  const acceptedValue = quoteList.filter(q => q.status === "accepted").reduce((s, q) => s + q.total, 0);
+  const acceptedValue = quoteList
+    .filter((q) => q.status === "accepted")
+    .reduce((s, q) => s + q.total, 0);
+  const openQuotes = quoteList.filter((q) => q.status === "draft" || q.status === "sent");
+  const openCount = openQuotes.length;
+  const openValue = openQuotes.reduce((s, q) => s + q.total, 0);
+  const invoicedQuotes = quoteList.filter((q) => Boolean(q.invoiceNumber));
+  const invoicedCount = invoicedQuotes.length;
+  const invoicedValue = invoicedQuotes.reduce((s, q) => s + q.total, 0);
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header */}
-      <div className="px-4 pt-4 pb-3 border-b border-border shrink-0">
-        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-          <div>
-            <h1 className="text-lg font-black text-foreground font-display tracking-tight">Quotations</h1>
-            <p className="text-[11px] text-muted-foreground/50">
-              {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""}
-              {filtered.length !== quoteList.length ? ` · ${filtered.length} shown` : ""}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {draftCount > 0 && (
+      {/* Sticky Executive Header */}
+      <div className="sticky top-0 z-20 border-b border-border/80 bg-card/95 backdrop-blur-md shrink-0">
+        <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-3.5 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-primary/12 border border-primary/20 flex items-center justify-center shrink-0">
+                <ClipboardList className="h-5 w-5 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="font-display text-lg sm:text-xl font-bold leading-tight tracking-tight text-foreground truncate">
+                  Quotations &amp; Proforma
+                </h1>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">
+                  {shopName} · {quoteList.length} quote{quoteList.length !== 1 ? "s" : ""} on file
+                  {filtered.length !== quoteList.length && ` · ${filtered.length} matching`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {draftCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearDrafts}
+                  disabled={clearingDrafts}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 text-xs font-semibold text-rose-700 dark:text-rose-400 transition-colors hover:bg-rose-500/18 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {clearingDrafts ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  <span className="hidden sm:inline">Clear {draftCount} draft{draftCount !== 1 ? "s" : ""}</span>
+                  <span className="sm:hidden">Clear drafts</span>
+                </button>
+              )}
               <button
-                onClick={handleClearDrafts}
-                disabled={clearingDrafts}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-destructive/10 text-destructive border border-destructive/20 text-xs font-bold hover:bg-destructive/20 disabled:opacity-50 transition-colors"
+                type="button"
+                onClick={() => {
+                  setEditTarget(null);
+                  setView("builder");
+                }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
               >
-                {clearingDrafts ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                Clear {draftCount} Draft{draftCount !== 1 ? "s" : ""}
+                <Plus className="h-4 w-4" /> New Quote
               </button>
-            )}
-            <button
-              onClick={() => { setEditTarget(null); setView("builder"); }}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-black hover:bg-primary/90 transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" /> New Quote
-            </button>
-          </div>
-        </div>
-
-        {/* Stats row */}
-        {quoteList.length > 0 && (
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            <div className="bg-muted/30 rounded-xl px-3 py-2 border border-border/40">
-              <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground/40 mb-0.5">Total Value</p>
-              <p className="text-sm font-black text-foreground font-mono">{KES(totalValue)}</p>
-            </div>
-            <div className="bg-emerald-500/5 rounded-xl px-3 py-2 border border-emerald-500/15">
-              <p className="text-[9px] font-black uppercase tracking-wider text-emerald-500/60 mb-0.5">Accepted</p>
-              <p className="text-sm font-black text-emerald-400 font-mono">{KES(acceptedValue)}</p>
-            </div>
-            <div className="bg-primary/5 rounded-xl px-3 py-2 border border-primary/15">
-              <p className="text-[9px] font-black uppercase tracking-wider text-primary/50 mb-0.5">Open</p>
-              <p className="text-sm font-black text-primary font-mono">{(counts["draft"] ?? 0) + (counts["sent"] ?? 0)}</p>
             </div>
           </div>
-        )}
 
-        {/* Search */}
-        <div className="relative mb-3">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40 pointer-events-none" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search by customer name or quote number…"
-            className="w-full h-9 pl-9 pr-3 bg-muted/40 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:ring-1 focus:ring-primary/30"
-          />
-          {search && (
-            <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center rounded-full bg-muted-foreground/20 hover:bg-muted-foreground/30">
-              <X className="h-2.5 w-2.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
+          {/* Search + Sort Row */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <label className="relative block min-w-0 flex-1">
+              <span className="sr-only">Search quotations</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search customer, phone, quote # or invoice #…"
+                className="h-9 w-full rounded-xl border border-border/70 bg-muted/40 pl-9 pr-9 text-sm text-foreground outline-none transition focus:border-primary/50 focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/75"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </label>
 
-        {/* Status tabs */}
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
-          {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setFilter(tab.id)}
-              className={cn(
-                "flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black whitespace-nowrap transition-all shrink-0",
-                filter === tab.id
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted/40 text-muted-foreground hover:bg-muted/70"
-              )}
-            >
-              {tab.label}
-              {(counts[tab.id] ?? 0) > 0 && (
-                <span className={cn(
-                  "text-[9px] font-black px-1 py-0.5 rounded-full min-w-[16px] text-center",
-                  filter === tab.id ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground/60"
-                )}>{counts[tab.id]}</span>
-              )}
-            </button>
-          ))}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground hidden sm:block" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as QuoteSortMode)}
+                aria-label="Sort quotations"
+                className="h-9 rounded-xl border border-border/70 bg-muted/40 px-3 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/35 w-full sm:w-auto"
+              >
+                <option value="newest">Sort: Newest First</option>
+                <option value="value">Sort: Highest Value</option>
+                <option value="customer">Sort: Customer (A–Z)</option>
+                <option value="validUntil">Sort: Expiring Soonest</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Filter Pills */}
+          <div
+            className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar"
+            role="group"
+            aria-label="Filter quotations by status"
+          >
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setFilter(tab.id)}
+                aria-pressed={filter === tab.id}
+                className={cn(
+                  "flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors",
+                  filter === tab.id
+                    ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                    : "bg-muted/50 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <span>{tab.label}</span>
+                <span
+                  className={cn(
+                    "font-mono text-[10px] font-bold tabular-nums px-1.5 py-0.2 rounded-full",
+                    filter === tab.id
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-background/70 text-muted-foreground",
+                  )}
+                >
+                  {counts[tab.id] ?? 0}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Content */}
+      {/* Scrollable Body */}
       <div className="flex-1 overflow-y-auto">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3">
-            <Loader2 className="h-6 w-6 text-primary animate-spin" />
-            <p className="text-sm text-muted-foreground/50">Loading quotations…</p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-muted/20 flex items-center justify-center">
-              <FileText className="h-7 w-7 text-muted-foreground/20" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-foreground">
-                {search || filter !== "all" ? "No matching quotations" : "No quotations yet"}
-              </p>
-              <p className="text-xs text-muted-foreground/40 mt-1">
-                {search || filter !== "all"
-                  ? "Try a different filter or clear search"
-                  : "Create your first quote to get started"}
-              </p>
-            </div>
-            {!search && filter === "all" && (
+        <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 pb-20 md:pb-8 space-y-4">
+          {/* Interactive 4-Card KPI Strip */}
+          {!loading && quoteList.length > 0 && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
               <button
-                onClick={() => { setEditTarget(null); setView("builder"); }}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-black hover:bg-primary/90 transition-colors"
+                type="button"
+                onClick={() => setFilter("all")}
+                className={cn(
+                  "text-left rounded-2xl border p-3.5 sm:p-4 transition-colors",
+                  filter === "all"
+                    ? "bg-card border-primary/50 ring-1 ring-primary/25"
+                    : "bg-card/80 border-border/80 hover:border-border",
+                )}
               >
-                <Plus className="h-4 w-4" /> Create First Quote
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-primary/12 flex items-center justify-center shrink-0">
+                    <ClipboardList className="h-4 w-4 text-primary" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-muted text-muted-foreground tabular-nums">
+                    {filtered.length} shown
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-muted-foreground mt-2.5">
+                  Pipeline in View
+                </p>
+                <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-foreground leading-snug break-words mt-0.5">
+                  {KES(totalValue)}
+                </p>
               </button>
-            )}
-          </div>
-        ) : (
-          <div className="p-4 space-y-3">
-            {filtered.map(q => (
-              <QuotationCard
-                key={q.id}
-                q={q}
-                shop={shop}
-                onEdit={() => { setEditTarget(q); setView("builder"); }}
-                onPrint={() => { setPrintTarget(q); setView("print"); }}
-                onStatusChange={(s) => handleStatusChange(q, s)}
-                onDelete={() => handleDelete(q)}
-                onDownloadPdf={() => downloadPdf(q, shop)}
-                onConvertToSale={() => handleConvertToSale(q)}
-                onInvoice={() => { void handleInvoice(q); }}
-                invoiceBusy={invoiceBusyId === q.id}
-              />
-            ))}
-          </div>
-        )}
+
+              <button
+                type="button"
+                onClick={() => setFilter(filter === "accepted" ? "all" : "accepted")}
+                className={cn(
+                  "text-left rounded-2xl border p-3.5 sm:p-4 transition-colors",
+                  filter === "accepted"
+                    ? "bg-emerald-500/10 border-emerald-500/50 ring-1 ring-emerald-500/25"
+                    : "bg-card/80 border-border/80 hover:border-emerald-500/40",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/12 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 tabular-nums">
+                    {counts["accepted"] ?? 0} won
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-muted-foreground mt-2.5">
+                  Accepted Value
+                </p>
+                <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-400 leading-snug break-words mt-0.5">
+                  {KES(acceptedValue)}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilter(filter === "sent" ? "all" : "sent")}
+                className={cn(
+                  "text-left rounded-2xl border p-3.5 sm:p-4 transition-colors",
+                  filter === "sent"
+                    ? "bg-sky-500/10 border-sky-500/50 ring-1 ring-sky-500/25"
+                    : "bg-card/80 border-border/80 hover:border-sky-500/40",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-sky-500/12 flex items-center justify-center shrink-0">
+                    <Clock className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/12 text-sky-700 dark:text-sky-400 tabular-nums">
+                    {openCount} open
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-muted-foreground mt-2.5">
+                  Awaiting Follow-Up
+                </p>
+                <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-foreground leading-snug break-words mt-0.5">
+                  {KES(openValue)}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilter(filter === "invoiced" ? "all" : "invoiced")}
+                className={cn(
+                  "text-left rounded-2xl border p-3.5 sm:p-4 transition-colors",
+                  filter === "invoiced"
+                    ? "bg-amber-500/10 border-amber-500/50 ring-1 ring-amber-500/25"
+                    : "bg-card/80 border-border/80 hover:border-amber-500/40",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/12 flex items-center justify-center shrink-0">
+                    <FileText className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/12 text-amber-700 dark:text-amber-400 tabular-nums">
+                    {invoicedCount} issued
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-muted-foreground mt-2.5">
+                  Invoiced Total
+                </p>
+                <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-foreground leading-snug break-words mt-0.5">
+                  {KES(invoicedValue)}
+                </p>
+              </button>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="space-y-3 pt-2">
+              {[1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className="h-24 rounded-2xl bg-muted/40 border border-border/50 animate-pulse"
+                />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card/40 px-6 py-16 text-center">
+              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                <FileText className="h-5 w-5" />
+              </div>
+              <p className="text-sm font-bold text-foreground">
+                {search || filter !== "all"
+                  ? "No matching quotations"
+                  : "No quotations yet"}
+              </p>
+              <p className="mt-1 max-w-xs text-xs leading-relaxed text-muted-foreground">
+                {search || filter !== "all"
+                  ? "Try another customer name, phone number, quote number, or status filter."
+                  : "Create your first professional quotation to send on WhatsApp, download as PDF, or convert to a POS sale."}
+              </p>
+              {search || filter !== "all" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch("");
+                    setFilter("all");
+                  }}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                >
+                  Clear search &amp; filters
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditTarget(null);
+                    setView("builder");
+                  }}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  <Plus className="h-4 w-4" /> Create first quote
+                </button>
+              )}
+            </div>
+          ) : (
+            <section aria-label="Quotation list" className="space-y-2.5">
+              <div className="flex items-center justify-between px-1">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {filter === "all"
+                    ? "Recent quotations"
+                    : filter === "invoiced"
+                      ? "Invoiced quotations"
+                      : `${STATUS_META[filter].label} quotations`}
+                  <span className="ml-2 font-mono font-semibold text-foreground tabular-nums">
+                    {filtered.length}
+                  </span>
+                </p>
+                {search && (
+                  <p className="max-w-[55%] truncate text-xs text-muted-foreground">
+                    Matching &ldquo;{search}&rdquo;
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2.5">
+                {visibleQuotes.map((q) => (
+                  <QuotationCard
+                    key={q.id}
+                    q={q}
+                    shop={shop}
+                    onEdit={() => {
+                      setEditTarget(q);
+                      setView("builder");
+                    }}
+                    onPrint={() => {
+                      setPrintTarget(q);
+                      setView("print");
+                    }}
+                    onStatusChange={(s) => handleStatusChange(q, s)}
+                    onDelete={() => handleDelete(q)}
+                    onDownloadPdf={() => downloadPdf(q, shop)}
+                    onConvertToSale={() => handleConvertToSale(q)}
+                    onInvoice={() => {
+                      void handleInvoice(q);
+                    }}
+                    invoiceBusy={invoiceBusyId === q.id}
+                  />
+                ))}
+              </div>
+
+              {/* Pagination Footer */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-2xl border border-border/70 bg-card/60 px-4 py-3 text-xs">
+                <span className="text-muted-foreground tabular-nums">
+                  Showing{" "}
+                  <span className="font-semibold text-foreground">1–{visibleQuotes.length}</span> of{" "}
+                  <span className="font-semibold text-foreground">{filtered.length}</span> quotation
+                  {filtered.length === 1 ? "" : "s"}
+                </span>
+                {filtered.length > visibleCount && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCount((n) => n + QUOTES_PAGE_STEP)}
+                      className="inline-flex h-8 items-center rounded-xl border border-border bg-card px-3 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                    >
+                      Show {Math.min(QUOTES_PAGE_STEP, filtered.length - visibleCount)} more
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCount(filtered.length)}
+                      className="inline-flex h-8 items-center rounded-xl px-3 text-xs font-semibold text-primary hover:bg-primary/10 transition-colors"
+                    >
+                      Show all ({filtered.length})
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+        </div>
       </div>
     </div>
   );

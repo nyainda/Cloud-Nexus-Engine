@@ -811,6 +811,25 @@ paths:
                   $ref: "#/components/schemas/InventoryMovement"
 
   # ─── NOTIFICATIONS ────────────────────────────────────────
+  /notifications/unread-count:
+    get:
+      operationId: getUnreadNotificationCount
+      tags: [notifications]
+      summary: Get the current shop's unread notification count
+      parameters:
+        - name: shopId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Unread notification count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationUnreadCount"
+
   /notifications:
     get:
       operationId: listNotifications
@@ -825,6 +844,20 @@ paths:
           in: query
           schema:
             type: string
+        - name: limit
+          in: query
+          description: Defaults to 50; requests are capped at 101 notifications.
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+        - name: offset
+          in: query
+          description: Number of notifications to skip; defaults to 0.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
       responses:
         "200":
           description: Notifications
@@ -1032,6 +1065,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RangeReport"
+
+  /reports/monthly-sales:
+    get:
+      operationId: getMonthlySales
+      tags: [reports]
+      summary: Aggregated monthly sales for one calendar year
+      parameters:
+        - name: shopId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Twelve monthly sales summaries for the selected year
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthlySalesReport"
+        "400":
+          description: Invalid shop or year
 
   /reports/top-products:
     get:
@@ -1986,6 +2045,14 @@ components:
           type: string
       required: [id, shopId, type, title, message, isRead, createdAt]
 
+    NotificationUnreadCount:
+      type: object
+      properties:
+        count:
+          type: integer
+          minimum: 0
+      required: [count]
+
     # ─── AUDIT ────────────────────────────────────────────
     AuditEntry:
       type: object
@@ -2111,6 +2178,35 @@ components:
           items:
             $ref: "#/components/schemas/DailySummary"
       required: [from, to, totalRevenue, totalProfit, totalCost, salesCount, marginPct, dailyBreakdown]
+
+    MonthlySalesReport:
+      type: object
+      properties:
+        shopId:
+          type: string
+        year:
+          type: integer
+        totalRevenue:
+          type: number
+        totalProfit:
+          type: number
+        totalSalesCount:
+          type: integer
+        monthlyBreakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              month:
+                type: integer
+              revenue:
+                type: number
+              profit:
+                type: number
+              salesCount:
+                type: integer
+            required: [month, revenue, profit, salesCount]
+      required: [shopId, year, totalRevenue, totalProfit, totalSalesCount, monthlyBreakdown]
 
     DailySummary:
       type: object

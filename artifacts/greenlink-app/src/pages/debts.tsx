@@ -1,2252 +1,42 @@
-import React, { useState, useMemo, useEffect } from "react";
-import { useListDebts, useRecordDebtPayment, useGetDebt, getListDebtsQueryKey, getListSalesQueryKey, getGetDebtQueryKey, customFetch } from "@workspace/api-client-react";
-import { enqueueMutation } from "@/lib/offline-queue";
-import { useQueryClient } from "@tanstack/react-query";
-import { CustomerAutocomplete, toTitleCase, type SelectedCustomer } from "@/components/customer-autocomplete";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useListDebts, getListDebtsQueryKey, customFetch } from "@workspace/api-client-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toTitleCase } from "@/components/customer-autocomplete";
+import { NurseryDebtSettlementDialog } from "@/components/NurseryDebtSettlementDialog";
+import {
+  computeNurseryProjection,
+  findMatchingSupplier,
+  loadNurserySettlementState,
+  normalizeCustomerKey,
+  normalizePhoneDigits,
+  roundMoney,
+  triggerNurseryAutoSyncSweep,
+  type NurserySettlementMetrics,
+  type NurserySupplierSummary,
+} from "@/lib/nursery-settlement";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { formatKES } from "@/lib/format";
 import {
-  Search, Users, Phone, CalendarClock, CheckCircle2, Wallet,
+  Search, Phone, CheckCircle2, Wallet,
   MessageCircle, AlertTriangle, Clock, TrendingDown, History,
-  ChevronDown, ChevronUp, ChevronRight, Banknote, User2, Trash2, Send, BadgeCheck,
-  ShoppingBasket, Package, Download, UserPlus, Save, X,
+  ChevronRight, Send, X, ArrowUpDown, Sprout, Zap,
 } from "lucide-react";
-import { toast } from "sonner";
 import { useDebounce } from "@/hooks/use-debounce";
-import { format, formatDistanceToNow, differenceInDays } from "date-fns";
+import { differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
-  addDebtToCustomerListCaches,
-  applyDebtPayment,
-  patchCustomerListCaches,
-  patchCustomerProfileCaches,
-  patchDebtCaches,
-} from "@/lib/optimistic-finance";
-
-function debtProductSummary(items: any[] | undefined): string {
-  const labels = (items ?? [])
-    .map((item) => {
-      const name = item?.productName ?? item?.name;
-      if (!name) return "";
-      const qty = item?.qty ?? item?.quantity;
-      return qty !== undefined && qty !== null ? `${name} × ${qty}` : String(name);
-    })
-    .filter(Boolean);
-  return labels.length > 0 ? labels.join(", ") : "Unlinked debt";
-}
-
-function compactDebtProductSummary(items: any[] | undefined, maxItems = 2): string {
-  const labels = (items ?? [])
-    .map((item) => {
-      const name = item?.productName ?? item?.name;
-      if (!name) return "";
-      const qty = item?.qty ?? item?.quantity;
-      return qty !== undefined && qty !== null ? `${name} × ${qty}` : String(name);
-    })
-    .filter(Boolean);
-  if (labels.length === 0) return "Unlinked debt";
-  const visible = labels.slice(0, maxItems);
-  return labels.length > maxItems ? `${visible.join(", ")} + ${labels.length - maxItems} more` : visible.join(", ");
-}
-
-function debtBalanceDue(debt: any): number {
-  return Math.max(0, Number(debt?.balance || 0));
-}
-
-function debtCredit(debt: any): number {
-  return Math.max(0, -Number(debt?.balance || 0));
-}
-
-function debtAmountPaid(debt: any): number {
-  return Math.max(
-    0,
-    Number(debt?.amountPaid ?? Number(debt?.totalAmount || 0) - Number(debt?.balance || 0)),
-  );
-}
-
-// How much of this debt's amountPaid is actually fresh money the customer
-// handed over, as opposed to credit reallocated in from another one of
-// their debts (paymentType "credit_applied") or a reversed entry. Needed
-// anywhere we SUM amountPaid across several of a customer's debts — e.g.
-// the statement's customer-level "Total Paid" — because credit_applied
-// rows record money that was already counted once, on the debt it
-// originally came in on; including them again on the debt it was later
-// swept/applied to double-counts that same money.
-function debtGenuineCashReceived(debt: any): number {
-  const payments = debt?.payments || [];
-  const reversedIds = new Set(
-    payments
-      .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
-      .map((p: any) => p.reversalOfId),
-  );
-  return payments
-    .filter(
-      (p: any) =>
-        p.paymentType !== "reversal" &&
-        p.paymentType !== "credit_applied" &&
-        !reversedIds.has(p.id),
-    )
-    .reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
-}
-
-function sameCustomer(a: string, b: string): boolean {
-  return a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-/** Client-side mirror of the server's allocatePayment — oldest debt first. */
-function previewAllocations(debtsToPay: any[], paymentAmount: number) {
-  let remaining = Math.max(0, paymentAmount);
-  const allocations: { debt: any; amount: number }[] = [];
-  for (const d of debtsToPay) {
-    if (remaining <= 0) break;
-    const due = debtBalanceDue(d);
-    const amount = Math.min(remaining, due);
-    if (amount <= 0) continue;
-    allocations.push({ debt: d, amount });
-    remaining -= amount;
-  }
-  return { allocations, remaining };
-}
-
-function PaymentDialog({ debt }: { debt: any }) {
-  const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState("");
-  const [applyToAll, setApplyToAll] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const recordPayment = useRecordDebtPayment();
-  const qc = useQueryClient();
-  const shopId = localStorage.getItem("greenlink_shopId") || "";
-  const userName = localStorage.getItem("greenlink_userName") || "";
-  const currentBalance = debtBalanceDue(debt);
-  const enteredAmount = Number(amount) || 0;
-  const extraCredit = Math.max(0, enteredAmount - currentBalance);
-  const remainingAfterPayment = Math.max(0, currentBalance - enteredAmount);
-  const paidPct = debt.totalAmount > 0
-    ? Math.min(100, Math.round((debtAmountPaid(debt) / debt.totalAmount) * 100))
-    : 0;
-
-  // This customer's other open debts — lets us offer "spread this payment
-  // across everything they owe" instead of only ever touching the one debt
-  // the dialog was opened from.
-  const { data: allDebts } = useListDebts({ shopId }, { query: { queryKey: getListDebtsQueryKey({ shopId }), enabled: open } });
-  const otherOpenDebts = useMemo(() => {
-    if (!Array.isArray(allDebts)) return [];
-    return (allDebts as any[])
-      .filter(
-        (d) =>
-          d.id !== debt.id &&
-          (d.status === "unpaid" || d.status === "partial") &&
-          sameCustomer(d.customerName, debt.customerName),
-      )
-      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-  }, [allDebts, debt.id, debt.customerName]);
-  const hasOtherDebts = otherOpenDebts.length > 0;
-
-  // Oldest-first, same ordering the backend uses, so the preview matches
-  // exactly what will actually happen once the request lands.
-  const payoffOrder = useMemo(
-    () => [debt, ...otherOpenDebts].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
-    [debt, otherOpenDebts],
-  );
-  const totalOwedAcrossDebts = useMemo(
-    () => payoffOrder.reduce((sum, d) => sum + debtBalanceDue(d), 0),
-    [payoffOrder],
-  );
-  const allocationPreview = useMemo(
-    () => (applyToAll && hasOtherDebts ? previewAllocations(payoffOrder, enteredAmount) : null),
-    [applyToAll, hasOtherDebts, payoffOrder, enteredAmount],
-  );
-
-  const handlePayment = async () => {
-    const paid = Number(amount);
-    if (!paid || paid <= 0 || submitting) return;
-    const bulk = applyToAll && hasOtherDebts;
-
-    // Guard against double-tap immediately
-    setSubmitting(true);
-
-    const exactKey = getListDebtsQueryKey({ shopId });
-    const snapshot = qc.getQueryData(exactKey);
-    const paidAt = new Date().toISOString();
-
-    qc.cancelQueries({ queryKey: exactKey });
-
-    if (bulk) {
-      const { allocations, remaining } = previewAllocations(payoffOrder, paid);
-      const lastIdx = allocations.length - 1;
-
-      allocations.forEach(({ debt: d, amount: portion }, i) => {
-        const finalApplied = portion + (i === lastIdx ? remaining : 0);
-        patchDebtCaches(qc, shopId, d.id, (current) => applyDebtPayment(current, finalApplied, paidAt));
-        patchCustomerProfileCaches(qc, shopId, d.id, (current) => applyDebtPayment(current, finalApplied, paidAt));
-      });
-      const closedCount = allocations.filter(
-        ({ debt: d, amount: portion }) => debtBalanceDue(d) - portion <= 0.005,
-      ).length;
-      patchCustomerListCaches(qc, debt.customerName, (customer) => ({
-        ...customer,
-        totalBalance: Math.max(0, Number(customer.totalBalance || 0) - (paid - remaining)),
-        totalCredit: Math.max(0, Number(customer.totalCredit || 0) + remaining),
-        activeCount: Math.max(0, Number(customer.activeCount || 0) - closedCount),
-      }));
-
-      setOpen(false);
-      setAmount("");
-      setApplyToAll(false);
-
-      if (!navigator.onLine) {
-        try {
-          await enqueueMutation("customer_debt_payment", shopId, {
-            shopId,
-            customerName: debt.customerName,
-            amount: paid,
-            recordedBy: userName,
-          });
-          toast.success("Payment saved offline — will sync on reconnect");
-        } catch {
-          qc.setQueryData(exactKey, snapshot);
-          qc.invalidateQueries({ queryKey: ["/api/crm"] });
-          toast.error("Could not save offline payment — please retry");
-        } finally {
-          setSubmitting(false);
-        }
-        return;
-      }
-
-      toast.success(
-        allocations.length > 1
-          ? `Payment applied across ${allocations.length} debts!`
-          : "Payment recorded!",
-      );
-
-      customFetch("/api/debts/customer-payment", {
-        method: "POST",
-        body: JSON.stringify({ shopId, customerName: debt.customerName, amount: paid, recordedBy: userName }),
-      })
-        .then(() => {
-          qc.invalidateQueries({ queryKey: exactKey });
-          allocations.forEach(({ debt: d }) => qc.invalidateQueries({ queryKey: getGetDebtQueryKey(d.id) }));
-          qc.invalidateQueries({ queryKey: ["/api/crm"] });
-        })
-        .catch(() => {
-          qc.setQueryData(exactKey, snapshot);
-          allocations.forEach(({ debt: d }) => qc.invalidateQueries({ queryKey: getGetDebtQueryKey(d.id) }));
-          qc.invalidateQueries({ queryKey: ["/api/crm"] });
-          toast.error("Payment failed — please retry");
-        })
-        .finally(() => {
-          setSubmitting(false);
-        });
-      return;
-    }
-
-    // Optimistic update — instant, no await
-    patchDebtCaches(qc, shopId, debt.id, (current) =>
-      applyDebtPayment(current, paid, paidAt),
-    );
-    patchCustomerListCaches(qc, debt.customerName, (customer) => {
-      const nextBalance = Math.max(0, Number(customer.totalBalance || 0) - paid);
-      const creditIncrease = Math.max(0, paid - currentBalance);
-      return {
-        ...customer,
-        totalBalance: nextBalance,
-        totalCredit: Math.max(0, Number(customer.totalCredit || 0) + creditIncrease),
-        activeCount: Math.max(
-          0,
-          Number(customer.activeCount || 0) - (paid >= currentBalance ? 1 : 0),
-        ),
-      };
-    });
-    patchCustomerProfileCaches(qc, shopId, debt.id, (current) =>
-      applyDebtPayment(current, paid, paidAt),
-    );
-
-    // Close instantly — don't wait for network
-    setOpen(false);
-    setAmount("");
-    setApplyToAll(false);
-    // If offline, queue the payment and return — sync will fire on reconnect
-    if (!navigator.onLine) {
-      try {
-        await enqueueMutation("debt_payment", shopId, { debtId: debt.id, amount: paid, recordedBy: userName });
-        toast.success("Payment saved offline — will sync on reconnect");
-      } catch {
-        qc.invalidateQueries({ queryKey: exactKey });
-        qc.invalidateQueries({ queryKey: ["/api/crm"] });
-        toast.error("Could not save offline payment — please retry");
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
-
-    toast.success("Payment recorded!");
-
-    // Fire network request in the background.
-    // ⚠️ Do NOT call invalidateQueries on success — it triggers a refetch that can
-    // return stale cached data and revert the optimistic update. The optimistic patch
-    // above is already authoritative; the 20-second refetchInterval will sync eventually.
-    recordPayment.mutateAsync({ debtId: debt.id, data: { amount: paid, recordedBy: userName } })
-      .then(() => {
-        // Server confirmed — safe to refetch and get any concurrent updates
-        qc.invalidateQueries({ queryKey: exactKey });
-        qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
-        qc.invalidateQueries({ queryKey: ["/api/crm"] });
-      })
-      .catch(() => {
-        qc.setQueryData(exactKey, snapshot);
-        qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
-        qc.invalidateQueries({ queryKey: ["/api/crm"] });
-        toast.error("Payment failed — please retry");
-      })
-      .finally(() => {
-        setSubmitting(false);
-      });
-  };
-
-  const quickAmounts = [
-    { label: "25%", value: (debt.balance * 0.25).toFixed(0) },
-    { label: "Half", value: (debt.balance * 0.5).toFixed(0) },
-    {
-      label: applyToAll && hasOtherDebts ? "All debts" : "Full",
-      value: (applyToAll && hasOtherDebts ? totalOwedAcrossDebts : debt.balance).toString(),
-    },
-  ];
-
-  return (
-    <Dialog open={open} onOpenChange={o => { setOpen(o); if (!o) { setAmount(""); setApplyToAll(false); } }}>
-      <DialogTrigger asChild>
-        <Button size="sm" className="h-8 text-xs px-3 font-semibold bg-primary hover:bg-primary/90 text-primary-foreground">
-          <Wallet className="w-3.5 h-3.5 mr-1" />Record Payment
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Record Payment</DialogTitle>
-        </DialogHeader>
-
-        <div className="bg-muted/40 rounded-xl p-4 border border-border space-y-3">
-          <div className="flex items-center gap-3">
-            <div className={cn(
-              "w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0",
-              "bg-destructive/15 text-destructive"
-            )}>
-              {debt.customerName.charAt(0).toUpperCase()}
-            </div>
-            <div>
-              <p className="font-bold text-foreground">{debt.customerName}</p>
-              {debt.customerPhone && (
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Phone className="h-3 w-3" />{debt.customerPhone}
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
-              <span>Paid {paidPct}%</span>
-               <span>Balance: <span className="text-destructive font-bold font-mono">{formatKES(currentBalance)}</span></span>
-            </div>
-            <div className="h-2 bg-muted rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary rounded-full transition-all"
-                style={{ width: `${paidPct}%` }}
-              />
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Total: {formatKES(debt.totalAmount)}
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <Label className="text-xs uppercase tracking-wider font-bold">Payment Amount (KES)</Label>
-          <Input
-            type="number"
-            className="h-14 text-2xl font-bold font-mono text-center"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-            placeholder="0"
-            autoFocus
-          />
-          {hasOtherDebts && (
-            <label className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 px-3 py-2.5 cursor-pointer">
-              <Checkbox
-                checked={applyToAll}
-                onCheckedChange={(v) => setApplyToAll(v === true)}
-                className="mt-0.5"
-              />
-              <span className="text-xs">
-                <span className="font-semibold text-foreground">
-                  Apply to all of {debt.customerName}'s debts
-                </span>
-                <span className="block mt-0.5 text-[10px] text-muted-foreground">
-                  They owe {formatKES(totalOwedAcrossDebts)} across {payoffOrder.length} debts. This payment will pay off the oldest ones first instead of only this one.
-                </span>
-              </span>
-            </label>
-          )}
-
-          {enteredAmount > 0 && allocationPreview ? (
-            <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs space-y-1.5">
-              <span className="font-semibold text-foreground block">Where this payment goes:</span>
-              {allocationPreview.allocations.map(({ debt: d, amount: portion }) => (
-                <div key={d.id} className="flex items-center justify-between text-muted-foreground">
-                  <span className="truncate pr-2">
-                    {format(new Date(d.createdAt), "d MMM yyyy")} debt
-                    {d.id === debt.id ? " (this one)" : ""}
-                  </span>
-                  <span className="font-mono text-foreground shrink-0">
-                    {formatKES(portion)}
-                    {debtBalanceDue(d) - portion <= 0.005 ? " ✓" : ""}
-                  </span>
-                </div>
-              ))}
-              {allocationPreview.remaining > 0 && (
-                <div className="flex items-center justify-between text-emerald-400 pt-1 border-t border-border/60">
-                  <span className="font-semibold">Left over as customer credit</span>
-                  <span className="font-mono font-semibold">{formatKES(allocationPreview.remaining)}</span>
-                </div>
-              )}
-            </div>
-          ) : enteredAmount > 0 && (
-            <div className={cn(
-              "rounded-lg border px-3 py-2 text-xs",
-              extraCredit > 0
-                ? "border-emerald-500/25 bg-emerald-500/5 text-emerald-400"
-                : "border-border bg-muted/30 text-muted-foreground",
-            )}>
-              {extraCredit > 0 ? (
-                <>
-                  <span className="font-semibold">Extra customer credit: {formatKES(extraCredit)}</span>
-                  <span className="block mt-0.5 text-[10px] text-muted-foreground">
-                    The debt will close at zero. This extra amount will be kept for the customer and applied to a future debt or sale.
-                  </span>
-                </>
-              ) : (
-                <span>Remaining after payment: <strong>{formatKES(remainingAfterPayment)}</strong></span>
-              )}
-            </div>
-          )}
-          <div className="grid grid-cols-3 gap-2">
-            {quickAmounts.map(q => (
-              <Button
-                key={q.label}
-                variant="outline"
-                size="sm"
-                className="h-9 text-xs font-semibold"
-                onClick={() => setAmount(q.value)}
-              >
-                {q.label}
-                <span className="ml-1 text-[10px] text-muted-foreground font-mono">
-                  {formatKES(Number(q.value))}
-                </span>
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <DialogFooter className="mt-4">
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button
-            onClick={handlePayment}
-            disabled={!amount || Number(amount) <= 0 || submitting}
-            className="px-8 min-w-[140px]"
-          >
-            {submitting ? (
-              <span className="flex items-center gap-2">
-                <span className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
-                Recording…
-              </span>
-            ) : "Confirm Payment"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Mark as Paid button ───────────────────────────────────────────────────────
-function MarkPaidButton({ debt }: { debt: any }) {
-  const [loading, setLoading] = useState(false);
-  const [completed, setCompleted] = useState(false);
-  const qc = useQueryClient();
-  const shopId = localStorage.getItem("greenlink_shopId") || "";
-
-  if (debt.status === "paid" || completed) return null;
-
-  const handle = async () => {
-    if (loading) return;
-    setLoading(true);
-    const exactKey = getListDebtsQueryKey({ shopId });
-    const snapshot = qc.getQueryData(exactKey);
-    const now = new Date().toISOString();
-    setCompleted(true);
-    patchDebtCaches(qc, shopId, debt.id, (current) =>
-      applyDebtPayment(current, Number(debt.balance || 0), now),
-    );
-    patchCustomerListCaches(qc, debt.customerName, (customer) => ({
-      ...customer,
-      totalBalance: Math.max(
-        0,
-        Number(customer.totalBalance || 0) - Number(debt.balance || 0),
-      ),
-      activeCount: Math.max(0, Number(customer.activeCount || 0) - 1),
-    }));
-    patchCustomerProfileCaches(qc, shopId, debt.id, (current) =>
-      applyDebtPayment(current, Number(debt.balance || 0), now),
-    );
-    toast.success(`${debt.customerName} marked as paid`);
-    try {
-      await customFetch(`/api/debts/${debt.id}/payments`, {
-        method: "POST",
-        body: JSON.stringify({
-          amount: debt.balance,
-          recordedBy: localStorage.getItem("greenlink_userName") || undefined,
-          note: "Marked paid",
-          // "Mark Paid" means "settle this debt" — draw down any credit the
-          // customer already has on other debts first, and only require
-          // fresh cash for whatever that credit doesn't cover.
-          useAvailableCredit: true,
-        }),
-      });
-      qc.invalidateQueries({ queryKey: exactKey });
-      qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
-      qc.invalidateQueries({ queryKey: ["/api/crm"] });
-    } catch {
-      qc.setQueryData(exactKey, snapshot);
-      qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
-      qc.invalidateQueries({ queryKey: ["/api/crm"] });
-      setCompleted(false);
-      toast.error("Failed to mark paid — please retry");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <button
-      onClick={handle}
-      disabled={loading}
-      className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-semibold transition-colors disabled:opacity-50"
-      title="Mark debt as fully paid"
-    >
-      <BadgeCheck className="h-3.5 w-3.5" />
-      {loading ? "…" : "Mark Paid"}
-    </button>
-  );
-}
-
-function ReversePaymentButton({ debtId, payment, onDone }: { debtId: string; payment: any; onDone: () => void }) {
-  const [loading, setLoading] = useState(false);
-  const reverse = async () => {
-    if (loading) return;
-    const reason = window.prompt("Why is this payment being reversed?", "Payment recorded by mistake");
-    if (reason === null) return;
-    setLoading(true);
-    try {
-      await customFetch(`/api/debts/${debtId}/payments/${payment.id}/reverse`, {
-        method: "POST",
-        body: JSON.stringify({ reason: reason.trim() || "Payment correction" }),
-      });
-      toast.success("Payment reversed — the balance has been restored");
-      onDone();
-    } catch (error: any) {
-      toast.error(error?.message || "Could not reverse this payment");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <button
-      onClick={reverse}
-      disabled={loading}
-      className="text-[10px] font-semibold text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-      title="Create a correction entry without deleting history"
-    >
-      {loading ? "Reversing…" : "Undo"}
-    </button>
-  );
-}
-
-// ─── Delete debt dialog ────────────────────────────────────────────────────────
-function DeleteDebtDialog({ debt, onDeleted }: { debt: any; onDeleted: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const qc = useQueryClient();
-  const shopId = localStorage.getItem("greenlink_shopId") || "";
-
-  const handleDelete = async () => {
-    setLoading(true);
-    const exactKey = getListDebtsQueryKey({ shopId });
-    const snapshot = qc.getQueryData(exactKey);
-
-    // Remove from debts cache instantly — no waiting for network
-    qc.setQueryData(exactKey, (old: any) =>
-      Array.isArray(old) ? old.filter((d: any) => d.id !== debt.id) : old
-    );
-    setOpen(false);
-    onDeleted();
-
-    try {
-      await customFetch(`/api/debts/${debt.id}`, { method: "DELETE" });
-      toast.success(`Debt for ${debt.customerName} deleted`);
-      // Sync sales history so the linked sale no longer shows as a live debt
-      qc.invalidateQueries({ queryKey: getListSalesQueryKey() });
-    } catch {
-      // Rollback
-      qc.setQueryData(exactKey, snapshot);
-      toast.error("Failed to delete — please retry");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <button
-          className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors"
-          title="Delete debt"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Trash2 className="h-4 w-4 text-destructive" />
-            Delete Debt Record
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-4 space-y-1">
-          <p className="text-sm font-bold text-foreground">{debt.customerName}</p>
-          {debt.customerPhone && (
-            <p className="text-xs text-muted-foreground">{debt.customerPhone}</p>
-          )}
-          <p className="text-sm font-bold font-mono text-destructive">{formatKES(debt.totalAmount)}</p>
-          <p className="text-[10px] text-muted-foreground">
-            Created {format(new Date(debt.createdAt), "d MMM yyyy")}
-          </p>
-        </div>
-
-        <p className="text-sm text-muted-foreground">
-          Use this for <span className="font-semibold text-foreground">returned goods</span> or <span className="font-semibold text-foreground">data entry mistakes</span>. This permanently removes the debt and all its payment records.
-        </p>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)} disabled={loading}>Cancel</Button>
-          <Button
-            variant="destructive"
-            onClick={handleDelete}
-            disabled={loading}
-            className="px-8"
-          >
-            {loading ? "Deleting…" : "Delete"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Debt PDF download — premium dark-header design ────────────────────────
-async function downloadDebtPdf(debtId: string, shopId: string) {
-  toast.loading("Generating statement…", { id: "debt-pdf" });
-  try {
-    const [shopsData, debt] = await Promise.all([
-      customFetch<any[]>("/api/shops"),
-      customFetch<any>(`/api/debts/${debtId}`),
-    ]);
-    const shops: any[] = Array.isArray(shopsData) ? shopsData : [];
-    const shop = shops.find((s: any) => s.id === shopId)
-      ?? shops.find((s: any) => s.id === debt?.shopId)
-      ?? shops[0]
-      ?? { name: "GreenLink", id: shopId };
-    const payments: any[] = debt?.payments ?? [];
-    const items: any[]    = debt?.items    ?? [];
-    const productSummary = debtProductSummary(items);
-    const balanceDue = debtBalanceDue(debt);
-    const customerCredit = debtCredit(debt);
-    const totalPaid = debtAmountPaid(debt);
-    const openedDate = format(new Date(debt?.createdAt), "dd MMM yyyy");
-    const daysOpen   = differenceInDays(new Date(), new Date(debt?.createdAt));
-    const generatedAt = format(new Date(), "dd MMM yyyy, h:mm a");
-
-    const { jsPDF } = await import("jspdf");
-    const autoTable = (await import("jspdf-autotable")).default;
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W = doc.internal.pageSize.getWidth();
-    const H = doc.internal.pageSize.getHeight();
-    const ML = 16, MR = 16;
-    const CW = W - ML - MR;
-
-    type RGB = [number, number, number];
-    // Clean, print-friendly palette
-    const GREEN:   RGB = [5,  150, 105];   // emerald-600
-    const GRNLT:   RGB = [209, 250, 229];  // emerald-100
-    const SLATE:   RGB = [30,  41,  59];   // slate-800
-    const WHITE:   RGB = [255, 255, 255];
-    const LGRAY:   RGB = [248, 250, 252];  // slate-50
-    const MGRAY:   RGB = [100, 116, 139];  // slate-500
-    const BORD:    RGB = [226, 232, 240];  // slate-200
-    const RED:     RGB = [220,  38,  38];  // red-600
-    const ORANGE:  RGB = [234,  88,  12];  // orange-600
-
-    const isPaid    = debt?.status === "paid";
-    const isPartial = debt?.status === "partial";
-    const statusColor: RGB = isPaid ? GREEN : isPartial ? ORANGE : RED;
-    const statusLabel = isPaid ? "PAID IN FULL" : isPartial ? "PARTIALLY PAID" : "OUTSTANDING";
-
-    // ── Load shop logo ─────────────────────────────────────────────────────
-    const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
-    const logoUrl = shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg";
-    let logoBase64 = "";
-    let logoNatW = 0;
-    let logoNatH = 0;
-    try {
-      const resp = await fetch(logoUrl);
-      const blob = await resp.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      await new Promise<void>(resolve => {
-        const img = new Image();
-        img.onload  = () => { logoNatW = img.naturalWidth; logoNatH = img.naturalHeight; resolve(); };
-        img.onerror = () => resolve();
-        img.src = blobUrl;
-      });
-      URL.revokeObjectURL(blobUrl);
-      logoBase64 = await new Promise<string>(resolve => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    } catch { /* logo optional */ }
-
-    // ── Shared page chrome ─────────────────────────────────────────────────
-    function drawHeader(isFirst: boolean) {
-      // Page 1 needs an explicit white fill; continuation pages are already
-      // white in jsPDF — painting the full page on page 2+ is unnecessary and
-      // leaves fill state dirty which causes autotable rows to render black.
-      if (isFirst) {
-        doc.setFillColor(...WHITE); doc.rect(0, 0, W, H, "F");
-      }
-      // Top green stripe
-      doc.setFillColor(...GREEN); doc.rect(0, 0, W, 3, "F");
-
-      if (isFirst) {
-        // Logo
-        const LOGO_H = 18;
-        if (logoBase64 && logoNatW > 0) {
-          const scale = Math.min(40 / logoNatW, LOGO_H / logoNatH);
-          const dW = logoNatW * scale, dH = logoNatH * scale;
-          doc.addImage(logoBase64, "JPEG", ML, 7, dW, dH);
-        }
-        // Shop name
-        doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(...SLATE);
-        doc.text(shop?.name ?? "Our Shop", ML, 12);
-        doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...MGRAY);
-        let sx = 17;
-        if (shop?.address)       { doc.text(shop.address,       ML, sx); sx += 4; }
-        if (shop?.ownerWhatsapp) { doc.text(shop.ownerWhatsapp, ML, sx); sx += 4; }
-        if (shop?.email)         { doc.text(shop.email,         ML, sx); }
-
-        // Document type — right
-        doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...GREEN);
-        doc.text("DEBT STATEMENT", W - MR, 10, { align: "right" });
-        doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...SLATE);
-        doc.text(`#${(debt?.id ?? "").slice(0,8).toUpperCase()}`, W - MR, 18, { align: "right" });
-        doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-        doc.text(`Generated: ${generatedAt}`, W - MR, 23, { align: "right" });
-
-        // Divider
-        doc.setDrawColor(...BORD); doc.setLineWidth(0.4);
-        doc.line(ML, 28, W - MR, 28);
-      } else {
-        // Compact continuation header
-        doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-        const pg = (doc as any).internal.getCurrentPageInfo().pageNumber;
-        doc.text(`${shop?.name ?? ""}  ·  #${(debt?.id ?? "").slice(0,8).toUpperCase()}  ·  ${debt?.customerName ?? ""}  ·  continued`, ML, 9);
-        doc.text(`Page ${pg}`, W - MR, 9, { align: "right" });
-        doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
-        doc.line(ML, 12, W - MR, 12);
-      }
-
-      // Reset graphics state so autotable inherits clean defaults, not our
-      // custom fill/stroke colors. Without this, row fills on page 2+ go black.
-      doc.setFillColor(...WHITE);
-      doc.setTextColor(0, 0, 0);
-      doc.setDrawColor(0, 0, 0);
-      doc.setLineWidth(0.2);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-    }
-
-    function drawFooter() {
-      doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
-      doc.line(ML, H - 12, W - MR, H - 12);
-      doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...MGRAY);
-      doc.text("This statement is generated for record-keeping purposes only.", ML, H - 7);
-      doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...GREEN);
-      doc.text(shop?.name ?? "", W - MR, H - 7, { align: "right" });
-    }
-
-    function sectionLabel(sy: number, label: string) {
-      doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...GREEN);
-      doc.text(label, ML, sy);
-      doc.setDrawColor(...GRNLT); doc.setLineWidth(0.6);
-      doc.line(ML, sy + 1.5, W - MR, sy + 1.5);
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // PAGE 1
-    // ══════════════════════════════════════════════════════════════════════
-    drawHeader(true);
-    let y = 34;
-
-    // ── Customer + summary two-column block ───────────────────────────────
-    const LBW = (CW - 5) / 2;
-    const RBW = CW - LBW - 5;
-    const LBX = ML, RBX = ML + LBW + 5;
-    const CARD_H = customerCredit > 0 ? 43 : 36;
-
-    // Customer card — white with green left border
-    doc.setFillColor(...LGRAY); doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
-    doc.roundedRect(LBX, y, LBW, CARD_H, 1.5, 1.5, "FD");
-    doc.setFillColor(...GREEN); doc.roundedRect(LBX, y, 3.5, CARD_H, 1.5, 1.5, "F");
-    doc.rect(LBX + 3.5, y, 3, CARD_H, "F"); // square off right side of stripe
-
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...MGRAY);
-    doc.text("CUSTOMER", LBX + 8, y + 7);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(...SLATE);
-    doc.text(debt?.customerName ?? "—", LBX + 8, y + 16, { maxWidth: LBW - 12 });
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MGRAY);
-    if (debt?.customerPhone) { doc.text(debt.customerPhone, LBX + 8, y + 23); }
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-    doc.text(`Opened: ${openedDate}  ·  ${daysOpen}d ago`, LBX + 8, y + 29);
-    // Status pill
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...statusColor);
-    doc.text(`● ${statusLabel}`, LBX + 8, y + 35);
-
-    // Summary card — green-tinted
-    doc.setFillColor(...GRNLT); doc.setDrawColor(167, 243, 208); doc.setLineWidth(0.3);
-    doc.roundedRect(RBX, y, RBW, CARD_H, 1.5, 1.5, "FD");
-
-    doc.setFont("helvetica", "bold"); doc.setFontSize(6.5); doc.setTextColor(...GREEN);
-    doc.text("DEBT SUMMARY", RBX + 6, y + 7);
-
-    const summaryRows = [
-      { label: "Total Debt",  value: `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`, color: SLATE   },
-      { label: "Amount Paid", value: `KES ${totalPaid.toLocaleString("en-KE")}`,                color: GREEN   },
-      { label: "Balance Due", value: `KES ${balanceDue.toLocaleString("en-KE")}`,               color: isPaid ? GREEN : statusColor },
-      ...(customerCredit > 0
-        ? [{ label: "Customer Credit", value: `KES ${customerCredit.toLocaleString("en-KE")}`, color: GREEN }]
-        : []),
-    ];
-    const summaryGap = customerCredit > 0 ? 6 : 7.5;
-    summaryRows.forEach((row, i) => {
-      const ry = y + 14 + i * summaryGap;
-      doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...MGRAY);
-      doc.text(row.label, RBX + 6, ry);
-      doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(...(row.color as RGB));
-      doc.text(row.value, RBX + RBW - 5, ry, { align: "right" });
-    });
-
-    y += CARD_H + 10;
-
-    // ── Items table ───────────────────────────────────────────────────────
-    if (items.length > 0) {
-      sectionLabel(y, "ITEMS — LINKED SALE");
-      y += 6;
-      autoTable(doc, {
-        startY: y, margin: { left: ML, right: MR, bottom: 16 },
-        showHead: "firstPage",
-        head: [["#", "Product / Description", "Qty", "Unit Price (KES)", "Total (KES)"]],
-        body: items.map((it: any, i: number) => [
-          String(i + 1),
-          it.productName ?? it.name ?? "—",
-          String(it.qty ?? it.quantity ?? 1),
-          Number(it.unitPrice ?? 0).toLocaleString("en-KE"),
-          Number(it.totalPrice ?? it.total ?? 0).toLocaleString("en-KE"),
-        ]),
-        headStyles: { fillColor: SLATE, textColor: WHITE, fontStyle: "bold", fontSize: 7.5,
-          cellPadding: { top: 4, bottom: 4, left: 4, right: 4 } },
-        bodyStyles: { fontSize: 8, cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
-          textColor: SLATE, lineColor: BORD, lineWidth: 0.2 },
-        alternateRowStyles: { fillColor: LGRAY },
-        columnStyles: {
-          0: { cellWidth: 14, halign: "center", fontStyle: "bold", textColor: MGRAY },
-          1: { cellWidth: "auto" },
-          2: { cellWidth: 14, halign: "right" },
-          3: { cellWidth: 36, halign: "right", textColor: MGRAY },
-          4: { cellWidth: 38, halign: "right", fontStyle: "bold", textColor: GREEN },
-        },
-        tableLineColor: BORD, tableLineWidth: 0.2,
-        didDrawPage: (data: any) => { if (data.pageNumber > 1) drawHeader(false); },
-      });
-      y = (doc as any).lastAutoTable.finalY + 10;
-    }
-
-    // ── Payment history ───────────────────────────────────────────────────
-    sectionLabel(y, "PAYMENT HISTORY");
-    y += 6;
-
-    type HistRow = { cells: string[]; isOpened: boolean; isCredit?: boolean };
-    const histRows: HistRow[] = [];
-    histRows.push({
-      cells: [format(new Date(debt?.createdAt), "dd MMM yyyy, HH:mm"), "System", productSummary, "Debt Opened",
-        `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`,
-        `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`],
-      isOpened: true,
-    });
-    let running = debt?.totalAmount ?? 0;
-    const reversedPaymentIds = new Set(
-      payments.filter((p: any) => p.paymentType === "reversal" && p.reversalOfId).map((p: any) => p.reversalOfId),
-    );
-    const printablePayments = payments.filter(
-      (p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id),
-    );
-    for (const p of printablePayments) {
-      const paymentAmount = Number(p.amount || 0);
-      const creditCreated = Math.max(0, paymentAmount - Math.max(0, running));
-      running -= paymentAmount;
-      histRows.push({
-        cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", productSummary,
-          `Payment Received${p.note ? ` · ${p.note}` : ""}`,
-          `KES ${paymentAmount.toLocaleString("en-KE")}`,
-          `KES ${Math.max(0, running).toLocaleString("en-KE")}`],
-        isOpened: false,
-      });
-      if (creditCreated > 0) {
-        histRows.push({
-          cells: [format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"), p.recordedBy || "—", productSummary,
-            "Customer credit carried forward",
-            `KES ${creditCreated.toLocaleString("en-KE")}`,
-            `KES ${creditCreated.toLocaleString("en-KE")} credit`],
-          isOpened: false,
-          isCredit: true,
-        });
-      }
-    }
-    if (histRows.length === 1) {
-      histRows.push({ cells: ["—", "—", productSummary, "No payments recorded yet", "—", "—"], isOpened: false });
-    }
-
-    autoTable(doc, {
-      startY: y, margin: { left: ML, right: MR, bottom: 16 },
-      showHead: "firstPage",
-      head: [["Date & Time", "Recorded By", "Product", "Entry", "Amount (KES)", "Balance (KES)"]],
-      body: histRows.map(r => r.cells),
-      headStyles: { fillColor: SLATE, textColor: WHITE, fontStyle: "bold", fontSize: 7.5,
-        cellPadding: { top: 4, bottom: 4, left: 4, right: 4 } },
-      bodyStyles: { fontSize: 8, cellPadding: { top: 5, bottom: 5, left: 4, right: 4 },
-        textColor: SLATE, lineColor: BORD, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: LGRAY },
-      columnStyles: {
-        0: { cellWidth: 31 },
-        1: { cellWidth: 24 },
-        2: { cellWidth: 34 },
-        3: { cellWidth: "auto" },
-        4: { cellWidth: 32, halign: "right" },
-        5: { cellWidth: 32, halign: "right", fontStyle: "bold" },
-      },
-      didParseCell: (data: any) => {
-        if (data.section !== "body") return;
-        const row = histRows[data.row.index];
-        if (!row) return;
-        if (row.isCredit) { data.cell.styles.textColor = GREEN; data.cell.styles.fontStyle = "bold"; }
-        else if (row.isOpened) { data.cell.styles.textColor = [100, 116, 139]; data.cell.styles.fontStyle = "italic"; }
-        else if (data.column.index === 4) {
-          data.cell.styles.textColor = GREEN;
-          data.cell.styles.fontStyle = "bold";
-        }
-        else if (data.column.index === 5) { data.cell.styles.textColor = isPaid ? GREEN : statusColor; }
-      },
-      didDrawPage: (data: any) => { if (data.pageNumber > 1) drawHeader(false); },
-      tableLineColor: BORD, tableLineWidth: 0.2,
-    });
-    y = (doc as any).lastAutoTable.finalY + 8;
-
-    // ── Clean summary bar ─────────────────────────────────────────────────
-    const BS_H = 18;
-    if (y + BS_H > H - 20) { doc.addPage(); drawHeader(false); y = 18; }
-
-    doc.setFillColor(...LGRAY); doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
-    doc.roundedRect(ML, y, CW, BS_H, 2, 2, "FD");
-    // Green left accent
-    doc.setFillColor(...GREEN); doc.roundedRect(ML, y, 4, BS_H, 2, 2, "F");
-    doc.rect(ML + 4, y, 2, BS_H, "F");
-
-    const cols3 = [
-      { label: "TOTAL DEBT",  value: `KES ${(debt?.totalAmount ?? 0).toLocaleString("en-KE")}`, vc: SLATE },
-      { label: "PAID",        value: `KES ${totalPaid.toLocaleString("en-KE")}`,                vc: GREEN },
-      { label: "BALANCE DUE", value: `KES ${balanceDue.toLocaleString("en-KE")}`,               vc: isPaid ? GREEN : statusColor },
-      ...(customerCredit > 0
-        ? [{ label: "CUSTOMER CREDIT", value: `KES ${customerCredit.toLocaleString("en-KE")}`, vc: GREEN }]
-        : []),
-    ];
-    const colW = CW / cols3.length;
-    cols3.forEach((col, i) => {
-      const cx = ML + colW * i + colW / 2;
-      doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...GREEN);
-      doc.text(col.label, cx, y + 6, { align: "center" });
-      doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...(col.vc as RGB));
-      doc.text(col.value, cx, y + 13, { align: "center" });
-       if (i < cols3.length - 1) {
-        doc.setDrawColor(...BORD); doc.setLineWidth(0.3);
-        doc.line(ML + colW * (i + 1), y + 3, ML + colW * (i + 1), y + BS_H - 3);
-      }
-    });
-
-    // Footer on all pages
-    const numPages = (doc as any).internal.getNumberOfPages();
-    for (let p = 1; p <= numPages; p++) { doc.setPage(p); drawFooter(); }
-
-    const safeName = (debt?.customerName ?? "customer").replace(/[^a-z0-9]/gi, "_");
-    doc.save(`DebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
-    toast.success("Statement downloaded!", { id: "debt-pdf" });
-  } catch (err) {
-    console.error("Debt PDF error:", err);
-    toast.error("Failed to generate statement", { id: "debt-pdf" });
-  }
-}
-
-function DebtDownloadButton({ debt }: { debt: any }) {
-  const [loading, setLoading] = useState(false);
-  const shopId = localStorage.getItem("greenlink_shopId") || "";
-
-  const handle = async () => {
-    if (loading) return;
-    setLoading(true);
-    try {
-      await downloadDebtPdf(debt.id, shopId);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <button
-      onClick={handle}
-      disabled={loading}
-      title="Download debt statement PDF"
-      className="flex items-center gap-1 h-8 px-3 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors disabled:opacity-50"
-    >
-      {loading ? (
-        <span className="w-3 h-3 rounded-full border border-primary border-t-transparent animate-spin" />
-      ) : (
-        <Download className="h-3 w-3" />
-      )}
-      PDF
-    </button>
-  );
-}
-
-async function downloadCustomerPdf(group: CustomerGroup, shopId: string) {
-  toast.loading("Generating customer statement…", { id: "customer-debt-pdf" });
-  try {
-    const [shopsData, ...details] = await Promise.all([
-      customFetch<any[]>("/api/shops"),
-      ...group.debts.map((d: any) => customFetch<any>(`/api/debts/${d.id}`)),
-    ]);
-    const shop = (Array.isArray(shopsData) ? shopsData : []).find((s: any) => s.id === shopId) ?? { name: "GreenLink" };
-    const { jsPDF } = await import("jspdf");
-    const autoTable = (await import("jspdf-autotable")).default;
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W = doc.internal.pageSize.getWidth();
-    const H = doc.internal.pageSize.getHeight();
-    const ML = 16, MR = 16, CW = W - ML - MR;
-    const green: [number, number, number] = [5, 150, 105];
-    const slate: [number, number, number] = [30, 41, 59];
-    const muted: [number, number, number] = [100, 116, 139];
-    const border: [number, number, number] = [226, 232, 240];
-    const totalAmount = details.reduce((s, d: any) => s + Number(d?.totalAmount || 0), 0);
-    const totalBalance = details.reduce((s, d: any) => s + debtBalanceDue(d), 0);
-    const totalCredit = details.reduce((s, d: any) => s + debtCredit(d), 0);
-    const totalPaid = details.reduce((s, d: any) => s + debtGenuineCashReceived(d), 0);
-    const money = (n: number) => `KES ${Number(n || 0).toLocaleString("en-KE")}`;
-    const status = totalBalance <= 0 ? (totalCredit > 0 ? "PAID IN FULL · CREDIT" : "PAID IN FULL") : totalPaid > 0 ? "PARTIALLY PAID" : "OUTSTANDING";
-
-    const shopIsGreenlink = !(shop?.id ?? "").includes("sunrise") && !(shop?.name ?? "").toLowerCase().includes("sunrise");
-    let logoBase64 = "";
-    let logoNatW = 0;
-    let logoNatH = 0;
-    try {
-      const response = await fetch(shopIsGreenlink ? "/logo-greenlink.jpg" : "/logo-sunrise.jpg");
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      await new Promise<void>((resolve) => {
-        const image = new Image();
-        image.onload = () => { logoNatW = image.naturalWidth; logoNatH = image.naturalHeight; resolve(); };
-        image.onerror = () => resolve();
-        image.src = blobUrl;
-      });
-      URL.revokeObjectURL(blobUrl);
-      logoBase64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => resolve("");
-        reader.readAsDataURL(blob);
-      });
-    } catch { /* logo is optional */ }
-
-    doc.setFillColor(...green); doc.rect(0, 0, W, 3, "F");
-    if (logoBase64 && logoNatW > 0 && logoNatH > 0) {
-      const logoH = 14;
-      const scale = Math.min(28 / logoNatW, logoH / logoNatH);
-      doc.addImage(logoBase64, "JPEG", ML, 6, logoNatW * scale, logoNatH * scale);
-    }
-    doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...slate);
-    doc.text(shop.name || "GreenLink", ML + 32, 14);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
-    doc.text("CUSTOMER DEBT STATEMENT", W - MR, 12, { align: "right" });
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...muted);
-    doc.text(`Generated ${format(new Date(), "dd MMM yyyy, HH:mm")}`, W - MR, 17, { align: "right" });
-    doc.setDrawColor(...border); doc.line(ML, 23, W - MR, 23);
-
-    doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...slate);
-    doc.text(group.customerName, ML, 34);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...muted);
-    doc.text(group.customerPhone || "No phone number", ML, 40);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
-    doc.text(status, W - MR, 35, { align: "right" });
-
-    autoTable(doc, {
-      startY: 47, margin: { left: ML, right: MR },
-      head: [["Debt Ref", "Date", "Products / Notes", "Status", "Total", "Paid", "Balance"]],
-      body: details.map((d: any) => [
-        `#${String(d.id).slice(0, 8).toUpperCase()}`,
-        format(new Date(d.createdAt), "dd MMM yyyy"),
-        `${compactDebtProductSummary(d.items)}${d.notes ? ` · ${String(d.notes).slice(0, 42)}` : ""}`,
-         d.status === "cancelled" ? "VOIDED" : d.status === "paid" ? (debtCredit(d) > 0 ? "PAID + CREDIT" : "PAID") : d.status === "partial" ? "PARTIAL" : "UNPAID",
-         money(d.totalAmount), money(debtAmountPaid(d)), money(debtBalanceDue(d)),
-      ]),
-      headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-      bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-      columnStyles: { 0: { cellWidth: 23 }, 1: { cellWidth: 27 }, 2: { cellWidth: "auto" }, 3: { cellWidth: 22, fontStyle: "bold" }, 4: { cellWidth: 28, halign: "right" }, 5: { cellWidth: 28, halign: "right" }, 6: { cellWidth: 31, halign: "right", fontStyle: "bold" } },
-    });
-
-    let y = (doc as any).lastAutoTable.finalY + 10;
-
-    // ── Itemized products across every debt record ─────────────────────────
-    // The customer statement covers multiple debt records, so include the
-    // actual products taken rather than only the item count in the summary.
-    const itemRows = details.flatMap((d: any) =>
-      (d.items || []).map((item: any) => [
-        `#${String(d.id).slice(0, 8).toUpperCase()}`,
-        item.productName ?? item.name ?? "—",
-        String(item.qty ?? item.quantity ?? 1),
-        money(item.unitPrice),
-        money(item.totalPrice ?? item.total),
-      ]),
-    );
-    if (itemRows.length > 0) {
-      doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
-      doc.text("ITEMS TAKEN — ALL DEBT RECORDS", ML, y);
-      y += 5;
-      autoTable(doc, {
-        startY: y, margin: { left: ML, right: MR },
-        head: [["Debt Ref", "Product / Description", "Qty", "Unit Price", "Total"]],
-        body: itemRows,
-        headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-        bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        columnStyles: {
-          0: { cellWidth: 25 },
-          1: { cellWidth: "auto" },
-          2: { cellWidth: 18, halign: "right" },
-          3: { cellWidth: 32, halign: "right" },
-          4: { cellWidth: 32, halign: "right", fontStyle: "bold" },
-        },
-      });
-      y = (doc as any).lastAutoTable.finalY + 10;
-    }
-
-    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...green);
-    doc.text("PAYMENT HISTORY", ML, y); y += 5;
-    const paymentRows = details.flatMap((d: any) => {
-      const reversedPaymentIds = new Set(
-        (d.payments || [])
-          .filter((p: any) => p.paymentType === "reversal" && p.reversalOfId)
-          .map((p: any) => p.reversalOfId),
-      );
-      const printablePayments = (d.payments || [])
-        .filter((p: any) => p.paymentType !== "reversal" && !reversedPaymentIds.has(p.id))
-      let running = Number(d.totalAmount || 0);
-      return printablePayments.flatMap((p: any) => {
-        const paymentAmount = Number(p.amount || 0);
-        const creditCreated = Math.max(0, paymentAmount - Math.max(0, running));
-        running -= paymentAmount;
-        const rows = [[
-          format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
-          `#${String(d.id).slice(0, 8).toUpperCase()}`,
-          compactDebtProductSummary(d.items),
-          `Payment received${p.note ? ` · ${p.note}` : ""}`,
-          p.recordedBy || "—",
-          money(paymentAmount),
-        ]];
-        if (creditCreated > 0) {
-          rows.push([
-            format(new Date(p.paidAt), "dd MMM yyyy, HH:mm"),
-            `#${String(d.id).slice(0, 8).toUpperCase()}`,
-            compactDebtProductSummary(d.items),
-            "Customer credit carried forward",
-            p.recordedBy || "—",
-            money(creditCreated),
-          ]);
-        }
-        return rows;
-      });
-    });
-    autoTable(doc, {
-      startY: y, margin: { left: ML, right: MR },
-      head: [["Date & Time", "Debt Ref", "Products", "Entry", "Recorded By", "Amount"]],
-      body: paymentRows.length ? paymentRows : [["—", "—", "—", "No payments recorded", "—", "—"]],
-      headStyles: { fillColor: slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-      bodyStyles: { fontSize: 7.5, textColor: slate, lineColor: border, lineWidth: 0.2 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-      columnStyles: { 0: { cellWidth: 31 }, 1: { cellWidth: 22 }, 2: { cellWidth: 34 }, 3: { cellWidth: "auto" }, 4: { cellWidth: 27 }, 5: { cellWidth: 28, halign: "right", fontStyle: "bold" } },
-    });
-    y = (doc as any).lastAutoTable.finalY + 8;
-    if (y > H - 45) { doc.addPage(); y = 22; }
-    doc.setFillColor(248, 250, 252); doc.setDrawColor(...border); doc.roundedRect(ML, y, CW, 20, 2, 2, "FD");
-    const summary = [
-      ["TOTAL DEBT", money(totalAmount)],
-      ["TOTAL PAID", money(totalPaid)],
-      ["BALANCE DUE", money(totalBalance)],
-      ...(totalCredit > 0 ? [["CUSTOMER CREDIT", money(totalCredit)]] : []),
-    ];
-    summary.forEach(([label, value], i) => {
-      const colW = CW / summary.length;
-      const x = ML + colW * i + colW / 2;
-      doc.setFont("helvetica", "bold"); doc.setFontSize(6); doc.setTextColor(...green); doc.text(label, x, y + 7, { align: "center" });
-      const valueColor: [number, number, number] = label === "BALANCE DUE" && totalBalance > 0 ? [220, 38, 38] : i === 1 || label === "CUSTOMER CREDIT" ? green : slate;
-      doc.setFontSize(9); doc.setTextColor(...valueColor); doc.text(value, x, y + 14, { align: "center" });
-    });
-    doc.setDrawColor(...border); doc.line(ML, H - 13, W - MR, H - 13);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...muted);
-    doc.text("This statement includes all debt records currently grouped under this customer.", ML, H - 8);
-    const safeName = group.customerName.replace(/[^a-z0-9]/gi, "_");
-    doc.save(`CustomerDebtStatement_${safeName}_${format(new Date(), "yyyyMMdd")}.pdf`);
-    toast.success("Customer statement downloaded!", { id: "customer-debt-pdf" });
-  } catch (err) {
-    console.error("Customer debt PDF error:", err);
-    toast.error("Failed to generate customer statement", { id: "customer-debt-pdf" });
-  }
-}
-
-function CustomerDownloadButton({ group }: { group: CustomerGroup }) {
-  const [loading, setLoading] = useState(false);
-  const shopId = localStorage.getItem("greenlink_shopId") || "";
-  return (
-    <button
-      onClick={async (e) => { e.stopPropagation(); if (loading) return; setLoading(true); try { await downloadCustomerPdf(group, shopId); } finally { setLoading(false); } }}
-      disabled={loading}
-      className="flex items-center gap-1 h-8 px-2.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors disabled:opacity-50"
-      title="Download all debt records for this customer"
-    >
-      {loading ? <span className="w-3 h-3 rounded-full border border-primary border-t-transparent animate-spin" /> : <Download className="h-3 w-3" />}
-      All PDF
-    </button>
-  );
-}
-
-function CustomerGroupRow({
-  group,
-  onSelectDebt,
-}: {
-  group: CustomerGroup;
-  onSelectDebt: (debt: any) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const hasActive = group.activeDebts.length > 0;
-  // A customer with zero active debts could mean either "fully paid off" or
-  // "the debt was cancelled" — two very different outcomes that both left
-  // hasActive === false. The old check (`isPaid = hasActive && ...`) could
-  // never be true once a customer's last debt was paid, so a fully-settled
-  // customer fell through to isVoided and showed a "Voided" badge instead
-  // of "Paid". Distinguish them by what's actually in the record history.
-  const hasPaidHistory = group.debts.some((d: any) => d.status === "paid");
-  const allCancelled = group.debts.length > 0 && group.debts.every((d: any) => d.status === "cancelled");
-  const isPaid = !hasActive && hasPaidHistory;
-  const isPartial = hasActive && group.totalBalance > 0 && group.totalBalance < group.totalAmount;
-  const isVoided = !hasActive && allCancelled;
-  const statusLabel = isVoided ? "Voided" : isPaid ? "Paid" : group.isOverdue ? "Overdue" : isPartial ? "Partial" : "Unpaid";
-  const statusCss = isPaid
-    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
-    : isVoided
-    ? "bg-muted text-muted-foreground border-border"
-    : group.isOverdue
-    ? "bg-red-500/15 text-red-400 border-red-500/25"
-    : isPartial
-    ? "bg-orange-500/15 text-orange-400 border-orange-500/25"
-    : "bg-destructive/15 text-destructive border-destructive/25";
-  const initials = group.customerName.split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
-
-  // Split records so outstanding balances are never visually mixed with
-  // settled/voided history — outstanding first (most actionable), a
-  // collapsed "Settled" section underneath.
-  const outstandingDebts = group.debts.filter((d: any) => d.status === "unpaid" || d.status === "partial");
-  const settledDebts = group.debts.filter((d: any) => d.status === "paid" || d.status === "cancelled");
-  const [showSettled, setShowSettled] = useState(false);
-
-  return (
-    <div className="border-b border-border/40">
-      <div
-        className="group flex items-center gap-3 px-4 py-3.5 hover:bg-muted/30 transition-colors cursor-pointer"
-        onClick={() => setExpanded(v => !v)}
-      >
-        <div className={cn(
-          "w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold shrink-0",
-          isPaid ? "bg-emerald-500/15 text-emerald-400" : group.isOverdue ? "bg-red-500/15 text-red-400" : "bg-primary/15 text-primary",
-        )}>
-          {initials}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-foreground truncate">{toTitleCase(group.customerName)}</p>
-          <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-0.5">
-            {group.customerPhone ? <><Phone className="h-2.5 w-2.5" />{group.customerPhone}<span>·</span></> : null}
-            {group.debts.length} debt record{group.debts.length === 1 ? "" : "s"}
-          </p>
-        </div>
-        <div className="hidden sm:block text-right pr-2">
-          <p className="text-sm font-semibold font-mono">{formatKES(group.totalAmount)}</p>
-          <p className="text-[10px] text-muted-foreground/50">Total across records</p>
-        </div>
-        <div className="text-right pr-2 shrink-0">
-          <p className={cn("text-sm font-bold font-mono", isPaid ? "text-emerald-400" : group.isOverdue ? "text-red-400" : isPartial ? "text-orange-400" : "text-destructive")}>{formatKES(group.totalBalance)}</p>
-          <p className="text-[10px] text-muted-foreground/50">Balance due</p>
-          {group.totalCredit > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(group.totalCredit)} credit</p>}
-        </div>
-        <span className={cn("hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusCss)}>{statusLabel}</span>
-        <CustomerDownloadButton group={group} />
-        <ChevronDown className={cn("h-4 w-4 text-muted-foreground/40 transition-transform shrink-0", expanded && "rotate-180 text-primary")} />
-      </div>
-      {expanded && (
-        <div className="bg-muted/15 border-t border-border/40 px-4 py-2 space-y-1">
-          {outstandingDebts.length > 0 && (
-            <>
-              <div className="flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground/50">
-                <span>Outstanding ({outstandingDebts.length})</span>
-                <span>Click a row to view history</span>
-              </div>
-              {outstandingDebts.map((debt: any) => (
-                <DebtRecordRow key={debt.id} debt={debt} onSelectDebt={onSelectDebt} />
-              ))}
-            </>
-          )}
-
-          {settledDebts.length > 0 && (
-            <div className={cn(outstandingDebts.length > 0 && "mt-2 pt-2 border-t border-border/30")}>
-              <button
-                onClick={() => setShowSettled(v => !v)}
-                className="w-full flex items-center justify-between px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-              >
-                <span>Settled / Paid ({settledDebts.length})</span>
-                <ChevronDown className={cn("h-3 w-3 transition-transform", showSettled && "rotate-180")} />
-              </button>
-              {showSettled && (
-                <div className="opacity-70 space-y-1">
-                  {settledDebts.map((debt: any) => (
-                    <DebtRecordRow key={debt.id} debt={debt} onSelectDebt={onSelectDebt} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DebtRecordRow({ debt, onSelectDebt }: { debt: any; onSelectDebt: (debt: any) => void }) {
-  const debtPaid = debt.status === "paid";
-  const debtVoided = debt.status === "cancelled";
-  const days = differenceInDays(new Date(), new Date(debt.createdAt));
-  return (
-    <button
-      onClick={() => onSelectDebt(debt)}
-      className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-card border border-transparent hover:border-border/60 transition-colors"
-    >
-      <div className="w-7 h-7 rounded-lg bg-card border border-border/60 flex items-center justify-center shrink-0">
-        <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold truncate">{format(new Date(debt.createdAt), "d MMM yyyy, HH:mm")}</p>
-        <p className="text-[10px] text-muted-foreground/60 truncate">{debt.notes || `${days} days old`} · Ref {debt.id.slice(0, 8).toUpperCase()}</p>
-      </div>
-      <div className="text-right">
-        <p className="text-xs font-bold font-mono">{formatKES(debt.totalAmount)}</p>
-        <p className={cn("text-[10px] font-mono", debtVoided ? "text-muted-foreground" : debtPaid ? "text-emerald-400" : "text-destructive")}>
-          {debtVoided ? "Voided" : debtPaid ? (debtCredit(debt) > 0 ? `Paid · +${formatKES(debtCredit(debt))} credit` : "Paid") : `${formatKES(debtBalanceDue(debt))} due`}
-        </p>
-      </div>
-      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30" />
-    </button>
-  );
-}
-
-function DebtTransferDialog({
-  debt,
-  items,
-  onDone,
-}: {
-  debt: any;
-  items: any[];
-  onDone: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [quantities, setQuantities] = useState<Record<number, string>>({});
-  const [submitting, setSubmitting] = useState(false);
-  const shopId = localStorage.getItem("greenlink_shopId") || "";
-
-  useEffect(() => {
-    if (!open) return;
-    setCustomerName("");
-    setCustomerPhone("");
-    setQuantities(
-      Object.fromEntries(items.map((item, index) => [index, String(item.qty ?? item.quantity ?? 0)])),
-    );
-  }, [open, items]);
-
-  const selectedTotal = items.reduce((sum, item, index) => {
-    const qty = Number(quantities[index] ?? 0);
-    return sum + (Number.isFinite(qty) ? qty * Number(item.unitPrice ?? 0) : 0);
-  }, 0);
-  const hasSelection = items.some((_, index) => Number(quantities[index] ?? 0) > 0);
-  const overBalance = selectedTotal > Number(debt.balance ?? 0) + 0.01;
-
-  const selectAll = () => {
-    setQuantities(
-      Object.fromEntries(items.map((item, index) => [index, String(item.qty ?? item.quantity ?? 0)])),
-    );
-  };
-
-  const clearAll = () => setQuantities({});
-
-  const handleSubmit = async () => {
-    if (submitting || !customerName.trim() || !hasSelection || overBalance) return;
-    setSubmitting(true);
-    try {
-      const selectedItems = items
-        .map((item, itemIndex) => ({ itemIndex, qty: Number(quantities[itemIndex] ?? 0) }))
-        .filter((item) => Number.isFinite(item.qty) && item.qty > 0);
-
-      await customFetch(`/api/debts/${debt.id}/transfer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          shopId,
-          customerName: customerName.trim(),
-          customerPhone: customerPhone.trim(),
-          items: selectedItems,
-          operationId: crypto.randomUUID(),
-        }),
-      });
-      toast.success(`Debt items recorded for ${toTitleCase(customerName)}`);
-      setOpen(false);
-      onDone();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not move the debt items");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={items.length === 0 || Number(debt.balance ?? 0) <= 0}
-          className="h-8 gap-1.5 text-xs border-primary/30 text-primary hover:bg-primary/10"
-        >
-          <Users className="h-3.5 w-3.5" />
-          Move items
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-primary" />
-            Move debt items
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
-            <p className="text-xs font-semibold">Current record: {toTitleCase(debt.customerName)}</p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              The receiving record keeps the original taken date and item prices. Only the outstanding amount can be moved.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Receiving customer</Label>
-            <CustomerAutocomplete
-              shopId={shopId}
-              value={customerName}
-              onChange={setCustomerName}
-              onSelect={(customer: SelectedCustomer) => {
-                setCustomerName(customer.name);
-                setCustomerPhone(customer.phone);
-              }}
-              placeholder="Search or enter a customer name"
-            />
-            <Input
-              value={customerPhone}
-              onChange={(event) => setCustomerPhone(event.target.value)}
-              placeholder="Phone number (optional)"
-              className="h-9"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Items and quantities</Label>
-              <div className="flex gap-2">
-                <button type="button" onClick={selectAll} className="text-[11px] font-semibold text-primary hover:underline">
-                  Select all
-                </button>
-                <button type="button" onClick={clearAll} className="text-[11px] font-semibold text-muted-foreground hover:text-foreground">
-                  Clear
-                </button>
-              </div>
-            </div>
-            <div className="rounded-xl border border-border overflow-hidden">
-              {items.map((item, index) => {
-                const available = Number(item.qty ?? item.quantity ?? 0);
-                const quantity = Number(quantities[index] ?? 0);
-                const selected = quantity > 0;
-                return (
-                  <div key={`${item.productName}-${index}`} className={cn("flex items-center gap-2.5 px-3 py-2.5", index > 0 && "border-t border-border/50")}>
-                    <Checkbox
-                      checked={selected}
-                      onCheckedChange={(checked) => {
-                        setQuantities((current) => ({
-                          ...current,
-                          [index]: checked ? String(available) : "",
-                        }));
-                      }}
-                      aria-label={`Move ${item.productName}`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-semibold">{item.productName}</p>
-                      <p className="text-[10px] text-muted-foreground">
-                        {formatKES(item.unitPrice)} each · {available} available
-                      </p>
-                    </div>
-                    <Input
-                      type="number"
-                      min="0"
-                      max={available}
-                      step="any"
-                      value={quantities[index] ?? ""}
-                      onChange={(event) => {
-                        const next = event.target.value;
-                        setQuantities((current) => ({ ...current, [index]: next }));
-                      }}
-                      className="h-8 w-20 text-right text-xs"
-                      aria-label={`Quantity of ${item.productName}`}
-                    />
-                    <span className="w-20 text-right text-xs font-mono font-semibold text-primary">
-                      {formatKES(Math.max(0, quantity * Number(item.unitPrice ?? 0)))}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl border border-border bg-muted/30 p-3">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Remaining here</p>
-              <p className="mt-1 text-sm font-bold font-mono">{formatKES(Math.max(0, Number(debt.balance ?? 0) - selectedTotal))}</p>
-            </div>
-            <div className={cn("rounded-xl border p-3", overBalance ? "border-destructive/30 bg-destructive/5" : "border-primary/20 bg-primary/5")}>
-              <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">New debt</p>
-              <p className={cn("mt-1 text-sm font-bold font-mono", overBalance ? "text-destructive" : "text-primary")}>{formatKES(selectedTotal)}</p>
-            </div>
-          </div>
-          {overBalance && (
-            <p className="text-[11px] font-semibold text-destructive">
-              The selected items exceed the outstanding balance of {formatKES(debt.balance)}.
-            </p>
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={submitting || !customerName.trim() || !hasSelection || overBalance}
-          >
-            {submitting ? "Saving…" : "Save new debt"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Debt Detail Panel (right-side two-pane) ──────────────────────────────
-type DetailTab = "overview" | "payments" | "items";
-
-function DebtDetailPanel({
-  debt,
-  isOwner,
-  onClose,
-}: {
-  debt: any;
-  isOwner: boolean;
-  onClose: () => void;
-}) {
-  const [detailTab, setDetailTab] = useState<DetailTab>("overview");
-  const { data, isLoading } = useGetDebt(debt.id, { query: { queryKey: getGetDebtQueryKey(debt.id), staleTime: 30_000 } });
-  const qc = useQueryClient();
-  const shopId = localStorage.getItem("greenlink_shopId") || "";
-  const payments: any[] = (data as any)?.payments ?? [];
-  const items: any[]    = (data as any)?.items    ?? [];
-
-  const isPaid    = debt.status === "paid";
-  const isCancelled = debt.status === "cancelled";
-  const isPartial = debt.status === "partial";
-  const balanceDue = debtBalanceDue(debt);
-  const customerCredit = debtCredit(debt);
-  const totalPaid = debtAmountPaid(debt);
-  const paidPct   = debt.totalAmount > 0 ? Math.min(100, Math.round((totalPaid / debt.totalAmount) * 100)) : 0;
-  const daysOpen  = differenceInDays(new Date(), new Date(debt.createdAt));
-  const isOverdue = !isPaid && !isCancelled && daysOpen > 30;
-
-  const statusLabel = isCancelled ? "VOIDED" : isPaid ? "PAID" : isPartial ? "PARTIAL" : "UNPAID";
-  const statusBadgeCss = isPaid
-    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25"
-    : isCancelled
-    ? "bg-muted text-muted-foreground border-border"
-    : isOverdue
-    ? "bg-red-500/15 text-red-400 border-red-500/25"
-    : isPartial
-    ? "bg-orange-500/15 text-orange-400 border-orange-500/25"
-    : "bg-destructive/15 text-destructive border-destructive/25";
-  const statusColor = isCancelled ? "text-muted-foreground" : isPaid ? "text-emerald-400" : isOverdue ? "text-red-400" : isPartial ? "text-orange-400" : "text-destructive";
-  const avatarBg    = isPaid ? "bg-emerald-500/15 text-emerald-400" : isOverdue ? "bg-red-500/15 text-red-400" : isPartial ? "bg-orange-500/15 text-orange-400" : "bg-destructive/15 text-destructive";
-
-  const initials = debt.customerName.split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
-
-  const tabs = [
-    { id: "overview"  as DetailTab, label: "Overview" },
-    { id: "payments"  as DetailTab, label: isLoading ? "Payments" : `Payments (${payments.length})` },
-    { id: "items"     as DetailTab, label: isLoading ? "Items"    : `Items (${items.length})` },
-  ];
-  const reversedPaymentIds = new Set(
-    payments.filter((p: any) => p.paymentType === "reversal" && p.reversalOfId).map((p: any) => p.reversalOfId),
-  );
-  const refreshDebt = () => {
-    qc.invalidateQueries({ queryKey: getListDebtsQueryKey({ shopId: localStorage.getItem("greenlink_shopId") || "" }) });
-    qc.invalidateQueries({ queryKey: getGetDebtQueryKey(debt.id) });
-  };
-
-  return (
-    <div className="flex flex-col h-full bg-card">
-
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-bold font-mono text-foreground truncate">
-            Debt #{debt.id.slice(0, 8).toUpperCase()}
-          </span>
-          <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide border shrink-0", statusBadgeCss)}>
-            {statusLabel}
-          </span>
-        </div>
-        <button
-          onClick={onClose}
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0 ml-2"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex border-b border-border shrink-0">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setDetailTab(t.id)}
-            className={cn(
-              "flex-1 py-2.5 text-xs font-semibold transition-colors border-b-2 -mb-px",
-              detailTab === t.id
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto">
-
-        {/* ── Overview ── */}
-        {detailTab === "overview" && (
-          <div className="p-4 space-y-4">
-            {/* Customer block */}
-            <div className="flex items-center gap-3">
-              <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center text-base font-bold shrink-0", avatarBg)}>
-                {initials}
-              </div>
-              <div className="min-w-0">
-                <p className="font-bold text-foreground">{toTitleCase(debt.customerName)}</p>
-                {debt.customerPhone ? (
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <Phone className="h-3 w-3 shrink-0" />{debt.customerPhone}
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground/30 mt-0.5 italic">No phone number</p>
-                )}
-                <p className="text-[10px] text-muted-foreground/50 mt-0.5">
-                  {daysOpen}d ago{isOverdue && <span className="text-red-400 font-semibold"> · Overdue</span>}
-                </p>
-              </div>
-            </div>
-
-            {/* Amounts 2×2 */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="bg-muted/30 rounded-xl p-3 border border-border/40">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Total Amount</p>
-                <p className="text-sm font-bold font-mono text-foreground">{formatKES(debt.totalAmount)}</p>
-              </div>
-              <div className="bg-emerald-500/5 rounded-xl p-3 border border-emerald-500/15">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Amount Paid</p>
-                <p className="text-sm font-bold font-mono text-emerald-400">{formatKES(totalPaid)}</p>
-              </div>
-              <div className={cn("rounded-xl p-3 border", isPaid ? "bg-emerald-500/5 border-emerald-500/15" : "bg-destructive/5 border-destructive/15")}>
-                <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Balance Due</p>
-                 <p className={cn("text-sm font-bold font-mono", statusColor)}>{formatKES(balanceDue)}</p>
-              </div>
-              <div className="bg-muted/30 rounded-xl p-3 border border-border/40">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Status</p>
-                <span className={cn("text-xs font-bold", statusColor)}>{statusLabel}</span>
-              </div>
-            {customerCredit > 0 && (
-              <div className="rounded-xl p-3 border border-emerald-500/15 bg-emerald-500/5">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-400 mb-1.5">Customer Credit</p>
-                <p className="text-sm font-bold font-mono text-emerald-400">{formatKES(customerCredit)}</p>
-                <p className="text-[10px] text-muted-foreground mt-1">Available for the customer&apos;s next debt or sale.</p>
-              </div>
-            )}
-            </div>
-
-            {/* Progress */}
-            {!isPaid && (
-              <div>
-                <div className="flex justify-between text-[10px] mb-1.5 text-muted-foreground">
-                  <span>Paid {paidPct}%</span>
-                  <span className="font-mono">{formatKES(totalPaid)} / {formatKES(debt.totalAmount)}</span>
-                </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className={cn("h-full rounded-full transition-all", isPartial ? "bg-orange-400" : "bg-primary")}
-                    style={{ width: `${paidPct}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Metadata rows */}
-            <div className="rounded-xl border border-border overflow-hidden">
-              {[
-                { label: "Debt Ref",   value: debt.id.slice(0, 8).toUpperCase() },
-                { label: "Sale ID",    value: debt.saleId ? debt.saleId.slice(0, 14) + "…" : "—" },
-                { label: "Created At", value: format(new Date(debt.createdAt), "d MMM yyyy, HH:mm") },
-                ...(debt.paidAt ? [{ label: isCancelled ? "Voided At" : "Paid At", value: format(new Date(debt.paidAt), "d MMM yyyy") }] : []),
-                ...(debt.notes ? [{ label: "Notes", value: debt.notes }] : []),
-              ].map((row, i) => (
-                <div key={row.label} className={cn("flex items-start gap-3 px-3 py-2.5", i > 0 && "border-t border-border/60")}>
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground w-[68px] shrink-0 mt-0.5 leading-relaxed">{row.label}</span>
-                  <span className="text-xs text-foreground font-mono break-all">{row.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── Payments ── */}
-        {detailTab === "payments" && (
-          <div className="p-4 space-y-2">
-            {isLoading ? (
-              <div className="space-y-2 animate-pulse">
-                {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-muted/40 rounded-xl" />)}
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-destructive/5 border border-destructive/20">
-                  <div className="w-8 h-8 rounded-full bg-destructive/15 flex items-center justify-center shrink-0">
-                    <Banknote className="h-3.5 w-3.5 text-destructive" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold">Debt Opened</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{format(new Date(debt.createdAt), "d MMM yyyy, HH:mm")}</p>
-                  </div>
-                  <p className="text-xs font-bold font-mono text-destructive shrink-0">{formatKES(debt.totalAmount)}</p>
-                </div>
-
-                {payments.length === 0 && (
-                  <p className="text-xs text-muted-foreground/40 text-center py-6 italic">No payments recorded yet</p>
-                )}
-
-                {payments.map((p: any, i: number) => {
-                  const isReversal = p.paymentType === "reversal" || Number(p.amount) < 0;
-                  const isReversed = !isReversal && reversedPaymentIds.has(p.id);
-                  return (
-                  <div key={p.id ?? i} className={cn(
-                    "flex items-center gap-3 p-3 rounded-xl border",
-                    isReversal ? "bg-destructive/5 border-destructive/20" : isReversed ? "bg-muted/30 border-border/50" : "bg-emerald-500/5 border-emerald-500/20",
-                  )}>
-                    <div className={cn(
-                      "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
-                      isReversal ? "bg-destructive/15" : isReversed ? "bg-muted" : "bg-emerald-500/15",
-                    )}>
-                      {isReversal
-                        ? <X className="h-3.5 w-3.5 text-destructive" />
-                        : <CheckCircle2 className={cn("h-3.5 w-3.5", isReversed ? "text-muted-foreground" : "text-emerald-400")} />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-xs font-semibold">
-                          {isReversal ? "Payment Reversed" : isReversed ? "Payment Received · Reversed" : "Payment Received"}
-                        </p>
-                        {p.recordedBy && (
-                          <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
-                            <User2 className="h-2.5 w-2.5" />{p.recordedBy}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">
-                        {format(new Date(p.paidAt), "d MMM yyyy, HH:mm")}
-                        {p.note ? ` · ${p.note}` : ""}
-                      </p>
-                      <p className="text-[10px] text-primary/70 mt-1 flex items-start gap-1">
-                        <Package className="h-2.5 w-2.5 mt-0.5 shrink-0" />
-                        <span className="truncate">Product: {debtProductSummary(items)}</span>
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className={cn("text-xs font-bold font-mono", isReversal ? "text-destructive" : isReversed ? "text-muted-foreground line-through" : "text-emerald-400")}>
-                        {isReversal ? "" : "+"}{formatKES(Math.abs(p.amount))}
-                      </p>
-                      {isOwner && !isReversal && !isReversed && (
-                        <ReversePaymentButton debtId={debt.id} payment={p} onDone={refreshDebt} />
-                      )}
-                    </div>
-                  </div>
-                  );
-                })}
-
-                <div className="mt-1 p-3 rounded-xl bg-muted/30 border border-border flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? "s" : ""}</span>
-                  <div className="text-right">
-                    <p className="text-[10px] text-muted-foreground/60">Balance</p>
-                    <p className={cn("text-sm font-bold font-mono", debtBalanceDue(debt) === 0 ? "text-emerald-400" : statusColor)}>
-                      {formatKES(debtBalanceDue(debt))}
-                    </p>
-                    {debtCredit(debt) > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(debtCredit(debt))} credit</p>}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── Items ── */}
-        {detailTab === "items" && (
-          <div className="p-4">
-            {isLoading ? (
-              <div className="space-y-2 animate-pulse">
-                {[1, 2, 3].map((i) => <div key={i} className="h-12 bg-muted/40 rounded-xl" />)}
-              </div>
-            ) : items.length === 0 ? (
-              <p className="text-xs text-muted-foreground/40 text-center py-8 italic">No items linked to this debt</p>
-            ) : (
-              <div className="space-y-2">
-                <div className="rounded-xl border border-border overflow-hidden">
-                  <div className="grid grid-cols-[1fr_32px_minmax(90px,auto)_minmax(90px,auto)] bg-muted/50 border-b border-border">
-                    <div className="px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Product</div>
-                    <div className="px-1 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground text-right">Qty</div>
-                    <div className="px-2 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground text-right">Unit</div>
-                    <div className="px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-muted-foreground text-right">Total</div>
-                  </div>
-                  {items.map((item: any, i: number) => (
-                    <div key={i} className={cn("grid grid-cols-[1fr_32px_minmax(90px,auto)_minmax(90px,auto)] items-center", i > 0 && "border-t border-border/50")}>
-                      <div className="px-3 py-2.5 text-xs font-medium truncate">{item.productName}</div>
-                      <div className="px-1 py-2.5 text-xs text-right text-muted-foreground">{item.qty ?? item.quantity}</div>
-                      <div className="px-2 py-2.5 text-xs text-right text-muted-foreground font-mono whitespace-nowrap">{formatKES(item.unitPrice)}</div>
-                      <div className="px-3 py-2.5 text-xs text-right font-bold font-mono text-primary whitespace-nowrap">{formatKES(item.totalPrice ?? item.total)}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-primary/10 border border-primary/20">
-                  <span className="text-xs font-bold">Total</span>
-                  <span className="text-sm font-bold font-mono text-primary">{formatKES(debt.totalAmount)}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Actions footer */}
-      <div className="border-t border-border p-3 shrink-0 space-y-2">
-        <div className="flex gap-2 flex-wrap">
-          {!isPaid && !isCancelled && debt.balance > 0 && <PaymentDialog debt={debt} />}
-          <DebtDownloadButton debt={debt} />
-          {isOwner && !isPaid && !isCancelled && debt.balance > 0 && <MarkPaidButton debt={debt} />}
-          {isOwner && !isPaid && !isCancelled && debt.balance > 0 && (
-            <DebtTransferDialog debt={debt} items={items} onDone={refreshDebt} />
-          )}
-          {/* Financial records stay in the ledger; corrections use reversible entries. */}
-        </div>
-        {debt.customerPhone && !isPaid && !isCancelled && debt.balance > 0 && (
-          <a
-            href={`https://wa.me/${debt.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(`Hi ${debt.customerName}, you have an outstanding balance of ${formatKES(debt.balance)} at our shop. Please settle at your earliest convenience. Thank you!`)}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-1.5 w-full h-8 rounded-xl border border-[#25D366]/30 text-[#25D366] bg-[#25D366]/5 hover:bg-[#25D366]/15 text-xs font-semibold transition-colors"
-          >
-            <MessageCircle className="h-3.5 w-3.5" />
-            Send WhatsApp Reminder
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Legacy panel kept for internal use only ──────────────────────────────
-function DebtHistoryPanel({ debtId }: { debtId: string }) {
-  const { data, isLoading } = useGetDebt(debtId, { query: { queryKey: getGetDebtQueryKey(debtId), enabled: !!debtId } });
-
-  if (isLoading) {
-    return (
-      <div className="px-4 py-4 space-y-2 animate-pulse">
-        {[1, 2].map(i => (
-          <div key={i} className="flex gap-3 items-center">
-            <div className="w-8 h-8 rounded-full bg-muted shrink-0" />
-            <div className="flex-1 space-y-1">
-              <div className="h-3 w-24 bg-muted rounded" />
-              <div className="h-2 w-16 bg-muted rounded" />
-            </div>
-            <div className="h-3 w-16 bg-muted rounded" />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  const payments = (data as any)?.payments || [];
-  const items: { productName: string; quantity: number; unitPrice: number; totalPrice: number; discount?: number | null }[] = (data as any)?.items || [];
-
-  return (
-    <div className="border-t border-border/30 bg-muted/10 px-4 py-4 space-y-4">
-
-      {/* Products taken */}
-      {items.length > 0 && (
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-2 flex items-center gap-1.5">
-            <ShoppingBasket className="h-3 w-3" />Items Taken
-          </p>
-          <div className="rounded-xl border border-border/40 overflow-hidden bg-background/40">
-            {items.map((item, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5",
-                  i > 0 && "border-t border-border/30"
-                )}
-              >
-                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                  <Package className="h-3.5 w-3.5 text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground truncate">{item.productName}</p>
-                  <p className="text-[10px] text-muted-foreground/60 font-mono">
-                    {item.quantity} × {formatKES(item.unitPrice)}
-                    {item.discount ? <span className="ml-1.5 text-orange-400">−{item.discount}%</span> : null}
-                  </p>
-                </div>
-                <p className="text-xs font-bold font-mono text-foreground shrink-0">{formatKES(item.totalPrice)}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div>
-      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-3">
-        Payment Timeline
-      </p>
-
-      {/* Original debt row */}
-      <div className="relative pl-7 pb-3 overflow-hidden">
-        <div className="absolute left-0 top-1 w-5 h-5 rounded-full bg-destructive/15 border border-destructive/30 flex items-center justify-center">
-          <Banknote className="h-2.5 w-2.5 text-destructive" />
-        </div>
-        {payments.length > 0 && <div className="absolute left-2.5 top-5 w-px bottom-0 bg-border/40" />}
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-foreground">Debt opened</p>
-            <p className="text-[10px] text-muted-foreground/60">
-              {data ? format(new Date((data as any).createdAt), "d MMM yyyy, HH:mm") : "—"}
-            </p>
-          </div>
-          <p className="text-xs font-bold text-destructive font-mono">{formatKES((data as any)?.totalAmount ?? 0)}</p>
-        </div>
-      </div>
-
-      {/* Payment rows */}
-      {payments.map((payment: any, i: number) => (
-        <div key={payment.id} className="relative pl-7 pb-3 overflow-hidden">
-          <div className="absolute left-0 top-1 w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-            <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />
-          </div>
-          {i < payments.length - 1 && <div className="absolute left-2.5 top-5 w-px bottom-0 bg-border/40" />}
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-foreground">Payment received</p>
-              <div className="flex items-center gap-2 mt-0.5">
-                <p className="text-[10px] text-muted-foreground/60">
-                  {format(new Date(payment.paidAt), "d MMM yyyy, HH:mm")}
-                </p>
-                {payment.recordedBy && (
-                  <p className="text-[10px] text-muted-foreground/50 flex items-center gap-0.5">
-                    <User2 className="h-2 w-2" />{payment.recordedBy}
-                  </p>
-                )}
-              </div>
-            </div>
-            <p className="text-xs font-bold text-emerald-400 font-mono">+{formatKES(payment.amount)}</p>
-          </div>
-        </div>
-      ))}
-
-      {payments.length === 0 && (
-        <p className="text-xs text-muted-foreground/40 pl-7 italic">No payments recorded yet</p>
-      )}
-
-      {/* Summary */}
-      <div className="mt-2 pt-3 border-t border-border/30 flex justify-between items-center">
-        <span className="text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? "s" : ""}</span>
-        <div className="text-right">
-          <p className="text-[10px] text-muted-foreground/50">Balance remaining</p>
-          <p className={cn("text-sm font-bold font-mono", (data as any)?.balance === 0 ? "text-emerald-400" : "text-destructive")}>
-            {formatKES((data as any)?.balance ?? 0)}
-          </p>
-        </div>
-      </div>
-      </div>
-    </div>
-  );
-}
+  type CustomerGroup,
+  debtBalanceDue,
+  debtCredit,
+  debtAmountPaid,
+} from "@/lib/debt-utils";
+import { AddDebtDialog } from "@/features/debts/DebtRecordDialogs";
+import { CustomerGroupRow } from "@/features/debts/DebtRows";
+import { DebtDetailPanel } from "@/features/debts/DebtDetailPanel";
 
 type DebtTab = "unpaid" | "partial" | "overdue" | "paid" | "all";
-
-interface CustomerGroup {
-  key: string;
-  customerName: string;
-  customerPhone: string;
-  debts: any[];
-  activeDebts: any[];
-  totalBalance: number;
-  totalCredit: number;
-  totalAmount: number;
-  worstStatus: "unpaid" | "partial" | "paid" | "cancelled";
-  isOverdue: boolean;
-}
-
-// ── Add Debt Dialog ───────────────────────────────────────────────────────────
-function AddDebtDialog({ shopId, onAdded }: { shopId: string; onAdded: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [amount, setAmount] = useState("");
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-  const qc = useQueryClient();
-
-  const reset = () => { setCustomerName(""); setCustomerPhone(""); setAmount(""); setNotes(""); };
-
-  const handleSave = async () => {
-    const name = toTitleCase(customerName);
-    if (!name) { toast.error("Customer name required"); return; }
-    const total = parseFloat(amount);
-    if (!total || total <= 0) { toast.error("Enter a valid amount"); return; }
-
-    setSaving(true);
-    const optimisticDebt = {
-      id: `optimistic-${crypto.randomUUID()}`,
-      shopId,
-      saleId: null,
-      customerName: name,
-      customerPhone: customerPhone.trim(),
-      totalAmount: total,
-      amountPaid: 0,
-      balance: total,
-      status: "unpaid",
-      notes: notes.trim() || null,
-      paidAt: null,
-      createdAt: new Date().toISOString(),
-      items: [],
-    };
-    const debtListKey = getListDebtsQueryKey({ shopId });
-    const debtSnapshot = qc.getQueryData(debtListKey);
-
-    // Show the new debt immediately. The server request continues in the
-    // background and rolls this entry back if Cloudflare rejects it.
-    qc.setQueryData(debtListKey, (old: any) =>
-      Array.isArray(old) ? [optimisticDebt, ...old] : old,
-    );
-    addDebtToCustomerListCaches(qc, shopId, optimisticDebt);
-    setOpen(false);
-    reset();
-    toast.success(`Debt of ${amount} recorded for ${name}`);
-
-    try {
-      await customFetch("/api/debts", {
-        method: "POST",
-        body: JSON.stringify({
-          shopId,
-          customerName: name,
-          customerPhone: customerPhone.trim(),
-          totalAmount: total,
-          notes: notes.trim() || undefined,
-        }),
-      });
-      onAdded();
-      qc.invalidateQueries({ queryKey: ["/api/crm"] });
-    } catch {
-      qc.setQueryData(debtListKey, debtSnapshot);
-      qc.invalidateQueries({ queryKey: ["/api/crm"] });
-      toast.error("Failed to record debt — please retry");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <button
-        onClick={() => setOpen(true)}
-        disabled={saving}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
-      >
-        <UserPlus className="h-3.5 w-3.5" />
-        New Debt
-      </button>
-
-      <Dialog open={open} onOpenChange={(o) => { if (!o) { setOpen(false); reset(); } }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <UserPlus className="h-4 w-4 text-primary" />
-              Record a Debt
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase tracking-wider">Customer name *</Label>
-              <CustomerAutocomplete
-                shopId={shopId}
-                value={customerName}
-                onChange={(v) => { setCustomerName(v); }}
-                onSelect={(c: SelectedCustomer) => {
-                  setCustomerName(c.name);
-                  if (c.phone) setCustomerPhone(c.phone);
-                }}
-                showBalanceWarning
-                selectedBalance={undefined}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase tracking-wider">Phone (optional)</Label>
-              <div className="relative">
-                <User2 className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <input
-                  type="tel"
-                  placeholder="+254 7XX XXX XXX"
-                  value={customerPhone}
-                  onChange={e => setCustomerPhone(e.target.value)}
-                  className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 pl-9 pr-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase tracking-wider">Amount (KES) *</Label>
-              <input
-                type="number"
-                min={1}
-                placeholder="e.g. 1500"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-1 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase tracking-wider">Notes (optional)</Label>
-              <textarea
-                rows={2}
-                placeholder="What is this debt for?"
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <button
-              onClick={() => { setOpen(false); reset(); }}
-              disabled={saving}
-              className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!customerName.trim() || !amount || saving}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
-            >
-              {saving ? (
-                <span className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
-              ) : (
-                <Save className="h-3.5 w-3.5" />
-              )}
-              Record Debt
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
 
 export default function Debts() {
   const shopId = localStorage.getItem("greenlink_shopId") || "";
@@ -2257,31 +47,113 @@ export default function Debts() {
   const debouncedSearch                 = useDebounce(search, 100);
   const [tab, setTab]                   = useState<DebtTab>("all");
   const [viewMode, setViewMode]         = useState<"customers" | "records">("customers");
+  const [sortBy, setSortBy]             = useState<"balance_desc" | "oldest" | "newest" | "name_asc">("balance_desc");
+  const [visibleCount, setVisibleCount] = useState(10);
   const [selectedDebt, setSelectedDebt] = useState<any>(null);
   const [bulkRemindOpen, setBulkRemindOpen] = useState(false);
+  const shopName = localStorage.getItem("greenlink_shopName") || "Shop";
+  const [plantSettleTarget, setPlantSettleTarget] = useState<{
+    customerName: string;
+    customerPhone?: string;
+    initialTab?: "settle" | "history";
+  } | null>(null);
+
+  const suppliersQuery = useQuery<{ rows: NurserySupplierSummary[] }>({
+    queryKey: ["/api/nursery/suppliers", shopId],
+    queryFn: () => customFetch<{ rows: NurserySupplierSummary[] }>("/api/nursery/suppliers"),
+    enabled: !!shopId,
+    staleTime: 30_000,
+  });
+  const nurserySuppliers = suppliersQuery.data?.rows ?? [];
+
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [debouncedSearch, tab, viewMode, sortBy]);
 
   const qc = useQueryClient();
 
-  // No timed polling here: every debt-changing action on this page (payments,
-  // new debt from a sale, edits) already calls invalidateQueries with this
-  // exact key, so React Query refetches right when something actually
-  // changes. We also refetch on window focus / remount, so switching back
-  // to this tab after a while still shows fresh data — we just don't pay
-  // for a D1 read every 5 seconds while nobody is looking, foreground or not.
+  // Invalidate handles writes on this device; polling makes updates from other
+  // devices visible without requiring a page change or cache clear.
   const { data: allDebts, isLoading } = useListDebts(
     { shopId },
     {
       query: {
         queryKey: getListDebtsQueryKey({ shopId }),
         enabled: !!shopId,
-        staleTime: 15_000,
+        staleTime: 60_000,
         refetchOnWindowFocus: true,
         refetchOnMount: true,
-        refetchInterval: false,
+        refetchInterval: 180_000,
         refetchIntervalInBackground: false,
       },
     }
   );
+
+  const nurserySettlementQuery = useQuery<NurserySettlementMetrics>({
+    queryKey: [
+      "nursery-settlement-state",
+      shopId,
+      "debts-page",
+      (allDebts as any[] | undefined)?.length ?? 0,
+      ((allDebts as any[]) || []).reduce((s, d) => s + Number(d?.balance || 0), 0),
+    ],
+    queryFn: () =>
+      loadNurserySettlementState({
+        qc,
+        shopId,
+        shopName,
+        allDebts: (allDebts as any[]) || [],
+        suppliers: nurserySuppliers,
+      }),
+    enabled: !!shopId && !isLoading,
+    staleTime: 60_000,
+  });
+  const nurseryMetrics = nurserySettlementQuery.data;
+  const nurseryProjection = useMemo(() => {
+    if (!nurseryMetrics) return null;
+    return computeNurseryProjection({
+      metrics: nurseryMetrics,
+      poolMode: nurseryMetrics.shopConfig.poolMode,
+      shopCommissionPct: nurseryMetrics.shopConfig.commissionPct,
+    });
+  }, [nurseryMetrics]);
+  const nurseryTotalGross = nurseryMetrics?.grossTotal ?? 0;
+
+  // One-time atomic sweep of any remaining collected plant balance when Auto-Sync is enabled.
+  const autoSweepTriggeredRef = useRef<string>("");
+  useEffect(() => {
+    const cfg = nurseryMetrics?.autoSyncConfig;
+    const totals = nurseryMetrics?.autoSyncTotals;
+    if (!shopId || !cfg?.enabled || !totals || totals.hasInitialSweep || totals.remainingCollectedCents <= 0) {
+      return;
+    }
+    if (autoSweepTriggeredRef.current === shopId) return;
+    autoSweepTriggeredRef.current = shopId;
+    triggerNurseryAutoSyncSweep("initial")
+      .then(async (res) => {
+        const net = roundMoney(Number(res?.sweep?.sweptNetCents ?? 0) / 100);
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: getListDebtsQueryKey({ shopId }) }),
+          qc.invalidateQueries({ queryKey: getListDebtsQueryKey() }),
+          qc.invalidateQueries({ queryKey: ["nursery-settlement-state", shopId] }),
+          qc.invalidateQueries({ queryKey: ["/api/crm"] }),
+          qc.invalidateQueries({ queryKey: ["/api/crm/profile", shopId] }),
+        ]);
+        if (net > 0) {
+          toast.success(
+            `Auto-synced remaining ${formatKES(net)} plant proceeds to ${toTitleCase(cfg.ownerCustomerName)}`,
+          );
+        }
+      })
+      .catch(() => {
+        autoSweepTriggeredRef.current = "";
+      });
+  }, [
+    shopId,
+    qc,
+    nurseryMetrics?.autoSyncConfig,
+    nurseryMetrics?.autoSyncTotals,
+  ]);
 
   // Keep selectedDebt in sync when data refreshes
   useEffect(() => {
@@ -2329,18 +201,27 @@ export default function Debts() {
         (d.customerPhone || "").includes(q)
       );
     }
-    return [...list].sort((a: any, b: any) => b.balance - a.balance);
-  }, [allDebts, tab, debouncedSearch]);
+    return [...list].sort((a: any, b: any) => {
+      switch (sortBy) {
+        case "oldest":
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        case "newest":
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        case "name_asc":
+          return (a.customerName || "").localeCompare(b.customerName || "");
+        default:
+          return (b.balance || 0) - (a.balance || 0);
+      }
+    });
+  }, [allDebts, tab, debouncedSearch, sortBy]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, CustomerGroup>();
 
     // Track which debt is the newest per group so the group's display name
-    // reflects the latest rename, not whichever debt happened to sort first
-    // (this list is sorted by balance, so "first seen" was effectively random
-    // relative to name history — that's what made a rename look like it
-    // "reverted" on some screens but not others).
+    // reflects the latest rename, not whichever debt happened to sort first.
     const newestSeenAt = new Map<string, string>();
+    const oldestSeenAt = new Map<string, string>();
 
     for (const debt of filtered) {
       const key = debt.customerName?.trim().replace(/\s+/g, " ").toLowerCase() || "unknown";
@@ -2358,6 +239,7 @@ export default function Debts() {
           isOverdue: false,
         });
         newestSeenAt.set(key, debt.createdAt);
+        oldestSeenAt.set(key, debt.createdAt);
       }
       const g = map.get(key)!;
       g.debts.push(debt);
@@ -2371,20 +253,38 @@ export default function Debts() {
         const daysAgo = differenceInDays(new Date(), new Date(debt.createdAt));
         if (daysAgo > 30) g.isOverdue = true;
       }
-       const statusRank = { unpaid: 3, partial: 2, paid: 1, cancelled: 0 } as Record<string, number>;
+      const statusRank = { unpaid: 3, partial: 2, paid: 1, cancelled: 0 } as Record<string, number>;
       if ((statusRank[debt.status] ?? 0) > (statusRank[g.worstStatus] ?? 0)) {
-         g.worstStatus = debt.status as "unpaid" | "partial" | "paid" | "cancelled";
+        g.worstStatus = debt.status as "unpaid" | "partial" | "paid" | "cancelled";
       }
-      // Use the spelling/phone from whichever debt was created most recently.
       if (debt.createdAt >= (newestSeenAt.get(key) ?? debt.createdAt)) {
         newestSeenAt.set(key, debt.createdAt);
         if (debt.customerName) g.customerName = debt.customerName;
         if (debt.customerPhone) g.customerPhone = debt.customerPhone;
       }
+      if (debt.createdAt < (oldestSeenAt.get(key) ?? debt.createdAt)) {
+        oldestSeenAt.set(key, debt.createdAt);
+      }
     }
 
-    return Array.from(map.values());
-  }, [filtered]);
+    const list = Array.from(map.values());
+    return list.sort((a, b) => {
+      switch (sortBy) {
+        case "oldest":
+          return new Date(oldestSeenAt.get(a.key) ?? 0).getTime() - new Date(oldestSeenAt.get(b.key) ?? 0).getTime();
+        case "newest":
+          return new Date(newestSeenAt.get(b.key) ?? 0).getTime() - new Date(newestSeenAt.get(a.key) ?? 0).getTime();
+        case "name_asc":
+          return a.customerName.localeCompare(b.customerName);
+        default:
+          return b.totalBalance - a.totalBalance;
+      }
+    });
+  }, [filtered, sortBy]);
+
+  const activeListTotal = viewMode === "customers" ? grouped.length : filtered.length;
+  const visibleGroups = useMemo(() => grouped.slice(0, visibleCount), [grouped, visibleCount]);
+  const visibleDebts = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
   const TABS: { value: DebtTab; label: string; count: number }[] = [
     { value: "unpaid",  label: "Unpaid",       count: stats.unpaidCount  },
@@ -2394,293 +294,647 @@ export default function Debts() {
     { value: "all",     label: "All",          count: stats.totalCount   },
   ];
 
-  const STAT_CARDS = [
-    { label: "Total Debt", value: formatKES(stats.totalBalance), sub: `Across ${stats.activeCount} records`,  Icon: TrendingDown,  iconBg: "bg-destructive/15",                                                iconColor: "text-destructive",                                                valueCss: "text-destructive"      },
-    { label: "Overdue",    value: formatKES(stats.overdueBalance), sub: `${stats.overdueCount} records`,      Icon: Clock,         iconBg: stats.overdueCount > 0 ? "bg-orange-500/15"  : "bg-muted/30",    iconColor: stats.overdueCount > 0 ? "text-orange-400"  : "text-muted-foreground/30", valueCss: stats.overdueCount > 0 ? "text-orange-400"  : "text-muted-foreground/30" },
-    { label: "Partial",    value: formatKES(stats.partialBalance), sub: `${stats.partialCount} records`,      Icon: AlertTriangle, iconBg: stats.partialCount > 0 ? "bg-yellow-500/15"  : "bg-muted/30",    iconColor: stats.partialCount > 0 ? "text-yellow-400" : "text-muted-foreground/30", valueCss: stats.partialCount > 0 ? "text-yellow-400" : "text-muted-foreground/30" },
-    { label: "Paid",       value: formatKES(stats.paidTotal),     sub: `${stats.paidCount} records`,          Icon: CheckCircle2,  iconBg: "bg-emerald-500/15",                                               iconColor: "text-emerald-400",                                                valueCss: "text-emerald-400"      },
+  const STAT_CARDS: {
+    label: string;
+    tabKey: DebtTab;
+    value: string;
+    sub: string;
+    Icon: any;
+    iconBg: string;
+    iconColor: string;
+    valueCss: string;
+    ringCss: string;
+  }[] = [
+    {
+      label: "Total Debt",
+      tabKey: "all",
+      value: formatKES(stats.totalBalance),
+      sub: `Across ${stats.activeCount} active records`,
+      Icon: TrendingDown,
+      iconBg: "bg-destructive/12 border-destructive/25",
+      iconColor: "text-destructive",
+      valueCss: "text-destructive",
+      ringCss: "border-destructive/45 bg-destructive/[0.06]",
+    },
+    {
+      label: "Overdue 30d+",
+      tabKey: "overdue",
+      value: formatKES(stats.overdueBalance),
+      sub: `${stats.overdueCount} record${stats.overdueCount !== 1 ? "s" : ""}`,
+      Icon: Clock,
+      iconBg: stats.overdueCount > 0 ? "bg-rose-500/12 border-rose-500/25" : "bg-muted/40 border-border/60",
+      iconColor: stats.overdueCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground",
+      valueCss: stats.overdueCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground",
+      ringCss: "border-rose-500/45 bg-rose-500/[0.06]",
+    },
+    {
+      label: "Partial Paid",
+      tabKey: "partial",
+      value: formatKES(stats.partialBalance),
+      sub: `${stats.partialCount} record${stats.partialCount !== 1 ? "s" : ""}`,
+      Icon: AlertTriangle,
+      iconBg: stats.partialCount > 0 ? "bg-amber-500/12 border-amber-500/25" : "bg-muted/40 border-border/60",
+      iconColor: stats.partialCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+      valueCss: stats.partialCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+      ringCss: "border-amber-500/45 bg-amber-500/[0.06]",
+    },
+    {
+      label: "Settled / Paid",
+      tabKey: "paid",
+      value: formatKES(stats.paidTotal),
+      sub: `${stats.paidCount} record${stats.paidCount !== 1 ? "s" : ""}`,
+      Icon: CheckCircle2,
+      iconBg: "bg-emerald-500/12 border-emerald-500/25",
+      iconColor: "text-emerald-600 dark:text-emerald-400",
+      valueCss: "text-emerald-600 dark:text-emerald-400",
+      ringCss: "border-emerald-500/45 bg-emerald-500/[0.06]",
+    },
   ];
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden bg-background text-foreground">
 
-      {/* ── Left panel ──────────────────────────────────────────────── */}
+      {/* ── Left Workspace Panel (Full width up to 2xl, side-by-side 2xl+) ─ */}
       <div className={cn(
-        "flex flex-col min-w-0 overflow-hidden transition-all duration-200",
-        selectedDebt ? "hidden lg:flex lg:flex-1" : "flex-1"
+        "flex flex-col min-w-0 flex-1 overflow-hidden transition-all duration-200",
+        selectedDebt && "hidden sm:flex"
       )}>
-
-      {/* Sticky header */}
-      <div className="shrink-0 border-b border-border bg-card/98 backdrop-blur-sm">
-        {/* Title + actions */}
-        <div className="flex items-center justify-between px-4 pt-4 pb-3 gap-3">
-          <div>
-            <h1 className="text-lg font-bold font-display tracking-tight">Manage Debts</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Track customer debts and payments</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {stats.overdueWithPhone.length > 0 && (
-              <button
-                onClick={() => setBulkRemindOpen(true)}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#25D366]/10 border border-[#25D366]/25 text-[#25D366] text-xs font-semibold hover:bg-[#25D366]/20 transition-colors"
-              >
-                <Send className="h-3.5 w-3.5" />
-                Remind
-                <span className="bg-[#25D366]/20 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                  {stats.overdueWithPhone.length}
-                </span>
-              </button>
-            )}
-            <div className="hidden sm:flex items-center rounded-xl bg-muted/60 p-0.5">
-              <button
-                onClick={() => setViewMode("customers")}
-                className={cn("px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors", viewMode === "customers" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground")}
-              >
-                Customers
-              </button>
-              <button
-                onClick={() => setViewMode("records")}
-                className={cn("px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors", viewMode === "records" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground")}
-              >
-                Records
-              </button>
-            </div>
-            <AddDebtDialog shopId={shopId} onAdded={() => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() })} />
-          </div>
-        </div>
-
-        {/* Search + filter row */}
-        <div className="px-4 pb-2 flex gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              placeholder="Search by customer name or phone…"
-              className="pl-9 h-9 text-sm bg-muted/40 border-border/60 rounded-xl"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Status tabs */}
-        <div className="flex gap-1.5 px-4 pb-3 overflow-x-auto scrollbar-hide">
-          {TABS.map(t => (
-            <button
-              key={t.value}
-              onClick={() => { setTab(t.value); setSelectedDebt(null); }}
-              className={cn(
-                "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap",
-                tab === t.value
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-muted/60 text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.label}
-              {t.count > 0 && (
-                <span className={cn(
-                  "text-[10px] font-bold tabular-nums",
-                  tab === t.value ? "text-primary-foreground/70" : "text-muted-foreground/60"
-                )}>
-                  {t.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>{/* end sticky header */}
-
-      {/* ── Stats cards ──────────────────────────────────────────────── */}
-      <div className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-2.5 px-4 py-3 border-b border-border/60">
-        {STAT_CARDS.map(({ label, value, sub, Icon, iconBg, iconColor, valueCss }) => (
-          <div key={label} className="flex items-center gap-3 rounded-xl bg-card border border-border/50 px-3 py-2.5">
-            <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", iconBg)}>
-              <Icon className={cn("h-4 w-4", iconColor)} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground truncate">{label}</p>
-              <p className={cn("text-sm font-bold font-mono leading-tight truncate", valueCss)}>{value}</p>
-              <p className="text-[10px] text-muted-foreground/50 truncate">{sub}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Table area ───────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
-
-        {/* Column headers — hidden on mobile */}
-        {!isLoading && filtered.length > 0 && viewMode === "records" && (
-          <div className="hidden sm:grid grid-cols-[auto_1fr_110px_100px_110px_32px] items-center px-4 py-2 border-b border-border/50 bg-muted/20 sticky top-0 z-10">
-            <div className="w-9 mr-3" />
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Customer</div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-right pr-4">Total Amount</div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground text-right pr-4">Balance</div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</div>
-            <div />
-          </div>
-        )}
-
-        {/* Loading skeletons */}
-        {isLoading ? (
-          <div className="divide-y divide-border/40">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-3.5 animate-pulse">
-                <div className="w-9 h-9 rounded-xl bg-muted/60 shrink-0" />
-                <div className="flex-1 space-y-1.5">
-                  <div className="h-3.5 w-32 bg-muted/60 rounded-full" />
-                  <div className="h-2.5 w-24 bg-muted/40 rounded-full" />
+        <div className="flex-1 overflow-y-auto">
+          {/* Executive Header */}
+          <header className="border-b border-border/70 bg-background/90 px-4 sm:px-6 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3.5">
+              <div className="flex items-center gap-3.5 min-w-[230px] flex-1">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/12 border border-primary/25 text-primary">
+                  <Wallet className="h-5 w-5" />
                 </div>
-                <div className="hidden sm:block h-3.5 w-20 bg-muted/40 rounded-full" />
-                <div className="h-3.5 w-16 bg-muted/50 rounded-full" />
-                <div className="hidden sm:block h-6 w-16 bg-muted/30 rounded-full" />
-              </div>
-            ))}
-          </div>
-
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
-            <CheckCircle2 className="h-12 w-12 text-emerald-500/20" />
-            <p className="text-sm font-semibold">
-              {tab === "paid" ? "No paid debts yet" : "All clear!"}
-            </p>
-            <p className="text-xs opacity-50 text-center px-8">
-              {search ? `No results for "${search}"` : `No ${tab !== "all" ? tab + " " : ""}debts found.`}
-            </p>
-          </div>
-
-        ) : (
-          <div className="divide-y divide-border/40">
-            {viewMode === "customers" ? (
-              grouped.map((group) => (
-                <CustomerGroupRow key={group.key} group={group} onSelectDebt={setSelectedDebt} />
-              ))
-            ) : filtered.map((debt: any) => {
-              const isPaid    = debt.status === "paid";
-              const isPartial = debt.status === "partial";
-              const daysAgo   = differenceInDays(new Date(), new Date(debt.createdAt));
-              const isOverdue = !isPaid && daysAgo > 30;
-              const isSelected = selectedDebt?.id === debt.id;
-
-              const avatarBg =
-                isPaid    ? "bg-emerald-500/15 text-emerald-400" :
-                isOverdue ? "bg-red-500/15 text-red-400" :
-                isPartial ? "bg-orange-500/15 text-orange-400" :
-                            "bg-destructive/15 text-destructive";
-
-              const balanceCss =
-                isPaid    ? "text-emerald-400" :
-                isOverdue ? "text-red-400" :
-                isPartial ? "text-orange-400" :
-                            "text-destructive";
-
-              const statusBadge =
-                isPaid    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/25" :
-                isOverdue ? "bg-red-500/15 text-red-400 border-red-500/25" :
-                isPartial ? "bg-orange-500/15 text-orange-400 border-orange-500/25" :
-                            "bg-destructive/15 text-destructive border-destructive/25";
-
-               const balanceDue = debtBalanceDue(debt);
-               const customerCredit = debtCredit(debt);
-               const statusLabel =
-                isOverdue ? "Overdue" :
-                 isPaid    ? (customerCredit > 0 ? "Paid + Credit" : "Paid") :
-                isPartial ? "Partial" :
-                            "Unpaid";
-
-              const initials = debt.customerName
-                .split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
-
-              const totalPaid = debtAmountPaid(debt);
-
-              return (
-                <div
-                  key={debt.id}
-                  onClick={() => setSelectedDebt(isSelected ? null : debt)}
-                  className={cn(
-                    "group cursor-pointer transition-colors",
-                    "flex sm:grid sm:grid-cols-[auto_1fr_110px_100px_110px_32px] items-center gap-3 px-4 py-3",
-                    isSelected
-                      ? "bg-primary/8 border-l-2 border-l-primary"
-                      : "hover:bg-muted/30 border-l-2 border-l-transparent"
-                  )}
-                >
-                  {/* Avatar */}
-                  <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0", avatarBg)}>
-                    {initials}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-primary">
+                    <span>Credit Ledger</span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   </div>
+                  <h1 className="font-display text-2xl sm:text-[26px] font-bold tracking-normal leading-tight text-foreground">
+                    Customer Debts
+                  </h1>
+                  <p className="text-xs sm:text-sm text-muted-foreground truncate">
+                    Track credit balances, partial settlements, statements & WhatsApp reminders.
+                  </p>
+                </div>
+              </div>
 
-                  {/* Name + phone */}
-                  <div className="flex-1 sm:flex-none min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate leading-snug">{toTitleCase(debt.customerName)}</p>
-                    {debt.customerPhone ? (
-                      <p className="text-[11px] text-muted-foreground/60 flex items-center gap-1 mt-0.5">
-                        <Phone className="h-2.5 w-2.5 shrink-0" />{debt.customerPhone}
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {(nurseryTotalGross > 0 || nurserySuppliers.length > 0) && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPlantSettleTarget({
+                        customerName:
+                          nurserySuppliers.find((s) => !!s.customerName)?.customerName ??
+                          nurserySuppliers[0]?.name ??
+                          "",
+                        customerPhone:
+                          nurserySuppliers.find((s) => !!s.customerPhone)?.customerPhone ??
+                          nurserySuppliers[0]?.phone ??
+                          "",
+                      })
+                    }
+                    className="inline-flex h-9 items-center gap-1.5 px-3 rounded-xl bg-emerald-500/12 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-bold hover:bg-emerald-500/20 transition-colors cursor-pointer"
+                    title="Clear nursery owner debts using this shop's sold plants"
+                  >
+                    <Sprout className="h-3.5 w-3.5" />
+                    Plant Proceeds · {formatKES(nurseryTotalGross)}
+                  </button>
+                )}
+                {stats.overdueWithPhone.length > 0 && (
+                  <button
+                    onClick={() => setBulkRemindOpen(true)}
+                    className="inline-flex h-9 items-center gap-1.5 px-3 rounded-xl bg-[#25D366]/12 border border-[#25D366]/30 text-[#25D366] text-xs font-bold hover:bg-[#25D366]/20 transition-colors"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Remind
+                    <span className="bg-[#25D366]/20 text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums">
+                      {stats.overdueWithPhone.length}
+                    </span>
+                  </button>
+                )}
+
+                <div className="inline-flex items-center rounded-xl border border-border/70 bg-muted/45 p-0.5">
+                  <button
+                    onClick={() => setViewMode("customers")}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                      viewMode === "customers" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    Customers
+                  </button>
+                  <button
+                    onClick={() => setViewMode("records")}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                      viewMode === "records" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    Records
+                  </button>
+                </div>
+
+                <AddDebtDialog shopId={shopId} onAdded={() => qc.invalidateQueries({ queryKey: getListDebtsQueryKey() })} />
+              </div>
+            </div>
+
+            {/* Interactive 4-Card KPI Strip */}
+            <div className="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+              {STAT_CARDS.map(({ label, tabKey, value, sub, Icon, iconBg, iconColor, valueCss, ringCss }) => {
+                const isActive = tab === tabKey;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => { setTab(tabKey); setSelectedDebt(null); }}
+                    className={cn(
+                      "text-left rounded-2xl border p-3.5 transition-all hover:border-primary/40",
+                      isActive ? ringCss : "border-border/80 bg-card/95"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground truncate">{label}</p>
+                        <p className={cn("font-display mt-1 text-lg sm:text-xl font-bold tabular-nums leading-tight truncate", valueCss)}>
+                          {value}
+                        </p>
+                      </div>
+                      <div className={cn("w-9 h-9 rounded-xl border flex items-center justify-center shrink-0", iconBg)}>
+                        <Icon className={cn("h-4 w-4", iconColor)} />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1.5 truncate">{sub}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </header>
+
+          {/* Main Workspace Container */}
+          <div className="p-4 sm:p-6 space-y-4">
+            {nurseryMetrics && nurseryProjection && (nurseryMetrics.grossTotal > 0 || nurseryMetrics.settledPayments.length > 0) && (
+              <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.05] p-3.5 sm:p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                      <Sprout className="h-4 w-4 text-emerald-500" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-xs font-bold text-foreground truncate">
+                          Nursery Plant Proceeds · {shopName}
+                        </p>
+                        {nurseryMetrics.autoSyncConfig?.enabled && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                            <Zap className="h-2.5 w-2.5" />
+                            Auto-Sync → {toTitleCase(nurseryMetrics.autoSyncConfig.ownerCustomerName)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground truncate">
+                        {nurseryMetrics.autoSyncConfig?.enabled
+                          ? "Cash, M-Pesa & paid seedling credit sales auto-credit Mum's account; debts auto-cut"
+                          : "Collected Cash+M-Pesa vs amount already used to pay debts"}
                       </p>
-                    ) : (
-                      <p className="text-[11px] text-muted-foreground/30 mt-0.5 italic">No phone</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 rounded-xl text-xs gap-1.5 cursor-pointer"
+                      onClick={() =>
+                        setPlantSettleTarget({
+                          customerName:
+                            nurseryMetrics.autoSyncConfig?.ownerCustomerName ??
+                            nurserySuppliers.find((s) => !!s.customerName)?.customerName ??
+                            nurserySuppliers[0]?.name ??
+                            "",
+                          customerPhone:
+                            nurseryMetrics.autoSyncConfig?.ownerCustomerPhone ??
+                            nurserySuppliers.find((s) => !!s.customerPhone)?.customerPhone ??
+                            nurserySuppliers[0]?.phone ??
+                            "",
+                          initialTab: "history",
+                        })
+                      }
+                    >
+                      <History className="h-3.5 w-3.5" />
+                      Used Ledger ({nurseryMetrics.settledPayments.length + nurseryMetrics.payouts.length})
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8 rounded-xl text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
+                      onClick={() =>
+                        setPlantSettleTarget({
+                          customerName:
+                            nurseryMetrics.autoSyncConfig?.ownerCustomerName ??
+                            nurserySuppliers.find((s) => !!s.customerName)?.customerName ??
+                            nurserySuppliers[0]?.name ??
+                            "",
+                          customerPhone:
+                            nurseryMetrics.autoSyncConfig?.ownerCustomerPhone ??
+                            nurserySuppliers.find((s) => !!s.customerPhone)?.customerPhone ??
+                            nurserySuppliers[0]?.phone ??
+                            "",
+                          initialTab: "settle",
+                        })
+                      }
+                    >
+                      <Sprout className="h-3.5 w-3.5" />
+                      {nurseryMetrics.autoSyncConfig?.enabled ? "Auto-Sync & Split" : "Settle w/ Plants"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  <div className="rounded-xl border border-border/60 bg-background/75 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Collected Plant Money</p>
+                    <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-foreground">
+                      {formatKES(nurseryMetrics.collectedCashMpesa)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">of {formatKES(nurseryMetrics.grossTotal)} total</p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-background/75 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Used to Pay Debts</p>
+                    <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
+                      {formatKES(nurseryMetrics.d1SettledNetTotal)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {nurseryMetrics.settledPayments.length} settlement{nurseryMetrics.settledPayments.length === 1 ? "" : "s"} in D1
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-background/75 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Shop Profit Kept</p>
+                    <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-foreground">
+                      {formatKES(nurseryProjection.totalShopProfit)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">{nurseryMetrics.shopConfig.commissionPct}% split</p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Available Plant Balance</p>
+                    <p className="mt-0.5 text-sm font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {formatKES(nurseryProjection.availableNetProceeds)}
+                    </p>
+                    <p className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">
+                      {nurseryMetrics.payoutNetTotal > 0
+                        ? `After ${formatKES(nurseryMetrics.payoutNetTotal)} payouts`
+                        : nurseryMetrics.autoSyncConfig?.enabled && nurseryProjection.availableNetProceeds <= 0.01
+                        ? "Auto-synced to account"
+                        : "Ready to clear debts"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* Search + Sort + Status Pills Card */}
+            <div className="rounded-2xl border border-border/80 bg-card/95 p-3.5 sm:p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder={`Search across ${stats.totalCount.toLocaleString()} debts by customer name or phone…`}
+                    className="pl-10 pr-9 h-10 text-sm bg-background/70 border-border/80 rounded-xl focus-visible:border-primary"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      aria-label="Clear customer search"
+                      onClick={() => setSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="relative inline-flex items-center shrink-0">
+                  <select
+                    aria-label="Sort customer debts"
+                    value={sortBy}
+                    onChange={e => setSortBy(e.target.value as typeof sortBy)}
+                    style={{ WebkitAppearance: "none", MozAppearance: "none", appearance: "none" }}
+                    className="h-10 appearance-none rounded-xl border border-border/80 bg-background/70 pl-3.5 pr-9 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer w-full sm:w-auto"
+                  >
+                    <option value="balance_desc">Highest balance first</option>
+                    <option value="oldest">Oldest / most overdue</option>
+                    <option value="newest">Most recent first</option>
+                    <option value="name_asc">Name: A to Z</option>
+                  </select>
+                  <ArrowUpDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                </div>
+              </div>
+
+              <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
+                {TABS.map(t => (
+                  <button
+                    key={t.value}
+                    onClick={() => { setTab(t.value); setSelectedDebt(null); }}
+                    className={cn(
+                      "shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all whitespace-nowrap",
+                      tab === t.value
+                        ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                        : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+                    )}
+                  >
+                    <span>{t.label}</span>
+                    {t.count > 0 && (
+                      <span className={cn(
+                        "text-[10px] font-bold px-1.5 py-0.5 rounded-md tabular-nums",
+                        tab === t.value ? "bg-black/15 text-primary-foreground" : "bg-background/80 text-foreground"
+                      )}>
+                        {t.count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Accounts / Records Ledger Card */}
+            <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/95">
+              {/* Header row */}
+              {!isLoading && filtered.length > 0 && (
+                viewMode === "customers" ? (
+                  <div className="hidden sm:grid grid-cols-[minmax(190px,1.5fr)_minmax(110px,0.8fr)_minmax(115px,0.9fr)_92px_auto] items-center gap-3 px-4 py-2.5 border-b border-border/70 bg-muted/25 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <span>Customer Account</span>
+                    <span className="text-right">Total Issued</span>
+                    <span className="text-right">Balance Due</span>
+                    <span className="text-center">Status</span>
+                    <span className="text-right">Actions</span>
+                  </div>
+                ) : (
+                  <div className="hidden sm:grid grid-cols-[auto_1fr_120px_115px_100px_32px] items-center gap-3 px-4 py-2.5 border-b border-border/70 bg-muted/25 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <div className="w-9" />
+                    <span>Customer</span>
+                    <span className="text-right">Total Issued</span>
+                    <span className="text-right">Balance Due</span>
+                    <span className="text-center">Status</span>
+                    <div />
+                  </div>
+                )
+              )}
+
+              {/* Loading skeletons */}
+              {isLoading ? (
+                <div className="divide-y divide-border/50">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-4 animate-pulse">
+                      <div className="w-10 h-10 rounded-xl bg-muted/60 shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3.5 w-36 bg-muted/60 rounded-full" />
+                        <div className="h-2.5 w-24 bg-muted/40 rounded-full" />
+                      </div>
+                      <div className="hidden sm:block h-3.5 w-20 bg-muted/40 rounded-full" />
+                      <div className="h-4 w-20 bg-muted/50 rounded-full" />
+                      <div className="hidden sm:block h-6 w-16 bg-muted/35 rounded-full" />
+                    </div>
+                  ))}
+                </div>
+
+              ) : filtered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-2.5 text-muted-foreground">
+                  <CheckCircle2 className="h-11 w-11 text-emerald-500/25" />
+                  <p className="text-sm font-semibold text-foreground">
+                    {tab === "paid" ? "No paid debts yet" : "All clear!"}
+                  </p>
+                  <p className="text-xs text-center px-8">
+                    {search ? `No customer or phone matching "${search}"` : `No ${tab !== "all" ? tab + " " : ""}debt accounts found.`}
+                  </p>
+                </div>
+
+              ) : (
+                <div>
+                  {viewMode === "customers" ? (
+                    visibleGroups.map((group) => {
+                      const supplierMatch = findMatchingSupplier(nurserySuppliers, group.customerName, group.customerPhone);
+                      const ownerSync = nurseryMetrics?.autoSyncConfig;
+                      const ownerMatch = Boolean(
+                        ownerSync?.enabled &&
+                        ((normalizeCustomerKey(ownerSync.ownerCustomerName) &&
+                          normalizeCustomerKey(ownerSync.ownerCustomerName) === group.key) ||
+                          (normalizePhoneDigits(ownerSync.ownerCustomerPhone).length >= 9 &&
+                            normalizePhoneDigits(ownerSync.ownerCustomerPhone) ===
+                              normalizePhoneDigits(group.customerPhone))),
+                      );
+                      const syntheticOwnerSupplier =
+                        !supplierMatch && ownerMatch && ownerSync
+                          ? {
+                              id: "auto-sync-owner",
+                              name: ownerSync.ownerCustomerName,
+                              phone: ownerSync.ownerCustomerPhone,
+                              customerName: ownerSync.ownerCustomerName,
+                              customerPhone: ownerSync.ownerCustomerPhone,
+                            }
+                          : null;
+                      return (
+                        <CustomerGroupRow
+                          key={group.key}
+                          group={group}
+                          onSelectDebt={setSelectedDebt}
+                          matchedSupplier={supplierMatch ?? syntheticOwnerSupplier}
+                          plantPaidAmount={nurseryMetrics?.settledByCustomerKey[group.key] ?? 0}
+                          onOpenPlantSettle={(target) => setPlantSettleTarget(target)}
+                        />
+                      );
+                    })
+                  ) : (
+                    <div className="divide-y divide-border/50">
+                      {visibleDebts.map((debt: any) => {
+                        const isPaid    = debt.status === "paid";
+                        const isPartial = debt.status === "partial";
+                        const daysAgo   = differenceInDays(new Date(), new Date(debt.createdAt));
+                        const isOverdue = !isPaid && daysAgo > 30;
+                        const isSelected = selectedDebt?.id === debt.id;
+
+                        const avatarBg =
+                          isPaid    ? "bg-emerald-500/12 border-emerald-500/25 text-emerald-600 dark:text-emerald-400" :
+                          isOverdue ? "bg-rose-500/12 border-rose-500/25 text-rose-600 dark:text-rose-400" :
+                          isPartial ? "bg-amber-500/12 border-amber-500/25 text-amber-600 dark:text-amber-400" :
+                                      "bg-destructive/12 border-destructive/25 text-destructive";
+
+                        const balanceCss =
+                          isPaid    ? "text-emerald-600 dark:text-emerald-400" :
+                          isOverdue ? "text-rose-600 dark:text-rose-400" :
+                          isPartial ? "text-amber-600 dark:text-amber-400" :
+                                      "text-destructive";
+
+                        const statusBadge =
+                          isPaid    ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 border-emerald-500/25" :
+                          isOverdue ? "bg-rose-500/12 text-rose-600 dark:text-rose-400 border-rose-500/25" :
+                          isPartial ? "bg-amber-500/12 text-amber-600 dark:text-amber-400 border-amber-500/25" :
+                                      "bg-destructive/12 text-destructive border-destructive/25";
+
+                        const balanceDue = debtBalanceDue(debt);
+                        const customerCredit = debtCredit(debt);
+                        const statusLabel =
+                          isOverdue ? "Overdue" :
+                          isPaid    ? (customerCredit > 0 ? "Paid + Credit" : "Paid") :
+                          isPartial ? "Partial" :
+                                      "Unpaid";
+
+                        const initials = debt.customerName
+                          .split(" ").map((w: string) => w[0] ?? "").slice(0, 2).join("").toUpperCase();
+
+                        const totalPaid = debtAmountPaid(debt);
+
+                        return (
+                          <div
+                            key={debt.id}
+                            onClick={() => setSelectedDebt(isSelected ? null : debt)}
+                            className={cn(
+                              "group cursor-pointer transition-colors",
+                              "flex sm:grid sm:grid-cols-[auto_1fr_120px_115px_100px_32px] items-center gap-3 px-4 py-3.5",
+                              isSelected
+                                ? "bg-primary/10 border-l-2 border-l-primary"
+                                : "hover:bg-muted/25 border-l-2 border-l-transparent"
+                            )}
+                          >
+                            <div className={cn("w-9 h-9 rounded-xl border flex items-center justify-center text-xs font-bold shrink-0", avatarBg)}>
+                              {initials || "?"}
+                            </div>
+
+                            <div className="flex-1 sm:flex-none min-w-0">
+                              <p className="text-sm font-semibold text-foreground truncate leading-snug">{toTitleCase(debt.customerName)}</p>
+                              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5 truncate">
+                                {debt.customerPhone ? (
+                                  <span className="inline-flex items-center gap-1 font-mono">
+                                    <Phone className="h-2.5 w-2.5 shrink-0" />{debt.customerPhone}
+                                  </span>
+                                ) : (
+                                  <span className="italic">No phone</span>
+                                )}
+                                <span>·</span>
+                                <span>{daysAgo === 0 ? "Today" : `${daysAgo}d ago`}</span>
+                              </p>
+                            </div>
+
+                            <div className="hidden sm:block text-right">
+                              <p className="text-sm font-semibold font-mono tabular-nums text-foreground">{formatKES(debt.totalAmount)}</p>
+                              <p className="text-[10px] text-muted-foreground tabular-nums">Paid: {formatKES(totalPaid)}</p>
+                            </div>
+
+                            <div className="text-right shrink-0">
+                              <p className={cn("text-sm font-bold font-mono tabular-nums", balanceCss)}>{formatKES(balanceDue)}</p>
+                              {customerCredit > 0 && (
+                                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">
+                                  +{formatKES(customerCredit)} credit
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="hidden sm:flex justify-center">
+                              <span className={cn("text-[10px] font-bold px-2.5 py-0.5 rounded-full border uppercase tracking-wider", statusBadge)}>
+                                {statusLabel}
+                              </span>
+                            </div>
+
+                            <div className="hidden sm:flex items-center justify-center">
+                              <ChevronRight className={cn("h-4 w-4 transition-colors", isSelected ? "text-primary" : "text-muted-foreground group-hover:text-foreground")} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!isLoading && filtered.length > 0 && (
+                <div className="border-t border-border/70 bg-muted/20 px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground tabular-nums">
+                  <span>
+                    Showing{" "}
+                    <strong className="text-foreground">
+                      {Math.min(visibleCount, activeListTotal).toLocaleString()}
+                    </strong>{" "}
+                    of{" "}
+                    <strong className="text-foreground">{activeListTotal.toLocaleString()}</strong>{" "}
+                    {viewMode === "customers" ? `customer${activeListTotal !== 1 ? "s" : ""}` : `record${activeListTotal !== 1 ? "s" : ""}`}
+                    {activeListTotal > visibleCount && " — use Search above for instant lookup"}
+                  </span>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {selectedDebt && (
+                      <span className="text-[11px] font-semibold text-primary hidden lg:inline mr-2">
+                        Inspecting #{selectedDebt.id.slice(0, 8).toUpperCase()}
+                      </span>
+                    )}
+                    {visibleCount > 10 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 rounded-lg px-2.5 text-xs"
+                        onClick={() => setVisibleCount(10)}
+                      >
+                        Show 10
+                      </Button>
+                    )}
+                    {activeListTotal > visibleCount && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 rounded-lg px-2.5 text-xs font-semibold"
+                          onClick={() => setVisibleCount(n => Math.min(n + 10, activeListTotal))}
+                        >
+                          Load 10 more
+                        </Button>
+                        {activeListTotal - visibleCount > 10 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 rounded-lg px-2.5 text-xs"
+                            onClick={() => setVisibleCount(n => Math.min(n + 25, activeListTotal))}
+                          >
+                            +25
+                          </Button>
+                        )}
+                      </>
                     )}
                   </div>
-
-                  {/* Total amount — hidden on mobile */}
-                  <div className="hidden sm:block text-right pr-4">
-                    <p className="text-sm font-semibold font-mono text-foreground">{formatKES(debt.totalAmount)}</p>
-                    <p className="text-[10px] text-muted-foreground/50">Paid: {formatKES(totalPaid)}</p>
-                  </div>
-
-                  {/* Balance */}
-                  <div className="text-right pr-4 shrink-0">
-                    <p className={cn("text-sm font-bold font-mono", balanceCss)}>{formatKES(balanceDue)}</p>
-                    {customerCredit > 0 && <p className="text-[10px] text-emerald-400 font-semibold">+{formatKES(customerCredit)} credit</p>}
-                  </div>
-
-                  {/* Status badge */}
-                  <div className="hidden sm:flex items-center">
-                    <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wide", statusBadge)}>
-                      {statusLabel}
-                    </span>
-                  </div>
-
-                  {/* Arrow */}
-                  <div className="hidden sm:flex items-center justify-center">
-                    <ChevronRight className={cn("h-4 w-4 transition-colors", isSelected ? "text-primary" : "text-muted-foreground/30 group-hover:text-muted-foreground")} />
-                  </div>
                 </div>
-              );
-            })}
+              )}
+            </div>
           </div>
-        )}
-
-        {/* Row count */}
-        {!isLoading && filtered.length > 0 && (
-          <p className="text-[11px] text-muted-foreground/40 text-center py-4">
-            Showing {viewMode === "customers" ? grouped.length : filtered.length} {viewMode === "customers" ? `customer${grouped.length !== 1 ? "s" : ""}` : `record${filtered.length !== 1 ? "s" : ""}`}
-          </p>
-        )}
-      </div>
-
+        </div>
       </div>{/* end left panel */}
 
-      {/* ── Right: detail panel (desktop) ────────────────────────────── */}
+      {/* ── Detail panel: docked on 2xl+, slide-over drawer on <= xl ───── */}
       {selectedDebt && (
-        <div className="hidden lg:flex flex-col w-[420px] xl:w-[460px] shrink-0 border-l border-border">
+        <div className="hidden 2xl:flex flex-col w-[460px] shrink-0 border-l border-border/80 bg-card/95">
           <DebtDetailPanel
             debt={selectedDebt}
             isOwner={isOwner}
             onClose={() => setSelectedDebt(null)}
+            onOpenPlantSettle={(target) => setPlantSettleTarget(target)}
           />
         </div>
       )}
 
-      {/* ── Mobile: full-screen overlay panel ────────────────────────── */}
+      {/* ── Slide-over drawer (mobile bottom sheet / tablet+desktop slide-over) ── */}
       {selectedDebt && (
-        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedDebt(null)} />
-          <div className="relative bg-card rounded-t-2xl flex flex-col shadow-2xl" style={{ maxHeight: "92dvh" }}>
-            <div className="w-10 h-1 bg-muted-foreground/20 rounded-full mx-auto mt-2.5 mb-1 shrink-0" />
+        <div className="2xl:hidden fixed inset-0 z-50 flex flex-col justify-end sm:flex-row sm:justify-end">
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-xs" onClick={() => setSelectedDebt(null)} />
+          <div
+            className="relative bg-card rounded-t-2xl sm:rounded-none sm:border-l sm:border-border/80 flex flex-col shadow-2xl w-full sm:w-[450px] sm:h-full max-h-[92dvh] sm:max-h-full overflow-hidden animate-in fade-in-0 duration-150"
+          >
+            <div className="sm:hidden w-10 h-1 bg-muted-foreground/25 rounded-full mx-auto mt-2.5 mb-1 shrink-0" />
             <DebtDetailPanel
               debt={selectedDebt}
               isOwner={isOwner}
               onClose={() => setSelectedDebt(null)}
+              onOpenPlantSettle={(target) => setPlantSettleTarget(target)}
             />
           </div>
         </div>
@@ -2740,6 +994,20 @@ export default function Debts() {
           </div>
         </div>
       )}
+
+      <NurseryDebtSettlementDialog
+        open={!!plantSettleTarget}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPlantSettleTarget(null);
+        }}
+        shopId={shopId}
+        shopName={shopName}
+        customerName={plantSettleTarget?.customerName}
+        customerPhone={plantSettleTarget?.customerPhone}
+        initialTab={plantSettleTarget?.initialTab}
+        externalDebts={allDebts || []}
+        suppliers={nurserySuppliers}
+      />
 
     </div>
   );

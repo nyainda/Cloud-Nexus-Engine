@@ -5,6 +5,13 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { setBaseUrl, setAuthTokenGetter, getListProductsQueryOptions, getListProductsQueryKey } from "@workspace/api-client-react";
 import { mergeWithMutationResults } from "@/lib/product-version-guard";
 import { loadCachedProducts, saveProductsToCache } from "@/lib/product-db";
+import {
+  syncProductsDelta,
+  setStoredCatalogVersion,
+  getStoredCatalogVersion,
+  deriveCatalogVersionFromProducts,
+} from "@/lib/product-sync";
+import { API_BASE } from "@/lib/api-base";
 import { useEffect, useRef, useState, lazy, Suspense, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
 import { useGetSession } from "@workspace/api-client-react";
@@ -30,18 +37,16 @@ import POS from "@/pages/pos";
 import Layout from "@/components/layout";
 const Stock = lazy(() => import("@/pages/stock"));
 const Debts = lazy(() => import("@/pages/debts"));
-const Alerts = lazy(() => import("@/pages/alerts"));
 const Reports = lazy(() => import("@/pages/reports"));
-const OCR = lazy(() => import("@/pages/ocr"));
 const Settings = lazy(() => import("@/pages/settings"));
 const OwnerDashboard = lazy(() => import("@/pages/owner-dashboard"));
 const SalesHistory = lazy(() => import("@/pages/sales-history"));
 const Returns = lazy(() => import("@/pages/returns"));
 const Transfers = lazy(() => import("@/pages/transfers"));
-const InvoiceHistory = lazy(() => import("@/pages/invoice-history"));
 const SupplierDetail = lazy(() => import("@/pages/supplier-detail"));
 const Quotations = lazy(() => import("@/pages/quotations"));
 const Customers = lazy(() => import("@/pages/customers"));
+const NurseryRegister = lazy(() => import("@/pages/nursery-register"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
 const queryClient = new QueryClient({
@@ -63,10 +68,10 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      refetchOnWindowFocus: false,  // POS: tab switches must never fire background requests
-      refetchOnReconnect: false,    // reconnect refetch disabled — mutations invalidate cache explicitly
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
       refetchOnMount: true,
-      staleTime: 5 * 60_000,        // 5 min — matches KV cache TTL; mutations invalidate immediately
+      staleTime: 60_000,
       gcTime: 30 * 60_000,          // 30 min in memory
     },
   },
@@ -95,7 +100,12 @@ queryClient.getQueryCache().subscribe((event) => {
   const key = event.query.queryKey;
   if (!Array.isArray(key) || key[0] !== "/api/products") return;
 
-  // 1. Version guard merge
+  // 1. Record authoritative server catalog version before optimistic merge
+  const serverVersion =
+    (action.data as any)?.catalogVersion ||
+    deriveCatalogVersionFromProducts(action.data?.products);
+
+  // 2. Version guard merge
   const merged = mergeWithMutationResults(action.data);
   if (merged !== action.data) {
     _applyingVersionGuard = true;
@@ -103,19 +113,19 @@ queryClient.getQueryCache().subscribe((event) => {
     _applyingVersionGuard = false;
   }
 
-  // 2. Write-through to IndexedDB — use the merged data (authoritative)
+  // 3. Write-through to IndexedDB — use the merged data (authoritative)
   const finalData = merged !== action.data ? merged : action.data;
   const products: any[] | undefined = finalData?.products;
   if (products && products.length > 0) {
     const shopId: string | undefined = products[0]?.shopId;
     if (shopId) {
+      if (serverVersion) setStoredCatalogVersion(shopId, serverVersion);
       // Fire-and-forget — IndexedDB write is non-blocking
       saveProductsToCache(shopId, products).catch(() => {});
     }
   }
 });
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? null;
 setBaseUrl(API_BASE);
 setAuthTokenGetter(() => localStorage.getItem("greenlink_token"));
 
@@ -137,15 +147,15 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0A0A0A", color: "#C8FF00", fontFamily: "sans-serif", gap: 16, padding: 24 }}>
+        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "hsl(var(--background))", color: "hsl(var(--primary))", fontFamily: "var(--app-font-sans)", gap: 16, padding: 24 }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/>
           </svg>
-          <p style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Something went wrong</p>
-          <p style={{ fontSize: 13, color: "#888", margin: 0, maxWidth: 320, textAlign: "center" }}>{this.state.message}</p>
+          <p style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Something went wrong</p>
+          <p style={{ fontSize: 13, color: "hsl(var(--muted-foreground))", margin: 0, maxWidth: 320, textAlign: "center" }}>{this.state.message}</p>
           <button
             onClick={() => { this.setState({ hasError: false, message: "" }); window.location.reload(); }}
-            style={{ marginTop: 8, padding: "10px 24px", background: "#C8FF00", color: "#0A0A0A", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 14 }}
+            style={{ marginTop: 8, padding: "10px 24px", background: "hsl(var(--primary))", color: "hsl(var(--primary-foreground))", border: "none", borderRadius: 12, fontWeight: 700, cursor: "pointer", fontSize: 14 }}
           >
             Reload
           </button>
@@ -159,18 +169,18 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 // ── Shared loading spinner ─────────────────────────────────────────────────────
 function PageLoader() {
   return (
-    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0A0A0A", gap: 20 }}>
-      <div style={{ width: 52, height: 52, borderRadius: 14, background: "#C8FF00", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0A0A0A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "hsl(var(--background))", gap: 20 }}>
+      <div style={{ width: 52, height: 52, borderRadius: 16, background: "linear-gradient(135deg, #C8FF1A 0%, #9EE600 100%)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 12px 32px rgba(184,248,22,0.22)" }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0A0E0C" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
           <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>
         </svg>
       </div>
       <div style={{ textAlign: "center" }}>
-        <p style={{ color: "#fff", fontWeight: 700, fontSize: 18, margin: 0, letterSpacing: "-0.02em" }}>GreenLink OS</p>
-        <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, margin: "4px 0 0" }}>Loading…</p>
+        <p style={{ color: "hsl(var(--foreground))", fontWeight: 700, fontSize: 18, margin: 0, letterSpacing: "-0.02em" }}>GreenLink OS</p>
+        <p style={{ color: "hsl(var(--muted-foreground))", fontSize: 12, margin: "4px 0 0" }}>Loading workspace…</p>
       </div>
-      <div style={{ width: 36, height: 36, borderRadius: "50%", border: "2px solid rgba(200,255,0,0.2)", borderTop: "2px solid #C8FF00", animation: "spin 0.8s linear infinite" }} />
+      <div style={{ width: 32, height: 32, borderRadius: "50%", border: "2px solid hsl(var(--primary) / 0.2)", borderTop: "2px solid hsl(var(--primary))", animation: "spin 0.8s linear infinite" }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
@@ -221,9 +231,15 @@ function AuthGuard({ children }: { children: ReactNode }) {
     const opts = getListProductsQueryOptions({ shopId, limit: 3000 });
     loadCachedProducts(shopId).then((cached) => {
       if (cached.length > 0 && !qc.getQueryData(opts.queryKey)) {
-        qc.setQueryData(opts.queryKey, { products: cached });
+        qc.setQueryData(opts.queryKey, { products: cached, total: cached.length });
       }
-      qc.prefetchQuery(opts);
+      if (cached.length > 0 && getStoredCatalogVersion(shopId)) {
+        syncProductsDelta(qc, shopId).catch(() => {
+          qc.prefetchQuery(opts);
+        });
+      } else {
+        qc.prefetchQuery(opts);
+      }
     }).catch(() => {
       qc.prefetchQuery(opts);
     });
@@ -233,7 +249,8 @@ function AuthGuard({ children }: { children: ReactNode }) {
   // ── Session validation — online only ───────────────────────────────────────
   // When the device is offline there is no point hitting the network:
   //  • We can't reach the CF Worker anyway → guaranteed TypeError
-  //  • The 5-second NetworkFirst SW timeout causes a visible hang
+  //  • API requests fail while offline; the service worker no longer serves
+  //    stale API responses as a substitute for current server data
   //  • The retry/error path can incorrectly land in the "no session" branch
   //    if the error object shape is unexpected, logging the user out.
   // Solution: disable the query while offline and re-enable when back online.
@@ -332,18 +349,16 @@ function AppRoutes() {
                 <Route path="/pos" component={POS} />
                 <Route path="/stock" component={Stock} />
                 <Route path="/debts" component={Debts} />
-                <Route path="/alerts" component={Alerts} />
                 <Route path="/reports" component={Reports} />
-                <Route path="/ocr" component={OCR} />
                 <Route path="/settings" component={Settings} />
                 <Route path="/owner-dashboard" component={OwnerDashboard} />
                 <Route path="/sales-history" component={SalesHistory} />
                 <Route path="/returns" component={Returns} />
                 <Route path="/transfers" component={Transfers} />
-                <Route path="/invoices" component={InvoiceHistory} />
                 <Route path="/suppliers/:supplierId" component={SupplierDetail} />
                 <Route path="/quotations" component={Quotations} />
                 <Route path="/customers" component={Customers} />
+                <Route path="/nursery" component={NurseryRegister} />
                 <Route component={NotFound} />
               </Switch>
             </Suspense>

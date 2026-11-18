@@ -5,6 +5,7 @@ import {
   useListAuditLog, getListSuppliersQueryKey
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { API_BASE } from "@/lib/api-base";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter
 } from "@/components/ui/dialog";
@@ -14,7 +15,7 @@ import { useLocation } from "wouter";
 import {
   LogOut, Store, Shield, Truck, FileText, Plus, Edit2, Trash2,
   KeyRound, Eye, EyeOff, Bot, CheckCircle2, ChevronRight,
-  Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone, X, MessageCircle, ScanLine,
+  Phone, User, Sparkles, Clock, AlertCircle, Settings2, Download, Smartphone, X, MessageCircle,
   WifiOff, Wifi, RefreshCw, CloudUpload, ShoppingCart, Package, Banknote, HardDrive, TrendingUp, CreditCard, Bell,
 } from "lucide-react";
 import {
@@ -45,6 +46,7 @@ function mutationTypeLabel(type: QueuedMutation["type"]) {
   if (type === "restock") return "Restock";
   if (type === "debt_payment") return "Debt Payment";
   if (type === "customer_debt_payment") return "Debt Payment (all debts)";
+  if (type === "customer_credit_topup") return "Credit Top-up";
   return type;
 }
 function mutationTypeIcon(type: QueuedMutation["type"]) {
@@ -52,6 +54,7 @@ function mutationTypeIcon(type: QueuedMutation["type"]) {
   if (type === "restock") return Package;
   if (type === "debt_payment") return Banknote;
   if (type === "customer_debt_payment") return Banknote;
+  if (type === "customer_credit_topup") return Banknote;
   return CloudUpload;
 }
 
@@ -978,7 +981,7 @@ function BackupSection({ shopId }: { shopId: string }) {
     setDownloading(true);
     try {
       const token = localStorage.getItem("greenlink_token") || "";
-      const baseUrl = (window as any).__API_BASE_URL__ || "";
+      const baseUrl = API_BASE ?? "";
       const res = await fetch(`${baseUrl}/api/admin/export?shopId=${encodeURIComponent(shopId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -1120,9 +1123,9 @@ export default function Settings() {
 
   const [activeSection, setActiveSection] = useState<Section>("shop");
 
-  const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 60_000, refetchIntervalInBackground: false } });
-  const { data: suppliers } = useListSuppliers({ shopId }, { query: { enabled: !!shopId && isOwner, refetchInterval: 60_000, refetchIntervalInBackground: false } });
-  const { data: auditLog } = useListAuditLog({ shopId, limit: 20 }, { query: { enabled: !!shopId && isOwner, refetchInterval: 30_000, refetchIntervalInBackground: false } });
+  const { data: shop } = useGetShop(shopId, { query: { enabled: !!shopId, refetchInterval: 180_000, refetchIntervalInBackground: false } });
+  const { data: suppliers } = useListSuppliers({ shopId }, { query: { enabled: !!shopId && isOwner, refetchInterval: 180_000, refetchIntervalInBackground: false } });
+  const { data: auditLog } = useListAuditLog({ shopId, limit: 20 }, { query: { enabled: !!shopId && isOwner, refetchInterval: 180_000, refetchIntervalInBackground: false } });
 
   const updateShop = useUpdateShop();
 
@@ -1414,7 +1417,7 @@ export default function Settings() {
           <div className="max-w-xl space-y-6">
             <div>
               <h2 className="text-2xl font-bold font-display text-foreground">AI Integration</h2>
-              <p className="text-sm text-muted-foreground mt-0.5">Connect an AI provider to power the Smart Scanner. Groq is used first (faster), Gemini as fallback.</p>
+              <p className="text-sm text-muted-foreground mt-0.5">Configure optional AI vision API keys (Groq primary, Gemini fallback).</p>
             </div>
 
             {/* Groq */}
@@ -1428,21 +1431,6 @@ export default function Settings() {
               <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground/50 mb-3">Google Gemini — Vision OCR (Fallback)</p>
               <GeminiSection shopId={shopId} hasKey={!!(shop as any)?.hasGeminiKey} />
             </div>
-
-            {/* Quick access to the scanner */}
-            <button
-              onClick={() => setLocation("/ocr")}
-              className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-all text-left group"
-            >
-              <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
-                <ScanLine className="h-5 w-5 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-foreground">Open Smart Scanner</p>
-                <p className="text-xs text-muted-foreground/70 mt-0.5">Scan invoices and handwritten notebooks with AI</p>
-              </div>
-              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
-            </button>
           </div>
         )}
 

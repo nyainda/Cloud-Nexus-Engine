@@ -2,10 +2,10 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GreenLink OS</title>
     <meta name="description" content="GreenLink OS — Professional retail management for agrovet businesses." />
-    <meta name="theme-color" content="#0A0A0A" />
+    <meta name="theme-color" content="#0A0E0C" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="robots" content="index, follow" />
@@ -20,17 +20,17 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://api.fontshare.com">
     <style>
-      html, body, #root { height: 100%; background: #0A0A0A; margin: 0; }
+      html, body, #root { height: 100%; background: #0A0E0C; margin: 0; }
       #app-splash {
-        position: fixed; inset: 0; background: #0A0A0A; z-index: 9999;
+        position: fixed; inset: 0; background: radial-gradient(circle at 50% 35%, rgba(184, 248, 22, 0.08), transparent 55%), #0A0E0C; z-index: 9999;
         display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
         transition: opacity 0.3s ease;
       }
       #app-splash.hidden { opacity: 0; pointer-events: none; }
-      .splash-icon { width: 64px; height: 64px; border-radius: 18px; background: #C8FF00; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 40px rgba(200,255,0,0.25); }
-      .splash-title { color: #fff; font-size: 22px; font-weight: 700; letter-spacing: -0.03em; font-family: system-ui, sans-serif; margin: 0; }
-      .splash-sub { color: rgba(255,255,255,0.35); font-size: 12px; font-family: system-ui, sans-serif; margin: 2px 0 0; text-align: center; }
-      .splash-spinner { width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(200,255,0,0.2); border-top-color: #C8FF00; animation: splash-spin 0.75s linear infinite; }
+      .splash-icon { width: 64px; height: 64px; border-radius: 18px; background: linear-gradient(135deg, #C8FF1A 0%, #9EE600 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 12px 40px rgba(184,248,22,0.28), inset 0 1px 0 rgba(255,255,255,0.45); }
+      .splash-title { color: #F5F7F6; font-size: 22px; font-weight: 700; letter-spacing: -0.03em; font-family: system-ui, sans-serif; margin: 0; }
+      .splash-sub { color: rgba(245,247,246,0.45); font-size: 12px; font-family: system-ui, sans-serif; margin: 4px 0 0; text-align: center; }
+      .splash-spinner { width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(184,248,22,0.18); border-top-color: #B8F816; animation: splash-spin 0.75s linear infinite; }
       @keyframes splash-spin { to { transform: rotate(360deg); } }
     </style>
   </head>

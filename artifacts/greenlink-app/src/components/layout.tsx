@@ -1,14 +1,15 @@
 import { Link, useRoute, useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import { OfflineBanner } from "@/components/offline-banner";
-import { OfflineSyncProvider } from "@/lib/offline-context";
+import { OfflineSyncProvider, useOfflineSyncCtx } from "@/lib/offline-context";
 import {
-  ShoppingCart, Package, Users, Bell, BarChart3,
-  ScanLine, Settings, LogOut, LayoutDashboard, Receipt,
-  Sun, Moon, Download, RotateCcw, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen,
-  MoreHorizontal, X, Truck, ArrowLeftRight, FileText, BookUser,
+  ShoppingCart, Package, Users, BarChart3, Store, MapPin,
+  Settings, LogOut, LayoutDashboard, Receipt,
+  Sun, Moon, Download, RotateCcw, PanelLeftClose, PanelLeftOpen,
+  MoreHorizontal, X, ArrowLeftRight, FileText, BookUser, Sprout,
+  WifiOff, RefreshCw,
 } from "lucide-react";
-import { useListNotifications, useLogout } from "@workspace/api-client-react";
+import { useLogout } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { setCachedSession } from "@/lib/session-cache";
 import { getTheme, setTheme, type Theme } from "@/lib/theme";
@@ -22,29 +23,54 @@ interface NavItemProps {
   collapsed?: boolean;
 }
 
+const PAGE_TITLES: Record<string, string> = {
+  "/": "Point of Sale",
+  "/pos": "Point of Sale",
+  "/stock": "Inventory",
+  "/customers": "Customers",
+  "/debts": "Customer Debts",
+  "/sales-history": "Sales History",
+  "/returns": "Process Return",
+  "/transfers": "Stock Transfers",
+  "/quotations": "Quotations",
+  "/nursery": "Nursery Register",
+  "/owner-dashboard": "Owner Overview",
+  "/reports": "Analytics",
+  "/settings": "Settings",
+};
+
+function getPageTitle(path: string): string {
+  if (PAGE_TITLES[path]) return PAGE_TITLES[path];
+  if (path.startsWith("/suppliers/")) return "Supplier Detail";
+  return "GreenLink OS";
+}
+
 function SidebarNavItem({ href, icon: Icon, label, badge, collapsed }: NavItemProps) {
-  const [isActive] = useRoute(href);
+  const [matchHref] = useRoute(href);
+  const [matchRoot] = useRoute("/");
+  const isActive = matchHref || (href === "/pos" && matchRoot);
+
   return (
     <Link
       href={href}
       title={collapsed ? label : undefined}
       className={cn(
-        "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group relative",
-        collapsed ? "justify-center px-2" : "",
+        "flex items-center gap-3 rounded-xl transition-all duration-150 group relative",
+        collapsed ? "justify-center h-10 w-10 mx-auto" : "px-3 py-2",
         isActive
-          ? "bg-primary text-primary-foreground font-semibold"
+          ? "bg-primary text-primary-foreground font-semibold shadow-sm"
           : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
       )}
     >
-      <Icon className="h-4 w-4 shrink-0" />
-      {!collapsed && <span className="text-sm font-medium">{label}</span>}
+      <Icon className={cn("h-4 w-4 shrink-0", isActive ? "text-primary-foreground" : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground")} />
+      {!collapsed && <span className="text-[13px] font-medium truncate">{label}</span>}
       {!!badge && badge > 0 && !collapsed && (
         <span className="ml-auto bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
           {badge > 99 ? "99+" : badge}
         </span>
       )}
       {!!badge && badge > 0 && collapsed && (
-        <span className="absolute top-1 right-1 bg-destructive text-[8px] font-bold rounded-full w-3 h-3 flex items-center justify-center text-white">
+        <span className="absolute -top-0.5 -right-0.5 bg-destructive text-[8px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center text-white">
           {badge > 9 ? "9+" : badge}
         </span>
       )}
@@ -53,7 +79,10 @@ function SidebarNavItem({ href, icon: Icon, label, badge, collapsed }: NavItemPr
 }
 
 function BottomNavItem({ href, icon: Icon, label, badge }: NavItemProps) {
-  const [isActive] = useRoute(href === "/" ? "/" : href);
+  const [matchHref] = useRoute(href);
+  const [matchRoot] = useRoute("/");
+  const isActive = matchHref || (href === "/pos" && matchRoot);
+
   return (
     <Link
       href={href}
@@ -62,117 +91,108 @@ function BottomNavItem({ href, icon: Icon, label, badge }: NavItemProps) {
         isActive ? "text-primary" : "text-muted-foreground"
       )}
     >
+      {isActive && (
+        <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-primary" />
+      )}
       <div className="relative">
-        <Icon className="h-5 w-5" />
+        <Icon className="h-[18px] w-[18px]" />
         {!!badge && badge > 0 && (
           <span className="absolute -top-1.5 -right-1.5 bg-destructive text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center text-white">
             {badge > 9 ? "9+" : badge}
           </span>
         )}
       </div>
-      <span className={cn("text-[9px] font-semibold uppercase tracking-wide", isActive ? "text-primary" : "text-muted-foreground/60")}>
+      <span className={cn("text-[9px] font-bold uppercase tracking-wider", isActive ? "text-primary" : "text-muted-foreground/70")}>
         {label}
       </span>
     </Link>
   );
 }
 
-function MobileThemeToggle() {
-  const [theme, setThemeState] = useState<Theme>(getTheme);
-  const toggle = () => {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    setThemeState(next);
-  };
+function MobileThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
   return (
     <button
-      onClick={toggle}
-      title={theme === "dark" ? "Light mode" : "Dark mode"}
-      className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+      type="button"
+      onClick={onToggle}
+      title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+      className="h-8 w-8 flex items-center justify-center rounded-xl border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground transition-colors"
     >
-      {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      {theme === "dark" ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-primary" />}
     </button>
   );
 }
 
-function ThemeToggle({ collapsed, className }: { collapsed?: boolean; className?: string }) {
-  const [theme, setThemeState] = useState<Theme>(getTheme);
-  const toggle = () => {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    setThemeState(next);
-  };
+function ThemeToggle({ collapsed, theme, onToggle }: { collapsed?: boolean; theme: Theme; onToggle: () => void }) {
   return (
     <button
-      onClick={toggle}
+      type="button"
+      onClick={onToggle}
       title={collapsed ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
       className={cn(
-        "flex items-center gap-2 rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all text-sm font-medium w-full",
-        collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5",
-        className
+        "flex items-center gap-2.5 rounded-xl text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all text-[13px] font-medium cursor-pointer",
+        collapsed ? "justify-center h-10 w-10 mx-auto" : "w-full px-3 py-2"
       )}
     >
-      {theme === "dark" ? <Sun className="h-4 w-4 shrink-0" /> : <Moon className="h-4 w-4 shrink-0" />}
+      {theme === "dark" ? <Sun className="h-4 w-4 shrink-0 text-amber-400" /> : <Moon className="h-4 w-4 shrink-0 text-primary" />}
       {!collapsed && <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>}
     </button>
   );
 }
 
-function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCount: number }) {
+function MobileBottomNav({ isOwner }: { isOwner: boolean }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [location] = useLocation();
 
-  // Close the "More" sheet whenever the user navigates
   useEffect(() => { setMoreOpen(false); }, [location]);
 
   return (
     <>
-      {/* Bottom bar */}
       <nav
-        className="lg:hidden flex items-stretch bg-sidebar border-t border-border shrink-0 z-40"
+        className="lg:hidden flex items-stretch bg-sidebar/95 backdrop-blur-md border-t border-border shrink-0 z-40"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <BottomNavItem href="/pos" icon={ShoppingCart} label="POS" />
         <BottomNavItem href="/stock" icon={Package} label="Stock" />
         <BottomNavItem href="/debts" icon={Users} label="Debts" />
-        <BottomNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} />
         <BottomNavItem href="/sales-history" icon={Receipt} label="History" />
-        {/* "More" button — opens a sheet with the rest of the navigation */}
         <button
+          type="button"
           onClick={() => setMoreOpen(v => !v)}
           className={cn(
             "flex flex-col items-center justify-center flex-1 py-2 gap-0.5 transition-colors relative",
             moreOpen ? "text-primary" : "text-muted-foreground"
           )}
         >
-          <MoreHorizontal className="h-5 w-5" />
-          <span className={cn("text-[9px] font-semibold uppercase tracking-wide", moreOpen ? "text-primary" : "text-muted-foreground/60")}>
+          <MoreHorizontal className="h-[18px] w-[18px]" />
+          <span className={cn("text-[9px] font-bold uppercase tracking-wider", moreOpen ? "text-primary" : "text-muted-foreground/70")}>
             More
           </span>
         </button>
       </nav>
 
-      {/* "More" bottom sheet overlay */}
       {moreOpen && (
         <>
-          {/* Backdrop */}
           <div
-            className="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
             onClick={() => setMoreOpen(false)}
           />
-          {/* Sheet */}
           <div
-            className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-sidebar border-t border-border rounded-t-2xl shadow-2xl"
+            className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-sidebar border-t border-border rounded-t-3xl shadow-2xl"
             style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border/40">
-              <p className="text-sm font-bold text-foreground">Navigation</p>
-              <button onClick={() => setMoreOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border/60">
+              <p className="font-display text-sm font-bold text-foreground">All Modules</p>
+              <button
+                type="button"
+                onClick={() => setMoreOpen(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-xl bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+              >
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="p-3 grid grid-cols-2 gap-2">
               <MoreSheetItem href="/customers" icon={BookUser} label="Customers" />
+              <MoreSheetItem href="/nursery" icon={Sprout} label="Nursery Register" />
               <MoreSheetItem href="/returns" icon={RotateCcw} label="Process Return" />
               <MoreSheetItem href="/transfers" icon={ArrowLeftRight} label="Transfers" />
               <MoreSheetItem href="/quotations" icon={FileText} label="Quotations" />
@@ -180,8 +200,6 @@ function MobileBottomNav({ isOwner, unreadCount }: { isOwner: boolean; unreadCou
                 <>
                   <MoreSheetItem href="/reports" icon={BarChart3} label="Analytics" />
                   <MoreSheetItem href="/owner-dashboard" icon={LayoutDashboard} label="Overview" />
-                  <MoreSheetItem href="/invoices" icon={Truck} label="Purchase History" />
-                  <MoreSheetItem href="/ocr" icon={ScanLine} label="Smart Scanner" />
                 </>
               )}
               <MoreSheetItem href="/settings" icon={Settings} label="Settings" />
@@ -199,14 +217,14 @@ function MoreSheetItem({ href, icon: Icon, label }: { href: string; icon: React.
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-semibold transition-all",
+        "flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-all border",
         isActive
-          ? "bg-primary/10 text-primary border border-primary/20"
-          : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
+          ? "bg-primary/12 text-primary border-primary/30"
+          : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground border-border/40"
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />
-      {label}
+      <span className="truncate">{label}</span>
     </Link>
   );
 }
@@ -214,6 +232,107 @@ function MoreSheetItem({ href, icon: Icon, label }: { href: string; icon: React.
 function ShopLogo({ shopId, className }: { shopId: string; className?: string }) {
   const src = shopId.includes("sunrise") ? "/logo-sunrise.jpg" : "/logo-greenlink.jpg";
   return <img src={src} alt="shop logo" className={className} style={{ objectFit: "contain" }} />;
+}
+
+function WorkspaceTopBar({
+  currentPath,
+  shopName,
+  role,
+  userName,
+  theme,
+  onToggleTheme,
+}: {
+  currentPath: string;
+  shopName: string;
+  role: string;
+  userName: string;
+  theme: Theme;
+  onToggleTheme: () => void;
+}) {
+  const { isOnline, pendingCount, syncing } = useOfflineSyncCtx();
+  const isPos = currentPath === "/" || currentPath === "/pos";
+  const pageTitle = getPageTitle(currentPath);
+
+  return (
+    <header className="hidden lg:flex h-12 shrink-0 items-center justify-between gap-4 border-b border-border bg-card/75 backdrop-blur-md px-5 z-30">
+      <div className="flex items-center gap-3 min-w-0">
+        <h1 className="font-display text-sm font-bold tracking-tight text-foreground shrink-0">
+          {pageTitle}
+        </h1>
+        <span className="h-4 w-px bg-border shrink-0" />
+
+        {/* Active Shop Verification Chip */}
+        <div className="flex items-center gap-2 rounded-full border border-emerald-500/25 bg-emerald-500/10 pl-2 pr-3 py-1 min-w-0">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-500">
+            <Store className="h-3 w-3" />
+          </span>
+          <span className="truncate text-xs font-bold text-foreground max-w-[240px]" title={shopName}>
+            {shopName}
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-500 border border-emerald-500/20">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            {role}
+          </span>
+        </div>
+
+        {isPos && (
+          <div className="hidden xl:inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-500 shrink-0">
+            <MapPin className="h-3 w-3" />
+            Verify branch before checkout
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2.5 shrink-0">
+        {userName && (
+          <span className="text-xs font-medium text-muted-foreground hidden xl:inline">
+            Operator: <span className="font-semibold text-foreground">{userName}</span>
+          </span>
+        )}
+
+        {/* Network / Sync Pill */}
+        <div
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+            syncing
+              ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
+              : !isOnline
+              ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+              : pendingCount > 0
+              ? "border-orange-500/30 bg-orange-500/10 text-orange-400"
+              : "border-border bg-muted/40 text-muted-foreground"
+          )}
+        >
+          {syncing ? (
+            <RefreshCw className="h-3 w-3 animate-spin" />
+          ) : !isOnline ? (
+            <WifiOff className="h-3 w-3" />
+          ) : (
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          )}
+          <span>
+            {syncing
+              ? `Syncing ${pendingCount}`
+              : !isOnline
+              ? "Offline"
+              : pendingCount > 0
+              ? `${pendingCount} queued`
+              : "Synced"}
+          </span>
+        </div>
+
+        {/* Quick theme switch */}
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          className="h-8 w-8 flex items-center justify-center rounded-full border border-border bg-muted/40 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors cursor-pointer"
+        >
+          {theme === "dark" ? <Sun className="h-3.5 w-3.5 text-amber-400" /> : <Moon className="h-3.5 w-3.5 text-primary" />}
+        </button>
+      </div>
+    </header>
+  );
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -224,7 +343,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isOwner = role === "owner";
   const { canInstall, install } = usePwaInstall();
 
-  // Collapsible sidebar state — persisted in localStorage
+  const [theme, setThemeState] = useState<Theme>(getTheme);
+  const toggleTheme = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    setThemeState(next);
+  };
+
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem("greenlink_sidebar_collapsed") === "1"; } catch { return false; }
   });
@@ -237,14 +362,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const { data: notifications } = useListNotifications(
-    { shopId },
-    { query: { enabled: !!shopId } as any }
-  );
-  const unreadCount = (notifications || []).filter((n: any) => !n.isRead).length;
-
   const logout = useLogout();
-  const [, setLocation] = useLocation();
+  const [currentPath, setLocation] = useLocation();
 
   const handleLogout = () => {
     logout.mutate(undefined, {
@@ -261,169 +380,188 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="fixed inset-0 flex flex-col lg:flex-row bg-background font-sans">
       {/* ── Desktop Sidebar ── */}
-      <aside className={cn(
-        "hidden lg:flex flex-col border-r border-sidebar-border bg-sidebar shrink-0 transition-all duration-200",
-        collapsed ? "w-14" : "w-56"
-      )}>
-        {/* Logo / header */}
-        <div className={cn(
-          "border-b border-sidebar-border flex items-center",
-          collapsed ? "p-2 justify-center" : "p-4 justify-between"
-        )}>
+      <aside
+        className={cn(
+          "hidden lg:flex flex-col border-r border-sidebar-border bg-sidebar shrink-0 transition-[width] duration-200",
+          collapsed ? "w-[68px]" : "w-[232px]"
+        )}
+      >
+        {/* Brand Header */}
+        <div
+          className={cn(
+            "h-12 border-b border-sidebar-border flex items-center shrink-0",
+            collapsed ? "px-2 justify-center" : "px-3.5 justify-between gap-2"
+          )}
+        >
           {!collapsed && (
             <div className="flex items-center gap-2.5 min-w-0">
-              <ShopLogo shopId={shopId} className="h-9 w-auto max-w-[120px] rounded" />
+              <div className="h-8 w-8 rounded-lg bg-white p-0.5 border border-black/10 shrink-0 overflow-hidden flex items-center justify-center">
+                <ShopLogo shopId={shopId} className="h-full w-full" />
+              </div>
+              <div className="min-w-0">
+                <p className="font-display text-sm font-bold tracking-tight leading-none">
+                  GreenLink <span className="text-primary">OS</span>
+                </p>
+                <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5">
+                  {userName || (isOwner ? "Owner" : "Cashier")}
+                </p>
+              </div>
             </div>
           )}
-          {collapsed && (
-            <ShopLogo shopId={shopId} className="h-8 w-8 rounded object-contain" />
-          )}
-          {/* Collapse toggle always visible */}
+
           <button
+            type="button"
             onClick={toggleCollapsed}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className={cn(
-              "flex items-center justify-center rounded-lg text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors",
-              collapsed ? "mt-2 w-8 h-8" : "w-7 h-7 shrink-0"
-            )}
+            className="flex items-center justify-center rounded-lg w-8 h-8 text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors shrink-0 cursor-pointer"
           >
             {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
           </button>
         </div>
 
-        {/* Role indicator — hidden when collapsed */}
-        {!collapsed && (
-          <div className="px-3 py-2 border-b border-sidebar-border/60">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              <span className="text-sidebar-foreground/60 font-medium">
-                {userName || (isOwner ? "Owner" : "Cashier")} · <span className="capitalize">{role}</span>
-              </span>
-            </div>
-          </div>
-        )}
-
-        <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto overflow-x-hidden">
+        {/* Navigation Links */}
+        <nav className="flex-1 px-2.5 py-3 space-y-1 overflow-y-auto overflow-x-hidden">
+          {!collapsed && (
+            <p className="px-3 pb-1 text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-[0.14em]">
+              Register
+            </p>
+          )}
           <SidebarNavItem href="/pos" icon={ShoppingCart} label="Point of Sale" collapsed={collapsed} />
           <SidebarNavItem href="/stock" icon={Package} label="Inventory" collapsed={collapsed} />
           <SidebarNavItem href="/customers" icon={BookUser} label="Customers" collapsed={collapsed} />
           <SidebarNavItem href="/debts" icon={Users} label="Customer Debts" collapsed={collapsed} />
-          <SidebarNavItem href="/alerts" icon={Bell} label="Alerts" badge={unreadCount} collapsed={collapsed} />
 
-          {!collapsed && (
+          {!collapsed ? (
             <div className="pt-3 pb-1 px-3">
-              <p className="text-[10px] font-bold text-sidebar-foreground/30 uppercase tracking-wider">History</p>
+              <p className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-[0.14em]">History</p>
             </div>
+          ) : (
+            <div className="py-1.5"><div className="border-t border-sidebar-border/60" /></div>
           )}
-          {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
           <SidebarNavItem href="/sales-history" icon={Receipt} label="Sales History" collapsed={collapsed} />
           <SidebarNavItem href="/returns" icon={RotateCcw} label="Process Return" collapsed={collapsed} />
           <SidebarNavItem href="/transfers" icon={ArrowLeftRight} label="Transfers" collapsed={collapsed} />
 
-          {!collapsed && (
+          {!collapsed ? (
             <div className="pt-3 pb-1 px-3">
-              <p className="text-[10px] font-bold text-sidebar-foreground/30 uppercase tracking-wider">Sales Tools</p>
+              <p className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-[0.14em]">Sales Tools</p>
             </div>
+          ) : (
+            <div className="py-1.5"><div className="border-t border-sidebar-border/60" /></div>
           )}
-          {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
           <SidebarNavItem href="/quotations" icon={FileText} label="Quotations" collapsed={collapsed} />
+          <SidebarNavItem href="/nursery" icon={Sprout} label="Nursery Register" collapsed={collapsed} />
 
           {isOwner && (
             <>
-              {!collapsed && (
+              {!collapsed ? (
                 <div className="pt-3 pb-1 px-3">
-                  <p className="text-[10px] font-bold text-sidebar-foreground/30 uppercase tracking-wider">Management</p>
+                  <p className="text-[10px] font-bold text-sidebar-foreground/40 uppercase tracking-[0.14em]">Management</p>
                 </div>
+              ) : (
+                <div className="py-1.5"><div className="border-t border-sidebar-border/60" /></div>
               )}
-              {collapsed && <div className="pt-2 pb-1"><div className="border-t border-sidebar-border/40" /></div>}
               <SidebarNavItem href="/owner-dashboard" icon={LayoutDashboard} label="Owner Dashboard" collapsed={collapsed} />
               <SidebarNavItem href="/reports" icon={BarChart3} label="Analytics" collapsed={collapsed} />
-              <SidebarNavItem href="/invoices" icon={Truck} label="Purchase History" collapsed={collapsed} />
-              <SidebarNavItem href="/ocr" icon={ScanLine} label="Smart Scanner" collapsed={collapsed} />
             </>
           )}
         </nav>
 
-        <div className={cn("p-2 border-t border-sidebar-border space-y-0.5")}>
+        {/* Footer Controls */}
+        <div className="p-2.5 border-t border-sidebar-border space-y-1 shrink-0">
           <SidebarNavItem href="/settings" icon={Settings} label="Settings" collapsed={collapsed} />
-          <ThemeToggle collapsed={collapsed} />
+          <ThemeToggle collapsed={collapsed} theme={theme} onToggle={toggleTheme} />
           {canInstall && (
             <button
+              type="button"
               onClick={install}
               title={collapsed ? "Install App" : undefined}
               className={cn(
-                "w-full flex items-center gap-3 rounded-lg text-primary hover:bg-primary/10 transition-all text-sm font-medium",
-                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5"
+                "flex items-center gap-2.5 rounded-xl text-primary hover:bg-primary/10 transition-all text-[13px] font-medium cursor-pointer",
+                collapsed ? "justify-center h-10 w-10 mx-auto" : "w-full px-3 py-2"
               )}
             >
-              <Download className="h-4 w-4" />
-              {!collapsed && "Install App"}
+              <Download className="h-4 w-4 shrink-0" />
+              {!collapsed && <span>Install App</span>}
             </button>
           )}
           <button
+            type="button"
             onClick={handleLogout}
             title={collapsed ? "Sign Out" : undefined}
             className={cn(
-              "w-full flex items-center gap-3 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all text-sm font-medium",
-              collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5"
+              "flex items-center gap-2.5 rounded-xl text-sidebar-foreground/65 hover:bg-destructive/12 hover:text-destructive transition-all text-[13px] font-medium cursor-pointer",
+              collapsed ? "justify-center h-10 w-10 mx-auto" : "w-full px-3 py-2"
             )}
           >
-            <LogOut className="h-4 w-4" />
-            {!collapsed && "Sign Out"}
+            <LogOut className="h-4 w-4 shrink-0" />
+            {!collapsed && <span>Sign Out</span>}
           </button>
         </div>
       </aside>
 
-      {/* ── Mobile/Tablet column ── */}
+      {/* ── Main Column ── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-
         {/* Mobile Topbar */}
-        <div className="lg:hidden flex items-center justify-between px-4 py-2.5 border-b border-border bg-sidebar shrink-0">
-          <div className="flex items-center gap-2">
-            <ShopLogo shopId={shopId} className="h-8 w-auto max-w-[110px] rounded" />
-            <div>
-              <div className="flex items-center gap-1">
+        <div className="lg:hidden flex items-center justify-between gap-2 px-3.5 py-2 border-b border-border bg-sidebar shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="h-8 w-8 rounded-lg bg-white p-0.5 border border-black/10 shrink-0 overflow-hidden flex items-center justify-center">
+              <ShopLogo shopId={shopId} className="h-full w-full" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-foreground truncate leading-tight">{shopName}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                <p className="text-[10px] text-muted-foreground capitalize">{role}</p>
+                <span className="text-[10px] font-semibold text-muted-foreground capitalize">{role}</span>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-1">
-            <MobileThemeToggle />
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <MobileThemeToggle theme={theme} onToggle={toggleTheme} />
             {canInstall && (
               <button
+                type="button"
                 onClick={install}
                 title="Install App"
-                className="h-8 w-8 flex items-center justify-center rounded-lg text-primary hover:bg-primary/10 transition-colors"
+                className="h-8 w-8 flex items-center justify-center rounded-xl border border-primary/30 bg-primary/10 text-primary"
               >
                 <Download className="h-4 w-4" />
               </button>
             )}
-            <Link href="/settings" className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
+            <Link
+              href="/settings"
+              className="h-8 w-8 flex items-center justify-center rounded-xl border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground transition-colors"
+            >
               <Settings className="h-4 w-4" />
             </Link>
             <button
+              type="button"
               onClick={handleLogout}
-              className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Sign Out"
+              className="h-8 w-8 flex items-center justify-center rounded-xl border border-border/60 bg-muted/40 text-muted-foreground hover:text-destructive hover:border-destructive/30 transition-colors"
             >
               <LogOut className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        {/* Single OfflineSync instance shared by the banner and POS badge */}
         <OfflineSyncProvider shopId={shopId}>
-          {/* Offline banner — shows when device loses connectivity */}
+          <WorkspaceTopBar
+            currentPath={currentPath}
+            shopName={shopName}
+            role={role}
+            userName={userName}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
           <OfflineBanner />
-
-          {/* Page content */}
-          <main className="flex-1 overflow-y-auto min-h-0" style={{ WebkitTransform: 'translateZ(0)', transform: 'translateZ(0)' }}>
+          <main className="flex-1 overflow-y-auto min-h-0">
             {children}
           </main>
         </OfflineSyncProvider>
 
-        {/* Mobile Bottom Nav */}
-        <MobileBottomNav isOwner={isOwner} unreadCount={unreadCount} />
+        <MobileBottomNav isOwner={isOwner} />
       </div>
     </div>
   );

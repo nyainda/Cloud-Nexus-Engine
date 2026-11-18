@@ -34,7 +34,7 @@ const DB_PATH = path.join(DATA_DIR, "greenlink.db");
 // ── SQLite → D1Database shim ────────────────────────────────────────────────
 function makeD1(sqliteDb: Database.Database): D1Database {
   function runStatement(sql: string, params: unknown[]): D1PreparedStatement {
-    return {
+    const statement = {
       bind(...args: unknown[]) {
         return runStatement(sql, args);
       },
@@ -68,6 +68,8 @@ function makeD1(sqliteDb: Database.Database): D1Database {
         return rows as T[];
       },
     } as D1PreparedStatement;
+    Object.assign(statement, { __sqliteSql: sql, __sqliteParams: params });
+    return statement;
   }
 
   const d1: D1Database = {
@@ -75,15 +77,21 @@ function makeD1(sqliteDb: Database.Database): D1Database {
       return runStatement(sql, []);
     },
     async batch(statements: D1PreparedStatement[]) {
-      const results: any[] = [];
-      for (const stmt of statements) {
-        try {
-          results.push(await (stmt as any).run());
-        } catch {
-          results.push({ success: false, results: [], meta: {} });
-        }
-      }
-      return results;
+      // Match D1's all-or-nothing batch semantics in local development. Running
+      // each statement independently and swallowing errors can leave a debt
+      // without its sale (or vice versa), making local behavior differ from CF.
+      const transaction = sqliteDb.transaction(() =>
+        statements.map((statement) => {
+          const { __sqliteSql, __sqliteParams } = statement as any;
+          const info = sqliteDb.prepare(__sqliteSql).run(...__sqliteParams);
+          return {
+            success: true as const,
+            meta: { changes: info.changes, last_row_id: Number(info.lastInsertRowid) },
+            results: [],
+          };
+        }),
+      );
+      return transaction() as any;
     },
     async dump() {
       return new ArrayBuffer(0);
@@ -208,6 +216,7 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
         items_json TEXT NOT NULL DEFAULT '[]',
         invoice_number TEXT,
         invoice_issued_at TEXT,
+        invoice_snapshot_json TEXT,
         created_by TEXT,
         created_at TEXT NOT NULL
       )`).run();
@@ -311,6 +320,90 @@ async function bootstrapSqlite(db: Database.Database, kv: KVNamespace): Promise<
     "ALTER TABLE quotations ADD COLUMN items_json TEXT DEFAULT '[]'",
     "ALTER TABLE quotations ADD COLUMN invoice_number TEXT",
     "ALTER TABLE quotations ADD COLUMN invoice_issued_at TEXT",
+    "ALTER TABLE quotations ADD COLUMN invoice_snapshot_json TEXT",
+    `CREATE TABLE IF NOT EXISTS invoice_revisions (
+      id TEXT PRIMARY KEY, quotation_id TEXT NOT NULL, invoice_number TEXT NOT NULL,
+      revision_number INTEGER NOT NULL, snapshot_json TEXT NOT NULL, revised_at TEXT NOT NULL,
+      UNIQUE(quotation_id, revision_number)
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_invoice_revisions_quotation ON invoice_revisions(quotation_id, revision_number)",
+    `UPDATE quotations SET invoice_snapshot_json = json_object(
+      'customerName', customer_name, 'customerPhone', customer_phone,
+      'customerEmail', customer_email, 'notes', notes, 'validUntil', valid_until,
+      'subtotal', subtotal, 'discountAmount', discount_amount, 'total', total,
+      'items', json(items_json), 'createdAt', COALESCE(invoice_issued_at, created_at)
+    ) WHERE invoice_number IS NOT NULL AND invoice_snapshot_json IS NULL`,
+    `CREATE TABLE IF NOT EXISTS nursery_varieties (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Uncategorized', default_price INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, name)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_daily_sales (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, business_date TEXT NOT NULL, variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL, payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0), total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, variety_id, unit_price_cents, payment_method)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_customer_daily_sales (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, business_date TEXT NOT NULL, customer_key TEXT NOT NULL,
+      customer_name TEXT NOT NULL, customer_phone TEXT NOT NULL DEFAULT '', variety_id TEXT NOT NULL,
+      unit_price_cents INTEGER NOT NULL, payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      quantity INTEGER NOT NULL CHECK(quantity > 0), total_amount_cents INTEGER NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(shop_id, business_date, customer_key, variety_id, unit_price_cents, payment_method)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_entry_requests (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, created_at TEXT NOT NULL, debt_id TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_sale_entries (
+      id TEXT PRIMARY KEY, request_id TEXT NOT NULL, shop_id TEXT NOT NULL, business_date TEXT NOT NULL,
+      variety_id TEXT NOT NULL, variety_name TEXT NOT NULL, customer_name TEXT NOT NULL DEFAULT '',
+      customer_phone TEXT NOT NULL DEFAULT '', quantity INTEGER NOT NULL CHECK(quantity > 0),
+      unit_price_cents INTEGER NOT NULL, total_amount_cents INTEGER NOT NULL,
+      payment_method TEXT NOT NULL CHECK(payment_method IN ('cash','mpesa','credit')),
+      debt_id TEXT, transaction_id TEXT, source_supplier_id TEXT, source_supplier_name TEXT, created_at TEXT NOT NULL,
+      UNIQUE(shop_id, request_id)
+    )`,
+    "ALTER TABLE suppliers ADD COLUMN customer_id TEXT",
+    "ALTER TABLE nursery_sale_entries ADD COLUMN source_supplier_id TEXT",
+    "ALTER TABLE nursery_sale_entries ADD COLUMN source_supplier_name TEXT",
+    `CREATE TABLE IF NOT EXISTS nursery_supplier_receipts (
+      id TEXT PRIMARY KEY, request_id TEXT NOT NULL, shop_id TEXT NOT NULL, supplier_id TEXT NOT NULL,
+      variety_id TEXT NOT NULL, variety_name TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity > 0),
+      received_at TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', created_by TEXT, created_at TEXT NOT NULL,
+      UNIQUE(shop_id, request_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS nursery_supplier_ledger (
+      id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, supplier_id TEXT NOT NULL, sale_entry_id TEXT,
+      entry_type TEXT NOT NULL, amount_cents INTEGER NOT NULL, quantity INTEGER NOT NULL DEFAULT 0,
+      variety_name TEXT NOT NULL DEFAULT '', debt_id TEXT, debt_payment_id TEXT,
+      note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_nursery_supplier_receipts_stock ON nursery_supplier_receipts(shop_id, supplier_id, variety_id)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_supplier_receipts_history ON nursery_supplier_receipts(shop_id, supplier_id, received_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_supplier_ledger_history ON nursery_supplier_ledger(shop_id, supplier_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_supplier_ledger_sale ON nursery_supplier_ledger(shop_id, sale_entry_id)",
+    "CREATE INDEX IF NOT EXISTS idx_nursery_entries_source_stock ON nursery_sale_entries(shop_id, source_supplier_id, variety_id)",
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_nursery_supplier_sale_proceeds_once
+      ON nursery_supplier_ledger(sale_entry_id, entry_type)
+      WHERE sale_entry_id IS NOT NULL AND entry_type = 'sale_proceeds'`,
+    `CREATE TRIGGER IF NOT EXISTS nursery_source_stock_guard
+      BEFORE INSERT ON nursery_sale_entries
+      WHEN NEW.source_supplier_id IS NOT NULL
+      BEGIN
+        SELECT CASE WHEN NOT EXISTS (
+          SELECT 1 FROM suppliers WHERE id = NEW.source_supplier_id AND shop_id = NEW.shop_id
+        ) THEN RAISE(ABORT, 'Invalid nursery supplier source') END;
+        SELECT CASE WHEN
+          COALESCE((SELECT SUM(quantity) FROM nursery_supplier_receipts
+            WHERE shop_id = NEW.shop_id AND supplier_id = NEW.source_supplier_id AND variety_id = NEW.variety_id), 0) -
+          COALESCE((SELECT SUM(quantity) FROM nursery_sale_entries
+            WHERE shop_id = NEW.shop_id AND source_supplier_id = NEW.source_supplier_id AND variety_id = NEW.variety_id), 0)
+          < NEW.quantity
+        THEN RAISE(ABORT, 'Insufficient nursery supplier stock') END;
+      END`,
   ];
   for (const m of MIGRATIONS) {
     try {
@@ -371,10 +464,21 @@ async function createApp() {
     }),
   );
 
-  // Inject local env bindings into every request context
+  // Inject local bindings and mirror the Worker cache policy so local
+  // development doesn't accidentally hide cross-device mutations either.
   app.use("*", async (c, next) => {
     Object.assign(c.env, env);
     await next();
+    if (c.req.method === "GET") {
+      const urlPath = new URL(c.req.url).pathname;
+      const isPublic = urlPath === "/api/shops" || urlPath.startsWith("/api/healthz");
+      c.res.headers.set(
+        "Cache-Control",
+        isPublic ? "public, max-age=120, stale-while-revalidate=300" : "private, no-store",
+      );
+    } else {
+      c.res.headers.set("Cache-Control", "no-store");
+    }
   });
 
   app.onError((err, c) => {

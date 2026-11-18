@@ -147,6 +147,7 @@ describe("GreenLink API smoke tests", { concurrency: false }, () => {
     const { status, body } = await api(`/api/notifications?shopId=${ctx.shopId}`);
     assert.equal(status, 200, `expected 200, got ${status}`);
     assert.ok(Array.isArray(body), "notifications should be an array");
+    assert.ok(body.length <= 50, "notifications without a limit must use the bounded default page");
   });
 
   // ── Suppliers ─────────────────────────────────────────────────────────────

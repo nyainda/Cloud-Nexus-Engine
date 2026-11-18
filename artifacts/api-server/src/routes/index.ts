@@ -20,6 +20,7 @@ import pushRouter from "./push";
 import quotationsRouter from "./quotations";
 import adminRouter from "./admin";
 import crmRouter from "./crm";
+import nurseryRouter from "./nursery";
 
 const router = new Hono<AppEnv>();
 
@@ -43,4 +44,5 @@ router.route("/", pushRouter);
 router.route("/", quotationsRouter);
 router.route("/", adminRouter);
 router.route("/", crmRouter);
+router.route("/", nurseryRouter);
 export default router;

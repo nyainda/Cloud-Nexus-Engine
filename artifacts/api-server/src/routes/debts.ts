@@ -13,7 +13,15 @@ import {
   creditBalance,
   getCustomerCreditSources,
   getCustomerOutstandingDebts,
+  matchesCustomerIdentities,
 } from "../lib/debt-credit";
+import {
+  buildCreditOwnerStatements,
+  buildDebitOwnerAdjustmentStatements,
+  getNurserySyncConfig,
+  isNurseryCreditDebt,
+  resolveEffectiveCreditIdentities,
+} from "../lib/nursery-sync";
 import { chunk } from "../lib/chunk";
 
 const debtsRouter = new Hono<AppEnv>();
@@ -131,8 +139,14 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
     );
   }
 
-  // Batch-fetch sale items for all debts that have a saleId — single query, no N+1
-  const saleIds = rows.map(r => r.saleId).filter((id): id is string => !!id);
+  // Batch-fetch sale items ONLY for debts that have a saleId and do not already store itemsJson.
+  const saleIds = Array.from(
+    new Set(
+      rows
+        .filter((r) => !!r.saleId && parseDebtItems(r.itemsJson) === null)
+        .map((r) => r.saleId!),
+    ),
+  );
   let itemsByHuman: Record<string, { productName: string; qty: number; unitPrice: number; totalPrice: number; totalProfit?: number | null }[]> = {};
   if (saleIds.length > 0) {
     const itemChunks = await Promise.all(
@@ -178,6 +192,71 @@ debtsRouter.get("/debts", requireAuth, async (c) => {
   return c.json(result);
 });
 
+// Single-query plant settlement payment lookup — replaces up to 60 parallel
+// /api/debts/:debtId requests from the Debts/Analytics settlement summary.
+debtsRouter.get("/debts/settlement-payments", requireAuth, async (c) => {
+  const session = c.get("session");
+  const requestedShopId = c.req.query("shopId");
+  const shopId = requestedShopId || session.shopId;
+  if (requestedShopId && requestedShopId !== session.shopId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT
+       dp.id AS paymentId,
+       dp.debt_id AS debtId,
+       dp.amount,
+       dp.recorded_by AS recordedBy,
+       dp.paid_at AS paidAt,
+       dp.payment_type AS paymentType,
+       dp.note,
+       d.customer_name AS customerName,
+       d.customer_phone AS customerPhone,
+       d.created_at AS debtCreatedAt
+     FROM debt_payments dp
+     INNER JOIN debts d ON d.id = dp.debt_id
+     WHERE d.shop_id = ?
+       AND d.status != 'cancelled'
+       AND dp.payment_type != 'reversal'
+       AND (
+         (dp.amount > 0 AND (
+           LOWER(COALESCE(dp.note, '')) LIKE '%[plant-settle:%'
+           OR (
+             TRIM(COALESCE(dp.recorded_by, '')) = 'Nursery'
+             AND LOWER(COALESCE(dp.note, '')) LIKE '%nursery supplier%'
+           )
+         ))
+         OR LOWER(COALESCE(dp.note, '')) LIKE '%[plant-settle-adj:%'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM debt_payments rev
+         WHERE rev.debt_id = dp.debt_id
+           AND rev.payment_type = 'reversal'
+           AND rev.reversal_of_id = dp.id
+       )
+     ORDER BY COALESCE(dp.paid_at, d.created_at) DESC`,
+  ).bind(shopId).all<{
+    paymentId: string;
+    debtId: string;
+    amount: number;
+    recordedBy: string | null;
+    paidAt: string | null;
+    paymentType: string | null;
+    note: string | null;
+    customerName: string;
+    customerPhone: string;
+    debtCreatedAt: string;
+  }>();
+
+  return c.json({
+    payments: (results ?? []).map((row) => ({
+      ...row,
+      customerName: normalizeCustomerName(row.customerName),
+    })),
+  });
+});
+
 debtsRouter.post("/debts", requireAuth, async (c) => {
   const body = await c.req.json<{
     shopId: string;
@@ -191,7 +270,20 @@ debtsRouter.post("/debts", requireAuth, async (c) => {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const customerName = normalizeCustomerName(body.customerName);
-  const creditSources = await getCustomerCreditSources(db, body.shopId, customerName);
+  const creditLookup = await resolveEffectiveCreditIdentities(
+    c.env.DB,
+    c.env.SESSIONS,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+  );
+  const creditSources = await getCustomerCreditSources(
+    db,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+    creditLookup.extraIdentities,
+  );
   const creditAllocations = allocateCredit(creditSources, body.totalAmount);
   const creditApplied = money(creditAllocations.reduce((sum, allocation) => sum + allocation.amount, 0));
   const balance = money(body.totalAmount - creditApplied);
@@ -627,11 +719,25 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   // this just runs it here too, on demand, for an existing debt. The
   // ordinary "Record Payment" dialog never sets this flag, so real cash
   // entered there is never silently swapped out for stored credit.
+  const syncLookupPromise = resolveEffectiveCreditIdentities(
+    c.env.DB,
+    c.env.SESSIONS,
+    debtBefore.shopId,
+    debtBefore.customerName,
+    debtBefore.customerPhone,
+  );
   let creditAllocations: Array<{ source: (typeof debts.$inferSelect); amount: number }> = [];
   let creditApplied = 0;
   if (body.useAvailableCredit) {
+    const syncLookup = await syncLookupPromise;
     const creditSources = (
-      await getCustomerCreditSources(db, debtBefore.shopId, debtBefore.customerName)
+      await getCustomerCreditSources(
+        db,
+        debtBefore.shopId,
+        debtBefore.customerName,
+        debtBefore.customerPhone,
+        syncLookup.extraIdentities,
+      )
     ).filter((source) => source.id !== debtId);
     creditAllocations = allocateCredit(creditSources, amount);
     creditApplied = money(creditAllocations.reduce((sum, allocation) => sum + allocation.amount, 0));
@@ -731,8 +837,9 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
   // oldest first, the same way POST /debts/customer-payment already does for
   // a fresh incoming payment; only the leftover (if any) stays as credit here.
   const overpayAmount = money(-(Number(updatedDebt?.balance ?? 0)));
+  const sweptNurseryCredits: Array<{ debt: typeof debts.$inferSelect; paymentId: string; amount: number }> = [];
   if (overpayAmount > 0.005) {
-    const otherOutstanding = await getCustomerOutstandingDebts(db, debtBefore.shopId, debtBefore.customerName);
+    const otherOutstanding = await getCustomerOutstandingDebts(db, debtBefore.shopId, debtBefore.customerName, debtBefore.customerPhone);
     const { allocations, remaining } = allocatePayment(otherOutstanding, overpayAmount);
     if (allocations.length > 0) {
       const swept = money(overpayAmount - remaining);
@@ -769,6 +876,10 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
         ),
       ]);
 
+      allocations.forEach(({ debt, amount: portion }, i) => {
+        sweptNurseryCredits.push({ debt, paymentId: sweepPaymentIds[i]!, amount: portion });
+      });
+
       const sweptPaidOffIds = allocations
         .filter(({ debt, amount: portion }) => money(Number(debt.balance) - portion) <= 0.005)
         .map(({ debt }) => debt.id);
@@ -776,6 +887,67 @@ debtsRouter.post("/debts/:debtId/payments", requireAuth, async (c) => {
         await db
           .delete(notifications)
           .where(and(inArray(notifications.debtId, sweptPaidOffIds), eq(notifications.type, "debt_reminder")));
+      }
+    }
+  }
+
+  // If this collected payment settled a Nursery seedling credit debt, auto-credit Mum's account.
+  if (!(body.note ?? "").includes("[plant-settle:") && !(body.note ?? "").includes("[plant-settle-adj:")) {
+    const syncLookup = await syncLookupPromise;
+    if (syncLookup.config.enabled) {
+      const ownerIdentity = {
+        customerName: syncLookup.config.ownerCustomerName,
+        customerPhone: syncLookup.config.ownerCustomerPhone,
+      };
+      const nurseryPayJobs: Array<{ paymentId: string; customerName: string; grossCents: number }> = [];
+      const directPaidCents = Math.round(
+        Math.min(amount, Math.max(0, Number(debtBefore.balance || 0))) * 100,
+      );
+      if (
+        directPaidCents > 0 &&
+        !matchesCustomerIdentities(debtBefore, [ownerIdentity]) &&
+        (await isNurseryCreditDebt(c.env.DB, debtBefore.shopId, debtBefore))
+      ) {
+        nurseryPayJobs.push({
+          paymentId: primaryPaymentId,
+          customerName: debtBefore.customerName,
+          grossCents: directPaidCents,
+        });
+      }
+      for (const item of sweptNurseryCredits) {
+        const sweptCents = Math.round(item.amount * 100);
+        if (
+          sweptCents > 0 &&
+          !matchesCustomerIdentities(item.debt, [ownerIdentity]) &&
+          (await isNurseryCreditDebt(c.env.DB, debtBefore.shopId, item.debt))
+        ) {
+          nurseryPayJobs.push({
+            paymentId: item.paymentId,
+            customerName: item.debt.customerName,
+            grossCents: sweptCents,
+          });
+        }
+      }
+      for (const job of nurseryPayJobs) {
+        const built = await buildCreditOwnerStatements({
+          d1: c.env.DB,
+          db,
+          shopId: debtBefore.shopId,
+          config: syncLookup.config,
+          grossCents: job.grossCents,
+          sourceKey: `credit-debt-pay:${job.paymentId}`,
+          sourceType: "credit_debt_payment",
+          label: `Seedling credit paid — ${job.customerName}`,
+          recordedBy: "Nursery Auto-Sync",
+          now,
+        });
+        if (built.statements.length > 0) {
+          try {
+            await c.env.DB.batch(built.statements);
+          } catch (err) {
+            if (!String(err).toLowerCase().includes("unique")) throw err;
+          }
+        }
       }
     }
   }
@@ -801,6 +973,7 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
   const body = await c.req.json<{
     shopId: string;
     customerName: string;
+    customerPhone?: string;
     amount: number;
     recordedBy?: string;
     note?: string | null;
@@ -814,7 +987,20 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
   if (body.shopId !== session.shopId) throw new HTTPException(403, { message: "Forbidden" });
 
   const customerName = normalizeCustomerName(body.customerName);
-  const outstanding = await getCustomerOutstandingDebts(db, body.shopId, customerName);
+  const syncLookup = await resolveEffectiveCreditIdentities(
+    c.env.DB,
+    c.env.SESSIONS,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+  );
+  const outstanding = await getCustomerOutstandingDebts(
+    db,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+    syncLookup.extraIdentities,
+  );
   if (outstanding.length === 0) {
     return c.json({ error: "This customer has no outstanding debts" }, 404);
   }
@@ -885,6 +1071,48 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
       .where(and(inArray(notifications.debtId, paidOffIds), eq(notifications.type, "debt_reminder")));
   }
 
+  // Forward collected payments on Nursery seedling credit debts to Mum's account when auto-sync is enabled.
+  if (
+    syncLookup.config.enabled &&
+    !(body.note ?? "").includes("[plant-settle:") &&
+    !(body.note ?? "").includes("[plant-settle-adj:")
+  ) {
+    const ownerIdentity = {
+      customerName: syncLookup.config.ownerCustomerName,
+      customerPhone: syncLookup.config.ownerCustomerPhone,
+    };
+    for (let i = 0; i < allocations.length; i++) {
+      const alloc = allocations[i]!;
+      const grossCents = Math.round(alloc.amount * 100);
+      if (
+        grossCents <= 0 ||
+        matchesCustomerIdentities(alloc.debt, [ownerIdentity]) ||
+        !(await isNurseryCreditDebt(c.env.DB, body.shopId, alloc.debt))
+      ) {
+        continue;
+      }
+      const built = await buildCreditOwnerStatements({
+        d1: c.env.DB,
+        db,
+        shopId: body.shopId,
+        config: syncLookup.config,
+        grossCents,
+        sourceKey: `credit-debt-pay:${paymentIds[i]!}`,
+        sourceType: "credit_debt_payment",
+        label: `Seedling credit paid — ${alloc.debt.customerName}`,
+        recordedBy: "Nursery Auto-Sync",
+        now,
+      });
+      if (built.statements.length > 0) {
+        try {
+          await c.env.DB.batch(built.statements);
+        } catch (err) {
+          if (!String(err).toLowerCase().includes("unique")) throw err;
+        }
+      }
+    }
+  }
+
   await db.insert(auditLog).values({
     id: crypto.randomUUID(),
     shopId: body.shopId,
@@ -915,6 +1143,141 @@ debtsRouter.post("/debts/customer-payment", requireAuth, async (c) => {
   );
 });
 
+// Adds money straight to a customer's stored credit (their overpayment
+// balance), for when a customer who already has credit keeps topping up, or
+// pays in advance. /debts/customer-payment can't do this: it only pays down
+// OUTSTANDING debts and rejects a customer who owes nothing. Credit lives as
+// a negative balance on a debt row, so a top-up deepens that same row the way
+// an overpayment already does — and the next credit sale or "Mark Paid"
+// picks it up automatically through getCustomerCreditSources().
+debtsRouter.post("/debts/customer-credit", requireAuth, async (c) => {
+  const body = await c.req.json<{
+    shopId: string;
+    customerName: string;
+    customerPhone?: string;
+    amount: number;
+    recordedBy?: string;
+    note?: string | null;
+    requestId?: string;
+  }>();
+  const db = createDb(c.env.DB);
+  const amount = money(Number(body.amount));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return c.json({ error: "Top-up amount must be greater than zero" }, 400);
+  }
+  const session = c.get("session");
+  if (body.shopId !== session.shopId) throw new HTTPException(403, { message: "Forbidden" });
+
+  // Idempotency: the client sends a requestId (reused as the payment id) so an
+  // offline-queue replay or double tap can't add the same money twice.
+  const requestId = typeof body.requestId === "string" && /^[A-Za-z0-9-]{8,64}$/.test(body.requestId)
+    ? body.requestId : null;
+  if (requestId) {
+    const prior = await db.select().from(debtPayments).where(eq(debtPayments.id, requestId)).get();
+    if (prior) {
+      const priorDebt = await db.select().from(debts).where(eq(debts.id, prior.debtId)).get();
+      if (!priorDebt || priorDebt.shopId !== body.shopId) {
+        return c.json({ error: "requestId already in use" }, 409);
+      }
+      return c.json({ duplicate: true, payment: prior, debt: priorDebt, creditBalance: creditBalance(priorDebt) }, 200);
+    }
+  }
+
+  const customerName = normalizeCustomerName(body.customerName);
+  const creditLookup = await resolveEffectiveCreditIdentities(
+    c.env.DB,
+    c.env.SESSIONS,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+  );
+  const creditSources = await getCustomerCreditSources(
+    db,
+    body.shopId,
+    customerName,
+    body.customerPhone,
+    creditLookup.extraIdentities,
+  );
+
+  // Prefer the customer's existing credit row. With none, a customer who is
+  // fully settled can still prepay: park it on their newest paid debt. A
+  // customer who still owes money should pay that down instead, not hide cash
+  // as credit next to an open balance.
+  let target: (typeof creditSources)[number] | undefined = creditSources[creditSources.length - 1];
+  if (!target) {
+    const outstanding = await getCustomerOutstandingDebts(
+      db,
+      body.shopId,
+      customerName,
+      body.customerPhone,
+      creditLookup.extraIdentities,
+    );
+    if (outstanding.length > 0) {
+      return c.json({
+        error: "This customer still owes money — record a payment against their debts instead of a credit top-up",
+      }, 409);
+    }
+    const identities = [
+      { customerName, customerPhone: body.customerPhone },
+      ...creditLookup.extraIdentities,
+    ];
+    const rows = await db
+      .select()
+      .from(debts)
+      .where(and(eq(debts.shopId, body.shopId), eq(debts.status, "paid")))
+      .all();
+    target = rows
+      .filter((r) => matchesCustomerIdentities(r, identities))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (!target) return c.json({ error: "No debt record found for this customer" }, 404);
+  }
+
+  const now = new Date().toISOString();
+  const paymentId = requestId ?? crypto.randomUUID();
+  const note = body.note?.trim() || "Credit top-up";
+
+  // balance moves relative to its CURRENT value (not total - amount_paid):
+  // spending credit only ever adjusts balance, so recomputing from
+  // amount_paid here would hand back credit the customer already used.
+  await db.batch([
+    db
+      .update(debts)
+      .set({
+        amountPaid: sql`amount_paid + ${amount}`,
+        balance: sql`balance - ${amount}`,
+      })
+      .where(eq(debts.id, target.id)),
+    db.insert(debtPayments).values({
+      id: paymentId,
+      debtId: target.id,
+      amount,
+      recordedBy: body.recordedBy ?? session.userName ?? null,
+      paidAt: now,
+      paymentType: "payment",
+      reversalOfId: null,
+      note,
+    }),
+  ] as unknown as Parameters<typeof db.batch>[0]);
+
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    shopId: body.shopId,
+    action: "debt_credit_topup",
+    entityType: "debt",
+    entityId: target.id,
+    oldValueJson: JSON.stringify({ balance: target.balance }),
+    newValueJson: JSON.stringify({ amount, paymentId }),
+    performedBy: session.userName ?? "Owner",
+    createdAt: now,
+  });
+
+  await kvDel(c.env.SESSIONS, CK.debts(body.shopId), CK.dashboard(body.shopId, now.slice(0, 10)));
+
+  const updated = await db.select().from(debts).where(eq(debts.id, target.id)).get();
+  const payment = await db.select().from(debtPayments).where(eq(debtPayments.id, paymentId)).get();
+  return c.json({ customerName, creditAdded: amount, creditBalance: creditBalance(updated!), debt: updated, payment }, 201);
+});
+
 // Corrections never delete financial history. Instead, an owner creates a
 // linked reversal entry that restores the balance and leaves both events visible.
 debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requireOwner, async (c) => {
@@ -935,15 +1298,58 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
   if (original.paymentType === "reversal" || original.amount <= 0) {
     return c.json({ error: "Only an original payment can be reversed" }, 400);
   }
+  if (original.paymentType === "credit_applied") {
+    return c.json({
+      error: "This credit was moved from another debt or sale and cannot be safely reversed from this screen.",
+    }, 409);
+  }
   const existingReversal = await db.select({ id: debtPayments.id })
     .from(debtPayments)
     .where(and(eq(debtPayments.debtId, debtId), eq(debtPayments.reversalOfId, paymentId)))
     .get();
   if (existingReversal) return c.json({ error: "This payment has already been reversed" }, 409);
 
+  const currentBalance = Number(debt.balance || 0);
+  const currentAmountPaid = Number(debt.amountPaid || 0);
+  const restoredBalance = currentBalance + Number(original.amount);
+  const restoredAmountPaid = Math.max(0, currentAmountPaid - Number(original.amount));
+  const expectedBalanceAfterReversal = Number(debt.totalAmount || 0) - restoredAmountPaid;
+  if (restoredBalance > expectedBalanceAfterReversal + 0.005) {
+    return c.json({
+      error: "This payment's customer credit has already been used. A ledger correction is needed before it can be safely reversed.",
+    }, 409);
+  }
+
   const now = new Date().toISOString();
   const reversalId = crypto.randomUUID();
   const reason = body.reason?.trim() || "Payment correction";
+
+  const linkedPosting = await c.env.DB
+    .prepare(
+      "SELECT gross_cents AS grossCents FROM nursery_auto_postings WHERE shop_id = ? AND source_key = ? LIMIT 1",
+    )
+    .bind(debt.shopId, `credit-debt-pay:${original.id}`)
+    .first<{ grossCents: number }>();
+
+  let nurseryReverseAdj: Awaited<ReturnType<typeof buildDebitOwnerAdjustmentStatements>> | null = null;
+  if (linkedPosting && linkedPosting.grossCents > 0) {
+    const syncConfig = await getNurserySyncConfig(c.env.DB, c.env.SESSIONS, debt.shopId);
+    nurseryReverseAdj = await buildDebitOwnerAdjustmentStatements({
+      d1: c.env.DB,
+      db,
+      shopId: debt.shopId,
+      config: syncConfig,
+      grossReductionCents: linkedPosting.grossCents,
+      sourceKey: `reverse-credit-debt-pay:${original.id}`,
+      label: `Reversed seedling credit payment (${debt.customerName})`,
+      recordedBy: "Nursery Auto-Sync",
+      now,
+    });
+    if (!nurseryReverseAdj.ok) {
+      return c.json({ error: nurseryReverseAdj.error }, 409);
+    }
+  }
+
   await db.insert(debtPayments).values({
     id: reversalId,
     debtId,
@@ -955,11 +1361,14 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
     note: reason,
   });
 
+  // balance moves relative to its CURRENT value. Recomputing it from
+  // total - amount_paid would hand back credit the customer already spent
+  // (credit use only ever adjusts balance), e.g. when undoing a credit top-up.
   await db.update(debts).set({
     amountPaid: sql`MAX(0, amount_paid - ${original.amount})`,
-    balance: sql`total_amount - MAX(0, amount_paid - ${original.amount})`,
-    status: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) = 0 THEN 'unpaid' WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN 'paid' ELSE 'partial' END`,
-    paidAt: sql`CASE WHEN MAX(0, amount_paid - ${original.amount}) >= total_amount THEN paid_at ELSE NULL END`,
+    balance: sql`balance + ${original.amount}`,
+    status: sql`CASE WHEN balance + ${original.amount} <= 0.005 THEN 'paid' WHEN MAX(0, amount_paid - ${original.amount}) = 0 THEN 'unpaid' ELSE 'partial' END`,
+    paidAt: sql`CASE WHEN balance + ${original.amount} <= 0.005 THEN paid_at ELSE NULL END`,
   }).where(eq(debts.id, debtId));
 
   await db.insert(auditLog).values({
@@ -973,6 +1382,14 @@ debtsRouter.post("/debts/:debtId/payments/:paymentId/reverse", requireAuth, requ
     performedBy: session.userName ?? "Owner",
     createdAt: now,
   });
+
+  if (nurseryReverseAdj && nurseryReverseAdj.ok && nurseryReverseAdj.statements.length > 0) {
+    try {
+      await c.env.DB.batch(nurseryReverseAdj.statements);
+    } catch (err) {
+      if (!String(err).toLowerCase().includes("unique")) throw err;
+    }
+  }
 
   const today = now.slice(0, 10);
   await kvDel(c.env.SESSIONS, CK.debts(debt.shopId), CK.dashboard(debt.shopId, today));
